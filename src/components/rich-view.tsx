@@ -25,16 +25,18 @@ import { liveDocumentEmpty, useLiveRoom, type LiveRoom } from "@/lib/live-snapsh
 import {
   CLOSE_ROOM_TOO_NEW,
   connectWithTicket,
+  EDITOR_MODEL,
+  MODEL_KEY,
   RICH_SCHEMA_MATH,
   RICH_SCHEMA_PLAIN,
   roomSchemaOf,
-  roomTooNew,
   SCHEMA_KEY,
   SEED_SETTLE_MS,
   type CollabConfig,
   type PeerUser,
 } from "@/lib/collab";
 import { docHasMath, planLegacyRoom } from "@/lib/rich-room-migrate";
+import { commitMathFields } from "@/lib/rich-math";
 import { CommentLayer } from "@/components/comments";
 import { LinkPreviewCard } from "@/components/link-preview-card";
 import { ImageLightbox } from "@/components/image-lightbox";
@@ -292,11 +294,14 @@ function RichViewInner({
   // bring up to date, and this pane never writes to it or from it.
   const [roomChecked, setRoomChecked] = useState(false);
   const [roomRefused, setRoomRefused] = useState(false);
+  // An older room's update is on its way to the server (checkRoom below):
+  // nothing typed now could be placed in a room about to change under it.
+  const [migrating, setMigrating] = useState(false);
   const roomRefusedRef = useRef(false);
   // Set below, once the editor exists; read from the debounced serialize.
   const stampSchemaRef = useRef<() => void>(() => {});
   const held = holdUntilReady && !!session && (!liveRoom.ready || !roomChecked);
-  const editableNow = !locked && !held && !roomRefused;
+  const editableNow = !locked && !held && !roomRefused && !migrating;
 
   // No pass means no live session: the page treats that as the runtime
   // failing to load and goes back to the local copy.
@@ -570,6 +575,9 @@ function RichViewInner({
   // Settle the debounce now and hand back what the document currently says.
   // Null means nothing was pending, so the parent's own copy is already current.
   const flush = useCallback((): string | null => {
+    // A formula's source field still open is part of what the user sees as
+    // the document: a save takes it, as leaving the field would.
+    commitMathFields(editorRef.current);
     if (!debounceTimer.current || roomRefusedRef.current) return null;
     clearTimeout(debounceTimer.current);
     debounceTimer.current = null;
@@ -639,13 +647,13 @@ function RichViewInner({
     console.warn("Markie: this live room needs a newer Markie; editing the local copy.");
     onCollabStatusRef.current?.("unavailable");
   };
+  // A room's meta map can say anything (any editor writes it), so the test
+  // is the binding's own: whether it could draw the room at all.
   const refuseIfUnrepresentable = (): boolean => {
     if (!session || !editor || editor.isDestroyed) return false;
     if (roomRefusedRef.current) return true;
-    const tooNew = roomTooNew(session.ydoc.getMap("meta").get(SCHEMA_KEY));
     const ystate = session.runtime.ySyncPluginKey.getState(editor.state) as { binding?: { projectionError?: unknown } } | undefined;
-    const undrawable = !!ystate?.binding?.projectionError;
-    if (!tooNew && !undrawable) return false;
+    if (!ystate?.binding?.projectionError) return false;
     refuseRoom();
     return true;
   };
@@ -666,11 +674,23 @@ function RichViewInner({
   };
   stampSchemaRef.current = stampSchema;
 
+  // A room whose copy here has front matter holds only the body, and 0.9.4's
+  // desktop writes its file from a live room with nothing in front: it would
+  // delete the front matter from its file. Schema 2 keeps it out (collab.ts).
+  const stampFrontMatter = () => {
+    if (!session || locked || roomRefusedRef.current || !frontMatterRef.current) return;
+    const meta = session.ydoc.getMap("meta");
+    if (roomSchemaOf(meta.get(SCHEMA_KEY)) < RICH_SCHEMA_MATH) meta.set(SCHEMA_KEY, RICH_SCHEMA_MATH);
+  };
+  const stampFrontMatterRef = useRef(stampFrontMatter);
+  stampFrontMatterRef.current = stampFrontMatter;
+
   useEffect(() => {
     if (!session || !editor) return;
     const { provider, ydoc } = session;
     let settle: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
+    let stopWaiting: (() => void) | null = null;
 
     // Returns true when the room already has content, so there is nothing left
     // to decide.
@@ -687,31 +707,72 @@ function RichViewInner({
       checkedRef.current = true;
       const meta = ydoc.getMap("meta");
       if (refuseIfUnrepresentableRef.current()) return;
-      if (!locked && roomSchemaOf(meta.get(SCHEMA_KEY)) < RICH_SCHEMA_MATH) {
-        let plan: ReturnType<typeof planLegacyRoom>;
-        try {
-          plan = planLegacyRoom(editor, {
-            frontMatter: frontMatterRef.current,
-            baselineBody: baselineBodyRef.current,
-          });
-        } catch (err) {
-          console.error("Markie: couldn't read the live room", err);
-          plan = { kind: "refuse" };
-        }
-        if (plan.kind === "refuse") {
-          refuseRoomRef.current();
-          return;
-        }
-        if (plan.kind === "migrate") {
-          // One transaction, so the room's math nodes and the stamp that
-          // keeps older builds out of it reach the server as one update.
-          ydoc.transact(() => {
-            editor.view.dispatch(plan.tr);
-            if (plan.formulas > 0) meta.set(SCHEMA_KEY, RICH_SCHEMA_MATH);
-          });
-        }
+      const done = () => {
+        stampFrontMatterRef.current();
+        setRoomChecked(true);
+      };
+      // Seeded or brought up to date by this build already, or not this
+      // pane's to change.
+      if (locked || meta.get(MODEL_KEY) !== undefined) {
+        done();
+        return;
       }
-      setRoomChecked(true);
+      let plan: ReturnType<typeof planLegacyRoom>;
+      try {
+        plan = planLegacyRoom(editor, {
+          frontMatter: frontMatterRef.current,
+          baselineBody: baselineBodyRef.current,
+        });
+      } catch (err) {
+        console.error("Markie: couldn't read the live room", err);
+        plan = { kind: "refuse" };
+      }
+      if (plan.kind === "refuse") {
+        refuseRoomRef.current();
+        return;
+      }
+      // The room as this build holds it, claimed for this build in one
+      // update the server takes from exactly one client
+      // (room-migration-update.ts). It is not applied here: the room
+      // changes for this pane when the server sends back this update, or
+      // another client's that got there first.
+      const target = plan.kind === "migrate" ? plan.tr.doc : editor.state.doc;
+      const schema = Math.max(
+        roomSchemaOf(meta.get(SCHEMA_KEY)),
+        docHasMath(target) || frontMatterRef.current ? RICH_SCHEMA_MATH : RICH_SCHEMA_PLAIN
+      );
+      const socket = (provider as unknown as { ws?: { readyState: number; send(data: Uint8Array): void } | null }).ws;
+      if (!socket || socket.readyState !== 1) {
+        refuseRoomRef.current();
+        return;
+      }
+      setMigrating(true);
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const landed = () => {
+        if (meta.get(MODEL_KEY) === undefined) return;
+        stopWaiting?.();
+        done();
+      };
+      stopWaiting = () => {
+        meta.unobserve(landed);
+        if (timer) clearTimeout(timer);
+        stopWaiting = null;
+        setMigrating(false);
+      };
+      meta.observe(landed);
+      // No answer at all: the socket dropped, or the server never took it.
+      timer = setTimeout(() => {
+        stopWaiting?.();
+        refuseRoomRef.current();
+      }, 15_000);
+      try {
+        const update = session.runtime.migrationUpdate(ydoc, target, { [MODEL_KEY]: EDITOR_MODEL, [SCHEMA_KEY]: schema });
+        socket.send(session.runtime.syncUpdateMessage(update));
+      } catch (err) {
+        console.error("Markie: couldn't bring the live room up to date", err);
+        stopWaiting?.();
+        refuseRoomRef.current();
+      }
     };
 
     const seedNow = () => {
@@ -740,8 +801,12 @@ function RichViewInner({
       // document before it seeds the metadata.
       ydoc.transact(() => {
         editor.commands.setContent(body);
-        // The oldest build that can represent this room (collab.ts).
-        ydoc.getMap("meta").set(SCHEMA_KEY, docHasMath(editor.state.doc) ? RICH_SCHEMA_MATH : RICH_SCHEMA_PLAIN);
+        const meta = ydoc.getMap("meta");
+        // The oldest build that can represent this room (collab.ts): not
+        // one without math nodes once there is a formula, and not 0.9.4's
+        // desktop when this copy has front matter the room leaves out.
+        meta.set(SCHEMA_KEY, docHasMath(editor.state.doc) || frontMatterRef.current ? RICH_SCHEMA_MATH : RICH_SCHEMA_PLAIN);
+        meta.set(MODEL_KEY, EDITOR_MODEL);
       });
       setRoomChecked(true);
     };
@@ -779,6 +844,7 @@ function RichViewInner({
     provider.on("sync", trySeed);
     return () => {
       cancelled = true;
+      stopWaiting?.();
       if (settle) clearTimeout(settle);
       provider.off("sync", trySeed);
     };

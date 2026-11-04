@@ -15,7 +15,9 @@ import { liveSession, redeemCollabTicket, type TicketHolder } from "./collab-tic
 import {
   LEGACY_CLIENT_SCHEMA,
   closeCodeFor,
+  hasEditorModel,
   recordedSchema,
+  updateClaimsModel,
   schemaOfRoom,
   setRoomSchemaLookup,
   updateAddsMath,
@@ -455,6 +457,20 @@ export function readAccessControlledSyncMessage(
   return messageType;
 }
 
+// Whether a sync message carries an update that sets the room's editor
+// model. Read from a copy of the message, before the real read applies it.
+function claimsModelUpdate(message: Uint8Array): boolean {
+  try {
+    const peek = decoding.createDecoder(message);
+    decoding.readVarUint(peek); // MESSAGE_SYNC
+    const syncType = decoding.readVarUint(peek);
+    if (syncType !== syncProtocol.messageYjsUpdate && syncType !== syncProtocol.messageYjsSyncStep2) return false;
+    return updateClaimsModel(decoding.readVarUint8Array(peek));
+  } catch {
+    return false;
+  }
+}
+
 function handleConnection(
   conn: WebSocket,
   docId: string,
@@ -521,6 +537,15 @@ function handleConnection(
         // A socket the room moved past is being closed; nothing it says
         // in the meantime goes in.
         const outgrown = room.schema > state.schema;
+        // A room is seeded or brought up to date exactly once
+        // (collab-schema.ts MODEL_KEY): a second client doing it at the same
+        // moment would add its own copy of every formula next to the first.
+        // Its update is dropped; it sent it without applying it, and takes
+        // the first one's from the room instead.
+        const secondModel = canEdit && hasEditorModel(room.ydoc) && claimsModelUpdate(message);
+        if (secondModel) {
+          console.log(`collab: dropped a second editor-model update in room ${docId}`);
+        }
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MESSAGE_SYNC);
         const syncType = readAccessControlledSyncMessage(
@@ -528,7 +553,7 @@ function handleConnection(
           encoder,
           room.ydoc,
           conn,
-          canEdit && !seedBlocked && !outgrown
+          canEdit && !seedBlocked && !outgrown && !secondModel
         );
         if (
           canEdit &&

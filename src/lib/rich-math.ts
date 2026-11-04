@@ -24,14 +24,14 @@
 // line), loaded the first time a formula is drawn, and a click on one while
 // editing opens its source.
 //
-// The text node keeps a markdown spec of its own as well (MathAwareText): a
-// `$x$` typed into a paragraph is text until the document is next read, and a
-// room written before these nodes existed holds its math as text. Either way
-// that text is written back unescaped, as before.
+// Typing a whole `$…$` span turns it into a formula as the closing `$` goes
+// in. A dollar sign that stays text is a dollar sign: where the text around
+// it would read back as math (`Pay \$x\$ now`, written with escapes), the
+// text node (MathAwareText) writes it escaped again, so it stays text.
 //
 // These nodes are what make a room's schema version 2 (src/lib/collab.ts):
 // a build without them cannot draw such a room, so the server keeps it out.
-import { Node, mergeAttributes, type NodeViewRendererProps } from "@tiptap/core";
+import { InputRule, Node, mergeAttributes, type NodeViewRendererProps } from "@tiptap/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
 
 // The parts of markdown-it (tiptap-markdown's parser) this uses, typed here
@@ -232,10 +232,10 @@ interface SerializerState {
 }
 
 // A bare `|` ends a table cell. Math parsed out of a cell can never hold
-// one (it would have split the cell), so this only touches what somebody
-// typed into a formula inside a table.
+// one (markdown-it splits the cell first and gives the formula `\|` back as
+// `|`), so every unescaped pipe is escaped, each one: `$||x||$` has four.
 const cellSafe = (source: string, state: SerializerState) =>
-  state.inTable ? source.replace(/(^|[^\\])\|/g, "$1\\|") : source;
+  state.inTable ? source.replace(/(?<!\\)\|/g, "\\|") : source;
 
 /** The text node, with math kept as written. Replaces StarterKit's `text`. */
 export const MathAwareText = Node.create({
@@ -244,18 +244,20 @@ export const MathAwareText = Node.create({
   addStorage() {
     return {
       markdown: {
-        serialize(state: SerializerState, node: PMNode, parent: PMNode) {
-          const text = node.text ?? "";
-          const parts = splitMath(text);
-          if (parts.length === 1 && parts[0].math && parts[0].text.startsWith("$$") && parent?.type.name === "paragraph" && parent.childCount === 1) {
-            // Display math held as text (a room from before mathBlock):
-            // the paragraph is the formula.
-            state.text(`$$\n${parts[0].text.slice(2, -2).trim()}\n$$`, false);
-            return;
-          }
-          for (const part of parts) {
-            if (part.math) state.text(part.text, false);
-            else state.text(escapeHTML(part.text));
+        // Math is a node, so a `$` in text is a dollar sign. Where the text
+        // would read back as a math span (it came from `\$x\$`, or is
+        // somebody's literal dollars), its dollars are written escaped;
+        // prices, which never form a span, are left as they are.
+        serialize(state: SerializerState, node: PMNode) {
+          for (const part of splitMath(node.text ?? "")) {
+            if (!part.math) {
+              state.text(escapeHTML(part.text));
+              continue;
+            }
+            part.text.split("$").forEach((piece, i) => {
+              if (i > 0) state.text("\\$", false);
+              if (piece) state.text(escapeHTML(piece));
+            });
           }
         },
         parse: {
@@ -310,6 +312,16 @@ interface MathViewProps extends NodeViewRendererProps {
   block: boolean;
 }
 
+// The source fields open in each editor, so a save can keep what is being
+// typed in one (commitMathFields) instead of writing the formula as it was.
+const openFields = new WeakMap<object, Set<() => void>>();
+
+/** Keeps whatever is typed in `editor`'s open formula fields, as leaving them would. */
+export function commitMathFields(editor: object | null | undefined): void {
+  if (!editor) return;
+  for (const finish of [...(openFields.get(editor) ?? [])]) finish();
+}
+
 // The formula as KaTeX draws it, and on a click while editing, its source in
 // a field: Enter (Cmd/Ctrl+Enter in a block) or leaving the field keeps the
 // change, Escape puts it back. Emptying the field removes the formula.
@@ -322,34 +334,70 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
   const view = document.createElement(block ? "div" : "span");
   dom.appendChild(view);
   let field: HTMLTextAreaElement | HTMLInputElement | null = null;
+  // The source as it was when the field opened, and where the node was.
+  let openedWith = "";
+  let lastPos: number | undefined;
+  const finish = () => commit(field ? field.value : null, false);
+  const posNow = () => {
+    const pos = typeof getPos === "function" ? getPos() : undefined;
+    if (pos !== undefined) lastPos = pos;
+    return pos;
+  };
+  const register = (on: boolean) => {
+    let set = openFields.get(editor);
+    if (!set) openFields.set(editor, (set = new Set()));
+    if (on) set.add(finish);
+    else set.delete(finish);
+  };
+  // What was typed, as a node of this kind: a peer changed or removed the
+  // formula meanwhile, and both versions are kept rather than one lost.
+  const keepBeside = (at: number, value: string) => {
+    const made = node.type.create({ ...node.attrs, source: value });
+    const content = block ? made : [editor.schema.text(" "), made];
+    editor.view.dispatch(editor.state.tr.insert(Math.min(at, editor.state.doc.content.size), content));
+  };
 
   const render = () => {
     dom.setAttribute("data-source", node.attrs.source);
     drawMath(view, String(node.attrs.source ?? ""), block);
   };
 
-  const commit = (value: string | null) => {
+  const commit = (value: string | null, focus = true) => {
     if (!field) return;
     const current = field;
     field = null;
+    register(false);
     current.remove();
     view.style.display = "";
     dom.classList.remove("is-editing");
-    const pos = typeof getPos === "function" ? getPos() : undefined;
-    if (value === null || value === node.attrs.source || pos === undefined) {
+    if (value === null || value === openedWith || editor.isDestroyed) {
+      render();
+      return;
+    }
+    const pos = posNow();
+    const here = pos === undefined ? null : editor.state.doc.nodeAt(pos);
+    if (pos === undefined || !here || here.type !== node.type) {
+      if (lastPos !== undefined && value.trim()) keepBeside(lastPos, value);
+      return;
+    }
+    if (here.attrs.source !== openedWith) {
+      // Somebody else changed this formula while it was open here.
+      if (value.trim()) keepBeside(pos + here.nodeSize, value);
       render();
       return;
     }
     const tr = editor.state.tr;
-    if (value.trim() === "") tr.delete(pos, pos + node.nodeSize);
-    else tr.setNodeMarkup(pos, undefined, { ...node.attrs, source: value });
+    if (value.trim() === "") tr.delete(pos, pos + here.nodeSize);
+    else tr.setNodeMarkup(pos, undefined, { ...here.attrs, source: value });
     editor.view.dispatch(tr);
-    editor.commands.focus();
+    if (focus) editor.commands.focus();
   };
 
   const open = () => {
     if (field || !editor.isEditable) return;
     const source = String(node.attrs.source ?? "");
+    openedWith = source;
+    posNow();
     const input = block ? document.createElement("textarea") : document.createElement("input");
     input.className = "markie-math-field";
     input.value = source;
@@ -371,6 +419,7 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
     });
     input.addEventListener("blur", () => commit(input.value));
     field = input;
+    register(true);
     view.style.display = "none";
     dom.classList.add("is-editing");
     dom.appendChild(input);
@@ -389,6 +438,7 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
     update(next: PMNode) {
       if (next.type !== node.type) return false;
       node = next;
+      posNow();
       if (!field) render();
       return true;
     },
@@ -405,8 +455,18 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
     ignoreMutation() {
       return true;
     },
+    // Gone while its source was open (a peer removed it, the document
+    // was redrawn): what was typed is not lost.
     destroy() {
+      if (!field) return;
+      const value = field.value;
       field = null;
+      register(false);
+      if (value === openedWith || !value.trim() || lastPos === undefined) return;
+      const at = lastPos;
+      setTimeout(() => {
+        if (!editor.isDestroyed) keepBeside(at, value);
+      }, 0);
     },
   };
 }
@@ -440,6 +500,29 @@ export const MathInline = Node.create({
   },
   renderText({ node }) {
     return String(node.attrs.source ?? "");
+  },
+  // `$x$` typed into a paragraph becomes a formula as its closing `$` goes
+  // in, by the same rule a document is read with; `$5 and $` does not.
+  addInputRules() {
+    const type = this.type;
+    return [
+      // Not TipTap's nodeInputRule: it inserts the typed character a second
+      // time now that the typed text is already in the document when a rule
+      // runs. The node holds the whole span, typed `$` included, so the
+      // range is replaced whether or not that `$` is in it yet.
+      new InputRule({
+        find: (text: string) => {
+          const found = /(?:^|[^\\$])(\$[^\s$][^$\n]*\$)$/.exec(text);
+          if (!found || mathSpanEnd(found[1], 0) !== found[1].length) return null;
+          return { index: found.index, text: found[0], replaceWith: found[1] };
+        },
+        handler: ({ state, range, match }) => {
+          const source = match[1];
+          const from = range.from + match[0].lastIndexOf(source);
+          state.tr.replaceWith(from, range.to, type.create({ source }));
+        },
+      }),
+    ];
   },
   addNodeView() {
     if (typeof document === "undefined") return null;

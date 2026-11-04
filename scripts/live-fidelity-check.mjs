@@ -23,6 +23,9 @@
 //   4. Old builds. A ticket request that says nothing about schemas (0.9.4's)
 //      is refused for a room holding a formula, and a socket on the account's
 //      token is shown out with 4403 before it is sent anything.
+//   5. The room of a document with front matter keeps old builds out too
+//      (0.9.4 would write its file without the YAML); a plain document's room
+//      stays open to them.
 //
 // Needs Google Chrome and the web build: `npm run build:web` first.
 // Usage: node scripts/live-fidelity-check.mjs [evidence-dir]
@@ -441,6 +444,30 @@ try {
     sock.on("error", () => {});
   });
   check("an old build on its token is shown out (4403) without being sent the room", typeof legacyClose === "object" && legacyClose.code === 4403 && legacyClose.messages === 0, JSON.stringify(legacyClose));
+
+  // ── 5. which plain rooms stay open to old builds ──
+  // A document with front matter and no formulas: its room holds only the
+  // body, which 0.9.4's desktop would write over its file without the YAML.
+  // A document with neither: open to every build.
+  const docsFor5 = [
+    ["notes", "Notes.md", "---\ntitle: Notes\n---\n# Notes\n\nNo formulas here.\n"],
+    ["plain", "Plain.md", "# Plain\n\nNo formulas, no front matter.\n"],
+  ];
+  for (const [slug, name, content] of docsFor5) {
+    const id = `${slug}-${stamp}`;
+    const made = await fetch(`${base}/api/docs/${id}`, { method: "PUT", headers: authed(accounts.alice.token), body: JSON.stringify({ name, content, hash: createHash("sha256").update(content, "utf8").digest("hex"), baseVersion: 0 }) });
+    if (!made.ok) throw new Error(`create ${name}: ${made.status}`);
+    // A document is live once it is shared.
+    const sharedDoc = await fetch(`${base}/api/docs/${id}/shares`, { method: "POST", headers: authed(accounts.alice.token), body: JSON.stringify({ email: accounts.bob.email, role: "editor" }) });
+    if (!sharedDoc.ok) throw new Error(`share ${name}: ${sharedDoc.status}`);
+    await alice3.navigate(`${base}/app/d/${id}`);
+    await poll(`alice live on ${name}`, () => alice3.evaluate("!!(window.__markieCollab && window.__markieEditor && window.__markieEditor.isEditable && window.__markieCollab.ydoc.getMap('meta').get('editorModel') === 2)").catch(() => false), 30_000);
+    await sleep(500);
+  }
+  const notesOld = await fetch(`${base}/api/docs/notes-${stamp}/collab-ticket`, { method: "POST", headers: authed(accounts.alice.token), body: "{}" });
+  check("an old build is kept out of the room of a document with front matter, formulas or not", notesOld.status === 409, String(notesOld.status));
+  const plainOld = await fetch(`${base}/api/docs/plain-${stamp}/collab-ticket`, { method: "POST", headers: authed(accounts.alice.token), body: "{}" });
+  check("an old build still joins the room of a plain document", plainOld.status === 200, String(plainOld.status));
   await alice3.close();
   await bob3.close();
 } catch (error) {

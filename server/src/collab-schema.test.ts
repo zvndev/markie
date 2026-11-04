@@ -35,7 +35,6 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { app } = await import("./index.ts");
 const { attachCollab, roomSchemaState } = await import("./collab.ts");
 const schema = await import("./collab-schema.ts");
-const { issueCollabTicket } = await import("./collab-tickets.ts");
 const Database = (await import("better-sqlite3")).default;
 const db = new Database(process.env.DB_PATH);
 
@@ -282,20 +281,87 @@ test("a build from before tickets, on its token, is an old build", async () => {
   assert.equal(fragmentHasMath(legacy.doc), false);
 });
 
-test("a new build meets a room a newer build stamped: no ticket, and 4426 at the socket", async () => {
+test("a schema stamp above any this server knows is ignored, so one editor cannot lock a room", async () => {
   const docId = `schema-future-${stamp}`;
   await createDoc(owner.token, docId, "Plain.\n");
+  await share(owner.token, docId, oldPeer.email);
   storeRoom(docId, (doc) => {
     doc.getXmlFragment("default").insert(0, [paragraph("Plain.")]);
-    doc.getMap("meta").set("schemaVersion", 3);
+    doc.getMap("meta").set("schemaVersion", 999);
   });
-  assert.equal((await askTicket(docId, owner.token, { schema: 2 })).status, 409);
-  // A ticket this build held from before the newer build stamped the room.
-  const session = await auth.api.getSession({ headers: new Headers({ Authorization: `Bearer ${owner.token}` }) });
-  const held = issueCollabTicket(docId, owner.id, session!.session.id, Date.now(), 2)!.ticket;
-  const peer = await connect(docId, withTicket(held));
-  await waitFor("shown out", () => peer.closeCode() !== null);
-  assert.equal(peer.closeCode(), 4426);
+  assert.equal((await askTicket(docId, owner.token, { schema: 2 })).status, 200);
+  assert.equal((await askTicket(docId, oldPeer.token, {})).status, 200);
+  const peer = await connect(docId, withTicket(await ticket(docId, owner.token, { schema: 2 })));
+  await waitFor("synced", () => peer.doc.getXmlFragment("default").length > 0);
+  // Stamping it live does not shut anyone out either.
+  peer.doc.getMap("meta").set("schemaVersion", 999);
+  await sleep(100);
+  // Nothing in the room needs more than every build can draw.
+  assert.equal(roomSchemaState(docId), 0);
+  assert.equal(peer.closeCode(), null);
+});
+
+// An update that claims the room's editor model, built the way a client
+// builds a migration (src/lib/room-migration-update.ts): on a copy of the
+// room, sent without being applied by the sender.
+function claimUpdate(base: Y.Doc, words: string): Uint8Array {
+  const copy = new Y.Doc();
+  Y.applyUpdate(copy, Y.encodeStateAsUpdate(base));
+  copy.transact(() => {
+    copy.getXmlFragment("default").insert(copy.getXmlFragment("default").length, [paragraph(words)]);
+    copy.getMap("meta").set("editorModel", 2);
+    copy.getMap("meta").set("schemaVersion", 2);
+  });
+  const update = Y.encodeStateAsUpdate(copy, Y.encodeStateVector(base));
+  copy.destroy();
+  return update;
+}
+function sendRaw(peer: Peer, update: Uint8Array) {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, MESSAGE_SYNC);
+  syncProtocol.writeUpdate(encoder, update);
+  peer.ws.send(encoding.toUint8Array(encoder));
+}
+
+test("two clients bringing one older room up to date at once: the server keeps the first and drops the second", async () => {
+  const docId = `schema-migrate-race-${stamp}`;
+  await createDoc(owner.token, docId, "Plain.\n");
+  await share(owner.token, docId, oldPeer.email);
+  storeRoom(docId, (doc) => {
+    doc.getXmlFragment("default").insert(0, [paragraph("Plain.")]);
+    doc.getMap("meta").set("schemaVersion", 1);
+  });
+  const a = await connect(docId, withTicket(await ticket(docId, owner.token, { schema: 2 })));
+  const b = await connect(docId, withTicket(await ticket(docId, oldPeer.token, { schema: 2 })));
+  await waitFor("both synced", () => a.doc.getXmlFragment("default").length > 0 && b.doc.getXmlFragment("default").length > 0);
+  // Both built from the same room, sent back to back.
+  const fromA = claimUpdate(a.doc, "A's migration");
+  const fromB = claimUpdate(b.doc, "B's migration");
+  sendRaw(a, fromA);
+  sendRaw(b, fromB);
+  const text = (doc: Y.Doc) => JSON.stringify(doc.getXmlFragment("default").toJSON());
+  await waitFor("A's migration reached both", () => text(a.doc).includes("A's migration") && text(b.doc).includes("A's migration"));
+  await sleep(150);
+  for (const peer of [a, b]) {
+    assert.equal(text(peer.doc).includes("B's migration"), false, "the second migration never lands");
+    assert.equal(peer.doc.getXmlFragment("default").length, 2);
+    assert.equal(peer.closeCode(), null);
+  }
+  // A later reload of the room holds one migration too.
+  assert.equal(roomSchemaState(docId), 2);
+});
+
+test("the schema read of a room does not overflow on a node with 150,000 children", () => {
+  const doc = new Y.Doc();
+  const list = new Y.XmlElement("bulletList");
+  doc.getXmlFragment("default").insert(0, [list]);
+  const children: Y.XmlElement[] = [];
+  for (let i = 0; i < 150_000; i++) children.push(new Y.XmlElement("listItem"));
+  list.insert(0, children);
+  assert.equal(schema.holdsMathNodes(doc), false);
+  const math = new Y.XmlElement("mathInline");
+  (list.get(149_999) as Y.XmlElement).insert(0, [math]);
+  assert.equal(schema.holdsMathNodes(doc), true);
 });
 
 test("text rooms are schema 1: never closed to old builds", () => {

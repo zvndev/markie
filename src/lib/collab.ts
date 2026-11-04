@@ -176,15 +176,26 @@ export function connectWithTicket(
 //   1  Everything up to desktop 0.9.4: paragraphs, headings, lists, tables
 //      (with their cells' alignment), pictures, embeds, marks; math held as
 //      text. Plain text rooms (Y.Text) are always 1.
-//   2  A rich room holding a math node (mathInline, mathBlock; rich-math.ts).
-//      A build without those nodes cannot draw such a room at all: its
-//      binding stops on the first one and shows an empty or stale page. Its
-//      writer could then report that page as the room's text and push it
-//      over the stored copy, so the server keeps such a client out.
+//   2  A rich room an older build would damage:
+//      * one holding a math node (mathInline, mathBlock; rich-math.ts). A
+//        build without those nodes cannot draw it at all: its binding stops
+//        on the first one and shows an empty or stale page, and its writer
+//        could then report that page as the room's text and push it over the
+//        stored copy.
+//      * the room of a document with front matter. The room holds only the
+//        body, and 0.9.4's desktop writes its file from a live room with no
+//        front matter in front, so it would delete the YAML from the file.
+//      So the server keeps older builds out of these rooms.
 //
-// The version is raised only when a room first holds a node that needs it
-// (RichView stamps 2 as a formula arrives), never just because a newer
-// build opened the room: a plain document stays open to every build.
+// The version is raised only when a room first needs it (a formula arrives,
+// or a client whose copy has front matter seeds or opens it), never just
+// because a newer build opened the room: a plain document stays open to
+// every build.
+//
+// A stamp above the newest schema this build knows is ignored, here and on
+// the server: any editor can write the meta map, and a stamp of 999 must not
+// lock a room for everyone. A room this build truly cannot draw is still
+// refused, by its binding (RichView).
 
 /** The newest room schema this build reads and writes. Sent with each ticket request. */
 export const COLLAB_SCHEMA_VERSION = 2;
@@ -196,15 +207,19 @@ export const RICH_SCHEMA_MATH = 2;
 export const TEXT_ROOM_SCHEMA = 1;
 /** The key in the room's meta map. */
 export const SCHEMA_KEY = "schemaVersion";
+/**
+ * Set once per room, by the client that seeded it or brought an older room
+ * up to date (rich-room-migrate.ts); the server lets exactly one update set
+ * it (server/src/collab-schema.ts). Its absence marks a room an older build
+ * seeded.
+ */
+export const MODEL_KEY = "editorModel";
+/** The value: this build's model (math nodes, no front matter in the room). */
+export const EDITOR_MODEL = 2;
 
-/** The schema a room's meta map records, or 0 when it records none. */
+/** The schema a room's meta map records, or 0 when it records none or one this build does not know. */
 export function roomSchemaOf(version: unknown): number {
-  return typeof version === "number" && Number.isInteger(version) && version > 0 ? version : 0;
-}
-
-/** True when a room needs a newer build than this one to be represented. */
-export function roomTooNew(version: unknown): boolean {
-  return roomSchemaOf(version) > COLLAB_SCHEMA_VERSION;
+  return typeof version === "number" && Number.isInteger(version) && version > 0 && version <= COLLAB_SCHEMA_VERSION ? version : 0;
 }
 
 /**

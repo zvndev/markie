@@ -6,9 +6,12 @@
 // desktop 0.9.4. A build without them cannot draw a room holding one: its
 // binding stops on the first formula and shows an empty or stale page, and
 // as the web app or the phone it could then report that page as the room's
-// text and push it over the stored copy. So a room records the oldest schema
-// that can represent it, every client says which it can represent, and the
-// server keeps a client out of a room that has moved past it:
+// text and push it over the stored copy. The room of a document with front
+// matter is the other case: it holds only the body, and 0.9.4's desktop
+// writes its file from a live room with nothing in front, deleting the YAML.
+// So a room records the oldest schema that can represent it (2 for both),
+// every client says which it can represent, and the server keeps a client
+// out of a room that has moved past it:
 //
 //   * The ticket request carries `schema` (src/lib/auth-client.ts and the
 //     phone's api.ts send it; a build from before sends `{}`, which reads
@@ -24,13 +27,28 @@
 //     to their own copy.
 //
 // A room's schema is the higher of what its meta map records (RichView
-// stamps 2 as the first formula arrives) and what its content needs, read
-// from the content itself when a room is loaded and from each update as it
-// arrives, so a client that forgets the stamp cannot open the door.
-// The schema only rises; deleting the document drops the room with it.
+// stamps 2 as the first formula arrives, and for front matter) and what its
+// content needs, read from the content itself when a room is loaded and from
+// each update as it arrives, so a client that forgets the stamp cannot open
+// the door. A recorded stamp above the schemas this server knows is ignored,
+// so one editor cannot lock a room. The schema only rises; deleting the
+// document drops the room with it.
+//
+// One more rule lives here: a room is seeded or brought up to date from an
+// older build's shape exactly once. The update that does it claims the
+// room's editor model (MODEL_KEY); the server takes the first claim and drops
+// any later one, so two clients migrating the same room at once cannot both
+// add their copy of every formula (src/lib/room-migration-update.ts).
 import * as Y from "yjs";
 
 export const SCHEMA_KEY = "schemaVersion";
+/**
+ * Set once, by the client that seeded a room or brought an older room up to
+ * date (src/lib/rich-room-migrate.ts). The server lets exactly one update
+ * set it: two clients bringing the same room up to date at once would each
+ * insert their own copy of every formula, so the second is dropped.
+ */
+export const MODEL_KEY = "editorModel";
 /** Every room content up to desktop 0.9.4, and every plain text room. */
 export const ROOM_SCHEMA_PLAIN = 1;
 /** A rich room holding a math node. */
@@ -52,10 +70,36 @@ export function clientSchemaFrom(body: unknown): number {
   return Math.min(value, 1000);
 }
 
-/** What the room's meta map records, or 0. */
+/**
+ * What the room's meta map records, or 0. Only the schemas this server
+ * knows count: any editor can write the meta map, and a stamp of 999 must
+ * not lock the room for everyone. A future schema raises this bound with it.
+ */
 export function recordedSchema(ydoc: Y.Doc): number {
   const value = ydoc.getMap("meta").get(SCHEMA_KEY);
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0;
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= ROOM_SCHEMA_MATH ? value : 0;
+}
+
+/** Whether the room has been seeded or brought up to date by a build that knows math nodes. */
+export function hasEditorModel(ydoc: Y.Doc): boolean {
+  return ydoc.getMap("meta").get(MODEL_KEY) !== undefined;
+}
+
+/**
+ * Whether one update sets the room's editor model (MODEL_KEY in the meta
+ * map): a seed or a migration. Read from the update's own structs.
+ */
+export function updateClaimsModel(update: Uint8Array): boolean {
+  try {
+    const { structs } = Y.decodeUpdate(update);
+    for (const struct of structs) {
+      const item = struct as { parent?: unknown; parentSub?: unknown };
+      if (item.parent === "meta" && item.parentSub === MODEL_KEY) return true;
+    }
+  } catch {
+    // Not an update this can read.
+  }
+  return false;
 }
 
 /** Whether the rich fragment holds a node only schema 2 can represent. */
@@ -64,12 +108,14 @@ export function holdsMathNodes(ydoc: Y.Doc): boolean {
   if (fragment.length === 0) return false;
   // Only elements are looked into: a room whose "default" was written as
   // text by something else holds strings here, and is not a rich room.
+  // Pushed one by one: spreading a node's children into push() overflows
+  // the call stack past about 125,000 of them.
   const stack: unknown[] = fragment.toArray();
   while (stack.length > 0) {
     const node = stack.pop();
     if (!(node instanceof Y.XmlElement)) continue;
     if (MATH_NODES.has(node.nodeName)) return true;
-    stack.push(...node.toArray());
+    for (const child of node.toArray()) stack.push(child);
   }
   return false;
 }

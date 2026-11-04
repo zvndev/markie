@@ -34,9 +34,20 @@ vi.mock("@/lib/collab-loader", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/collab-loader")>();
   const runtime = await import("@/lib/collab-runtime");
   const { Awareness } = await import("y-protocols/awareness");
+  const Y = await import("yjs");
+  const { updateFromSyncMessage } = await import("@/lib/room-migration-update");
   class FakeProvider {
     synced = false;
     shouldConnect = false;
+    // An update sent straight to the server (an older room brought up to
+    // date) comes back from it, as the real socket's does.
+    ws = {
+      readyState: 1,
+      send: (data: Uint8Array) => {
+        const update = updateFromSyncMessage(data);
+        if (update) setTimeout(() => Y.applyUpdate(this.#doc, update, "server"), 5);
+      },
+    };
     params: Record<string, string> = {};
     awareness: InstanceType<typeof Awareness>;
     #doc: import("yjs").Doc;

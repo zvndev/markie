@@ -213,3 +213,118 @@ describe("math in the rich view", () => {
     readOnly.view.unmount();
   });
 });
+
+describe("dollar signs that are not math", () => {
+  it("keeps `\\$` escapes through an edit, so escaped dollars never read back as a formula", () => {
+    const md = "Pay \\$x\\$ now.";
+    expect(nodesOf(md)).toEqual([]);
+    expect(roundTrip(md, appendToEnd(" Thanks."))).toBe("Pay \\$x\\$ now. Thanks.");
+    expect(nodesOf(roundTrip(md, appendToEnd(" Thanks.")))).toEqual([]);
+  });
+
+  it("escapes a dollar span held as text, and leaves prices alone", () => {
+    const literal = roundTrip("", (editor) => {
+      editor.commands.insertContent({ type: "text", text: "Write $a b$ literally." });
+    });
+    expect(literal).toBe("Write \\$a b\\$ literally.");
+    expect(nodesOf(literal)).toEqual([]);
+    const prices = roundTrip("", (editor) => {
+      editor.commands.insertContent({ type: "text", text: "Costs $5 and $10." });
+    });
+    expect(prices).toBe("Costs $5 and $10.");
+  });
+
+  it("escapes every pipe a formula holds inside a table cell, adjacent ones too", () => {
+    const md = "| m |\n| --- |\n| $x$ |\n";
+    const out = roundTrip(md, editSource(0, () => "$||x||$"));
+    expect(out).toContain("| $\\|\\|x\\|\\|$ |");
+    expect(nodesOf(out)).toEqual([{ type: "mathInline", source: "$||x||$" }]);
+  });
+});
+
+describe("typing a formula", () => {
+  async function typedInto(text: string) {
+    const editor = new Editor({ element: document.createElement("div"), extensions: richBaseExtensions({ collab: true }), content: "" });
+    try {
+      // As the keyboard does: one character at a time through the view, so
+      // input rules see each.
+      for (const char of text) {
+        const { from, to } = editor.state.selection;
+        const handled = editor.view.someProp("handleTextInput", (f) => f(editor.view, from, to, char, () => editor.state.tr.insertText(char, from, to)));
+        if (!handled) editor.view.dispatch(editor.state.tr.insertText(char, from, to));
+      }
+      return (editor.storage as unknown as { markdown: { getMarkdown(): string } }).markdown.getMarkdown();
+    } finally {
+      editor.destroy();
+    }
+  }
+
+  it("turns `$x^2$` into a formula as its closing dollar is typed", async () => {
+    expect(await typedInto("Area $x^2$ ok")).toBe("Area $x^2$ ok");
+    expect(nodesOf(await typedInto("Area $x^2$ ok"))).toEqual([{ type: "mathInline", source: "$x^2$" }]);
+  });
+
+  it("leaves prices as text", async () => {
+    expect(await typedInto("It cost $5 and $10.")).toBe("It cost $5 and $10.");
+  });
+});
+
+describe("a formula's source field", () => {
+  async function mountedEditor(markdown: string) {
+    const { render, waitFor } = await import("@testing-library/react");
+    const { EditorContent, useEditor } = await import("@tiptap/react");
+    let handle: import("@tiptap/react").Editor | null = null;
+    function View() {
+      const editor = useEditor({ extensions: richBaseExtensions(), content: markdown, immediatelyRender: true });
+      handle = editor;
+      return <EditorContent editor={editor} />;
+    }
+    const view = render(<View />);
+    await waitFor(() => expect(view.container.querySelector(".markie-math")).not.toBeNull());
+    const markdownNow = () => (handle!.storage as unknown as { markdown: { getMarkdown(): string } }).markdown.getMarkdown();
+    return { view, editor: () => handle!, markdownNow };
+  }
+
+  it("is kept by a save while still open", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { commitMathFields } = await import("@/lib/rich-math");
+    const { view, editor, markdownNow } = await mountedEditor("A $x$ b.\n");
+    const inline = view.container.querySelector(".markie-math-inline") as HTMLElement;
+    fireEvent.mouseDown(inline);
+    const field = inline.querySelector("input") as HTMLInputElement;
+    fireEvent.input(field, { target: { value: "$x^3$" } });
+    // What RichView's flush does before it serializes.
+    commitMathFields(editor());
+    expect(markdownNow()).toBe("A $x^3$ b.");
+    view.unmount();
+  });
+
+  it("keeps both versions when somebody else changed the formula while it was open", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { view, editor, markdownNow } = await mountedEditor("A $x$ b.\n");
+    const inline = view.container.querySelector(".markie-math-inline") as HTMLElement;
+    fireEvent.mouseDown(inline);
+    const field = inline.querySelector("input") as HTMLInputElement;
+    fireEvent.input(field, { target: { value: "$mine$" } });
+    // A peer's change to the same formula arrives.
+    let pos = -1;
+    editor().state.doc.descendants((node, p) => { if (node.type.name === "mathInline") pos = p; });
+    editor().view.dispatch(editor().state.tr.setNodeMarkup(pos, undefined, { source: "$theirs$" }));
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(markdownNow()).toBe("A $theirs$ $mine$ b.");
+    view.unmount();
+  });
+
+  it("keeps what was typed when the formula is removed while its source is open", async () => {
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const { view, editor, markdownNow } = await mountedEditor("A $x$ b.\n");
+    const inline = view.container.querySelector(".markie-math-inline") as HTMLElement;
+    fireEvent.mouseDown(inline);
+    fireEvent.input(inline.querySelector("input") as HTMLInputElement, { target: { value: "$kept$" } });
+    let pos = -1;
+    editor().state.doc.descendants((node, p) => { if (node.type.name === "mathInline") pos = p; });
+    editor().view.dispatch(editor().state.tr.delete(pos, pos + 1));
+    await waitFor(() => expect(markdownNow()).toContain("$kept$"));
+    view.unmount();
+  });
+});

@@ -12,7 +12,6 @@ import {
   RICH_SCHEMA_MATH,
   RICH_SCHEMA_PLAIN,
   roomSchemaOf,
-  roomTooNew,
   SEED_SETTLE_MS,
   TEXT_ROOM_SCHEMA,
 } from "./collab";
@@ -104,11 +103,9 @@ describe("room schema", () => {
     expect(roomSchemaOf(2)).toBe(2);
   });
 
-  it("is too new only past this build's schema; older rooms are this build's to bring up to date", () => {
-    expect(roomTooNew(COLLAB_SCHEMA_VERSION + 1)).toBe(true);
-    expect(roomTooNew(COLLAB_SCHEMA_VERSION)).toBe(false);
-    expect(roomTooNew(1)).toBe(false);
-    expect(roomTooNew(undefined)).toBe(false);
+  it("ignores a stamp above the newest schema it knows, so one editor cannot lock a room", () => {
+    expect(roomSchemaOf(COLLAB_SCHEMA_VERSION + 1)).toBe(0);
+    expect(roomSchemaOf(999)).toBe(0);
   });
 });
 

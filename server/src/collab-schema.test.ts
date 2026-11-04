@@ -79,9 +79,9 @@ async function signUp(name: string, email: string) {
   return { name, email, token: user.token, id: user.id };
 }
 
-async function createDoc(token: string, docId: string, content: string) {
+async function createDoc(token: string, docId: string, content: string, name = "schema.md") {
   const hash = createHash("sha256").update(content, "utf8").digest("hex");
-  const res = await jsonRequest("PUT", `/api/docs/${docId}`, token, { name: "schema.md", content, hash, baseVersion: 0 });
+  const res = await jsonRequest("PUT", `/api/docs/${docId}`, token, { name, content, hash, baseVersion: 0 });
   assert.equal(res.status, 200);
 }
 
@@ -379,6 +379,19 @@ test("the room of a document whose stored copy has front matter keeps old builds
   const legacy = await connect(docId, `token=${encodeURIComponent(oldPeer.token)}`);
   await waitFor("the token build shown out", () => legacy.closeCode() !== null);
   assert.equal(legacy.closeCode(), 4403);
+});
+
+test("a plain text file whose text happens to start like front matter stays open to old builds", async () => {
+  const docId = `schema-text-front-${stamp}`;
+  await createDoc(owner.token, docId, "---\na: 1\n---\nb: 2\n", "settings.txt");
+  await share(owner.token, docId, oldPeer.email);
+  assert.equal((await askTicket(docId, oldPeer.token, {})).status, 200);
+  const legacy = await connect(docId, `token=${encodeURIComponent(oldPeer.token)}`);
+  // Its own text goes in, and it is not shown out.
+  legacy.doc.getText("content").insert(0, "---\na: 1\n---\nb: 2\n");
+  await sleep(150);
+  assert.equal(legacy.closeCode(), null);
+  assert.equal((await askTicket(docId, oldPeer.token, {})).status, 200);
 });
 
 test("text rooms are schema 1: never closed to old builds", () => {

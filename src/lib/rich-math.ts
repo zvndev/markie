@@ -343,11 +343,32 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
     if (pos !== undefined) lastPos = pos;
     return pos;
   };
+  // Where this formula is, followed through every transaction while its
+  // source is open: when its view is thrown away the change goes into this
+  // very node, not into another formula that happens to hold the same
+  // source. Null once the node itself was deleted.
+  let tracked: number | null = null;
+  let pending = false;
+  const follow = ({ transaction }: { transaction: { mapping: { mapResult(pos: number, assoc?: number): { pos: number; deleted: boolean } } } }) => {
+    if (tracked === null) return;
+    const mapped = transaction.mapping.mapResult(tracked, 1);
+    lastPos = mapped.pos;
+    tracked = mapped.deleted ? null : mapped.pos;
+  };
   const register = (on: boolean) => {
     let set = openFields.get(editor);
     if (!set) openFields.set(editor, (set = new Set()));
-    if (on) set.add(finish);
-    else set.delete(finish);
+    if (on) {
+      set.add(finish);
+      tracked = posNow() ?? null;
+      editor.on("transaction", follow);
+    } else {
+      set.delete(finish);
+    }
+  };
+  const stopFollowing = () => {
+    editor.off("transaction", follow);
+    tracked = null;
   };
   // What was typed, as a node of this kind: a peer changed or removed the
   // formula meanwhile, and both versions are kept rather than one lost.
@@ -367,6 +388,7 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
     const current = field;
     field = null;
     register(false);
+    stopFollowing();
     current.remove();
     view.style.display = "";
     dom.classList.remove("is-editing");
@@ -458,29 +480,40 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
     // Gone while its source was open (a peer removed it, the document
     // was redrawn): what was typed is not lost.
     destroy() {
-      if (!field) return;
+      // A view can be destroyed more than once; a commit already waiting
+      // keeps following its node.
+      if (!field) {
+        if (!pending) stopFollowing();
+        return;
+      }
       const value = field.value;
       field = null;
       register(false);
-      if (value === openedWith || !value.trim() || lastPos === undefined) return;
-      const at = lastPos;
+      if (value === openedWith || !value.trim()) {
+        stopFollowing();
+        return;
+      }
       const type = node.type;
+      // Later, once the transaction that threw this view away has been
+      // followed: the formula is usually still there, only redrawn, and the
+      // change goes into it. If somebody changed it meanwhile, or it is gone,
+      // the typed copy is kept beside it.
+      pending = true;
       setTimeout(() => {
+        pending = false;
+        const at = tracked;
+        stopFollowing();
         if (editor.isDestroyed) return;
-        // The formula is usually still there, only redrawn: the change goes
-        // into it, the nearest one still holding the source it opened with.
-        // Only when it is gone is the typed copy kept beside where it was.
-        let found = -1;
-        editor.state.doc.descendants((candidate, pos) => {
-          if (candidate.type === type && candidate.attrs.source === openedWith && (found === -1 || Math.abs(pos - at) < Math.abs(found - at))) found = pos;
-          return true;
-        });
-        if (found === -1) {
-          keepBeside(at, value);
+        const here = at === null ? null : editor.state.doc.nodeAt(at);
+        if (at === null || !here || here.type !== type) {
+          if (lastPos !== undefined) keepBeside(lastPos, value);
           return;
         }
-        const here = editor.state.doc.nodeAt(found)!;
-        editor.view.dispatch(editor.state.tr.setNodeMarkup(found, undefined, { ...here.attrs, source: value }));
+        if (here.attrs.source !== openedWith) {
+          keepBeside(at + here.nodeSize, value);
+          return;
+        }
+        editor.view.dispatch(editor.state.tr.setNodeMarkup(at, undefined, { ...here.attrs, source: value }));
       }, 0);
     },
   };

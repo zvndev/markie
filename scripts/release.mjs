@@ -585,7 +585,10 @@ async function prepareMac() {
   // pipeline stops after notarizing with a message about consent.
   const launchEnv = { ...process.env, MARKIE_ALLOW_E2E: "1" };
   run("npm", ["run", "electron:smoke:mac:launch"], { env: launchEnv });
-  run("node", ["scripts/desktop-launch-smoke.mjs", "--platform", "mac", "--arch", "x64"], {
+  // x64 runs under Rosetta here, and the first launch of a fresh binary pays
+  // for translating it (build/preflight.cjs, TRANSLATED_TIMEOUT_MS). 45s failed
+  // a good 0.9.5 build on a loaded machine; the same build passed with this.
+  run("node", ["scripts/desktop-launch-smoke.mjs", "--platform", "mac", "--arch", "x64", "--timeout-ms", "180000"], {
     env: launchEnv,
   });
   const verified = await verifyLocalMacArtifacts({ verifyTrust: true });

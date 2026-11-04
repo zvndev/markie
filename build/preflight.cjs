@@ -128,7 +128,14 @@ async function afterPack(context) {
   const child = spawn(bin, [`--user-data-dir=${profileDir}`], {
     detached: true,
     stdio: "ignore",
-    env: { ...process.env, MARKIE_PREFLIGHT: "1" },
+    // Without ELECTRON_RUN_AS_NODE: inherited from an Electron parent (an
+    // editor or an agent host), it makes the app run as plain Node and quit,
+    // which this gate would report as a build with no window.
+    env: (() => {
+      const env = { ...process.env, MARKIE_PREFLIGHT: "1" };
+      delete env.ELECTRON_RUN_AS_NODE;
+      return env;
+    })(),
   });
   child.unref();
 

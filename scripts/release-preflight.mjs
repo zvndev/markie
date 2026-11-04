@@ -182,7 +182,12 @@ const PACKAGED_APP_DIRS = ["dist/mac-arm64/Markie.app", "dist/mac/Markie.app"];
 // have actually happened here: a renderer package sneaking back into
 // `dependencies` (that one cost 305 MiB on its own), the other 50 locale packs
 // coming back, and the amalgamated SQLite sources coming back.
-const PACKAGED_APP_BUDGET_BYTES = 265 * 1024 * 1024;
+//
+// Raised to 280 MiB for 0.9.5, deliberately: Electron 42 ships a larger
+// framework than 41, and the x64 .app measured 268.8 MiB with 234 MiB of it
+// the Electron framework. The x64 download grew by about the same 6 MB as
+// Electron's own x64 zip. Every regression above is still 25 MiB or more.
+const PACKAGED_APP_BUDGET_BYTES = 280 * 1024 * 1024;
 
 const REQUIRED_RELEASE_DOC_SNIPPETS = [
   "Per-platform local artifact contract",

@@ -8,12 +8,22 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-11-04
+
 ### Added
 
 - **Long documents show their outline at the left edge.** A document with a few
-  headings that runs past a screen and a half gets a column of short ticks, one
-  per heading. Hover one to see the section, click it to jump there. It works in
-  the rich view and in the source view. It was only in test builds before.
+  headings that runs past a screen and a half gets a column of short dashes, one
+  per heading, with the part you are reading picked out. Slide the pointer along
+  them and each dash grows like the Dock while a card beside it shows the
+  section's title and first lines. Click to jump there. It works in the rich
+  view, the source view and on markiedocs.com.
+- **Math and tables while you edit together.** In a live session, formulas show
+  rendered as you type. Click one to edit its source; multi-line math keeps its
+  line breaks. Table columns keep their alignment through live edits.
+- **Older OpenDocument files open.** ODT files from TextEdit, OpenOffice and
+  LibreOffice that use lists, tables or rich styles now open to read, with their
+  headings, lists, tables and formatting, instead of being refused.
 - **Export to Word, RTF, OpenDocument and plain text.** The Export menu now
   lists every format under Export as: PDF, HTML, Word (.docx), RTF, OpenDocument
   (.odt) and plain text. A plain-text file can be exported as Markdown instead.
@@ -25,6 +35,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Copy all moved to the top bar.** It sits beside Export as an icon, instead
   of floating in the corner of the page where Find also opens.
+- **Shared documents open to read on the web.** A shared link opens the
+  document for reading first, with Edit one click away.
+- **Markie runs on Electron 42**, with its latest security fixes.
+
+### Fixed
+
+- **Live editing no longer rewrites a file's front matter.** Opening a synced
+  file live in the rich view could turn its front matter into a heading and drop
+  raw HTML and comments when it saved. The file on disk now keeps its own front
+  matter, HTML and comments, and front matter no longer shows as a heading in a
+  live session.
+- **A live session never writes over a newer copy.** Markie refuses to save a
+  live session's text over a stored copy that session never held, and never
+  drops a formula or the starting text of a session silently.
+- **Embedded pictures stay pictures.** An SVG or other embedded (`data:`) image
+  in the rich editor no longer turns into escaped text when you save.
+- **Older Markie versions stay out of sessions they would damage.** A version
+  that cannot carry math or front matter edits its own copy instead of joining
+  that live session.
 
 ## [0.9.4] - 2026-11-02
 

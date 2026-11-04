@@ -2284,3 +2284,52 @@ body {
   background: var(--border);
 }
 
+
+/* The section rail's ticks (src/components/section-rail.tsx). Each is drawn at
+   its longest and scaled down to its length, so magnifying is a transform
+   and scrubbing a long rail does no layout. --len is the tick's rest length,
+   --lift lights the ticks on screen at rest, and --boost (0 to 1) is how much
+   of --growth the pointer gives it. Brightness follows the T3 minimap: faint
+   at rest, about half for the part on screen, nearly full under the pointer,
+   and the on-screen run steps back while the pointer is on the rail. */
+[data-markie-section-rail] [data-section-tick] {
+  position: absolute;
+  top: calc(50% - 1px);
+  height: 2px;
+  border-radius: 1px;
+  transform-origin: left center;
+  transform: scaleX(calc((var(--len) + var(--lift, 0) + var(--boost, 0) * var(--growth)) / var(--max)));
+  background: color-mix(in srgb, var(--foreground) 24%, transparent);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-markie-section-rail]:not([data-scrubbing]) [data-section-tick][data-in-view] {
+  --lift: 1;
+  background: color-mix(in srgb, var(--foreground) 58%, transparent);
+}
+
+[data-markie-section-rail] [data-section-tick][data-hot] {
+  background: color-mix(in srgb, var(--foreground) 92%, transparent);
+}
+
+/* The section card lifts off the page like the T3 minimap's: a deep shadow
+   on dark, a soft one on light. */
+[data-markie-section-card] {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+:root[data-theme-tone="light"] [data-markie-section-card] {
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.12);
+}
+
+[data-markie-section-rail] button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--foreground) 55%, transparent);
+  outline-offset: -1px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-markie-section-rail] [data-section-tick] {
+    transition: none;
+  }
+}

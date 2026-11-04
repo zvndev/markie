@@ -1,7 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Editor } from "@tiptap/react";
 import {
+  CARD_CLOSE_DELAY,
+  CARD_OPEN_DELAY,
   readRichSections,
   RichSectionRail,
   SectionRail,
@@ -27,9 +29,18 @@ const SECTIONS: Section[] = [
 const TOPS = [0, 700, 1400, 2100];
 
 afterEach(() => {
+  // Unmount first: an open card is portaled into the body cleared below.
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
   document.body.innerHTML = "";
   localStorage.clear();
 });
+
+const tickOf = (button: HTMLElement) => button.firstElementChild as HTMLElement;
+const boostOf = (button: HTMLElement) => tickOf(button).style.getPropertyValue("--boost");
+const renderRail = (placement: "overlay" | "column" = "overlay", scroller = makeScroller()) =>
+  render(<SectionRail sections={SECTIONS} scroller={scroller} measure={() => TOPS} onSelect={() => {}} placement={placement} />);
 
 describe("SectionRail", () => {
   it("shows one labelled tick per section, longest for H1", () => {
@@ -38,9 +49,9 @@ describe("SectionRail", () => {
     const nav = screen.getByRole("navigation", { name: "Sections" });
     const ticks = Array.from(nav.querySelectorAll("button"));
     expect(ticks.map((b) => b.getAttribute("aria-label"))).toEqual(["Overview", "Install", "Options", "Usage"]);
-    const widths = ticks.map((b) => parseFloat((b.firstElementChild as HTMLElement).style.width));
-    expect(widths[0]).toBeGreaterThan(widths[1]);
-    expect(widths[1]).toBeGreaterThan(widths[2]);
+    const lengths = ticks.map((b) => Number(tickOf(b).style.getPropertyValue("--len")));
+    expect(lengths[0]).toBeGreaterThan(lengths[1]);
+    expect(lengths[1]).toBeGreaterThan(lengths[2]);
   });
 
   it("stays hidden for a short document or fewer than three headings", () => {
@@ -67,17 +78,89 @@ describe("SectionRail", () => {
     expect(screen.getByRole("button", { name: "Overview" })).not.toHaveAttribute("aria-current");
   });
 
-  it("shows the heading and the start of its section on hover", () => {
-    render(<SectionRail sections={SECTIONS} scroller={makeScroller()} measure={() => TOPS} onSelect={() => {}} placement="overlay" />);
+  it("lights the run of sections on screen at rest, from the reading line to the last heading in view", async () => {
+    const scroller = makeScroller();
+    renderRail("overlay", scroller);
+    const inView = () => screen.getAllByRole("button").map((b) => tickOf(b).hasAttribute("data-in-view"));
+    expect(inView()).toEqual([true, false, false, false]);
+
+    scroller.scrollTop = 1300;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(inView()).toEqual([false, true, true, false]));
+    expect(screen.getByRole("button", { name: "Install" })).toHaveAttribute("aria-current", "location");
+  });
+
+  it("shows the heading and the start of its section once the pointer rests on a tick", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    renderRail();
     const tick = screen.getByRole("button", { name: "Install" });
-    fireEvent.mouseEnter(tick);
+    fireEvent.pointerMove(tick);
+    // Crossing the rail on the way somewhere else does not flash the card.
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    act(() => vi.advanceTimersByTime(CARD_OPEN_DELAY));
     const card = screen.getByRole("tooltip");
     expect(card).toHaveTextContent("Install");
     expect(card).toHaveTextContent("Run the installer.");
+    expect(card).toHaveTextContent("H2");
     expect(tick).toHaveAttribute("aria-describedby", card.id);
+  });
 
-    fireEvent.mouseLeave(screen.getByRole("navigation"));
+  it("says so when a section has no text of its own", () => {
+    renderRail("column");
+    act(() => screen.getByRole("button", { name: "Options" }).focus());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("No text before the next heading.");
+  });
+
+  it("magnifies the tick under the pointer and, less, its neighbours, like the Dock", () => {
+    renderRail();
+    const ticks = screen.getAllByRole("button");
+    fireEvent.pointerMove(ticks[1]);
+    expect(tickOf(ticks[1])).toHaveAttribute("data-hot");
+    expect(ticks.map(boostOf)).toEqual(["0.75", "1", "0.75", "0.45"]);
+    expect(screen.getByRole("navigation")).toHaveAttribute("data-scrubbing");
+
+    fireEvent.pointerMove(ticks[3]);
+    expect(tickOf(ticks[1])).not.toHaveAttribute("data-hot");
+    expect(ticks.map(boostOf)).toEqual(["0.22", "0.45", "0.75", "1"]);
+  });
+
+  it("scrubs: the open card follows the pointer from tick to tick without closing in between", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    renderRail();
+    const ticks = screen.getAllByRole("button");
+    fireEvent.pointerMove(ticks[0]);
+    act(() => vi.advanceTimersByTime(CARD_OPEN_DELAY));
+    const card = screen.getByRole("tooltip");
+    expect(card).toHaveTextContent("Overview");
+
+    for (const [i, name] of [[1, "Install"], [2, "Options"], [3, "Usage"]] as const) {
+      fireEvent.pointerMove(ticks[i]);
+      // Straight away, in the same card.
+      expect(screen.getByRole("tooltip")).toBe(card);
+      expect(card).toHaveTextContent(name);
+    }
+  });
+
+  it("lets go when the pointer leaves: the ticks at once, the card a moment later", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    renderRail();
+    const ticks = screen.getAllByRole("button");
+    fireEvent.pointerMove(ticks[2]);
+    act(() => vi.advanceTimersByTime(CARD_OPEN_DELAY));
+    fireEvent.pointerLeave(screen.getByRole("navigation"));
+    expect(ticks.map(boostOf)).toEqual(["", "", "", ""]);
+    expect(screen.getByRole("navigation")).not.toHaveAttribute("data-scrubbing");
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(CARD_CLOSE_DELAY));
     expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("magnifies only the pointer's tick, with no falloff, when motion is reduced", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {} }));
+    renderRail();
+    const ticks = screen.getAllByRole("button");
+    fireEvent.pointerMove(ticks[1]);
+    expect(ticks.map(boostOf)).toEqual(["", "1", "", ""]);
   });
 
   it("selects the section on click and lights its tick straight away", async () => {
@@ -93,15 +176,19 @@ describe("SectionRail", () => {
     const ticks = screen.getAllByRole("button");
     expect(ticks.filter((b) => b.tabIndex === 0)).toHaveLength(1);
 
+    // From the keyboard the card opens at once, and the magnification follows focus.
     act(() => ticks[0].focus());
     expect(screen.getByRole("tooltip")).toHaveTextContent("Overview");
+    expect(tickOf(ticks[0])).toHaveAttribute("data-hot");
     fireEvent.keyDown(ticks[0], { key: "ArrowDown" });
     expect(document.activeElement).toBe(ticks[1]);
     expect(screen.getByRole("tooltip")).toHaveTextContent("Install");
+    expect(tickOf(ticks[1])).toHaveAttribute("data-hot");
     fireEvent.keyDown(ticks[1], { key: "End" });
     expect(document.activeElement).toBe(ticks[3]);
     fireEvent.keyDown(ticks[3], { key: "Escape" });
     expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(tickOf(ticks[3])).not.toHaveAttribute("data-hot");
   });
 });
 

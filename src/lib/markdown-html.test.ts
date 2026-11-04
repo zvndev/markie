@@ -214,3 +214,25 @@ describe("a video link in an export", () => {
     expect(html).toContain('<a href="https://vimeo.com/148751763">');
   });
 });
+
+describe("a shared document cannot draw over the page", () => {
+  it("drops fixed, absolute and sticky positions and z-index, and keeps the rest of the style", () => {
+    const html = renderMarkdownHTML('<div style="position:fixed;inset:0;z-index:2147483647;background:#fff">Session expired</div>\n\n<p style="position: sticky; text-align: center">b</p>');
+    expect(html).not.toMatch(/position:\s*(fixed|sticky)/i);
+    expect(html).not.toMatch(/z-index/i);
+    expect(html).toContain('style="inset:0; background:#fff"');
+    expect(html).toContain('style="text-align: center"');
+  });
+
+  it("drops a style that hides a property behind a CSS escape or comment", () => {
+    const html = renderMarkdownHTML('<div style="posit\\69 on:fixed">c</div>\n\n<div style="position/**/:fixed">d</div>');
+    expect(html).not.toMatch(/style=/);
+  });
+
+  it("leaves highlights, alignment and math styles untouched", () => {
+    const html = renderMarkdownHTML('<mark style="background-color: yellow">f</mark> <span style="position: relative; top: 2px">e</span>\n\n$$\\frac{a}{b}$$');
+    expect(html).toContain('style="background-color: yellow"');
+    expect(html).toContain('style="position: relative; top: 2px"');
+    expect(html).toMatch(/class="katex[\s\S]*style="[^"]*(height|vertical-align)/);
+  });
+});

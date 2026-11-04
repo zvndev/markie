@@ -454,7 +454,7 @@ function touchIdBridge() {
 async function turnOnTouchId() {
   fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Settings" }));
   fireEvent.click(await screen.findByRole("button", { name: "Turn on Touch ID…" }));
-  fireEvent.change(screen.getByLabelText("Confirm with your passphrase"), { target: { value: secret } });
+  fireEvent.change(await screen.findByLabelText("Confirm with your passphrase"), { target: { value: secret } });
   fireEvent.click(screen.getByRole("button", { name: "Turn on Touch ID" }));
   const off = await screen.findByRole("button", { name: "Turn off Touch ID" });
   // The enroll operation finishes after the button appears; until then the item list is disabled.
@@ -564,7 +564,7 @@ describe("Touch ID unlock", () => {
     await create(storage);
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Turn on Touch ID…" }));
-    fireEvent.change(screen.getByLabelText("Confirm with your passphrase"), { target: { value: "not the vault passphrase at all" } });
+    fireEvent.change(await screen.findByLabelText("Confirm with your passphrase"), { target: { value: "not the vault passphrase at all" } });
     fireEvent.click(screen.getByRole("button", { name: "Turn on Touch ID" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Touch ID was not turned on");
     expect(touch.keychain.size).toBe(0);

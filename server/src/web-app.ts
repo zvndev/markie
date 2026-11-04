@@ -118,7 +118,7 @@ export function withServerMeta(shell: string, apiOrigin: string): string {
   if (!api || !socket) return shell;
   return shell.replace(
     "</head>",
-    `  <meta name="markie-api" content="${api}" />\n  <meta name="markie-collab" content="${socket}/collab" />\n  </head>`
+    () => `  <meta name="markie-api" content="${api}" />\n  <meta name="markie-collab" content="${socket}/collab" />\n  </head>`
   );
 }
 
@@ -212,11 +212,14 @@ export interface ShellDocMeta {
 export function withDocMeta(shell: string, meta: ShellDocMeta): string {
   const title = escAttr(meta.title.slice(0, 300));
   const format = /^[a-z]{1,20}$/.test(meta.format) ? meta.format : "markdown";
+  // Function replacements: a name is the document owner's text, and in a
+  // replacement string a `$` before a backtick, quote or `&` copies part of the
+  // page, so a name of repeated "$ backtick" grew the page to megabytes.
   return shell
-    .replace(/<title>[^<]*<\/title>/, `<title>${title} · Markie</title>`)
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${title} · Markie</title>`)
     .replace(
       "</head>",
-      `  <meta name="markie-doc-name" content="${title}" />\n  <meta name="markie-doc-format" content="${format}" />\n  </head>`
+      () => `  <meta name="markie-doc-name" content="${title}" />\n  <meta name="markie-doc-format" content="${format}" />\n  </head>`
     );
 }
 

@@ -17,6 +17,7 @@ import { rehypeDocLinks } from "./rehype-doc-links.ts";
 import { rehypeEmbeds } from "./rehype-embeds.ts";
 import { rehypeLegibleColors } from "./rehype-legible-colors.ts";
 import { rehypeZoomImages, ZOOM_CSS } from "./rehype-zoom-images.ts";
+import { rehypeContainStyles } from "./rehype-contain-styles.ts";
 import rehypeStringify from "rehype-stringify";
 import type { DocLinkAnswer } from "./doc-links.ts";
 import {
@@ -145,7 +146,10 @@ function buildProcessor(opts: RenderOptions) {
   p.use(rehypeEmbeds)
     .use(rehypeHighlight)
     .use(rehypeKatex)
-    .use(rehypeSanitize, sanitizeSchema);
+    .use(rehypeSanitize, sanitizeSchema)
+    // No inline style may lift a block over the page's own chrome
+    // (rehype-contain-styles.ts).
+    .use(rehypeContainStyles);
   // After sanitizing, so nothing a document writes reaches this markup.
   if (opts.zoomImages) p.use(rehypeZoomImages);
   return p.use(rehypeLegibleColors).use(rehypeStringify);
@@ -247,7 +251,7 @@ const PAGE_CSS = `
   /* A video card (rehype-embeds.ts): the thumbnail YouTube serves is 4:3 with
      black bars, so it is cropped to the player's shape. */
   main p.markie-embed img { display: block; width: 100%; max-width: 640px; aspect-ratio: 16 / 9; object-fit: cover; }
-  .cta { max-width: 760px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--line);
+  .cta { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--line);
     color: var(--muted); font-size: 14px; }
   .cta a { color: var(--accent); font-weight: 600; }
   .download-hero { max-width: 920px; }

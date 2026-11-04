@@ -117,6 +117,15 @@ test("a public view's shell names the document's name and format, escaped, and n
   assert.match(withDocMeta(shell, { title: "x", format: 'x" onload="1' }), /content="markdown"/, "an odd format is never written");
 });
 
+test("a document name made of $ patterns is written as text and never copies the page", () => {
+  const shell = "<html><head><title>Markie</title></head><body>" + "x".repeat(2000) + "</body></html>";
+  const name = "$`".repeat(150);
+  const html = withDocMeta(shell, { title: name, format: "markdown" });
+  assert.ok(html.length < shell.length + 1000, `page grew to ${html.length} bytes`);
+  assert.ok(html.includes(`<title>${name} · Markie</title>`));
+  assert.ok(withDocMeta(shell, { title: "$&$'", format: "markdown" }).includes(`<meta name="markie-doc-name" content="$&amp;$&#39;" />`));
+});
+
 test("read view paths are a document page itself, never its raw text or assets", () => {
   for (const path of ["/d/doc-1", "/d/doc-1/", "/s/tok", "/s/tok/"]) assert.equal(isReadViewPath(path), true, path);
   for (const path of ["/d/doc-1/raw", "/d/doc-1/assets", "/s/tok/raw", "/s/tok/assets", "/d/", "/app/d/x", "/download"]) assert.equal(isReadViewPath(path), false, path);

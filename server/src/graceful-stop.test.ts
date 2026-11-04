@@ -48,8 +48,10 @@ test("a stop lets the request in flight finish, then releases and exits 0", asyn
 });
 
 test("a request still open at the deadline is cut, and the stop still releases and exits 0", async () => {
+  let arrived!: () => void;
+  const reached = new Promise<void>((r) => { arrived = r; });
   const { server, port } = await listen(() => {
-    // never answers
+    arrived(); // and never answers
   });
   const steps: string[] = [];
   const exits: number[] = [];
@@ -60,7 +62,9 @@ test("a request still open at the deadline is cut, and the stop still releases a
     exit: (code) => exits.push(code),
   });
   const hung = get(port).catch((err: Error) => err);
-  await new Promise((r) => setTimeout(r, 20));
+  // The request must be open on the server before the stop, or there is
+  // nothing to cut. A fixed 20 ms wait lost that race on a loaded machine.
+  await reached;
   const started = Date.now();
   await stop("SIGTERM");
   assert.ok(Date.now() - started < 1000);

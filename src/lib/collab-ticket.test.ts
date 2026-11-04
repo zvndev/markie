@@ -22,7 +22,7 @@ describe("collabTicket", () => {
   it("asks the document's ticket route and hands back the ticket", async () => {
     const { client, request } = serverAnswering({ status: 200, data: { ticket: "tk", expiresAt: 123 } });
     expect(await client.collabTicket("doc/1")).toEqual({ kind: "ticket", ticket: "tk", expiresAt: 123 });
-    expect(request).toHaveBeenCalledWith("/api/docs/doc%2F1/collab-ticket", { method: "POST", body: "{}" });
+    expect(request).toHaveBeenCalledWith("/api/docs/doc%2F1/collab-ticket", { method: "POST", body: JSON.stringify({ schema: 2 }) });
   });
 
   it("reads a 404 or 405 with no route of its own as a server from before tickets", async () => {

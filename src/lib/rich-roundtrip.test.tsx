@@ -28,6 +28,10 @@ const SAFE: Array<[string, string]> = [
   // is no longer read as an escaped comma.
   ["display math", "$$\n\\frac{a}{b} \\, dx\n$$\n"],
   ["inline math", "Euler: $e^{i\\pi}$ stays.\n"],
+  // 2026-11-03: the table serializer writes the cells' alignment
+  // (rich-table-align.ts), and display math is a node holding its lines.
+  ["table alignment", "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n"],
+  ["multi-line display math", "$$\na = b\n  + c\n$$\n"],
 ];
 
 // Fixtures the current dependency set is expected to change when serialized
@@ -38,7 +42,6 @@ const LOSSY: Array<[string, string]> = [
   ["footnote", "Text with a note.[^1]\n\n[^1]: the note\n"],
   ["raw html block", "<div class=\"warn\">\n<b>html</b>\n</div>\n"],
   ["html comment", "before\n\n<!-- keep me -->\n\nafter\n"],
-  ["table alignment", "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n"],
   ["wrapped paragraph", "This paragraph is wrapped\nacross two lines.\n"],
   ["reference link", "See [the docs][ref].\n\n[ref]: https://example.com\n"],
   // Measured 2026-08-26 on tiptap-markdown 0.9.x: a tight task list comes back

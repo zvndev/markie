@@ -18,7 +18,7 @@ import {
   type RecentDoc,
 } from "./docs";
 import { DocumentCloudClient } from "@/lib/document-cloud";
-import type { CollabTicketAnswer } from "@/lib/collab";
+import { COLLAB_SCHEMA_VERSION, type CollabTicketAnswer } from "@/lib/collab";
 import { NetworkError, type HttpMethod, type HttpResponse, type HttpTransport } from "./http";
 import { sha256Hex } from "./sha256";
 
@@ -383,7 +383,7 @@ export function createApiClient(options: ApiClientOptions) {
     async collabTicket(id: string): Promise<CollabTicketAnswer> {
       if (!DOC_ID.test(id)) return { kind: "failed", status: 404 };
       try {
-        const { data } = await json("POST", `/api/docs/${encodeURIComponent(id)}/collab-ticket`, { body: {} });
+        const { data } = await json("POST", `/api/docs/${encodeURIComponent(id)}/collab-ticket`, { body: { schema: COLLAB_SCHEMA_VERSION } });
         const raw = (data ?? {}) as { ticket?: unknown; expiresAt?: unknown };
         if (typeof raw.ticket !== "string" || !/^[A-Za-z0-9_-]{16,256}$/.test(raw.ticket)) return { kind: "failed", status: 502 };
         return { kind: "ticket", ticket: raw.ticket, expiresAt: typeof raw.expiresAt === "number" ? raw.expiresAt : 0 };

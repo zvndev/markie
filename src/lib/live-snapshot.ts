@@ -26,7 +26,8 @@
 //      it, must write the stored copy back byte for byte (roomCarries in
 //      live-snapshot-rich.ts, which keeps every block the serializer merely
 //      reformats as its source bytes, as rich-view.tsx serializeMarkdown
-//      does). Front matter, raw HTML blocks, HTML comments, footnote
+//      does, and the stored copy's front matter in front: front matter never
+//      enters a rich room). Raw HTML blocks, HTML comments, footnote
 //      definitions and a refused picture address are the known losses and
 //      answer at once (liveSnapshotRefusal); anything else the serializer
 //      cannot reproduce is caught when the room is ready ("uncarried"). For
@@ -64,9 +65,19 @@
 // src/lib/collab-loader.ts): the room is typed structurally.
 import { useEffect, useState } from "react";
 import { richRoomCannotCarry } from "@/lib/live-room-carry";
+import { splitFrontMatter } from "@/lib/front-matter";
 import { TEXT_COLLAB_KEY } from "@/lib/text-collab";
 
 export type LiveKind = "rich" | "text";
+
+/**
+ * Whether a document gives a room nothing to hold. A rich room never holds
+ * front matter, so a document that is only front matter seeds nothing, and
+ * the room being empty is then the document, not a room still on its way.
+ */
+export function liveDocumentEmpty(text: string, kind: LiveKind): boolean {
+  return kind === "rich" ? !splitFrontMatter(text).body.trim() : !text.trim();
+}
 
 /** The parts of a live session this policy reads. */
 export interface LiveRoom {
@@ -169,10 +180,11 @@ export function useLiveRoom(room: LiveRoom | null, kind: LiveKind, { documentEmp
 export type SnapshotRefusal = "held-constructs";
 
 /**
- * Rule 3: whether the room can carry everything `stored` says. Front matter,
- * the constructs the solo editor holds aside (raw HTML blocks, HTML
- * comments, footnote definitions) and a picture whose address the editor
- * refuses do not survive a rich room.
+ * Rule 3: whether the room can carry everything `stored` says. The
+ * constructs the solo editor holds aside (raw HTML blocks, HTML comments,
+ * footnote definitions) and a picture whose address the editor refuses do
+ * not survive a rich room. Front matter does: it stays out of the room and
+ * the writer puts the stored copy's back.
  */
 export function liveSnapshotRefusal(stored: string, kind: LiveKind): SnapshotRefusal | null {
   if (kind !== "rich") return null;
@@ -182,7 +194,7 @@ export function liveSnapshotRefusal(stored: string, kind: LiveKind): SnapshotRef
 }
 
 export const SNAPSHOT_REFUSAL_NOTE =
-  "Live edits stay in the live session. The saved copy isn't updated from it, because this document has front matter, raw HTML, a picture address or other markdown that live editing can't keep exactly.";
+  "Live edits stay in the live session. The saved copy isn't updated from it, because this document has raw HTML, an HTML comment, a footnote, a picture address or other markdown that live editing can't keep exactly.";
 
 /**
  * Rules 3, 6 and 7, decided when the room is first ready. "unknown" until

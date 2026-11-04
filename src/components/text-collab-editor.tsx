@@ -9,7 +9,8 @@ import type { Doc as YDoc } from "yjs";
 import type { WebsocketProvider } from "y-websocket";
 import { useCollabRuntime, type CollabRuntime } from "@/lib/collab-loader";
 import {
-  COLLAB_SCHEMA_VERSION,
+  SCHEMA_KEY,
+  TEXT_ROOM_SCHEMA,
   connectWithTicket,
   SEED_SETTLE_MS,
   type CollabConfig,
@@ -172,7 +173,7 @@ function TextCollabEditorInner({
       seededRef.current = true;
       ydoc.transact(() => {
         binding.seedIfEmpty(valueRef.current);
-        ydoc.getMap("meta").set("schemaVersion", COLLAB_SCHEMA_VERSION);
+        ydoc.getMap("meta").set(SCHEMA_KEY, TEXT_ROOM_SCHEMA);
         ydoc.getMap("meta").set("contentKind", "text");
       });
     };

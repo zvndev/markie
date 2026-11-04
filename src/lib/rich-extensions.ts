@@ -23,7 +23,8 @@ import { AlignedHeading, AlignedParagraph } from "@/lib/rich-aligned-blocks";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { Highlight } from "@tiptap/extension-highlight";
 import { MarkieKeymap } from "@/lib/rich-keymap";
-import { MathAwareText } from "@/lib/rich-math";
+import { MathAwareText, MathBlock, MathInline } from "@/lib/rich-math";
+import { AlignedTable } from "@/lib/rich-table-align";
 import { TextAlign } from "@tiptap/extension-text-align";
 import {
   Color,
@@ -259,9 +260,16 @@ export function richBaseExtensions(
       ...(opts.collab ? { undoRedo: false } : {}),
     }),
     MathAwareText,
+    // Math as nodes holding their TeX verbatim, drawn with KaTeX
+    // (rich-math.ts). They are why a rich room is schema 2 (collab.ts).
+    MathInline,
+    MathBlock,
     AlignedParagraph,
     AlignedHeading,
-    TableKit.configure({ table: { resizable: false } }),
+    // The table with its column alignment written back (rich-table-align.ts);
+    // the cells, rows and headers are TableKit's own.
+    TableKit.configure({ table: false }),
+    AlignedTable.configure({ resizable: false }),
     TaskList,
     TaskItem.configure({ nested: true }),
     // allowBase64 defaults to false, and when it is false the extension's own

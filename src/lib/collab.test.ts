@@ -9,10 +9,12 @@ import {
   type CollabTicketAnswer,
   type TicketedProvider,
   initials,
-  isSchemaMismatch,
-  SCHEMA_MISMATCH_NOTICE,
+  RICH_SCHEMA_MATH,
+  RICH_SCHEMA_PLAIN,
+  roomSchemaOf,
+  roomTooNew,
   SEED_SETTLE_MS,
-  shouldWarnSchema,
+  TEXT_ROOM_SCHEMA,
 } from "./collab";
 
 const PALETTE = [
@@ -85,48 +87,28 @@ describe("collab schema version", () => {
   });
 });
 
-describe("isSchemaMismatch", () => {
-  it("is false for a room this build wrote", () => {
-    expect(isSchemaMismatch(COLLAB_SCHEMA_VERSION)).toBe(false);
+describe("room schema", () => {
+  it("speaks the math schema, and stamps plain rooms as every build reads them", () => {
+    expect(COLLAB_SCHEMA_VERSION).toBe(RICH_SCHEMA_MATH);
+    expect(RICH_SCHEMA_PLAIN).toBe(1);
+    // Text rooms never changed: every build may join them.
+    expect(TEXT_ROOM_SCHEMA).toBe(1);
   });
 
-  it("is false for a room that carries no version at all", () => {
-    // Rooms seeded before versioning existed are readable, not suspect.
-    expect(isSchemaMismatch(undefined)).toBe(false);
-    expect(isSchemaMismatch(null)).toBe(false);
+  it("reads a room with no stamp, or a stamp that is not a version, as nothing recorded", () => {
+    expect(roomSchemaOf(undefined)).toBe(0);
+    expect(roomSchemaOf(null)).toBe(0);
+    expect(roomSchemaOf("2")).toBe(0);
+    expect(roomSchemaOf({ v: 2 })).toBe(0);
+    expect(roomSchemaOf(1.5)).toBe(0);
+    expect(roomSchemaOf(2)).toBe(2);
   });
 
-  it("ignores a version that is not a number", () => {
-    expect(isSchemaMismatch("2")).toBe(false);
-    expect(isSchemaMismatch({ v: 2 })).toBe(false);
-  });
-
-  it("is true for any other version, older or newer", () => {
-    expect(isSchemaMismatch(COLLAB_SCHEMA_VERSION + 1)).toBe(true);
-    expect(isSchemaMismatch(COLLAB_SCHEMA_VERSION - 1)).toBe(true);
-  });
-});
-
-describe("shouldWarnSchema", () => {
-  it("raises the notice on a first-seen mismatch", () => {
-    expect(shouldWarnSchema(COLLAB_SCHEMA_VERSION + 1, false)).toBe(true);
-  });
-
-  it("stays quiet once the notice has already been said", () => {
-    // The room's meta map fires the observer on every streamed edit; the notice
-    // must not stack up.
-    expect(shouldWarnSchema(COLLAB_SCHEMA_VERSION + 1, true)).toBe(false);
-  });
-
-  it("stays quiet for a room this build wrote, warned or not", () => {
-    expect(shouldWarnSchema(COLLAB_SCHEMA_VERSION, false)).toBe(false);
-    expect(shouldWarnSchema(undefined, false)).toBe(false);
-  });
-});
-
-describe("SCHEMA_MISMATCH_NOTICE", () => {
-  it("is a plain-language warning, not a code", () => {
-    expect(SCHEMA_MISMATCH_NOTICE).toMatch(/different Markie version/i);
+  it("is too new only past this build's schema; older rooms are this build's to bring up to date", () => {
+    expect(roomTooNew(COLLAB_SCHEMA_VERSION + 1)).toBe(true);
+    expect(roomTooNew(COLLAB_SCHEMA_VERSION)).toBe(false);
+    expect(roomTooNew(1)).toBe(false);
+    expect(roomTooNew(undefined)).toBe(false);
   });
 });
 

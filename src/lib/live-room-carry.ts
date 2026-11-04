@@ -2,11 +2,13 @@
 // path of the one guard every writer of a live document's text applies.
 //
 // A rich room is seeded by parsing the markdown into TipTap, which has no node
-// for front matter, raw HTML blocks, HTML comments or footnote definitions.
-// The solo editor holds those aside and puts them back verbatim (rich-view.tsx
-// serializeMarkdown); the room cannot, so its serialization turns front matter
-// into a heading, drops raw HTML and comments, and escapes footnotes. Writing
-// the room's text over a text that has any of them destroys them. A picture
+// for raw HTML blocks, HTML comments or footnote definitions. The solo editor
+// holds those aside and puts them back verbatim (rich-view.tsx
+// serializeMarkdown); the room cannot, so its serialization drops raw HTML and
+// comments and escapes footnotes. Writing the room's text over a text that has
+// any of them destroys them. Front matter is not one of them: it never enters
+// a room, and every writer puts the front matter of the copy it writes back in
+// front (RichView's serializeMarkdown, live and solo alike). A picture
 // whose address the editor refuses (a `javascript:` or `file:` one, or a
 // `data:` one that is not a picture type; see rich-data-images.ts) is the same
 // loss: the room holds it as literal text and writes it back escaped.
@@ -27,15 +29,14 @@ import { hasRefusedImage } from "@/lib/rich-data-images";
 
 /** True when a rich room would lose part of `text` on its way back out. */
 export function richRoomCannotCarry(text: string): boolean {
-  const { frontMatter, body } = splitFrontMatter(text);
-  if (frontMatter) return true;
+  const { body } = splitFrontMatter(text);
   if (extractHoldAsides(body).holds.length > 0) return true;
   return hasRefusedImage(body);
 }
 
 /** Said on the desktop while a live rich session leaves the file alone. */
 export const LIVE_FILE_REFUSAL_NOTE =
-  "Live edits stay in the live session. Your file isn't updated from the live session, because it has front matter, raw HTML, a picture address or other markdown that live editing can't keep exactly.";
+  "Live edits stay in the live session. Your file isn't updated from the live session, because it has raw HTML, an HTML comment, a footnote, a picture address or other markdown that live editing can't keep exactly.";
 
 /** What the desktop did with the live text while the file is left alone. */
 export type LiveOutputAction = "copied" | "exported" | "saved";

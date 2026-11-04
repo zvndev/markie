@@ -1666,6 +1666,66 @@ body {
   display: none;
 }
 
+/* ── Math in the rich pane ──
+   A formula is drawn by KaTeX, as the read view draws it. A click while
+   editing swaps it for its source in a field; the field takes the editor's
+   own text colours so it reads in both modes. Until KaTeX has loaded (or for
+   a source that is no longer a formula) the source shows in mono. */
+.markdown-body .markie-math {
+  cursor: default;
+  border-radius: 6px;
+}
+
+.ProseMirror[contenteditable="true"] .markie-math:not(.is-editing) {
+  cursor: pointer;
+}
+
+.ProseMirror[contenteditable="true"] .markie-math:not(.is-editing):hover {
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+.markdown-body .markie-math-block {
+  display: block;
+  margin: 1em 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.markdown-body .markie-math.ProseMirror-selectednode {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.markdown-body .markie-math-source {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+}
+
+.markdown-body .markie-math-field {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  color: var(--foreground);
+  background: var(--surface);
+  border: 1px solid var(--doc-rule);
+  border-radius: 6px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.markdown-body .markie-math-field:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.markdown-body textarea.markie-math-field {
+  display: block;
+  width: 100%;
+  text-align: left;
+  resize: vertical;
+  padding: 6px 8px;
+}
+
 /* ── Video cards ──
    A video link alone on its line. The card is the thumbnail with a play
    button and the title; the player replaces it when clicked, and never

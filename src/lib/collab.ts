@@ -167,11 +167,52 @@ export function connectWithTicket(
   };
 }
 
-// The shape RichView writes into a room when it seeds one. Bump it whenever a
-// change to the editor's schema would make an older room's content unreadable
-// to this build, so a client that meets such a room can say so instead of
-// silently mangling it.
-export const COLLAB_SCHEMA_VERSION = 1;
+// ── Room schema versions ──────────────────────────────────────────────────
+//
+// A room says in its meta map ("schemaVersion") the oldest editor that can
+// represent it, and a client says on its ticket request (and so to the
+// server's gate, server/src/collab-schema.ts) the newest room it can.
+//
+//   1  Everything up to desktop 0.9.4: paragraphs, headings, lists, tables
+//      (with their cells' alignment), pictures, embeds, marks; math held as
+//      text. Plain text rooms (Y.Text) are always 1.
+//   2  A rich room holding a math node (mathInline, mathBlock; rich-math.ts).
+//      A build without those nodes cannot draw such a room at all: its
+//      binding stops on the first one and shows an empty or stale page. Its
+//      writer could then report that page as the room's text and push it
+//      over the stored copy, so the server keeps such a client out.
+//
+// The version is raised only when a room first holds a node that needs it
+// (RichView stamps 2 as a formula arrives), never just because a newer
+// build opened the room: a plain document stays open to every build.
+
+/** The newest room schema this build reads and writes. Sent with each ticket request. */
+export const COLLAB_SCHEMA_VERSION = 2;
+/** A rich room with nothing in it an older build cannot draw. */
+export const RICH_SCHEMA_PLAIN = 1;
+/** A rich room holding a math node. */
+export const RICH_SCHEMA_MATH = 2;
+/** Plain text rooms (Y.Text) are byte-faithful to every build. */
+export const TEXT_ROOM_SCHEMA = 1;
+/** The key in the room's meta map. */
+export const SCHEMA_KEY = "schemaVersion";
+
+/** The schema a room's meta map records, or 0 when it records none. */
+export function roomSchemaOf(version: unknown): number {
+  return typeof version === "number" && Number.isInteger(version) && version > 0 ? version : 0;
+}
+
+/** True when a room needs a newer build than this one to be represented. */
+export function roomTooNew(version: unknown): boolean {
+  return roomSchemaOf(version) > COLLAB_SCHEMA_VERSION;
+}
+
+/**
+ * The server's final answer when a room has moved past this client
+ * (server/src/collab.ts). A build that predates it gets 4403 instead, the
+ * only close code it stops on.
+ */
+export const CLOSE_ROOM_TOO_NEW = 4426;
 
 // A room is seeded by whichever client gets there first, and the server elects
 // exactly one seeder per empty room. This is the client half: after the first
@@ -179,23 +220,6 @@ export const COLLAB_SCHEMA_VERSION = 1;
 // racer sees the winner's content rather than adding a second copy of the file.
 export const SEED_SETTLE_MS = 150;
 
-export const SCHEMA_MISMATCH_NOTICE =
-  "This document was made with a different Markie version; editing may misbehave.";
-
-/** True when a room carries a schema version this build does not speak. */
-export function isSchemaMismatch(version: unknown): boolean {
-  return typeof version === "number" && version !== COLLAB_SCHEMA_VERSION;
-}
-
-/**
- * Whether the schema-mismatch notice should be raised now: only on a genuine
- * mismatch, and only if it has not already been said. The room's meta map can
- * fire the observer many times as edits stream in, so this keeps the warning
- * to once per session.
- */
-export function shouldWarnSchema(version: unknown, alreadyWarned: boolean): boolean {
-  return !alreadyWarned && isSchemaMismatch(version);
-}
 
 const PEER_COLORS = [
   "#f59e0b",

@@ -23,6 +23,12 @@ const MAX_TEXT = 1_000_000;
 const MAX_PARAGRAPHS = 10_000;
 const MAX_REPEAT = 64;
 const MAX_CELLS = 1024;
+// Every row and cell visit, counted across the whole read. Nested tables are
+// flattened into the outer cell, so their empty cells add no paragraph and no
+// cell to the limits above, and each level of 64 x 64 repeats multiplied the
+// work by 4096: a 1 KB file hung the reader. 200k visits is far past any real
+// document and still a fraction of a second.
+const MAX_TABLE_WORK = 200_000;
 // Containers whose children are ordinary body blocks.
 const SECTIONS = new Set(["section", "index-body", "table-of-content", "illustration-index", "table-index", "object-index", "user-index", "alphabetical-index", "bibliography", "index-title"]);
 // Inline content that is hidden, private, deleted or executable in the source.
@@ -143,7 +149,10 @@ export function readOdtDisplayBody(source: string, text: XmlElement, styleRoots:
   const { resolve, listLevel } = styleResolver(styleRoots);
   const paragraphs: RichParagraphInput[] = [];
   const layout: RichBlockInput[] = [];
-  let characters = 0, omitted = false;
+  let characters = 0, omitted = false, tableWork = 0;
+  const spend = () => {
+    if (++tableWork > MAX_TABLE_WORK) fail("This OpenDocument file has tables larger than Markie can show.");
+  };
   const hidden = (node: XmlElement) => ["none", "condition"].includes(xmlAttribute(node, "display", TEXT) ?? "") || xmlAttribute(node, "condition", TEXT) !== undefined;
   const repeat = (node: XmlElement, attribute: string) => {
     const value = Number(xmlAttribute(node, attribute, TABLE) ?? "1");
@@ -250,7 +259,7 @@ export function readOdtDisplayBody(source: string, text: XmlElement, styleRoots:
     const nested = sink !== topLevel;
     const rowGroup = (children: readonly XmlElement[]) => {
       for (const child of children) {
-        if (is(child, TABLE, "table-row")) for (let copy = repeat(child, "number-rows-repeated"); copy > 0; copy--) row(child);
+        if (is(child, TABLE, "table-row")) for (let copy = repeat(child, "number-rows-repeated"); copy > 0; copy--) { spend(); row(child); }
         else if (child.namespace === TABLE && ["table-header-rows", "table-rows", "table-row-group"].includes(child.localName)) rowGroup(child.children);
       }
     };
@@ -259,6 +268,7 @@ export function readOdtDisplayBody(source: string, text: XmlElement, styleRoots:
       for (const child of node.children) {
         if (!is(child, TABLE, "table-cell")) continue; // Covered cells sit under a spanning cell.
         for (let copy = repeat(child, "number-columns-repeated"); copy > 0 && cells.length < MAX_CELLS; copy--) {
+          spend();
           const cell: number[] = [];
           blocks(child.children, nested ? sink : (index) => cell.push(index));
           if (!nested) {

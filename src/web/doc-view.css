@@ -71,6 +71,12 @@
 .markie-view-scroll { flex: 1; min-width: 0; overflow: auto; scroll-padding-top: 16px; }
 .markie-view-main { max-width: 760px; margin: 0 auto; padding: 36px 24px 64px; overflow-wrap: anywhere; }
 .markie-view[data-bar-hidden="true"] .markie-view-main { padding-top: 28px; }
+/* A shared document draws only inside its own column. contain: paint makes the
+   article the containing block for anything fixed or absolute inside it and
+   clips what spills, so no class or style in a document can cover the bar or
+   the page with a fake screen. Tables, code and display math scroll inside
+   themselves, and the lightbox lives outside the article. */
+.markie-view-main > [data-web-view-content] { contain: paint; }
 
 /* The document, as the hosted page draws it. */
 .markie-view .markdown-body { color: var(--view-text); }

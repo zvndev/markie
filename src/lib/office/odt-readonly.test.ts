@@ -77,6 +77,16 @@ describe("read-only display of OpenDocument text beyond the editable subset", ()
     expect(document.diagnostics.map(d => d.code)).toEqual(["odt-read-only", "odt-omitted"]);
   });
 
+  it("refuses tiny nested tables whose repeats would multiply into hours of work", async () => {
+    const T = 'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"';
+    const level = (inner: string) => `<table:table><table:table-row table:number-rows-repeated="64"><table:table-cell table:number-columns-repeated="64">${inner}</table:table-cell></table:table-row></table:table>`;
+    const bomb = level(level(level("")));
+    const content = ODT_FIXTURE_CONTENT.replace('office:version="1.3"', `${T} office:version="1.4"`).replace("<office:text>", `<office:text>${bomb}`);
+    const started = Date.now();
+    await expect(openOdtForDisplay(odtFixture({ content }))).rejects.toThrow(/tables larger/);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("still refuses hostile XML anywhere in the package instead of falling back", async () => {
     const lol = '<!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>';
     const xxe = '<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>';

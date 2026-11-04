@@ -11,6 +11,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { rehypeMedia } from "@/lib/rehype-media";
 import { rehypeEmbeds } from "@/lib/rehype-embeds";
 import rehypeStringify from "rehype-stringify";
+import { rehypeContainStyles } from "@/lib/rehype-contain-styles";
 
 // The same hardened schema the public share renderer uses (server/src/render.ts).
 // A document's own HTML is parsed (rehype-raw) and then sanitized against this
@@ -97,6 +98,9 @@ const processor = unified()
   .use(rehypeHighlight)
   .use(rehypeKatex)
   .use(rehypeSanitize, sanitizeSchema)
+  // No inline style may lift a block over the page's own chrome
+  // (rehype-contain-styles.ts).
+  .use(rehypeContainStyles)
   .use(rehypeStringify);
 
 function escapeHTML(value: string): string {

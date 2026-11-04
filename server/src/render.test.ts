@@ -445,3 +445,29 @@ test("a picture on a document page enlarges with no script, and one in a link st
   // The plain renderer, used outside the pages, is unchanged.
   assert.doesNotMatch(renderMarkdownHTML("![a](https://x.test/a.png)"), /markie-zoom/);
 });
+
+test("a shared document cannot lift a block over the page: no fixed, absolute or sticky position and no z-index", () => {
+  const html = renderMarkdownHTML([
+    '<div style="position:fixed;inset:0;z-index:2147483647;background:#fff">Session expired</div>',
+    '<span style="POSITION : Absolute ; color: red">a</span>',
+    '<p style="position: sticky; text-align: center">b</p>',
+    '<div style="posit\\69 on:fixed">c</div>',
+    '<div style="position/**/:fixed">d</div>',
+    '<span style="position: relative; top: 2px; color: blue">e</span>',
+    '<mark style="background-color: yellow">f</mark>',
+  ].join("\n\n"));
+  assert.doesNotMatch(html, /position:\s*(fixed|absolute|sticky)/i);
+  assert.doesNotMatch(html, /z-index/i);
+  assert.doesNotMatch(html, /posit\\|\/\*/);
+  assert.match(html, /style="inset:0; background:#fff"/);
+  assert.match(html, /style="color: red"/);
+  assert.match(html, /style="text-align: center"/);
+  assert.match(html, /style="position: relative; top: 2px; color: blue"/, "a harmless style is untouched");
+  assert.match(html, /style="background-color: yellow"/);
+});
+
+test("math still renders with its inline styles after the style filter", () => {
+  const html = renderMarkdownHTML("$$\\frac{a}{b} + \\sqrt[3]{x}$$");
+  assert.match(html, /class="katex/);
+  assert.match(html, /style="[^"]*(height|vertical-align)/);
+});

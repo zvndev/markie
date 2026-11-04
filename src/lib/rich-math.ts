@@ -464,8 +464,23 @@ function mathNodeView({ node: initial, getPos, editor, block }: MathViewProps) {
       register(false);
       if (value === openedWith || !value.trim() || lastPos === undefined) return;
       const at = lastPos;
+      const type = node.type;
       setTimeout(() => {
-        if (!editor.isDestroyed) keepBeside(at, value);
+        if (editor.isDestroyed) return;
+        // The formula is usually still there, only redrawn: the change goes
+        // into it, the nearest one still holding the source it opened with.
+        // Only when it is gone is the typed copy kept beside where it was.
+        let found = -1;
+        editor.state.doc.descendants((candidate, pos) => {
+          if (candidate.type === type && candidate.attrs.source === openedWith && (found === -1 || Math.abs(pos - at) < Math.abs(found - at))) found = pos;
+          return true;
+        });
+        if (found === -1) {
+          keepBeside(at, value);
+          return;
+        }
+        const here = editor.state.doc.nodeAt(found)!;
+        editor.view.dispatch(editor.state.tr.setNodeMarkup(found, undefined, { ...here.attrs, source: value }));
       }, 0);
     },
   };

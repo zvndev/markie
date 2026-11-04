@@ -27,16 +27,17 @@
 // the document does not have at all was typed in the room, where an older
 // build wrote it as math, so it becomes math.
 //
-// Front matter: its nodes come out when they are exactly what the document's
-// front matter parses to. When they are not (the front matter changed since
-// the room was seeded, as agents' `markie:` front matter often does), the
-// room's leading rule and the nodes after it come out only if what is left
-// is, byte for byte, the body the pane opened on: the stored copy's front
-// matter wins anyway, and nothing of the body can go. Otherwise the room's
-// front matter cannot be told from content (someone edited it there, or the
-// room moved on too), nothing is changed, and the room is refused: this pane
-// goes back to the local copy rather than write front matter twice or drop
-// a rule.
+// Front matter, only for a pane whose copy has some: its nodes come out when
+// they are exactly what that front matter parses to. When they are not (it
+// changed since the room was seeded, as agents' `markie:` front matter often
+// does), the room's leading block comes out only if it is front-matter
+// shaped (a rule, YAML-looking lines, and the closing `---` as the older
+// build read it) and everything after it is, byte for byte, the body the
+// pane opened on. The stored copy's front matter wins anyway, and nothing
+// typed in the room can go. Otherwise (someone typed in the room, or edited
+// its front matter there) nothing is changed and the room is refused: this
+// pane goes back to the local copy. A pane whose copy has no front matter
+// never takes anything out.
 import { Editor } from "@tiptap/core";
 import { Fragment, type Node as PMNode, type Schema } from "@tiptap/pm/model";
 import type { Transaction } from "@tiptap/pm/state";
@@ -104,6 +105,10 @@ function startsWithRule(body: string): boolean {
 // Old seeding of front matter makes a rule and then a handful of nodes; a
 // search past this many leading nodes is not looking at front matter.
 const MAX_FRONT_MATTER_NODES = 24;
+
+// A line of YAML as the older build's parse left it: a key and a colon, or a
+// list item's `key: value`. "Live note" is not one.
+const YAML_KEY = /^\s*["']?[\w.-][\w .\-"']*:(\s|$)/;
 
 /**
  * What to do with a room an older build seeded, for a pane that opened on
@@ -211,18 +216,39 @@ export function planLegacyRoom(
         frontMatterEnd = sizeOf(leading);
       }
     }
-    if (frontMatterEnd === 0 && room[0]?.type.name === "horizontalRule" && writes(migrated) !== baselineBody) {
-      // Front matter other than the stored copy's, or none in the stored
-      // copy any more: the nodes go only if the rest is exactly the body.
-      for (let k = 1; k <= Math.min(MAX_FRONT_MATTER_NODES, room.length - 1); k++) {
-        if (writes(docOf(room.slice(k))) === baselineBody) {
-          frontMatterEnd = sizeOf(room.slice(0, k));
-          break;
-        }
+    // Whether `nodes` is what an older build made of some front matter
+    // block: the opening `---` as a rule, YAML lines as paragraphs or lists,
+    // and the closing `---` either underlining the last line (a level-2
+    // heading) or on its own (a rule). Proved by writing that YAML back and
+    // reading it again the way the older build did.
+    const frontMatterShaped = (nodes: PMNode[]): boolean => {
+      if (nodes.length < 2 || nodes[0].type.name !== "horizontalRule") return false;
+      const last = nodes[nodes.length - 1];
+      const underlined = last.type.name === "heading" && last.attrs.level === 2;
+      if (!underlined && last.type.name !== "horizontalRule") return false;
+      const middle = nodes.slice(1, -1);
+      const lines = middle.filter((node) => node.isTextblock).map((node) => node.textContent);
+      if (underlined) lines.push(last.textContent);
+      if (!lines.every((line) => YAML_KEY.test(line))) return false;
+      const yaml = middle.length ? serializer.serialize(docOf(middle)) : "";
+      const block = underlined
+        ? `---\n${yaml ? `${yaml}\n\n` : ""}${last.textContent}\n---\n`
+        : `---\n${yaml ? `${yaml}\n\n` : ""}---\n`;
+      return serializer.serialize(docOf(blocksOf(parser.parse(block)))) === serializer.serialize(docOf(nodes));
+    };
+    if (frontMatterEnd === 0 && frontMatter && room[0]?.type.name === "horizontalRule" && !startsWithRule(baselineBody)) {
+      // The room starts with front matter other than the stored copy's (it
+      // changed since the room was seeded). That block comes out only when
+      // it is front-matter shaped and everything after it is, byte for byte,
+      // the body this pane opened on: nothing typed in the room is lost.
+      // Anything else, the room is refused as it is.
+      for (let k = 2; k <= Math.min(MAX_FRONT_MATTER_NODES, room.length); k++) {
+        const prefix = room.slice(0, k);
+        if (!frontMatterShaped(prefix)) continue;
+        if (writes(docOf(room.slice(k))) === baselineBody) frontMatterEnd = sizeOf(prefix);
+        break;
       }
-      // A document without front matter keeps a room that starts with a
-      // rule as it is: that rule may be somebody's.
-      if (frontMatterEnd === 0 && frontMatter && !startsWithRule(baselineBody)) return { kind: "refuse" };
+      if (frontMatterEnd === 0) return { kind: "refuse" };
     }
 
     if (frontMatterEnd === 0 && edits.length === 0) return { kind: "none" };

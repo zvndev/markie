@@ -16,6 +16,9 @@ const loader = vi.hoisted(() => ({
   // Every fake provider made, newest last, so a test can read its params.
   // Updates sent straight to the server (an older room's migration).
   sent: [] as Uint8Array[],
+  // The server drops every seed or migration this client sends (it lost
+  // the race, or the server never answers).
+  dropClaims: false,
   providers: [] as Array<{
     createdWith: Record<string, string>;
     params: Record<string, string>;
@@ -40,6 +43,7 @@ vi.mock("@/lib/collab-loader", async (importOriginal) => {
         const update = updateFromSyncMessage(data);
         if (!update) return;
         loader.sent.push(update);
+        if (loader.dropClaims) return;
         setTimeout(() => {
           if (this.#doc.getMap("meta").get("editorModel") !== undefined) return;
           Y.applyUpdate(this.#doc, update, "server");
@@ -1011,5 +1015,139 @@ describe("RichView in a live room: the editor data model", () => {
     } finally {
       live.done();
     }
+  });
+});
+
+describe("RichView in a live room: second review", () => {
+  const collab: CollabConfig = {
+    docId: "doc-review",
+    wsBase: "ws://localhost/collab",
+    token: "t",
+    fetchTicket: async () => ({ kind: "ticket", ticket: "tk", expiresAt: 0 }),
+    user: { name: "Me", color: "#000000" },
+    readonly: false,
+  };
+  const liveDoc = () => (window as unknown as { __markieCollab?: { ydoc: import("yjs").Doc } | null }).__markieCollab!.ydoc;
+
+  async function roomOf(blocks: unknown[]) {
+    const Y = await import("yjs");
+    const { prosemirrorJSONToYXmlFragment } = await import("@tiptap/y-tiptap");
+    const { Editor: Headless } = await import("@tiptap/core");
+    const { richBaseExtensions } = await import("@/lib/rich-extensions");
+    const scratch = new Headless({ extensions: richBaseExtensions({ collab: true }), content: "" });
+    const prepared = new Y.Doc();
+    prosemirrorJSONToYXmlFragment(scratch.schema, { type: "doc", content: blocks }, prepared.getXmlFragment("default"));
+    prepared.getMap("meta").set("schemaVersion", 1);
+    scratch.destroy();
+    const state = Y.encodeStateAsUpdate(prepared);
+    return (doc: import("yjs").Doc) => Y.applyUpdate(doc, state);
+  }
+  const text = (t: string) => ({ type: "text", text: t });
+  const p = (t: string) => ({ type: "paragraph", attrs: { textAlign: null }, content: [text(t)] });
+  const h2 = (t: string) => ({ type: "heading", attrs: { level: 2, textAlign: null }, content: [text(t)] });
+  const rule = { type: "horizontalRule" };
+
+  async function open(value: string, seed?: (doc: import("yjs").Doc) => void) {
+    loader.room = seed ? { seed } : {};
+    const onRoomReady = vi.fn();
+    const onChange = vi.fn();
+    const onCollabStatus = vi.fn();
+    let editor: Editor | null = null;
+    const view = render(
+      <RichView value={value} onChange={onChange} collab={collab} holdUntilReady onRoomReady={onRoomReady}
+        onCollabStatus={onCollabStatus} onEditorReady={(e) => { if (e) editor = e; }} />
+    );
+    return { view, onRoomReady, onChange, onCollabStatus, editor: () => editor as unknown as Editor, done: () => { view.unmount(); loader.room = null; } };
+  }
+
+  it("never drops a live edit sitting between stale front matter and the body: refuses instead", async () => {
+    const live = await open("---\ntitle: new\n---\nBody.\n", await roomOf([rule, h2("title: old"), p("Live note"), p("Body.")]));
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      expect(live.editor().getText()).toContain("Live note");
+      expect(JSON.stringify(liveDoc().getXmlFragment("default").toJSON())).toContain("Live note");
+      expect(live.onChange).not.toHaveBeenCalled();
+    } finally {
+      live.done();
+    }
+  });
+
+  it("takes nothing out of a room whose leading rule is not front matter, for a copy without front matter", async () => {
+    const live = await open("Body.\n", await roomOf([rule, p("Agenda added live"), p("Body.")]));
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      expect(live.onRoomReady.mock.calls[0][0]).toContain("Agenda added live");
+      expect(live.editor().getText()).toContain("Agenda added live");
+    } finally {
+      live.done();
+    }
+  });
+
+  it("a seed the server drops is never in this pane: the winner's arrives, and typing waits for it", async () => {
+    const Y = await import("yjs");
+    loader.dropClaims = true;
+    // The client that won the seed lock writes the room a moment later.
+    const live = await open("# Mine\n\nMy copy.\n", (doc) => {
+      setTimeout(() => {
+        const winner = new Y.Doc();
+        const paragraph = new Y.XmlElement("paragraph");
+        paragraph.insert(0, [new Y.XmlText("The winner's copy.")]);
+        winner.getXmlFragment("default").insert(0, [paragraph]);
+        winner.getMap("meta").set("editorModel", 2);
+        winner.getMap("meta").set("schemaVersion", 1);
+        Y.applyUpdate(doc, Y.encodeStateAsUpdate(winner), "server");
+      }, 400);
+    });
+    try {
+      await waitFor(() => expect(loader.sent.length).toBeGreaterThan(0), { timeout: 3000 });
+      // Sent, not applied: until the server answers, the room is empty here
+      // and nothing can be typed into it.
+      expect(live.editor().getText()).not.toContain("My copy.");
+      expect(live.editor().isEditable).toBe(false);
+      await waitFor(() => expect(live.editor().getText()).toContain("The winner's copy."), { timeout: 3000 });
+      expect(live.editor().getText()).not.toContain("My copy.");
+      await waitFor(() => expect(live.editor().isEditable).toBe(true), { timeout: 3000 });
+    } finally {
+      loader.dropClaims = false;
+      loader.sent.length = 0;
+      live.done();
+    }
+  });
+
+  it("a seed the server never answers goes back to the local copy, and says so", async () => {
+    const { liveTiming } = await import("@/lib/collab");
+    const before = liveTiming.claimTimeoutMs;
+    liveTiming.claimTimeoutMs = 400;
+    loader.dropClaims = true;
+    const live = await open("# Mine\n\nMy copy.\n");
+    try {
+      await waitFor(() => expect(live.onCollabStatus).toHaveBeenCalledWith("unavailable"), { timeout: 3000 });
+      expect(live.onChange).not.toHaveBeenCalled();
+    } finally {
+      liveTiming.claimTimeoutMs = before;
+      loader.dropClaims = false;
+      loader.sent.length = 0;
+      live.done();
+    }
+  });
+
+  it("puts a formula's open source into the room when the pane closes", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const Y = await import("yjs");
+    const live = await open("A $x$ b.\n");
+    const received = new Y.Doc();
+    try {
+      await waitFor(() => expect(live.onRoomReady).toHaveBeenCalled(), { timeout: 3000 });
+      await waitFor(() => expect(live.view.container.querySelector(".markie-math-inline")).not.toBeNull());
+      const ydoc = liveDoc();
+      Y.applyUpdate(received, Y.encodeStateAsUpdate(ydoc));
+      ydoc.on("update", (update: Uint8Array) => Y.applyUpdate(received, update));
+      const inline = live.view.container.querySelector(".markie-math-inline") as HTMLElement;
+      fireEvent.mouseDown(inline);
+      fireEvent.input(inline.querySelector("input") as HTMLInputElement, { target: { value: "$kept$" } });
+    } finally {
+      live.done();
+    }
+    expect(JSON.stringify(received.getXmlFragment("default").toJSON())).toContain("$kept$");
   });
 });

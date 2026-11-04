@@ -16,6 +16,7 @@ import {
   LEGACY_CLIENT_SCHEMA,
   closeCodeFor,
   hasEditorModel,
+  ROOM_SCHEMA_MATH,
   recordedSchema,
   updateClaimsModel,
   schemaOfRoom,
@@ -149,17 +150,35 @@ const rooms = new Map<string, Room>();
 // a room's schema only rises while it exists.
 const idleSchemas = new Map<string, number>();
 
+// The stored copy's front matter, read fresh each time (an agent can add or
+// drop it between two tickets). A live room holds only the body of such a
+// document, and 0.9.4's desktop writes its file from a live room with nothing
+// in front, deleting the YAML: so the room needs schema 2 whatever any client
+// stamped. Only the start of the text is read; front matter is at the start.
+const FRONT_MATTER_RE = /^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/;
+function storedFrontMatterSchema(docId: string): number {
+  try {
+    const row = db
+      .prepare("SELECT substr(content, 1, 65536) AS head FROM docs WHERE id = ? AND deleted_at IS NULL")
+      .get(docId) as { head: string | null } | undefined;
+    return row?.head && FRONT_MATTER_RE.test(row.head) ? ROOM_SCHEMA_MATH : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function roomSchemaLookup(docId: string): number {
+  const fromStoredCopy = storedFrontMatterSchema(docId);
   const live = rooms.get(docId);
-  if (live) return live.schema;
+  if (live) return Math.max(live.schema, fromStoredCopy);
   const known = idleSchemas.get(docId);
-  if (known !== undefined) return known;
+  if (known !== undefined) return Math.max(known, fromStoredCopy);
   const ydoc = new Y.Doc();
   try {
     loadUpdates(docId, ydoc);
     const schema = schemaOfRoom(ydoc);
     idleSchemas.set(docId, schema);
-    return schema;
+    return Math.max(schema, fromStoredCopy);
   } finally {
     ydoc.destroy();
   }
@@ -483,6 +502,12 @@ function handleConnection(
   const room = getRoom(docId);
   // A ticket issued before the room moved on, or a socket on the account's
   // token: it never gets the room's state.
+  // The stored copy may have gained front matter since the room loaded.
+  const fromStoredCopy = storedFrontMatterSchema(docId);
+  if (fromStoredCopy > room.schema) {
+    room.schema = fromStoredCopy;
+    closeSocketsBelow(room, room.schema);
+  }
   if (room.schema > clientSchema) {
     conn.close(closeCodeFor(clientSchema), "room needs a newer Markie");
     if (room.conns.size === 0) {

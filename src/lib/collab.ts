@@ -235,6 +235,13 @@ export const CLOSE_ROOM_TOO_NEW = 4426;
 // racer sees the winner's content rather than adding a second copy of the file.
 export const SEED_SETTLE_MS = 150;
 
+/**
+ * How long a client waits for the server to answer its seed or migration
+ * (RichView claimRoom) before it gives the room up and goes back to the
+ * local copy, saying so. An object so a test can shorten it.
+ */
+export const liveTiming = { claimTimeoutMs: 15_000 };
+
 
 const PEER_COLORS = [
   "#f59e0b",

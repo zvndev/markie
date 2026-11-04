@@ -364,6 +364,23 @@ test("the schema read of a room does not overflow on a node with 150,000 childre
   assert.equal(schema.holdsMathNodes(doc), true);
 });
 
+test("the room of a document whose stored copy has front matter keeps old builds out, whatever the room says", async () => {
+  const docId = `schema-front-matter-${stamp}`;
+  await createDoc(owner.token, docId, "---\ntitle: Plan\n---\n# Plan\n\nNo formulas.\n");
+  await share(owner.token, docId, oldPeer.email);
+  // A room no client stamped for its front matter (a desktop whose own file
+  // has none seeded it).
+  storeRoom(docId, (doc) => {
+    doc.getXmlFragment("default").insert(0, [paragraph("No formulas.")]);
+    doc.getMap("meta").set("schemaVersion", 1);
+  });
+  assert.equal((await askTicket(docId, oldPeer.token, {})).status, 409);
+  assert.equal((await askTicket(docId, owner.token, { schema: 2 })).status, 200);
+  const legacy = await connect(docId, `token=${encodeURIComponent(oldPeer.token)}`);
+  await waitFor("the token build shown out", () => legacy.closeCode() !== null);
+  assert.equal(legacy.closeCode(), 4403);
+});
+
 test("text rooms are schema 1: never closed to old builds", () => {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, "$x$ in a text file");

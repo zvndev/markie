@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useEditor,
   useEditorState,
@@ -26,6 +26,7 @@ import {
   CLOSE_ROOM_TOO_NEW,
   connectWithTicket,
   EDITOR_MODEL,
+  liveTiming,
   MODEL_KEY,
   RICH_SCHEMA_MATH,
   RICH_SCHEMA_PLAIN,
@@ -36,6 +37,8 @@ import {
   type PeerUser,
 } from "@/lib/collab";
 import { docHasMath, planLegacyRoom } from "@/lib/rich-room-migrate";
+import { createDocument } from "@tiptap/core";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import { commitMathFields } from "@/lib/rich-math";
 import { CommentLayer } from "@/components/comments";
 import { LinkPreviewCard } from "@/components/link-preview-card";
@@ -513,6 +516,20 @@ function RichViewInner({
     },
   });
 
+  // A formula's source field still open when the pane goes away (the
+  // document closes, the view changes) is committed into the formula first.
+  // A layout cleanup, because it has to run before EditorContent unmounts
+  // and takes the editor view (and every formula's view) down with it, and
+  // before the live session's cleanup destroys the room: live, this puts
+  // the source in the room at once. It is not handed to onChange from here:
+  // by the time a pane unmounts its host may already hold another document,
+  // and the host flushes the pane it is leaving itself (onFlushReady), which
+  // commits open fields too.
+  useLayoutEffect(() => {
+    if (!editor) return;
+    return () => commitMathFields(editor);
+  }, [editor]);
+
   // Search highlights are a plugin, not marks in the document, so nothing about
   // finding text can be serialized into the file. Registered after the fact
   // rather than as an extension because it holds no configuration and the
@@ -731,14 +748,24 @@ function RichViewInner({
         refuseRoomRef.current();
         return;
       }
-      // The room as this build holds it, claimed for this build in one
-      // update the server takes from exactly one client
-      // (room-migration-update.ts). It is not applied here: the room
-      // changes for this pane when the server sends back this update, or
-      // another client's that got there first.
-      const target = plan.kind === "migrate" ? plan.tr.doc : editor.state.doc;
+      claimRoom(plan.kind === "migrate" ? plan.tr.doc : editor.state.doc, done);
+    };
+
+    // The room as this build holds it (`target`), claimed for this build in
+    // one update that the server takes from exactly one client: the seed of
+    // an empty room, or an older room brought up to date
+    // (room-migration-update.ts). It is not applied here. The room changes
+    // for this pane when the server sends back this update, or the update of
+    // the client that got there first, so nothing this pane holds can be an
+    // update the server dropped. Typing waits until then. No answer at all
+    // (the socket dropped, the server never took it) and the page goes back
+    // to the local copy, with its note: never a silent loss.
+    const claimRoom = (target: PMNode, done: () => void) => {
+      const meta = ydoc.getMap("meta");
       const schema = Math.max(
         roomSchemaOf(meta.get(SCHEMA_KEY)),
+        // Not a build without math nodes once there is a formula, and not
+        // 0.9.4's desktop when this copy has front matter the room leaves out.
         docHasMath(target) || frontMatterRef.current ? RICH_SCHEMA_MATH : RICH_SCHEMA_PLAIN
       );
       const socket = (provider as unknown as { ws?: { readyState: number; send(data: Uint8Array): void } | null }).ws;
@@ -760,16 +787,15 @@ function RichViewInner({
         setMigrating(false);
       };
       meta.observe(landed);
-      // No answer at all: the socket dropped, or the server never took it.
       timer = setTimeout(() => {
         stopWaiting?.();
         refuseRoomRef.current();
-      }, 15_000);
+      }, liveTiming.claimTimeoutMs);
       try {
         const update = session.runtime.migrationUpdate(ydoc, target, { [MODEL_KEY]: EDITOR_MODEL, [SCHEMA_KEY]: schema });
         socket.send(session.runtime.syncUpdateMessage(update));
       } catch (err) {
-        console.error("Markie: couldn't bring the live room up to date", err);
+        console.error("Markie: couldn't write the live room", err);
         stopWaiting?.();
         refuseRoomRef.current();
       }
@@ -793,22 +819,24 @@ function RichViewInner({
       }
       seededRef.current = true;
       checkedRef.current = true;
-      // One transaction, one update on the wire. The server's seed lock opens
-      // on the first update it persists, so the schema stamp must travel WITH
-      // the content, not ahead of it: sent separately, a stamp-only update
-      // would release the lock on a room that still holds nothing. Content
-      // first inside the transaction, so even an unmerged write seeds the
-      // document before it seeds the metadata.
-      ydoc.transact(() => {
-        editor.commands.setContent(body);
-        const meta = ydoc.getMap("meta");
-        // The oldest build that can represent this room (collab.ts): not
-        // one without math nodes once there is a formula, and not 0.9.4's
-        // desktop when this copy has front matter the room leaves out.
-        meta.set(SCHEMA_KEY, docHasMath(editor.state.doc) || frontMatterRef.current ? RICH_SCHEMA_MATH : RICH_SCHEMA_PLAIN);
-        meta.set(MODEL_KEY, EDITOR_MODEL);
+      // One update on the wire, content and stamps together: the server's
+      // seed lock opens on the first update it persists, so a stamp sent
+      // ahead of the content would release it on a room still holding
+      // nothing. A racer that lost the seed lock never applied its seed, so
+      // nothing it types afterwards rides on a dropped one.
+      let target: PMNode;
+      try {
+        const markdown = (editor.storage as unknown as { markdown: { parser: { parse(md: string): string } } }).markdown;
+        target = createDocument(markdown.parser.parse(body), editor.schema);
+      } catch (err) {
+        console.error("Markie: couldn't read the document into the live room", err);
+        refuseRoomRef.current();
+        return;
+      }
+      claimRoom(target, () => {
+        stampFrontMatterRef.current();
+        setRoomChecked(true);
       });
-      setRoomChecked(true);
     };
 
     // A viewer is not an author. Seeding from a read-only client writes the

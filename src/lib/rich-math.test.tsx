@@ -328,3 +328,26 @@ describe("a formula's source field", () => {
     view.unmount();
   });
 });
+
+describe("a formula's source field, when its view is redrawn or the pane closes", () => {
+  it("commits into the formula in place when only its view was destroyed", async () => {
+    const { render, fireEvent, waitFor } = await import("@testing-library/react");
+    const { EditorContent, useEditor } = await import("@tiptap/react");
+    let handle: import("@tiptap/react").Editor | null = null;
+    function View() {
+      const editor = useEditor({ extensions: richBaseExtensions(), content: "A $x$ b.\n", immediatelyRender: true });
+      handle = editor;
+      return <EditorContent editor={editor} />;
+    }
+    const view = render(<View />);
+    await waitFor(() => expect(view.container.querySelector(".markie-math-inline")).not.toBeNull());
+    const inline = view.container.querySelector(".markie-math-inline") as HTMLElement & { pmViewDesc?: { destroy(): void } };
+    fireEvent.mouseDown(inline);
+    fireEvent.input(inline.querySelector("input") as HTMLInputElement, { target: { value: "$x^2$" } });
+    // ProseMirror throws the view away and draws the node again.
+    inline.pmViewDesc!.destroy();
+    const markdown = () => (handle!.storage as unknown as { markdown: { getMarkdown(): string } }).markdown.getMarkdown();
+    await waitFor(() => expect(markdown()).toBe("A $x^2$ b."));
+    view.unmount();
+  });
+});

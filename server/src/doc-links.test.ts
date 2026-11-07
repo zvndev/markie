@@ -25,12 +25,14 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
 const { docLinksApi, docLinksFor, MAX_DOC_LINKS, sharedPageLinkFor, publicPageLinkFor } = await import("./doc-links.ts");
+const { publicShare } = await import("./public.ts");
 
 const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
 app.route("/api", docLinksApi);
+app.route("/", publicShare);
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -276,3 +278,27 @@ test("a public page publishes a target's link only for pointers its owner stored
   assert.deepEqual(publicPageLinkFor(a)("b.md"), { href: `/s/${rotated}` });
   assert.deepEqual(publicPageLinkFor(a)("b2.md"), { muted: true });
 });
+
+test("a public page's links read with the link alone, with the static page's answers", async () => {
+  const a = await makeDoc(owner.token);
+  const b = await makeDoc(owner.token, "# b\n");
+  const theirs = await makeDoc(stranger.token, "# theirs\n");
+  await json("POST", `/api/docs/${theirs}/public-link`, stranger.token);
+  await json("PUT", `/api/docs/${a}/links`, owner.token, { links: [{ ref: "plan.md", target: b }, { ref: "theirs.md", target: theirs }, { ref: "draft.md", target: "never" }] });
+  const pageToken = String((await json("POST", `/api/docs/${a}/public-link`, owner.token)).data.url).split("/s/")[1];
+  const read = async (token: string) => {
+    const res = await app.request(`/s/${token}/links`);
+    return { status: res.status, cache: res.headers.get("cache-control"), data: await res.json().catch(() => null) };
+  };
+  // b has no public link yet: muted, like the static page.
+  let got = await read(pageToken);
+  assert.equal(got.status, 200);
+  assert.equal(got.cache, "private, no-store");
+  assert.deepEqual(got.data, { links: [{ ref: "plan.md", muted: true }, { ref: "theirs.md", muted: true }, { ref: "draft.md", muted: true }] });
+  const bToken = String((await json("POST", `/api/docs/${b}/public-link`, owner.token)).data.url).split("/s/")[1];
+  got = await read(pageToken);
+  // Another account's public link is never published, even though it exists.
+  assert.deepEqual(got.data, { links: [{ ref: "plan.md", href: `/s/${bToken}` }, { ref: "theirs.md", muted: true }, { ref: "draft.md", muted: true }] });
+  assert.equal((await read("x".repeat(43))).status, 404);
+});
+

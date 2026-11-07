@@ -97,6 +97,9 @@
 .markie-view .markdown-body pre code.hljs { background: transparent; padding: 0; }
 .markie-view .markdown-body a { color: var(--view-accent); text-decoration: underline; text-decoration-color: var(--view-red);
   text-decoration-thickness: 2px; text-underline-offset: 3px; }
+/* A link to a page this reader can't open (view-content.ts withDocLinks). */
+.markie-view .markdown-body a.doc-link-muted { color: var(--view-muted); text-decoration-style: dotted;
+  text-decoration-color: var(--view-muted); text-decoration-thickness: 1px; cursor: not-allowed; }
 .markie-view .markdown-body blockquote { border-left: 3px solid var(--view-line); margin: 1em 0; padding: 2px 16px; color: var(--view-muted); background: none; }
 .markie-view .markdown-body table { border-collapse: collapse; margin: 0 0 1em; display: block; overflow-x: auto; }
 .markie-view .markdown-body th, .markie-view .markdown-body td { border: 1px solid var(--view-line); padding: 6px 12px; }

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { parseViewRoute, parseWebRoute, viewRoutePath, viewSignInHref } from "./routes";
 import { escapeIsFree, readBarHidden, writeBarHidden } from "./bar-visibility";
-import { isLocalMediaSrc, mediaRef, memberAssetUrl, publicAssetUrl, viewHtml, withAssetUrls } from "./view-content";
+import { isLocalMediaSrc, mediaRef, memberAssetUrl, parseViewLinks, publicAssetUrl, viewHtml, withAssetUrls, withDocLinks } from "./view-content";
 import { originalFileName, webExportFormats } from "./web-export";
 import { viewPathFor } from "./web-root";
 import { publicDocMeta, publicKind } from "./doc-view";
@@ -119,3 +119,20 @@ describe("export on the web", () => {
     expect(originalFileName("", "text")).toBe("document.txt");
   });
 });
+
+describe("links between documents in the read view", () => {
+  it("leaves web links, anchors and an author's borrowed muted class alone, but never muted", () => {
+    const html = '<a href="https://x.test/a.md">w</a><a href="#s">s</a><a class="doc-link-muted" href="/d/abc">own</a>';
+    const out = withDocLinks(html, new Map());
+    expect(out).toBe('<a href="https://x.test/a.md">w</a><a href="#s">s</a><a href="/d/abc">own</a>');
+  });
+
+  it("reads the member and public answers, keeping only paths on this host", () => {
+    const member = parseViewLinks({ links: [{ ref: "a.md", target: "id-1" }, { ref: "b.md" }, { ref: "" }, null] }, (t) => `/d/${t}`);
+    expect([...member]).toEqual([["a.md", { href: "/d/id-1" }], ["b.md", { muted: true }]]);
+    const pub = parseViewLinks({ links: [{ ref: "a.md", href: "/s/tok_1" }, { ref: "b.md", href: "//evil.test/s/x" }, { ref: "c.md", href: "javascript:alert(1)" }] }, () => "");
+    expect([...pub]).toEqual([["a.md", { href: "/s/tok_1" }], ["b.md", { muted: true }], ["c.md", { muted: true }]]);
+    expect(parseViewLinks(null, () => "").size).toBe(0);
+  });
+});
+

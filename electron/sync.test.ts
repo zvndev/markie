@@ -285,6 +285,73 @@ describe("push", () => {
   });
 });
 
+describe("syncOn links", () => {
+  afterEach(() => sync.setLinkSync(null));
+
+  it("pushes a first upload's links after its text lands", async () => {
+    const row = seedRow({ path: "/docs/home.md" });
+    respondWith({ status: 200, body: { version: 1 } });
+    const seen: unknown[] = [];
+    sync.setLinkSync({
+      pushLinks: async (filePath: string, cloudId: string, content: string, opts: { baseVersion?: number }) => {
+        // The row already names its cloud id, so a page linking back resolves it.
+        seen.push([filePath, cloudId === rows.get(filePath)?.cloud_doc_id, content, opts]);
+        return { ok: true, linked: 1 };
+      },
+    });
+    const res = await sync.syncOn(row.path, row.name, "[step 1](step-1.md)");
+    expect(res).toMatchObject({ ok: true, version: 1, links: { ok: true, linked: 1 } });
+    expect(seen).toEqual([["/docs/home.md", true, "[step 1](step-1.md)", { baseVersion: 1 }]]);
+  });
+
+  it("relinks the synced pages near a first upload that name it, and only those", async () => {
+    const dir = path.join(tmpDir, "guide");
+    fs.mkdirSync(path.join(dir, "sub"), { recursive: true });
+    const write = (name: string, text: string) => {
+      const p = path.join(dir, name);
+      fs.writeFileSync(p, text);
+      return p;
+    };
+    const home = write("home.md", "[step 2](step-2.md)");
+    const sub = write("sub/notes.md", "[back](../step-2.md)");
+    const unrelated = write("other.md", "[x](x.md)");
+    const edited = write("edited.md", "[step 2](step-2.md) and more");
+    seedRow({ path: home, cloud_doc_id: "home-id", cloud_version: 3, sync_state: "synced", content_hash: "hash:[step 2](step-2.md)" });
+    seedRow({ path: sub, cloud_doc_id: "sub-id", cloud_version: 2, sync_state: "synced", content_hash: "hash:[back](../step-2.md)" });
+    seedRow({ path: unrelated, cloud_doc_id: "other-id", cloud_version: 1, sync_state: "synced", content_hash: "hash:[x](x.md)" });
+    seedRow({ path: edited, cloud_doc_id: "edited-id", cloud_version: 1, sync_state: "synced", content_hash: "hash:[step 2](step-2.md)" });
+    const step2 = seedRow({ path: path.join(dir, "step-2.md") });
+    respondWith({ status: 200, body: { version: 1 } });
+    const seen: unknown[] = [];
+    sync.setLinkSync({
+      pushLinks: async (filePath: string, cloudId: string, _content: string, opts: { baseVersion?: number }) => {
+        seen.push([filePath, cloudId, opts.baseVersion]);
+        return { ok: true, linked: 1 };
+      },
+    });
+    expect((await sync.syncOn(step2.path, step2.name, "# Step 2")).ok).toBe(true);
+    expect(seen).toEqual([
+      [step2.path, step2.cloud_doc_id, 1],
+      [home, "home-id", 3],
+      [sub, "sub-id", 2],
+    ]);
+  });
+
+  it("does not relink anything when an already-linked page is uploaded again", async () => {
+    const dir = path.join(tmpDir, "again");
+    fs.mkdirSync(dir, { recursive: true });
+    const home = path.join(dir, "home.md");
+    fs.writeFileSync(home, "[a](a.md)");
+    seedRow({ path: home, cloud_doc_id: "home-id", cloud_version: 3, sync_state: "synced", content_hash: "hash:[a](a.md)" });
+    const a = seedRow({ path: path.join(dir, "a.md"), cloud_doc_id: "a-id", cloud_version: 4, sync_state: "synced" });
+    respondWith({ status: 200, body: { version: 5 } });
+    const seen: string[] = [];
+    sync.setLinkSync({ pushLinks: async (filePath: string) => { seen.push(filePath); return { unchanged: true }; } });
+    expect((await sync.syncOn(a.path, a.name, "# A")).ok).toBe(true);
+    expect(seen).toEqual([a.path]);
+  });
+});
+
 describe("syncOn", () => {
   it("keeps omitted-area legacy uploads valid without a confirmed principal", async () => {
     sync.setConfig({ token: "legacy-unconfirmed", serverURL: SERVER, userId: ME });
@@ -459,7 +526,7 @@ describe("syncOn", () => {
 
     const res = await sync.syncOn("/docs/a.md", "a.md", "hello");
 
-    expect(res).toEqual({ ok: true, version: 1, media: null });
+    expect(res).toEqual({ ok: true, version: 1, media: null, links: null });
     expect(row.sync_state).toBe("synced");
     expect(row.cloud_doc_id).toBeTruthy();
   });
@@ -481,7 +548,7 @@ describe("syncOn", () => {
     respondWith({ status: 200, body: { version: 2 } });
     const second = await sync.syncOn("/docs/a.md", "a.md", "hello");
 
-    expect(second).toEqual({ ok: true, version: 2, media: null });
+    expect(second).toEqual({ ok: true, version: 2, media: null, links: null });
     expect(row.cloud_doc_id).toBe(minted);
   });
 });
@@ -2447,7 +2514,7 @@ describe("media and text push order", () => {
 
     const res = await sync.syncOn("/docs/e.md", "e.md", "![](e.png)\n");
 
-    expect(res).toEqual({ ok: true, version: 4, media: { ok: true, uploaded: 1, skipped: [] } });
+    expect(res).toEqual({ ok: true, version: 4, media: { ok: true, uploaded: 1, skipped: [] }, links: null });
     expect(log).toEqual([
       { step: "stage", textCallsSoFar: 0, filePath: "/docs/e.md", cloudId: "ce" },
       { step: "link", textCallsSoFar: 1, filePath: "/docs/e.md", cloudId: "ce", baseVersion: 4 },

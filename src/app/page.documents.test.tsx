@@ -423,3 +423,53 @@ describe("document capabilities inside the existing Markie app", () => {
     expect(document.querySelector(".markie-shell")).not.toHaveAttribute("inert");
   });
 });
+
+describe("Make interactive (Live Docs, super-nightly)", () => {
+  it("hands the open Markdown to the workspace as a new unsaved .wd, from the menu, and never writes the Markdown file", async () => {
+    localStorage.setItem("markie.nightly", "1");
+    const createFrom = vi.fn(() => true);
+    state.shell = { ...state.shell!, createFrom };
+    const api = await boot();
+    await waitFor(() => expect(api.setDocumentMenuState).toHaveBeenCalledWith(expect.objectContaining({ renderer: "markdown", enabledCommands: expect.arrayContaining(["make-interactive"]) })));
+    await act(async () => { emit("onDocumentCommand", "make-interactive"); });
+    await waitFor(() => expect(createFrom).toHaveBeenCalledOnce());
+    expect(createFrom).toHaveBeenCalledWith({ name: "notes.wd", text: expect.stringContaining("Retained Markdown buffer"), pictureOrigin: "/notes/notes.md" });
+    expect(api.saveFile).not.toHaveBeenCalled();
+    expect(api.saveFileAs).not.toHaveBeenCalled();
+    await waitFor(() => expect(state.hostActive).toBe(true));
+    // In the .wd pane it is not offered again, and the menu says so.
+    await waitFor(() => expect(vi.mocked(api.setDocumentMenuState!).mock.calls.at(-1)![0].enabledCommands).not.toContain("make-interactive"));
+  });
+
+  it("is in the command palette while a Markdown document is open", async () => {
+    localStorage.setItem("markie.nightly", "1");
+    const createFrom = vi.fn(() => true);
+    state.shell = { ...state.shell!, createFrom };
+    await boot();
+    await userEvent.click(screen.getByRole("button", { name: "Commands (⌘K)" }));
+    await userEvent.type(screen.getByPlaceholderText("Type a command…"), "interactive");
+    await userEvent.click(screen.getByRole("option", { name: /Make interactive/ }));
+    await waitFor(() => expect(createFrom).toHaveBeenCalledWith(expect.objectContaining({ name: "notes.wd", pictureOrigin: "/notes/notes.md" })));
+  });
+
+  it("says so when the workspace cannot take the copy, leaving the Markdown alone", async () => {
+    localStorage.setItem("markie.nightly", "1");
+    state.shell = { ...state.shell!, createFrom: vi.fn(() => false) };
+    const api = await boot();
+    await act(async () => { emit("onDocumentCommand", "make-interactive"); });
+    expect((await screen.findAllByText("Markie could not open the interactive copy. Your Markdown file was not changed.")).length).toBeGreaterThan(0);
+    expect(api.saveFile).not.toHaveBeenCalled();
+  });
+
+  it("does not exist without the nightly gate", async () => {
+    const createFrom = vi.fn(() => true);
+    state.shell = { ...state.shell!, createFrom };
+    const api = await boot();
+    await act(async () => { emit("onDocumentCommand", "make-interactive"); });
+    expect(createFrom).not.toHaveBeenCalled();
+    for (const [sent] of vi.mocked(api.setDocumentMenuState!).mock.calls) expect(sent.enabledCommands).not.toContain("make-interactive");
+    await userEvent.click(screen.getByRole("button", { name: "Commands (⌘K)" }));
+    await userEvent.type(screen.getByPlaceholderText("Type a command…"), "interactive");
+    expect(screen.queryByRole("option", { name: /Make interactive/ })).not.toBeInTheDocument();
+  });
+});

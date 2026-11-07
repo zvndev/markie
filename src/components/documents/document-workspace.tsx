@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { LibraryRecord } from "@/lib/document-library";
-import type { DocumentShellState } from "@/lib/document-shell";
+import type { DocumentShellState, InteractiveDraft } from "@/lib/document-shell";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import { documentNeedsRecoverySave, type EditableDocumentFormat } from "@/lib/document-session";
 import type { WebDocumentPayload } from "@/lib/web-files";
@@ -120,11 +120,12 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
   outputInFlight.current = output.isBusy;
   const actionsBlocked = blocked || output.busy;
   const create = (format: EditableDocumentFormat) => { if (blocked || output.isBusy() || !canLeaveVault()) return; setNewMenu(false); setVault(false); setShowLibrary(false); void workspace.create(format); };
+  const createFrom = (draft: InteractiveDraft) => { if (blocked || output.isBusy() || !canLeaveVault()) return false; setNewMenu(false); setVault(false); setShowLibrary(false); void workspace.createFrom(draft); return true; };
   const open = (record: LibraryRecord) => { if (blocked || output.isBusy() || !canLeaveVault()) return; setVault(false); setShowLibrary(false); void workspace.open(record); };
   const importFile = () => { if (blocked || output.isBusy() || !canLeaveVault()) return; setVault(false); void workspace.importFile(); };
   const showVault = () => { if (!blocked && !output.isBusy() && !vault) void workspace.recoverNow().then(() => { if (!output.isBusy()) setVault(true); }); };
-  const actions = useRef({ create, open, importFile, showVault, workspace, blocked: actionsBlocked, output });
-  actions.current = { create, open, importFile, showVault, workspace, blocked: actionsBlocked, output };
+  const actions = useRef({ create, createFrom, open, importFile, showVault, workspace, blocked: actionsBlocked, output });
+  actions.current = { create, createFrom, open, importFile, showVault, workspace, blocked: actionsBlocked, output };
   const shellChanged = useRef(onShellChange); shellChanged.current = onShellChange;
   useEffect(() => {
     shellChanged.current?.({
@@ -142,7 +143,7 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
           else editorCommands?.execute(command);
         },
       },
-      create: (format) => actions.current.create(format), open: (record) => actions.current.open(record),
+      create: (format) => actions.current.create(format), createFrom: (draft) => actions.current.createFrom(draft), open: (record) => actions.current.open(record),
       importFile: () => actions.current.importFile(), save: (asCopy) => { if (!navigation.current.vault && !actions.current.blocked) void actions.current.workspace.saveFile(asCopy); },
       share: () => { if (!navigation.current.vault && !actions.current.blocked) void actions.current.workspace.share(); }, showVault: () => actions.current.showVault(),
       prepareClose, prepareLeave,

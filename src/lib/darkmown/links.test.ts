@@ -221,3 +221,37 @@ describe("the host's check on a link message", () => {
     close();
   });
 });
+
+describe("a Markdown document made interactive", () => {
+  const MARKDOWN = [
+    "# Trip notes", "",
+    "Book through [the hotel site](https://hotel.example.com/book?room=2) or [email Ada](mailto:ada@example.com?subject=Trip).", "",
+    "![The view from the room](pics/view.png \"Room 2\")", "",
+    "## Packing", "",
+    "- [ ] passport",
+    "- [x] charger",
+    "- [ ] *walking* shoes", "",
+    "Plain <https://maps.example.com> too.", "",
+  ].join("\n");
+
+  it("loses nothing in the .wd preview: links, the picture beside it and the checklist", async () => {
+    for (const trusted of [false, true]) {
+      const { srcDoc, warnings } = await compileDarkmownPreview(MARKDOWN, trusted, { links: true, pictureBase: BASE });
+      expect(warnings, `trusted=${trusted}`).toEqual([]);
+      const body = new DOMParser().parseFromString(srcDoc, "text/html").body;
+      expect([...body.querySelectorAll("h1, h2")].map((heading) => heading.textContent)).toEqual(["Trip notes", "Packing"]);
+      expect([...body.querySelectorAll("a")].map((anchor) => [anchor.textContent, anchor.getAttribute("href"), anchor.getAttribute("target")])).toEqual([
+        ["the hotel site", "https://hotel.example.com/book?room=2", "_blank"],
+        ["email Ada", "mailto:ada@example.com?subject=Trip", "_blank"],
+        ["https://maps.example.com", "https://maps.example.com/", "_blank"],
+      ]);
+      const picture = body.querySelector("img")!;
+      expect([picture.getAttribute("src"), picture.getAttribute("alt"), picture.getAttribute("title")]).toEqual([`${BASE}/pics%2Fview.png`, "The view from the room", "Room 2"]);
+      const items = [...body.querySelectorAll("li")];
+      expect(items.map((item) => [item.textContent!.trim(), (item.querySelector('input[type="checkbox"]') as HTMLInputElement).checked])).toEqual([
+        ["passport", false], ["charger", true], ["walking shoes", false],
+      ]);
+      expect(items[2].querySelector("em")?.textContent).toBe("walking");
+    }
+  });
+});

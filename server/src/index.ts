@@ -33,7 +33,7 @@ import {
   installLittleFriend,
 } from "./little-friend.ts";
 import { createDocumentPlatform } from "./document-platform.ts";
-import { assertLiveDocsIsolated, liveDocsConfig } from "./live-docs-config.ts";
+import { assertLiveDocsIsolated, liveDocsConfig, upgradeAllowed } from "./live-docs-config.ts";
 import { createLiveDocs } from "./live-docs.ts";
 import { createSqliteDocumentPlatformStore } from "./document-platform-store.ts";
 import type Database from "better-sqlite3";
@@ -74,6 +74,7 @@ const liveDocs = LIVE_DOCS_CONFIG
         ...deploymentNow.apiAliases,
         deploymentNow.siteUrl,
         deploymentNow.downloadSiteUrl,
+        ...(deploymentNow.docsOrigin ? [deploymentNow.docsOrigin] : []),
         ...(process.env.MARKIE_WEB_ORIGINS?.split(",").map((value) => value.trim()) ?? []),
       ]);
       return createLiveDocs({ config: LIVE_DOCS_CONFIG, appOrigin: deploymentNow.origin, siteUrl: deploymentNow.siteUrl });
@@ -516,7 +517,8 @@ export { app, liveDocs };
 if (process.env.MARKIE_NO_LISTEN !== "1") {
   const port = Number(process.env.PORT ?? 8787);
   const server = serve({ fetch: app.fetch, port });
-  attachCollab(server as Parameters<typeof attachCollab>[0]);
+  // No upgrade on the Live Docs domain ever reaches live editing.
+  attachCollab(server as Parameters<typeof attachCollab>[0], { allowUpgrade: (req) => upgradeAllowed(req.headers, LIVE_DOCS_CONFIG) });
   // Uploads a document refused at the link step belong to no document and to
   // no previous link set, so nothing on a request path ever finds them. This
   // is the only thing that does. Scheduled here rather than at assets.ts's

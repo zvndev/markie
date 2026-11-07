@@ -25,7 +25,7 @@ const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.optio
 if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 
 const { app, liveDocs } = await import("./index.ts");
-const { issueLiveDocTicket, liveDocLabel, LIVE_DOC_TICKET_TTL_MS } = await import("./live-docs-store.ts");
+const { issueLiveDocTicket, liveDocLabel, newLiveDocState, LIVE_DOC_TICKET_TTL_MS } = await import("./live-docs-store.ts");
 const Database = (await import("better-sqlite3")).default;
 const db = new Database(process.env.DB_PATH);
 after(() => db.close());
@@ -37,6 +37,9 @@ const APP_ORIGIN = `http://${APP_HOST}`;
 const liveHost = (label: string) => `${label}.live.localhost:8787`;
 const liveOrigin = (label: string) => `http://${liveHost(label)}`;
 const COOKIE = "__Host-markie-live";
+const STATE_COOKIE = "__Host-markie-live-state";
+/** The browser nonce cookie each pass was bound to, so `redeem` acts as that browser by default. */
+const stateFor = new Map<string, string>();
 
 let callers = 0;
 interface Ask {
@@ -92,21 +95,35 @@ async function addressOf(docId: string, token: string): Promise<{ url: string; l
   return { url: body.url, label: match[1] };
 }
 
+/** A browser arriving at `label` with no cookie: the nonce cookie it is given and the state the app host is told. */
+async function startAt(label: string): Promise<{ state: string; stateCookie: string }> {
+  const res = await ask(liveHost(label), "/");
+  assert.equal(res.status, 302);
+  const location = new URL(res.headers.get("location")!);
+  const state = location.searchParams.get("state");
+  assert.ok(state && /^[a-f0-9]{64}$/.test(state), `a state on ${location}`);
+  const line = res.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}=`) && !value.startsWith(`${STATE_COOKIE}=;`));
+  assert.ok(line, "the live host sets the nonce cookie");
+  return { state, stateCookie: line.split(";")[0] };
+}
+
 /** The pass the app host hands a signed-in browser for `label`. */
 async function passFor(label: string, appCookie: string): Promise<string> {
-  const res = await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: appCookie });
+  const { state, stateCookie } = await startAt(label);
+  const res = await ask(APP_HOST, `/live-docs/pass/${label}?state=${state}`, { cookie: appCookie });
   assert.equal(res.status, 302);
   const location = new URL(res.headers.get("location")!);
   assert.equal(location.origin, liveOrigin(label));
   assert.equal(location.pathname, "/__markie/pass");
   const ticket = location.searchParams.get("ticket");
   assert.ok(ticket);
+  stateFor.set(ticket, stateCookie);
   return ticket;
 }
 
-/** Redeem a pass on `label`'s host; the Live Doc cookie, or null when refused. */
-async function redeem(label: string, ticket: string): Promise<{ res: Response; cookie: string | null }> {
-  const res = await ask(liveHost(label), `/__markie/pass?ticket=${encodeURIComponent(ticket)}`);
+/** Redeem a pass on `label`'s host, as the browser that asked for it unless told otherwise; the Live Doc cookie, or null when refused. */
+async function redeem(label: string, ticket: string, stateCookie: string | null = stateFor.get(ticket) ?? null): Promise<{ res: Response; cookie: string | null }> {
+  const res = await ask(liveHost(label), `/__markie/pass?ticket=${encodeURIComponent(ticket)}`, stateCookie ? { cookie: stateCookie } : {});
   const line = res.headers.getSetCookie().find((value) => value.startsWith(`${COOKIE}=`) && !value.startsWith(`${COOKIE}=;`));
   return { res, cookie: line ? line.split(";")[0] : null };
 }
@@ -173,13 +190,21 @@ test("a shared editor is not the owner, so H1 gives them no address and no pass"
 // ── the pass flow ────────────────────────────────────────────────────────────
 
 test("the owner opens their private Live Doc through the pass", async () => {
-  // 1. No cookie on the live host: to the app host, carrying only the label.
+  // 1. No cookie on the live host: a nonce cookie on this host, and to the
+  //    app host carrying the label and the nonce's hash.
   const first = await ask(liveHost(labelA), "/");
   assert.equal(first.status, 302);
-  assert.equal(first.headers.get("location"), `${APP_ORIGIN}/live-docs/pass/${labelA}`);
+  const firstLocation = first.headers.get("location")!;
+  assert.match(firstLocation, new RegExp(`^${APP_ORIGIN.replace(/\./g, "\\.")}/live-docs/pass/${labelA}\\?state=[a-f0-9]{64}$`));
+  const stateLine = first.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}=`))!;
+  const [statePair, ...stateAttributes] = stateLine.split(";").map((part) => part.trim());
+  assert.match(statePair, /^__Host-markie-live-state=[A-Za-z0-9_-]{43}$/);
+  assert.deepEqual(stateAttributes.sort(), ["HttpOnly", "Max-Age=600", "Path=/", "SameSite=Lax", "Secure"].sort());
+  const state = new URL(firstLocation).searchParams.get("state")!;
+  assert.equal(state, sha(statePair.slice(`${STATE_COOKIE}=`.length)), "the app host is told only the nonce's hash");
 
   // 2. Signed in on the app host: a pass, sent to the label stored for the doc.
-  const pass = await ask(APP_HOST, `/live-docs/pass/${labelA}`, { cookie: ownerCookie });
+  const pass = await ask(APP_HOST, `/live-docs/pass/${labelA}?state=${state}`, { cookie: ownerCookie });
   assert.equal(pass.status, 302);
   assert.match(pass.headers.get("cache-control") ?? "", /no-store/);
   const target = new URL(pass.headers.get("location")!);
@@ -187,16 +212,18 @@ test("the owner opens their private Live Doc through the pass", async () => {
   assert.deepEqual([...target.searchParams.keys()], ["ticket"]);
   const ticket = target.searchParams.get("ticket")!;
   assert.ok(ticket.length >= 43, "32 random bytes");
-  const stored = db.prepare("SELECT ticket_hash, doc_id, user_id, label, expires_at - issued_at AS ttl FROM live_doc_tickets WHERE doc_id = ?").all(docA) as Array<{ ticket_hash: string; doc_id: string; user_id: string; label: string; ttl: number }>;
-  assert.ok(stored.some((row) => row.ticket_hash === sha(ticket) && row.user_id === owner.id && row.label === labelA && row.ttl === 60_000));
+  const stored = db.prepare("SELECT ticket_hash, doc_id, user_id, label, state_hash, expires_at - issued_at AS ttl FROM live_doc_tickets WHERE doc_id = ?").all(docA) as Array<{ ticket_hash: string; doc_id: string; user_id: string; label: string; state_hash: string; ttl: number }>;
+  assert.ok(stored.some((row) => row.ticket_hash === sha(ticket) && row.user_id === owner.id && row.label === labelA && row.state_hash === state && row.ttl === 60_000));
   assert.ok(!stored.some((row) => row.ticket_hash === ticket), "only the hash is stored");
 
-  // 3. The live host spends it: a host-only __Host- cookie, then `/`.
-  const redeemed = await ask(liveHost(labelA), `/__markie/pass?ticket=${encodeURIComponent(ticket)}`);
+  // 3. The live host spends it, from the browser holding the nonce: a
+  //    host-only __Host- cookie, the nonce cleared, then `/`.
+  const redeemed = await ask(liveHost(labelA), `/__markie/pass?ticket=${encodeURIComponent(ticket)}`, { cookie: statePair });
   assert.equal(redeemed.status, 303);
   assert.equal(redeemed.headers.get("location"), "/");
   const setCookie = redeemed.headers.getSetCookie();
-  assert.equal(setCookie.length, 1);
+  assert.equal(setCookie.length, 2);
+  assert.match(setCookie[1], /^__Host-markie-live-state=; Path=\/; Max-Age=0/);
   const [pair, ...attributes] = setCookie[0].split(";").map((part) => part.trim());
   assert.match(pair, /^__Host-markie-live=[A-Za-z0-9_-]{43}$/);
   assert.deepEqual(attributes.sort(), ["HttpOnly", "Max-Age=43200", "Path=/", "SameSite=Lax", "Secure"].sort());
@@ -235,6 +262,36 @@ test("a signed-out visitor is sent to the Markie sign-in, and back to the pass a
   const again = await ask(APP_HOST, `${location.pathname}${location.search}`, { cookie: ownerCookie });
   assert.equal(again.status, 302);
   assert.equal(again.headers.get("location"), `/live-docs/pass/${labelA}`);
+  // The browser's state rides through the sign-in and back.
+  const { state } = await startAt(labelA);
+  const withState = await ask(APP_HOST, `/live-docs/pass/${labelA}?state=${state}`);
+  const signIn = new URL(withState.headers.get("location")!);
+  assert.equal(signIn.searchParams.get("next"), `/live-docs/pass/${labelA}?state=${state}`);
+  const back = await ask(APP_HOST, `${signIn.pathname}${signIn.search}`, { cookie: ownerCookie });
+  assert.equal(back.headers.get("location"), `/live-docs/pass/${labelA}?state=${state}`);
+});
+
+test("a pass opens only in the browser that asked for it, and is burned by any other", async () => {
+  const ticket = await passFor(labelA, await browserSignIn(owner.email));
+  const elsewhere = await redeem(labelA, ticket, null);
+  assert.equal(elsewhere.res.status, 403, "a pass URL copied into a browser without the nonce");
+  assert.equal(elsewhere.cookie, null);
+  assert.ok(elsewhere.res.headers.getSetCookie().every((line) => !line.startsWith(`${COOKIE}=`)));
+  assert.equal((await redeem(labelA, ticket)).cookie, null, "and the pass is spent, even for the browser that asked");
+  const second = await passFor(labelA, await browserSignIn(owner.email));
+  const { stateCookie: someoneElse } = await startAt(labelA);
+  assert.equal((await redeem(labelA, second, someoneElse)).cookie, null, "another browser's own nonce does not match");
+});
+
+test("a pass link opened without the browser's nonce starts over at the Live Doc's own address", async () => {
+  const before = (db.prepare("SELECT COUNT(*) AS n FROM live_doc_tickets WHERE user_id = ?").get(owner.id) as { n: number }).n;
+  for (const query of ["", "?state=", "?state=abc", `?state=${"g".repeat(64)}`]) {
+    const res = await ask(APP_HOST, `/live-docs/pass/${labelA}${query}`, { cookie: ownerCookie });
+    assert.equal(res.status, 302, query);
+    assert.equal(res.headers.get("location"), `${liveOrigin(labelA)}/`, query);
+  }
+  const after = (db.prepare("SELECT COUNT(*) AS n FROM live_doc_tickets WHERE user_id = ?").get(owner.id) as { n: number }).n;
+  assert.equal(after, before, "no pass is issued without one");
 });
 
 test("a signed-in stranger is refused, and never gets a pass", async () => {
@@ -261,7 +318,7 @@ test("a ticket works once: replay fails", async () => {
   const replay = await redeem(labelA, ticket);
   assert.equal(replay.res.status, 403);
   assert.equal(replay.cookie, null);
-  assert.equal(replay.res.headers.getSetCookie().length, 0);
+  assert.deepEqual(replay.res.headers.getSetCookie().map((line) => line.split(";")[0]), [`${STATE_COOKIE}=`], "only the spent nonce is cleared");
 });
 
 test("a HEAD request to the redeem path does not spend the ticket", async () => {
@@ -281,13 +338,15 @@ test("two redeems racing with one ticket: exactly one wins", async () => {
 test("an expired ticket fails", async () => {
   const sessionId = (await auth.api.getSession({ headers: new Headers({ cookie: ownerCookie }) }))!.session.id;
   const binding = { docId: docA, userId: owner.id, authSessionId: sessionId, label: labelA };
-  const stale = issueLiveDocTicket(binding, Date.now() - LIVE_DOC_TICKET_TTL_MS - 1000)!;
-  const res = await redeem(labelA, stale.ticket);
+  const browser = newLiveDocState();
+  const stateCookie = `${STATE_COOKIE}=${browser.nonce}`;
+  const stale = issueLiveDocTicket(binding, browser.hash, Date.now() - LIVE_DOC_TICKET_TTL_MS - 1000)!;
+  const res = await redeem(labelA, stale.ticket, stateCookie);
   assert.equal(res.res.status, 403);
   assert.equal(res.cookie, null);
   // And one still inside its minute works, so the refusal above was the clock.
-  const fresh = issueLiveDocTicket(binding, Date.now() - LIVE_DOC_TICKET_TTL_MS + 5000)!;
-  assert.ok((await redeem(labelA, fresh.ticket)).cookie);
+  const fresh = issueLiveDocTicket(binding, browser.hash, Date.now() - LIVE_DOC_TICKET_TTL_MS + 5000)!;
+  assert.ok((await redeem(labelA, fresh.ticket, stateCookie)).cookie);
 });
 
 test("a ticket for doc A cannot open doc B, and is burned by trying", async () => {
@@ -311,7 +370,7 @@ test("a cookie minted for A's host does not open B", async () => {
   assert.equal((await ask(liveHost(labelA), "/", { cookie: cookieA })).status, 200);
   const onB = await ask(liveHost(labelB), "/", { cookie: cookieA });
   assert.equal(onB.status, 302);
-  assert.equal(onB.headers.get("location"), `${APP_ORIGIN}/live-docs/pass/${labelB}`);
+  assert.ok(onB.headers.get("location")!.startsWith(`${APP_ORIGIN}/live-docs/pass/${labelB}?state=`));
   assert.ok(!(await onB.text()).includes("Other doc"));
 });
 
@@ -402,11 +461,14 @@ test("the redirect to the live host cannot be pointed anywhere else", async () =
   }
   // The live host sends a visitor only to the configured app origin.
   const res = await ask(liveHost(labelA), "/", { headers: { referer: "https://evil.test/", origin: "https://evil.test" } });
-  assert.equal(res.headers.get("location"), `${APP_ORIGIN}/live-docs/pass/${labelA}`);
-  // The web sign-in's next accepts the pass path and nothing shaped like it.
+  assert.ok(res.headers.get("location")!.startsWith(`${APP_ORIGIN}/live-docs/pass/${labelA}?state=`));
+  // The web sign-in's next accepts the pass path, with or without a state, and nothing shaped like it.
   const { safeNext } = await import("./web-signin.ts");
   assert.equal(safeNext(`/live-docs/pass/${labelA}`), `/live-docs/pass/${labelA}`);
-  for (const bad of [`//evil.test/live-docs/pass/${labelA}`, `/live-docs/pass/${labelA}/../x`, `/live-docs/pass/${labelA}?x`, "/live-docs/pass/", `https://evil.test/live-docs/pass/${labelA}`]) {
+  const state = "a".repeat(64);
+  assert.equal(safeNext(`/live-docs/pass/${labelA}?state=${state}`), `/live-docs/pass/${labelA}?state=${state}`);
+  for (const bad of [`//evil.test/live-docs/pass/${labelA}`, `/live-docs/pass/${labelA}/../x`, `/live-docs/pass/${labelA}?x`, "/live-docs/pass/", `https://evil.test/live-docs/pass/${labelA}`,
+    `/live-docs/pass/${labelA}?state=abc`, `/live-docs/pass/${labelA}?state=${state}&next=//evil.test`, `/live-docs/pass/${labelA}?state=${state}#x`]) {
     assert.equal(safeNext(bad), "/", bad);
   }
 });
@@ -605,4 +667,36 @@ test("a browser that refuses the cookie gets a plain page, not a redirect loop",
     assert.equal((await ask(liveHost(labelA), "/", { cookie: cookie! })).status, 200);
   }
   assert.equal((await ask(APP_HOST, `/live-docs/pass/${labelA}`, { cookie: tabs })).status, 302);
+});
+
+// ── upgrades ─────────────────────────────────────────────────────────────────
+
+test("a WebSocket upgrade on a Live Doc host never reaches live editing", async () => {
+  const { createServer } = await import("node:http");
+  const { connect } = await import("node:net");
+  const { attachCollab } = await import("./collab.ts");
+  const { liveDocsConfig, upgradeAllowed } = await import("./live-docs-config.ts");
+  const config = liveDocsConfig();
+  const server = createServer((_req, res) => res.end());
+  attachCollab(server, { allowUpgrade: (req) => upgradeAllowed(req.headers, config) });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as { port: number }).port;
+  const upgrade = (host: string, extra = "") => new Promise<string>((resolve) => {
+    const socket = connect(port, "127.0.0.1");
+    let got = "";
+    socket.on("data", (chunk) => { got += chunk.toString("latin1"); });
+    socket.on("close", () => resolve(got));
+    socket.on("error", () => resolve(got));
+    socket.write(`GET /collab/doc-x?ticket=bad HTTP/1.1\r\nHost: ${host}\r\n${extra}Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    setTimeout(() => socket.destroy(), 3_000);
+  });
+  try {
+    assert.equal(await upgrade(liveHost(labelA)), "", "a Live Doc host gets no answer at all, the socket is closed");
+    assert.equal(await upgrade("live.localhost:8787"), "", "nor does the bare live domain");
+    assert.equal(await upgrade(`127.0.0.1:${port}`, `X-Forwarded-Host: ${liveHost(labelA)}\r\n`), "", "nor a request that names it in X-Forwarded-Host");
+    assert.match(await upgrade(`127.0.0.1:${port}`), /^HTTP\/1\.1 40[13] /, "the app host still reaches live editing, which refuses the bad ticket itself");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

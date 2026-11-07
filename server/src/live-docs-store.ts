@@ -5,7 +5,9 @@
 //                       derived from the doc id, so an address says nothing
 //                       about the document and cannot be worked out from it.
 //   live_doc_tickets    a pass: single use, 60 seconds, for one document,
-//                       one person, one sign-in and one label. Stored hashed.
+//                       one person, one sign-in, one label and one browser
+//                       (the hash of a nonce cookie the live host set before
+//                       sending the browser for the pass). Stored hashed.
 //   live_doc_sessions   what a pass becomes on the Live Doc's own host: a
 //                       random cookie value, stored hashed, bound the same way.
 //
@@ -36,6 +38,7 @@ db.exec(`
     user_id TEXT NOT NULL,
     auth_session_id TEXT NOT NULL,
     label TEXT NOT NULL,
+    state_hash TEXT NOT NULL DEFAULT '',
     issued_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
   );
@@ -56,6 +59,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_user ON live_doc_sessions(user_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_expiry ON live_doc_sessions(expires_at);
 `);
+
+// A database made before passes were bound to a browser: add the column. A
+// pass row without it can never be redeemed, since redeem requires a match.
+if (!(db.prepare("PRAGMA table_info(live_doc_tickets)").all() as Array<{ name: string }>).some((column) => column.name === "state_hash")) {
+  db.exec("ALTER TABLE live_doc_tickets ADD COLUMN state_hash TEXT NOT NULL DEFAULT ''");
+}
 
 /** How long a pass is good for, from the app host's redirect to the live host's redeem. */
 export const LIVE_DOC_TICKET_TTL_MS = 60 * 1000;
@@ -161,7 +170,8 @@ export interface LiveDocBinding {
  * minute. Expired rows go on the way in, so the table only ever holds passes
  * that could still be used.
  */
-export function issueLiveDocTicket(binding: LiveDocBinding, now = Date.now()): { ticket: string; expiresAt: number } | null {
+export function issueLiveDocTicket(binding: LiveDocBinding, stateHash: string, now = Date.now()): { ticket: string; expiresAt: number } | null {
+  if (!/^[a-f0-9]{64}$/.test(stateHash)) throw new Error("a pass needs the browser's state hash");
   return db.transaction(() => {
     db.prepare("DELETE FROM live_doc_tickets WHERE expires_at <= ?").run(now);
     const recent = (db
@@ -171,24 +181,32 @@ export function issueLiveDocTicket(binding: LiveDocBinding, now = Date.now()): {
     const ticket = randomBytes(32).toString("base64url");
     const expiresAt = now + LIVE_DOC_TICKET_TTL_MS;
     db.prepare(
-      "INSERT INTO live_doc_tickets (ticket_hash, doc_id, user_id, auth_session_id, label, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).run(hash(ticket), binding.docId, binding.userId, binding.authSessionId, binding.label, now, expiresAt);
+      "INSERT INTO live_doc_tickets (ticket_hash, doc_id, user_id, auth_session_id, label, state_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(hash(ticket), binding.docId, binding.userId, binding.authSessionId, binding.label, stateHash, now, expiresAt);
     return { ticket, expiresAt };
   })();
 }
 
 /**
- * Spends a pass on `label`'s host. The row is deleted in the same statement
- * that reads it, so two requests racing with one pass cannot both win, and a
- * pass shown to the wrong host is burned rather than kept for the right one.
+ * Spends a pass on `label`'s host, from the browser holding `stateNonce`. The
+ * row is deleted in the same statement that reads it, so two requests racing
+ * with one pass cannot both win, and a pass shown to the wrong host or from
+ * the wrong browser is burned rather than kept for the right one.
  */
-export function consumeLiveDocTicket(ticket: string, label: string, now = Date.now()): LiveDocBinding | null {
+export function consumeLiveDocTicket(ticket: string, label: string, stateNonce: string | null, now = Date.now()): LiveDocBinding | null {
   if (!ticket || ticket.length > 128) return null;
   const row = db
-    .prepare("DELETE FROM live_doc_tickets WHERE ticket_hash = ? RETURNING doc_id, user_id, auth_session_id, label, expires_at")
-    .get(hash(ticket)) as { doc_id: string; user_id: string; auth_session_id: string; label: string; expires_at: number } | undefined;
+    .prepare("DELETE FROM live_doc_tickets WHERE ticket_hash = ? RETURNING doc_id, user_id, auth_session_id, label, state_hash, expires_at")
+    .get(hash(ticket)) as { doc_id: string; user_id: string; auth_session_id: string; label: string; state_hash: string; expires_at: number } | undefined;
   if (!row || row.label !== label || row.expires_at <= now) return null;
+  if (!stateNonce || stateNonce.length > 128 || !row.state_hash || hash(stateNonce) !== row.state_hash) return null;
   return { docId: row.doc_id, userId: row.user_id, authSessionId: row.auth_session_id, label: row.label };
+}
+
+/** A fresh browser nonce for the pass, and the hash the app host is told. */
+export function newLiveDocState(): { nonce: string; hash: string } {
+  const nonce = randomBytes(32).toString("base64url");
+  return { nonce, hash: hash(nonce) };
 }
 
 /** The cookie value for a redeemed pass. Only its hash is stored. */

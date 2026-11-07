@@ -122,7 +122,9 @@ Each compile runs in its own short-lived Node process (`server/src/live-docs-chi
 - 8 seconds of wall clock, then SIGKILL;
 - capped stdout and stderr, and a one-line JSON reply that the server validates before use.
 
-On Node 26 the permission model also refuses network connections. Node 22 has no network permission, so the child removes the network globals before the compiler loads.
+Production runs Node 22, whose permission model has no network permission. The child removes the network globals (`fetch`, `WebSocket` and the like) before the compiler loads, but `node:net` and `node:http` stay importable. That is acceptable only because the compiler never runs the source as code: Darkmown parses it, and its expressions are a closed AST, so nothing in a Live Doc can reach an import. Moving the image to Node 25 or later turns on the network permission as a second wall.
+
+A compile that fails (out of time or memory) is remembered for 5 minutes, so reloading a broken Live Doc starts no new process. Each owner may have one compile running and four in flight at once, and past that gets "busy" for themselves alone, so one account cannot hold every slot.
 
 Results are cached by source hash and compiler version, so each change to a Live Doc pays for one process start. The server image needs nothing extra: the child and everything it imports are under `src/` and the production `node_modules`.
 

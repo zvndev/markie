@@ -129,17 +129,44 @@ test("the Mac preview's own limits refuse before any child: 128,000 characters, 
   assert.equal(compiler.childrenStarted(), 0);
 });
 
-test("a compile past its time limit is killed, and the next try runs again", async () => {
+test("a compile past its time limit is killed, remembered for a while, then tried again", async () => {
   // One millisecond is shorter than a process takes to load the compiler, so
   // this stops every compile at the wall clock, deterministically.
   const pids: number[] = [];
   const compiler = compilerFor({ timeoutMs: 1, onSpawn: (pid) => { pids.push(pid); onSpawn(pid); } });
   const result = await compiler.compile("# Slow\n");
   assert.deepEqual(result, { ok: false, kind: "failed", message: "This Live Doc took too long to compile, so it was stopped." });
-  await compiler.compile("# Slow\n");
-  assert.equal(compiler.childrenStarted(), 2, "a timeout is not cached against the document");
-  assert.equal(pids.length, 2);
+  assert.deepEqual(await compiler.compile("# Slow\n"), result);
+  assert.equal(compiler.childrenStarted(), 1, "a reload of a source that just failed starts no new process");
+  // Once the failure is old enough, the next load tries again.
+  const forgetful = compilerFor({ timeoutMs: 1, failedTtlMs: 0, onSpawn: (pid) => { pids.push(pid); onSpawn(pid); } });
+  await forgetful.compile("# Slow\n");
+  await forgetful.compile("# Slow\n");
+  assert.equal(forgetful.childrenStarted(), 2);
+  assert.equal(pids.length, 3);
   for (const pid of pids) assert.equal(isRunning(pid), false, `compile process ${pid} is still running`);
+});
+
+test("one owner cannot hold every compile slot, or more than their share of the queue", async () => {
+  const compiler = compilerFor({ timeoutMs: UNHURRIED, maxConcurrent: 2, maxQueued: 16, maxRunningPerOwner: 1, maxInFlightPerOwner: 2 });
+  const doc = (n: number) => `# Doc ${n}\n\nUnique body ${n} ${Math.random()}\n`;
+  // The heavy owner opens five different documents at once: one runs, one
+  // waits, and three are told "busy" for them alone.
+  const heavy = [0, 1, 2, 3, 4].map((n) => compiler.compile(doc(n), "heavy"));
+  // Someone else still gets the second slot straight away.
+  const other = await compiler.compile(doc(99), "other");
+  assert.ok(other.ok, JSON.stringify(other));
+  const results = await Promise.all(heavy);
+  assert.equal(results.filter((result) => result.ok).length, 2);
+  assert.equal(results.filter((result) => !result.ok && result.kind === "busy").length, 3);
+  // Their limit is about what is in flight, so it frees up as compiles finish.
+  assert.ok((await compiler.compile(doc(5), "heavy")).ok);
+});
+
+test("warnings are not kept with a compiled page", async () => {
+  const result = await compilerFor({ timeoutMs: UNHURRIED }).compile(":nope one\n:nope two\n\n# Page\n");
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.page.warnings, []);
 });
 
 test("a child that never finishes is killed with SIGKILL at the time limit", async () => {
@@ -192,9 +219,9 @@ test("a real compile past its memory limit dies alone, while a small one fits", 
   assert.ok(light.ok, `the limit leaves room for an ordinary compile: ${JSON.stringify(light)}`);
   const result = await compiler.compile(HEAVY);
   assert.deepEqual(result, { ok: false, kind: "failed", message: "This Live Doc needed too much memory to compile, so it was stopped." });
-  // Not cached: the same compiler tries again on the next load.
-  await compiler.compile(HEAVY);
-  assert.equal(compiler.childrenStarted(), 3);
+  // Remembered: a reload of the same source starts no new process.
+  assert.deepEqual(await compiler.compile(HEAVY), result);
+  assert.equal(compiler.childrenStarted(), 2);
   // The production limit compiles the same source.
   const production = await compilerFor({ timeoutMs: UNHURRIED }).compile(HEAVY);
   assert.ok(production.ok, JSON.stringify(production));

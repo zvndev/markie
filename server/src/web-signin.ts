@@ -23,7 +23,7 @@ import { auth } from "./auth.ts";
 import { reportRouteFault } from "./little-friend.ts";
 import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
 
-const NEXT = /^(?:\/d\/[A-Za-z0-9_-]{1,128}|\/live-docs\/pass\/[a-z2-7]{16})$/;
+const NEXT = /^(?:\/d\/[A-Za-z0-9_-]{1,128}|\/live-docs\/pass\/[a-z2-7]{16}(?:\?state=[a-f0-9]{64})?)$/;
 // The web app's pages (web-app.ts): its library, the new-document chooser,
 // and one document. A signed-out visit to any of them comes back here.
 const APP_NEXT = /^\/app(?:\/|\/new|\/d\/[A-Za-z0-9_-]{1,128})?$/;

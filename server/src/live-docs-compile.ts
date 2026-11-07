@@ -200,9 +200,13 @@ export type LiveDocCompile =
   | { ok: true; page: LiveDocPage }
   /** The source itself was refused: too large, too complex, or not valid Darkmown. Cached. */
   | { ok: false; kind: "refused"; message: string }
-  /** The compile did not finish: timed out, ran out of memory or crashed. Not cached. */
+  /**
+   * The compile did not finish: timed out, ran out of memory or crashed.
+   * Remembered for LIVE_DOC_FAILED_TTL_MS, since the same source under the
+   * same limits fails the same way, and a reload must not start a new process.
+   */
   | { ok: false; kind: "failed"; message: string }
-  /** Too many compiles in flight. Not cached; the next load tries again. */
+  /** Too many compiles in flight, overall or for this owner. Not cached; the next load tries again. */
   | { ok: false; kind: "busy"; message: string };
 
 const PAGE_KEYS = "bodyHtml,seeds,title,warnings";
@@ -254,11 +258,20 @@ export function interpretLiveDocChildRun(run: LiveDocChildRun): LiveDocCompile {
   return parseReply(run.stdout) ?? failed("The Live Doc compiler returned an invalid result.");
 }
 
+/** How long a source that failed to compile is answered from memory. */
+export const LIVE_DOC_FAILED_TTL_MS = 5 * 60 * 1000;
+
 export interface LiveDocCompilerOptions {
   timeoutMs?: number;
   heap?: LiveDocHeap;
   maxConcurrent?: number;
   maxQueued?: number;
+  /** Compiles one owner may have running at once. Their others wait. */
+  maxRunningPerOwner?: number;
+  /** Compiles one owner may have running or waiting. Past it, "busy" for them alone. */
+  maxInFlightPerOwner?: number;
+  failedTtlMs?: number;
+  failedEntries?: number;
   cacheEntries?: number;
   cacheBytes?: number;
   /** Test seam: told each compile process's id as it starts. */
@@ -272,16 +285,45 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
   const maxQueued = options.maxQueued ?? 16;
   const cacheEntries = options.cacheEntries ?? 200;
   const cacheBytes = options.cacheBytes ?? 64 * 1024 * 1024;
+  const maxRunningPerOwner = options.maxRunningPerOwner ?? 1;
+  const maxInFlightPerOwner = options.maxInFlightPerOwner ?? 4;
+  const failedTtlMs = options.failedTtlMs ?? LIVE_DOC_FAILED_TTL_MS;
+  const failedEntries = options.failedEntries ?? 1_000;
 
   // Insertion-ordered, so the first key is the least recently used.
   const cache = new Map<string, { result: LiveDocCompile; bytes: number }>();
   let cachedBytes = 0;
   const inFlight = new Map<string, Promise<LiveDocCompile>>();
   let running = 0;
-  const waiting: Array<() => void> = [];
+  // Who may take the next free slot: the first waiter whose owner is under
+  // their running limit, so one owner's queue never stands in front of others.
+  const waiting: Array<{ owner: string | undefined; start: () => void }> = [];
+  const runningBy = new Map<string, number>();
+  const inFlightBy = new Map<string, number>();
+  // Sources whose compile failed, with when they may be tried again.
+  const failures = new Map<string, { result: LiveDocCompile; until: number }>();
   let childrenStarted = 0;
 
+  const bump = (counts: Map<string, number>, owner: string, by: number) => {
+    const next = (counts.get(owner) ?? 0) + by;
+    if (next > 0) counts.set(owner, next);
+    else counts.delete(owner);
+  };
+
+  const rememberFailure = (key: string, result: LiveDocCompile) => {
+    failures.delete(key);
+    failures.set(key, { result, until: Date.now() + failedTtlMs });
+    for (const oldest of failures.keys()) {
+      if (failures.size <= failedEntries) break;
+      failures.delete(oldest);
+    }
+  };
+
   const remember = (key: string, result: LiveDocCompile) => {
+    if (!result.ok && result.kind === "failed") {
+      rememberFailure(key, result);
+      return;
+    }
     if (!result.ok && result.kind !== "refused") return;
     const bytes = result.ok
       ? result.page.bodyHtml.length + result.page.seeds.reduce((sum, seed) => sum + seed.length, 0) + result.page.title.length
@@ -301,22 +343,55 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
     return interpretLiveDocChildRun(await runLiveDocChild(source, { timeoutMs, heap, onSpawn: options.onSpawn }));
   };
 
-  const withSlot = async (source: string): Promise<LiveDocCompile> => {
-    if (running >= maxConcurrent) {
-      if (waiting.length >= maxQueued) return { ok: false, kind: "busy", message: "Live Docs are busy. Try again in a moment." };
-      await new Promise<void>((resolve) => waiting.push(resolve));
-    }
-    running += 1;
-    try {
-      return await runChild(source);
-    } finally {
-      running -= 1;
-      waiting.shift()?.();
+  // `owner` undefined means no per-owner limit (tests, and any caller that
+  // does not know whose document it is); only the global limits apply.
+  const underOwnerLimit = (owner: string | undefined) => owner === undefined || (runningBy.get(owner) ?? 0) < maxRunningPerOwner;
+  const mayStart = (owner: string | undefined) => running < maxConcurrent && underOwnerLimit(owner);
+
+  const startNext = () => {
+    while (running < maxConcurrent) {
+      const index = waiting.findIndex((waiter) => underOwnerLimit(waiter.owner));
+      if (index === -1) return;
+      const [waiter] = waiting.splice(index, 1);
+      running += 1;
+      if (waiter!.owner !== undefined) bump(runningBy, waiter!.owner, 1);
+      waiter!.start();
     }
   };
 
-  /** The compiled, sanitized page for this source, from cache when it has not changed. */
-  async function compile(source: string): Promise<LiveDocCompile> {
+  const BUSY: LiveDocCompile = { ok: false, kind: "busy", message: "Live Docs are busy. Try again in a moment." };
+
+  const withSlot = async (source: string, owner: string | undefined): Promise<LiveDocCompile> => {
+    if (owner !== undefined && (inFlightBy.get(owner) ?? 0) >= maxInFlightPerOwner) return BUSY;
+    if (!mayStart(owner) && waiting.length >= maxQueued) return BUSY;
+    // Counted from the moment it is accepted, waiting included, so an owner's
+    // queue is bounded too.
+    if (owner !== undefined) bump(inFlightBy, owner, 1);
+    try {
+      if (mayStart(owner)) {
+        running += 1;
+        if (owner !== undefined) bump(runningBy, owner, 1);
+      } else {
+        await new Promise<void>((start) => waiting.push({ owner, start }));
+      }
+      try {
+        return await runChild(source);
+      } finally {
+        running -= 1;
+        if (owner !== undefined) bump(runningBy, owner, -1);
+        startNext();
+      }
+    } finally {
+      if (owner !== undefined) bump(inFlightBy, owner, -1);
+    }
+  };
+
+  /**
+   * The compiled, sanitized page for this source, from cache when it has not
+   * changed. `owner` is whose document it is, so one account cannot hold
+   * every compile slot.
+   */
+  async function compile(source: string, owner?: string): Promise<LiveDocCompile> {
     if (typeof source !== "string" || source.length > LIVE_DOC_SOURCE_LIMIT) {
       return { ok: false, kind: "refused", message: "Live Docs can be up to 200,000 characters." };
     }
@@ -326,6 +401,11 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
       cache.delete(key);
       cache.set(key, hit);
       return hit.result;
+    }
+    const failure = failures.get(key);
+    if (failure) {
+      if (failure.until > Date.now()) return failure.result;
+      failures.delete(key);
     }
     // The cheap closed-subset checks, before any process exists.
     try {
@@ -337,9 +417,13 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
     }
     const pending = inFlight.get(key);
     if (pending) return pending;
-    const run = withSlot(source).then((result) => {
-      remember(key, result);
-      return result;
+    const run = withSlot(source, owner).then((result) => {
+      // The page never shows compiler warnings, so neither the cache nor the
+      // caller keeps them: thousands of them would otherwise sit in memory
+      // outside the cache's byte budget.
+      const kept: LiveDocCompile = result.ok ? { ok: true, page: { ...result.page, warnings: [] } } : result;
+      remember(key, kept);
+      return kept;
     }).finally(() => inFlight.delete(key));
     inFlight.set(key, run);
     return run;
@@ -352,6 +436,7 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
     clearCache: () => {
       cache.clear();
       cachedBytes = 0;
+      failures.clear();
     },
   };
 }

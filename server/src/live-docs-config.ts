@@ -161,14 +161,28 @@ const same = (a: LiveHost, b: LiveHost) =>
  * other is refused, so neither header alone can carry a request across.
  */
 export function classifyRequestHost(request: Request, config: LiveDocsConfig): LiveHost {
-  const host = request.headers.get("host");
-  const forwarded = request.headers.get("x-forwarded-host");
+  return classifyHostHeaders(request.headers.get("host"), request.headers.get("x-forwarded-host"), config, request.url);
+}
+
+/**
+ * Whether a WebSocket upgrade may reach the app's socket handlers: only on an
+ * app host. The live dispatch in index.ts sees Hono requests only, and an
+ * upgrade never becomes one, so the upgrade listener asks this itself.
+ */
+export function upgradeAllowed(headers: Readonly<Record<string, string | string[] | undefined>>, config: LiveDocsConfig | null): boolean {
+  if (!config) return true;
+  const one = (value: string | string[] | undefined) => (Array.isArray(value) ? value.join(",") : value) ?? null;
+  return classifyHostHeaders(one(headers.host), one(headers["x-forwarded-host"]), config).kind === "app";
+}
+
+function classifyHostHeaders(host: string | null, forwarded: string | null, config: LiveDocsConfig, url?: string): LiveHost {
   const fromHost = host ? classifyOne(host, config) : null;
   const fromForwarded = forwarded ? classifyOne(forwarded, config) : null;
   if (fromHost && fromForwarded) return same(fromHost, fromForwarded) ? fromHost : { kind: "refused" };
   if (fromHost ?? fromForwarded) return (fromHost ?? fromForwarded)!;
+  if (!url) return { kind: "app" };
   try {
-    return classifyOne(new URL(request.url).host, config);
+    return classifyOne(new URL(url).host, config);
   } catch {
     return { kind: "app" };
   }

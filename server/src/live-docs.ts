@@ -14,16 +14,20 @@
 //
 // Opening a private Live Doc (design, "Security model" 4):
 //
-//   1. The live host has no valid cookie: it redirects to the app host's
-//      /live-docs/pass/<label>, carrying the label and nothing else.
+//   1. The live host has no valid cookie: it sets a short-lived nonce cookie
+//      on its own host and redirects to the app host's
+//      /live-docs/pass/<label>?state=<hash of the nonce>.
 //   2. The app host checks the Markie sign-in (the existing web sign-in if
 //      there is none) and access through the same accessLevel documents use.
-//      Allowed: a pass, single use, 60 seconds, bound to doc, person, sign-in
-//      and label, stored hashed. The redirect to the live host is built from
-//      the label stored for the document, never from the request.
-//   3. The live host spends the pass and sets a host-only `__Host-` cookie
-//      whose value is a random id looked up server-side, then redirects to `/`
-//      so the pass leaves the address bar.
+//      Allowed: a pass, single use, 60 seconds, bound to doc, person, sign-in,
+//      label and that state hash, stored hashed. The redirect to the live host
+//      is built from the label stored for the document, never from the request.
+//   3. The live host spends the pass only alongside the nonce cookie whose
+//      hash it was bound to, the OAuth `state` pattern: a pass URL copied into
+//      another browser opens nothing, and nobody can plant their own Live Doc
+//      session in someone else's browser. It then sets a host-only `__Host-`
+//      cookie whose value is a random id looked up server-side, and redirects
+//      to `/` so the pass leaves the address bar.
 //   4. Every load re-checks the document, the sign-in and access against the
 //      database. A deleted document or lost access refuses the next load.
 //
@@ -43,7 +47,7 @@ import {
 import {
   LIVE_DOC_SESSION_TTL_MS, canOpenLiveDoc, consumeLiveDocTicket, createLiveDocSession, docIdForLabel,
   endLiveDocSession, ensureLiveDocLabel, issueLiveDocTicket, liveDocCookieRefused, liveDocLabel, liveDocSessionFor,
-  loadLiveDoc, markLiveDocSessionUsed, type LiveDocBinding,
+  loadLiveDoc, markLiveDocSessionUsed, newLiveDocState, type LiveDocBinding,
 } from "./live-docs-store.ts";
 
 /** The cookie on a Live Doc's own host. `__Host-`: Secure, Path=/, no Domain. */
@@ -52,6 +56,11 @@ export const LIVE_DOC_COOKIE = "__Host-markie-live";
 export const LIVE_DOC_REDEEM_PATH = "/__markie/pass";
 /** Where the app host mints one. */
 export const LIVE_DOC_PASS_PREFIX = "/live-docs/pass/";
+/** The nonce cookie that binds a pass to the browser that asked for it. */
+export const LIVE_DOC_STATE_COOKIE = "__Host-markie-live-state";
+/** Long enough to sign in to Markie on the way, short enough to go stale. */
+export const LIVE_DOC_STATE_TTL_S = 10 * 60;
+const STATE_HASH = /^[a-f0-9]{64}$/;
 
 function cookieFrom(request: Request, name: string): string | null {
   const header = request.headers.get("cookie");
@@ -67,6 +76,9 @@ function cookieFrom(request: Request, name: string): string | null {
 const setCookieHeader = (value: string, maxAgeSeconds: number) =>
   `${LIVE_DOC_COOKIE}=${value}; Path=/; Max-Age=${maxAgeSeconds}; Secure; HttpOnly; SameSite=Lax`;
 const clearCookieHeader = () => `${LIVE_DOC_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`;
+const setStateHeader = (nonce: string) =>
+  `${LIVE_DOC_STATE_COOKIE}=${nonce}; Path=/; Max-Age=${LIVE_DOC_STATE_TTL_S}; Secure; HttpOnly; SameSite=Lax`;
+const clearStateHeader = () => `${LIVE_DOC_STATE_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`;
 
 /** Whether a stored binding still opens `label`, read from the database now. */
 function stillOpens(binding: LiveDocBinding, label: string): boolean {
@@ -105,8 +117,10 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
     c.html(renderLiveNotice(heading, line, link), status);
 
   const toPass = (c: Context, label: string, clearCookie: boolean) => {
-    const headers = new Headers({ location: passUrl(label) });
+    const state = newLiveDocState();
+    const headers = new Headers({ location: `${passUrl(label)}?state=${state.hash}` });
     if (clearCookie) headers.append("set-cookie", clearCookieHeader());
+    headers.append("set-cookie", setStateHeader(state.nonce));
     return new Response(null, { status: 302, headers });
   };
 
@@ -115,13 +129,16 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
     // browser's own GET is about to bring.
     if (c.req.method !== "GET") return c.text("Not found", 404);
     const label = c.env.label;
-    const binding = consumeLiveDocTicket(c.req.query("ticket") ?? "", label);
+    const stateNonce = cookieFrom(c.req.raw, LIVE_DOC_STATE_COOKIE);
+    const binding = consumeLiveDocTicket(c.req.query("ticket") ?? "", label, stateNonce);
     if (!binding || !stillOpens(binding, label)) {
-      return notice(c, 403, "This pass has expired", "Passes work once, for a minute. Open the Live Doc again to get a new one.", { href: "/", label: "Open this Live Doc" });
+      c.header("set-cookie", clearStateHeader());
+      return notice(c, 403, "This pass didn't work", "A pass works once, for a minute, in the browser that asked for it. If cookies are off for this site, turn them on. Then open the Live Doc again.", { href: "/", label: "Open this Live Doc" });
     }
     const session = createLiveDocSession(binding);
     const headers = new Headers({ location: "/" });
     headers.append("set-cookie", setCookieHeader(session.value, Math.floor(LIVE_DOC_SESSION_TTL_MS / 1000)));
+    headers.append("set-cookie", clearStateHeader());
     return new Response(null, { status: 303, headers });
   });
 
@@ -141,7 +158,7 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
     }
     // The cookie came back, so it stuck; the pass's loop guard counts on this.
     markLiveDocSessionUsed(value!);
-    const compiled = await compiler.compile(doc.content);
+    const compiled = await compiler.compile(doc.content, doc.ownerId);
     if (!compiled.ok) {
       if (compiled.kind === "refused") return notice(c, 422, "This Live Doc can't be hosted yet", compiled.message);
       return notice(c, 503, "This Live Doc didn't load", compiled.message, { href: "/", label: "Try again" });
@@ -188,6 +205,11 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
     c.header("Cache-Control", "private, no-store");
     c.header("Referrer-Policy", "no-referrer");
     const label = c.req.param("label");
+    // The hash of the nonce cookie the live host set on this browser. Kept
+    // through the web sign-in, and bound into the pass.
+    const rawState = c.req.query("state");
+    const state = typeof rawState === "string" && STATE_HASH.test(rawState) ? rawState : null;
+    const back = `${LIVE_DOC_PASS_PREFIX}${label}${state ? `?state=${state}` : ""}`;
     const refused = (signedInAs: string | null) =>
       c.html(renderSignInNotice({
         title: "No access",
@@ -197,7 +219,7 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
           ["Live Docs open only for the account that owns them. If it's yours, sign in with that account."],
         ],
         action: LIVE_DOC_LABEL.test(label)
-          ? { href: webSignInHrefFor(appOrigin, `${LIVE_DOC_PASS_PREFIX}${label}`, { switchAccount: true })!, label: "Sign in with a different account" }
+          ? { href: webSignInHrefFor(appOrigin, back, { switchAccount: true })!, label: "Sign in with a different account" }
           : null,
       }), 404);
     if (!LIVE_DOC_LABEL.test(label)) return refused(null);
@@ -209,7 +231,7 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
     // back here. The same page answers for a label that does not exist, so a
     // signed-out visitor learns nothing about which addresses are real.
     if (!user?.id || !sessionId || !liveSession(user.id, sessionId)) {
-      return c.redirect(webSignInHrefFor(appOrigin, `${LIVE_DOC_PASS_PREFIX}${label}`)!, 302);
+      return c.redirect(webSignInHrefFor(appOrigin, back)!, 302);
     }
     const docId = docIdForLabel(label);
     if (!docId || !canOpenLiveDoc(docId, user.id)) return refused(user.email ?? null);
@@ -226,7 +248,12 @@ export function createLiveDocs({ config, appOrigin, siteUrl, compiler = createLi
         action: { href: `${liveDocOrigin(config, stored)}/`, label: "Try again" },
       }), 409);
     }
-    const issued = issueLiveDocTicket({ docId, userId: user.id, authSessionId: sessionId, label: stored });
+    // No browser nonce (a pass link opened directly, or a stale one): start
+    // at the Live Doc's own address, which sets one and sends the browser back.
+    if (!state) {
+      return new Response(null, { status: 302, headers: { location: `${liveDocOrigin(config, stored)}/`, "cache-control": "private, no-store", "referrer-policy": "no-referrer" } });
+    }
+    const issued = issueLiveDocTicket({ docId, userId: user.id, authSessionId: sessionId, label: stored }, state);
     if (!issued) {
       c.header("Retry-After", "60");
       return c.text("Too many Live Docs opened in the last minute. Wait a moment and try again.", 429);

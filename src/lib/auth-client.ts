@@ -596,6 +596,24 @@ export interface SharedByMeDoc {
 // primary server here, any other through src/lib/server-sessions.ts.
 export type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; data: T | null }>;
 
+/** A Live Doc's addresses, as the server hands them out (server/src/live-docs.ts). */
+export interface LiveDocAddress {
+  url: string;
+  access: "private" | "shared" | "public";
+  publicUrl: string | null;
+}
+
+/** An https address, or http on a loopback name for local development; else null. */
+function liveDocUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || (parsed.protocol === "http:" && /(^|\.)localhost$/.test(parsed.hostname)) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export function makeSharesClient(request: ApiRequest) {
   // Whether this server has shown it issues collab tickets. Once it has, a
   // later 404 is never read as "this server is too old", so one odd answer
@@ -687,20 +705,20 @@ export function makeSharesClient(request: ApiRequest) {
       return res.ok;
     },
 
-    // A cloud .wd's hosted Live Doc address (server/src/live-docs.ts), for its
-    // owner. null when the server has no Live Docs, the document is not a
-    // Live Doc, or the caller does not own it: the server answers all three
-    // with a 404 and the Library says it has no address.
-    liveDocAddress: async (docId: string): Promise<string | null> => {
-      const res = await request<{ url?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
-      const url = res.ok && typeof res.data?.url === "string" ? res.data.url : null;
+    // A cloud .wd's hosted Live Doc addresses (server/src/live-docs.ts). The
+    // private address goes to everyone it opens for, the owner and its
+    // members; the public one, while the public link is on, to the owner
+    // only. null when the server has no Live Docs, the document is not a Live
+    // Doc, or the caller cannot open it: the server answers all three with a
+    // 404 and the Library says it has no address. Anything that is not a web
+    // address is no address.
+    liveDocAddress: async (docId: string): Promise<LiveDocAddress | null> => {
+      const res = await request<{ url?: unknown; access?: unknown; publicUrl?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
+      if (!res.ok || !res.data) return null;
+      const url = liveDocUrl(res.data.url);
       if (!url) return null;
-      try {
-        const parsed = new URL(url);
-        return parsed.protocol === "https:" || (parsed.protocol === "http:" && /(^|\.)localhost$/.test(parsed.hostname)) ? parsed.href : null;
-      } catch {
-        return null;
-      }
+      const access = res.data.access === "shared" || res.data.access === "public" ? res.data.access : "private";
+      return { url, access, publicUrl: liveDocUrl(res.data.publicUrl) };
     },
 
     // A pass for the live-editing socket, so the session token stays out of

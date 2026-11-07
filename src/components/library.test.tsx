@@ -5,7 +5,8 @@ import type { ElectronAPI, LibraryItem } from "@/lib/electron";
 import type { LibraryRecord } from "@/lib/document-library";
 import { installBridge } from "@/test/mock-bridge";
 
-const liveDocAddress = vi.fn<(docId: string) => Promise<string | null>>(async () => "https://abcdefghijklmnop.markie.live/");
+type LiveDocAddressAnswer = { url: string; access: "private" | "shared" | "public"; publicUrl: string | null } | null;
+const liveDocAddress = vi.fn<(docId: string) => Promise<LiveDocAddressAnswer>>(async () => ({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null }));
 vi.mock("@/lib/auth-client", () => ({
   sharesClient: { sharedByMe: async () => [], liveDocAddress: (docId: string) => liveDocAddress(docId) },
   getAuthToken: () => "confirmed-session", getServerURL: () => "https://account.example.test", getConfirmedAuthIdentity: () => ({ userId: "user-a", serverURL: "https://account.example.test" }),
@@ -1022,11 +1023,34 @@ describe("a cloud Live Doc's address (nightly)", () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("is not offered for a .md, a local-only .wd, a .wd shared with me, or outside nightly", async () => {
+  it("copies the public address for the owner, and says so when the Live Doc is not public", async () => {
+    renderLibrary([wd()]);
+    const writeText = stubClipboard();
+    let menu = await openMenu("counter.wd");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy public Live Doc address" }));
+    expect(await screen.findByText(/isn't public/)).toBeInTheDocument();
+    expect(writeText).not.toHaveBeenCalled();
+    liveDocAddress.mockResolvedValueOnce({ url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/" });
+    menu = await openMenu("counter.wd");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy public Live Doc address" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://qrstuvwxyz234567.markie.live/"));
+  });
+
+  it("offers a .wd shared with me its private address, never a public one", async () => {
+    liveDocAddress.mockResolvedValueOnce({ url: "https://abcdefghijklmnop.markie.live/", access: "shared", publicUrl: null });
+    renderLibrary([item({ name: "theirs.wd", path: "/notes/theirs.wd", state: "synced", cloudId: "t1", shared: true, owned: false } as Partial<LibraryItem>)]);
+    const writeText = stubClipboard();
+    const menu = await openMenu("theirs.wd");
+    expect(within(menu).queryByRole("menuitem", { name: "Copy public Live Doc address" })).not.toBeInTheDocument();
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy Live Doc address" }));
+    expect(writeText).toHaveBeenCalledWith("https://abcdefghijklmnop.markie.live/");
+    expect(await screen.findByText(/everyone it's shared with/)).toBeInTheDocument();
+  });
+
+  it("is not offered for a .md, a local-only .wd, or outside nightly", async () => {
     const cases: Array<[LibraryItem, string]> = [
       [item({ name: "notes.md", state: "synced", cloudId: "m1" }), "notes.md"],
       [item({ name: "solo.wd", path: "/notes/solo.wd" }), "solo.wd"],
-      [item({ name: "theirs.wd", path: "/notes/theirs.wd", state: "synced", cloudId: "t1", shared: true, owned: false } as Partial<LibraryItem>), "theirs.wd"],
     ];
     for (const [row, name] of cases) {
       const { view } = renderLibrary([row]);

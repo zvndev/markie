@@ -13,12 +13,22 @@ function serverAnswering(status: number, data: unknown) {
 describe("liveDocAddress", () => {
   it("asks the document's live-doc route and hands back its address", async () => {
     const { client, request } = serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "private" });
-    expect(await client.liveDocAddress("doc/1")).toBe("https://abcdefghijklmnop.markie.live/");
+    expect(await client.liveDocAddress("doc/1")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null });
     expect(request).toHaveBeenCalledWith("/api/docs/doc%2F1/live-doc");
   });
 
+  it("hands the owner the public address too, while the public link is on", async () => {
+    const { client } = serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/" });
+    expect(await client.liveDocAddress("d")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/" });
+  });
+
+  it("drops a public address that is not a web address, and an access level it does not know", async () => {
+    const { client } = serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "everyone", publicUrl: "javascript:alert(1)" });
+    expect(await client.liveDocAddress("d")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null });
+  });
+
   it("accepts a loopback address for local development", async () => {
-    expect(await serverAnswering(200, { url: "http://abcdefghijklmnop.localhost:8787/" }).client.liveDocAddress("d")).toBe("http://abcdefghijklmnop.localhost:8787/");
+    expect((await serverAnswering(200, { url: "http://abcdefghijklmnop.localhost:8787/" }).client.liveDocAddress("d"))?.url).toBe("http://abcdefghijklmnop.localhost:8787/");
   });
 
   it("reads every refusal, and anything that is not a web address, as no address", async () => {

@@ -1,6 +1,6 @@
 # Hosting Live Docs
 
-Every cloud document with format `darkmown` (a `.wd`) gets its own address, `<label>.<LIVE_DOCS_DOMAIN>`. In H1 it opens only for its owner, through a one-time pass. This page covers turning it on, running it locally, and putting it on `markie.live` in production.
+Every cloud document with format `darkmown` (a `.wd`) gets its own address, `<label>.<LIVE_DOCS_DOMAIN>`. It opens through a one-time pass for its owner and everyone it is shared with. While its public link is on, it also has a public address that opens for anyone. This page covers turning it on, running it locally, who can open what, and putting it on `markie.live` in production.
 
 The design is `markie-darkmown-sites-design-2026-11-01.md` (Circular ENG-7835). The code is `server/src/live-docs*.ts`.
 
@@ -42,19 +42,56 @@ Measured on 2026-11-03 with Playwright 1.63 against a local server:
 | Signed-in stranger gets 404 | yes | yes | yes |
 | Owner's cookie after delete: refused | yes | not run | not run |
 
+## Who can open a Live Doc
+
+Access follows the document's Share settings. Nothing new is stored about who may see what.
+
+| Level | Who | How |
+|---|---|---|
+| Private | The owner | The private address, through the pass |
+| Shared | The owner and every member, viewer or editor | The private address, through the pass. A pending invite opens nothing until a verified account claims it |
+| Public | Anyone, signed in or not | A second address, `<public label>.<domain>`, with no cookie and no pass. The private address still needs the pass |
+
+- The public address exists only while the document's public link is on. It is bound to the hash of that link's token, so rotating the link (which removing a member does) or turning it off kills the address in the same moment.
+- The document's public link, `/s/<token>`, forwards to the public address when the document is a Live Doc. Every other document keeps its usual page.
+- Only the owner is shown the public address, the same as the public link. `GET /api/docs/:id/live-doc` gives a member `{ url, access: "shared" }` and the owner `{ url, access, publicUrl? }`.
+- A public page names its publisher in a footer: the owner's display name, never an email address.
+
+### Open tabs
+
+Every hosted page keeps one server-sent event stream open to its own host, `/__markie/live`. It carries no content: `ready`, a comment every 15 seconds, and `revoked` when access ends.
+
+- The stream re-reads access every 5 seconds. Removing a member, rotating or turning off the public link, and deleting the document also re-check every open stream of that document at once.
+- On `revoked`, the page empties itself and clears its address's storage, and says why: access ended, the public link changed, or the Live Doc is gone.
+- A refusal is a `200` with `revoked`, never an error status, so the page can tell "you lost access" from "the server is restarting". Anything else that drops the stream is retried with backoff, and never blanks the page.
+- Limits: 24 open streams per person, or per client address on a public page, and 2,000 per process. Past either, the stream answers `429` and the page retries.
+- A stream ends after 30 minutes and the page reconnects, so none lives forever.
+
+### Taking one down
+
+A Live Doc can be taken down at every level from the server, without touching the document:
+
+```
+node --experimental-strip-types scripts/live-doc-takedown.ts <address-or-doc-id> "<reason>"
+node --experimental-strip-types scripts/live-doc-takedown.ts --restore <address-or-doc-id>
+node --experimental-strip-types scripts/live-doc-takedown.ts --list
+```
+
+Its addresses then answer "taken down" with a `410`, its public link stops forwarding, its passes and cookies are deleted, and its open tabs close within 5 seconds. Restoring brings back the same addresses.
+
 ## How a request is routed
 
 | Host | Answers |
 |---|---|
-| `<label>.<domain>`, 16 base32 characters | `/` the page, `/__markie/pass` the redeem. Everything else is 404 |
+| `<label>.<domain>`, 16 base32 characters | `/` the page, `/__markie/pass` the redeem, `/__markie/live` the page's stream. Everything else is 404 |
 | `<domain>` itself | `/` redirects to `MARKIE_SITE_URL`. No cookie. Everything else is 404 |
 | Any other name under `<domain>` | 404 |
-| Any other host | The app, as before. `/live-docs/pass/<label>` and `/api/docs/:id/live-doc` live here |
+| Any other host | The app, as before. `/live-docs/pass/<label>` and `/api/docs/:id/live-doc` live here, and `/s/<token>` forwards a public Live Doc |
 
 - The live domain is answered before every app middleware, so no app route, CORS grant or app cookie can come back from a Live Doc host.
 - When `Host` or `X-Forwarded-Host` names the live domain, the two must agree exactly, or the request is a 404. kamal-proxy forwards a client's own `X-Forwarded-*` headers for markie-api (Kamal's `forward_headers` defaults to on without `ssl`), so neither header alone can carry a request across.
 - Every live response carries HSTS, `nosniff`, `Referrer-Policy: no-referrer`, COOP and CORP `same-origin`, `X-Frame-Options: DENY`, a Permissions-Policy denying camera, microphone and geolocation, `X-Robots-Tag: noindex, nofollow` and `Cache-Control: private, no-store`.
-- The page's CSP admits the pinned runtime and its bootstrap by hash, and its one style block by hash. `connect-src` and `form-action` are `'none'` in H1.
+- The page's CSP admits three scripts by hash: the pinned runtime, its bootstrap, and Markie's stream script. It admits its one style block by hash. `connect-src` is `'self'`, for the stream; the live host answers nothing else a page could use. `form-action` is `'none'`. The per-page network list is H3.
 
 ## Production on markie.live
 

@@ -10,6 +10,7 @@ import {
   revokePublicLink,
   rotatePublicLink,
 } from "./public-links.ts";
+import { recheckLiveDocChannels } from "./live-docs-channels.ts";
 import { primaryDownloadCta } from "./downloads.ts";
 import { deployment } from "./deployment.ts";
 import { brandEmailLogoUrl } from "./brand.ts";
@@ -431,6 +432,8 @@ shares.delete("/:id/shares/:idOrEmail", async (c) => {
   // Removing the row is not enough on its own: a live collaboration socket
   // outlives it, so hang up on the socket too.
   if (result.removedMember && result.memberId) disconnectUser(docId, result.memberId);
+  // The same for an open Live Doc tab, and for public tabs on the old link.
+  recheckLiveDocChannels(docId);
   if (!result.removedMember && !result.removedPending) {
     return c.json({ error: "not found" }, 404);
   }
@@ -469,6 +472,8 @@ shares.delete("/:id/public-link", async (c) => {
   const docId = c.req.param("id");
   if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   revokePublicLink(docId);
+  // Close every open tab of the Live Doc's public address now.
+  recheckLiveDocChannels(docId);
   return c.json({ ok: true });
 });
 

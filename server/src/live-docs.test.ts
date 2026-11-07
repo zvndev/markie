@@ -177,14 +177,18 @@ test("only the owner gets the address, and only for a .wd", async () => {
   assert.equal(liveDocLabel(markdown), null, "no address is handed out for a document that is not a Live Doc");
 });
 
-test("a shared editor is not the owner, so H1 gives them no address and no pass", async () => {
+test("a shared editor gets the private address and a pass, never the public one", async () => {
+  const editor = await signUpVerified(app, { name: "Editor", email: `live-editor-${stamp}@example.com` });
+  const editorCookie = await browserSignIn(editor.email);
   const shared = `live-shared-${stamp}`;
   await putDoc(owner.token, shared, "Shared.wd", COUNTER);
-  const res = await ask(APP_HOST, `/api/docs/${shared}/shares`, { method: "POST", bearer: owner.token, body: { email: stranger.email, role: "editor" } });
+  const res = await ask(APP_HOST, `/api/docs/${shared}/shares`, { method: "POST", bearer: owner.token, body: { email: editor.email, role: "editor" } });
   assert.equal(res.status, 200);
-  assert.equal((await ask(APP_HOST, `/api/docs/${shared}/live-doc`, { bearer: stranger.token })).status, 404);
   const { label } = await addressOf(shared, owner.token);
-  assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: strangerCookie })).status, 404);
+  const member = await ask(APP_HOST, `/api/docs/${shared}/live-doc`, { bearer: editor.token });
+  assert.equal(member.status, 200);
+  assert.deepEqual(await member.json(), { url: `${liveOrigin(label)}/`, access: "shared" });
+  assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: editorCookie })).status, 302);
 });
 
 // ── the pass flow ────────────────────────────────────────────────────────────
@@ -567,7 +571,7 @@ test("authored script, style, links and network never survive into the hosted pa
   assert.equal(res.status, 200);
   const html = await res.text();
   const scripts = [...html.matchAll(/<script(?: [^>]*)?>/g)].map((match) => match[0]);
-  assert.deepEqual(scripts.filter((tag) => tag !== '<script type="application/json" data-wd-state>'), ["<script>", "<script>"], "only the runtime and its bootstrap");
+  assert.deepEqual(scripts.filter((tag) => tag !== '<script type="application/json" data-wd-state>'), ["<script>", "<script>", "<script>"], "only the runtime, its bootstrap and Markie's stream script");
   // Darkmown escapes authored HTML into text, so what is left to check is the
   // markup itself: which elements exist and which attributes they carry.
   const tags = [...html.matchAll(/<([a-zA-Z][\w-]*)([^>]*)>/g)];
@@ -584,13 +588,14 @@ test("authored script, style, links and network never survive into the hosted pa
 
 const generated = (name: string) => readFileSync(new URL(`./generated/darkmown/${name}`, import.meta.url), "utf8");
 const policy = JSON.parse(generated("runtime-policy.json")) as { runtimeSha256: string; bootstrapSha256: string };
-const PAGE_STYLE = `:root{color-scheme:light dark}${generated("preview-style.css")}`;
-const EXPECTED_CSP =
+const { LIVE_DOC_CHANNEL_SCRIPT } = await import("./live-docs-page.ts");
+const PAGE_STYLE_START = `:root{color-scheme:light dark}${generated("preview-style.css")}`;
+const expectedCsp = (style: string) =>
   "default-src 'none'; " +
-  `script-src 'sha256-${policy.runtimeSha256}' 'sha256-${policy.bootstrapSha256}'; ` +
+  `script-src 'sha256-${policy.runtimeSha256}' 'sha256-${policy.bootstrapSha256}' 'sha256-${b64sha(LIVE_DOC_CHANNEL_SCRIPT)}'; ` +
   "script-src-attr 'none'; " +
-  `style-src 'sha256-${b64sha(PAGE_STYLE)}'; ` +
-  "img-src 'none'; media-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; worker-src 'none'; " +
+  `style-src 'sha256-${b64sha(style)}'; ` +
+  "img-src 'none'; media-src 'none'; font-src 'none'; connect-src 'self'; frame-src 'none'; worker-src 'none'; " +
   "manifest-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
 const EXPECTED_HEADERS: Record<string, string> = {
   "strict-transport-security": "max-age=63072000; includeSubDomains",
@@ -610,7 +615,9 @@ function assertLiveHeaders(res: Response, what: string) {
   for (const directive of ["default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'"]) {
     assert.ok(csp.split("; ").includes(directive), `${what}: ${directive}`);
   }
-  assert.ok(!/unsafe-inline|unsafe-eval|'self'|\*|https?:/.test(csp), `${what}: nothing loose in ${csp}`);
+  // The page's one 'self' is connect-src, for its stream to its own host.
+  const rest = csp.split("; ").filter((directive) => directive !== "connect-src 'self'").join("; ");
+  assert.ok(!/unsafe-inline|unsafe-eval|'self'|\*|https?:/.test(rest), `${what}: nothing loose in ${csp}`);
 }
 
 test("the hosted page carries exactly this CSP and header set", async () => {
@@ -619,14 +626,14 @@ test("the hosted page carries exactly this CSP and header set", async () => {
   const cookie = await openLiveDoc(labelA, ownerCookie);
   const res = await ask(liveHost(labelA), "/", { cookie });
   assert.equal(res.status, 200);
-  assert.equal(res.headers.get("content-security-policy"), EXPECTED_CSP);
-  assertLiveHeaders(res, "page");
   const html = await res.text();
+  const style = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+  assert.ok(style.startsWith(PAGE_STYLE_START), "the Mac preview's style, then Markie's own two rules");
+  assert.equal(res.headers.get("content-security-policy"), expectedCsp(style));
+  assertLiveHeaders(res, "page");
   // Each inline script and the style block is exactly what its hash names.
   const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => b64sha(match[1]));
-  assert.deepEqual(inline, [policy.runtimeSha256, policy.bootstrapSha256]);
-  const style = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
-  assert.equal(style, PAGE_STYLE);
+  assert.deepEqual(inline, [policy.runtimeSha256, policy.bootstrapSha256, b64sha(LIVE_DOC_CHANNEL_SCRIPT)]);
   assert.equal(res.headers.get("access-control-allow-origin"), null);
 });
 

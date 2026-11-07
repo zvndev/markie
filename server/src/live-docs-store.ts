@@ -10,6 +10,15 @@
 //                       sending the browser for the pass). Stored hashed.
 //   live_doc_sessions   what a pass becomes on the Live Doc's own host: a
 //                       random cookie value, stored hashed, bound the same way.
+//   live_doc_public_addresses
+//                       a public Live Doc's second address, opened with no
+//                       sign-in. Bound to the hash of the document's current
+//                       public link token (public-links.ts), so rotating or
+//                       revoking that link kills this address in the same
+//                       moment, with nothing here to update.
+//   live_doc_takedowns  Live Docs Markie has taken down. A taken-down doc is
+//                       hosted at no level until it is restored
+//                       (scripts/live-doc-takedown.ts).
 //
 // Nothing here decides access on its own. Every page load re-reads the doc,
 // the person's Markie sign-in and their access level (live-docs.ts), so a
@@ -22,6 +31,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { openDatabase } from "./db.ts";
 import { accessLevel, type ShareAccessLevel } from "./shares.ts";
+import { getPublicLinkToken } from "./public-links.ts";
 import { LIVE_DOC_LABEL } from "./live-docs-config.ts";
 
 const db = openDatabase();
@@ -58,6 +68,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_auth ON live_doc_sessions(auth_session_id, label, created_at);
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_user ON live_doc_sessions(user_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_live_doc_sessions_expiry ON live_doc_sessions(expires_at);
+  CREATE TABLE IF NOT EXISTS live_doc_public_addresses (
+    label TEXT PRIMARY KEY,
+    doc_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_live_doc_public_doc ON live_doc_public_addresses(doc_id);
+  CREATE TABLE IF NOT EXISTS live_doc_takedowns (
+    doc_id TEXT PRIMARY KEY,
+    reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // A database made before passes were bound to a browser: add the column. A
@@ -109,8 +131,10 @@ export function ensureLiveDocLabel(docId: string, now = Date.now()): string {
   // A collision between two 80-bit labels will not happen, but if it ever
   // did the UNIQUE constraint refuses it and a fresh label is drawn.
   for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = newLiveDocLabel();
+    if (labelTaken(candidate)) continue;
     try {
-      db.prepare("INSERT OR IGNORE INTO live_doc_addresses (doc_id, label, created_at) VALUES (?, ?, ?)").run(docId, newLiveDocLabel(), now);
+      db.prepare("INSERT OR IGNORE INTO live_doc_addresses (doc_id, label, created_at) VALUES (?, ?, ?)").run(docId, candidate, now);
     } catch (error) {
       if (!(error instanceof Error) || !/UNIQUE/i.test(error.message)) throw error;
       continue;
@@ -119,6 +143,14 @@ export function ensureLiveDocLabel(docId: string, now = Date.now()): string {
     if (label) return label;
   }
   throw new Error("could not assign a Live Doc address");
+}
+
+/** Whether a label is in use as any Live Doc address, private or public. */
+function labelTaken(label: string): boolean {
+  return Boolean(
+    db.prepare("SELECT 1 FROM live_doc_addresses WHERE label = ?").get(label)
+      ?? db.prepare("SELECT 1 FROM live_doc_public_addresses WHERE label = ?").get(label)
+  );
 }
 
 /** Which document a label addresses, or null. Says nothing about who may open it. */
@@ -144,18 +176,111 @@ export function loadLiveDoc(docId: string): LiveDocRow | null {
 }
 
 /**
- * Which access levels open a hosted Live Doc. H1 hosts private Live Docs
- * only, so it is the owner alone. H2 (shared) widens this one function; every
- * caller already goes through it and through the same accessLevel the rest of
- * the server uses.
+ * Which access levels open a Live Doc's private address: the owner and every
+ * member it is shared with, viewer or editor, the same people who can read the
+ * document in Markie (design, "Who can see a Live Doc"). A pending invite is
+ * not a member until it is claimed by a verified account, so it opens nothing.
  */
 export function liveDocLevelOpens(level: ShareAccessLevel): boolean {
-  return level === "owner";
+  return level === "owner" || level === "editor" || level === "viewer";
 }
 
 /** Whether `userId` may open `docId` as a hosted Live Doc, read live from the database. */
 export function canOpenLiveDoc(docId: string, userId: string): boolean {
-  return loadLiveDoc(docId) !== null && liveDocLevelOpens(accessLevel(docId, userId));
+  return loadLiveDoc(docId) !== null && !liveDocTakenDown(docId) && liveDocLevelOpens(accessLevel(docId, userId));
+}
+
+// ---------------------------------------------------------------- public
+
+/**
+ * The public address for a Live Doc whose public link is on, minted on first
+ * use and replaced whenever the link's token changes. null when the document
+ * has no public link, is not a Live Doc, or is taken down. Only the owner may
+ * be shown this (the caller checks); it needs no sign-in to open.
+ */
+export function ensurePublicLiveDocLabel(docId: string, now = Date.now()): string | null {
+  if (!loadLiveDoc(docId) || liveDocTakenDown(docId)) return null;
+  const token = getPublicLinkToken(docId);
+  if (!token) return null;
+  const tokenHash = hash(token);
+  return db.transaction(() => {
+    const current = db
+      .prepare("SELECT label FROM live_doc_public_addresses WHERE doc_id = ? AND token_hash = ?")
+      .get(docId, tokenHash) as { label: string } | undefined;
+    if (current) return current.label;
+    // A link that was rotated or revoked and switched back on: its old address
+    // already opens nothing, and this clears it away.
+    db.prepare("DELETE FROM live_doc_public_addresses WHERE doc_id = ?").run(docId);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const label = newLiveDocLabel();
+      if (labelTaken(label)) continue;
+      db.prepare("INSERT INTO live_doc_public_addresses (label, doc_id, token_hash, created_at) VALUES (?, ?, ?, ?)").run(label, docId, tokenHash, now);
+      return label;
+    }
+    throw new Error("could not assign a public Live Doc address");
+  })();
+}
+
+/**
+ * The document a public address opens right now, or null. Checked against the
+ * document's current public link on every call: a rotated or revoked link, a
+ * deleted or renamed document, or a takedown answers null at once.
+ */
+export function publicLiveDocFor(label: string): string | null {
+  if (!LIVE_DOC_LABEL.test(label)) return null;
+  const row = db
+    .prepare("SELECT doc_id, token_hash FROM live_doc_public_addresses WHERE label = ?")
+    .get(label) as { doc_id: string; token_hash: string } | undefined;
+  if (!row) return null;
+  const token = getPublicLinkToken(row.doc_id);
+  if (!token || hash(token) !== row.token_hash) return null;
+  if (!loadLiveDoc(row.doc_id) || liveDocTakenDown(row.doc_id)) return null;
+  return row.doc_id;
+}
+
+/**
+ * The name a public page shows as its publisher (design, "Security model" 6):
+ * the owner's display name, never their email address.
+ */
+export function liveDocPublisherName(docId: string): string {
+  const row = db
+    .prepare('SELECT u.name AS name FROM docs d JOIN "user" u ON u.id = d.owner_id WHERE d.id = ?')
+    .get(docId) as { name: string | null } | undefined;
+  const name = row?.name?.trim().replace(/\s+/g, " ").slice(0, 80);
+  return name || "a Markie account";
+}
+
+// ---------------------------------------------------------------- takedowns
+
+export function liveDocTakenDown(docId: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM live_doc_takedowns WHERE doc_id = ?").get(docId));
+}
+
+/**
+ * Takes a Live Doc down at every level. Its open tabs close on their next
+ * check (this runs from a script, in another process, so the timer finds it).
+ */
+export function takeDownLiveDoc(docId: string, reason: string, now = Date.now()): void {
+  db.transaction(() => {
+    db.prepare("INSERT INTO live_doc_takedowns (doc_id, reason, created_at) VALUES (?, ?, ?) ON CONFLICT(doc_id) DO UPDATE SET reason = excluded.reason, created_at = excluded.created_at")
+      .run(docId, reason.slice(0, 500), now);
+    db.prepare("DELETE FROM live_doc_sessions WHERE doc_id = ?").run(docId);
+    db.prepare("DELETE FROM live_doc_tickets WHERE doc_id = ?").run(docId);
+    // The public address stays, so a visitor holding it is told the page was
+    // taken down rather than sent to a sign-in.
+  })();
+}
+
+export function restoreLiveDoc(docId: string): boolean {
+  return db.prepare("DELETE FROM live_doc_takedowns WHERE doc_id = ?").run(docId).changes > 0;
+}
+
+/** The document behind a private or public label, for the takedown script. */
+export function docIdForAnyLabel(label: string): string | null {
+  if (!LIVE_DOC_LABEL.test(label)) return null;
+  const row = (db.prepare("SELECT doc_id FROM live_doc_addresses WHERE label = ?").get(label)
+    ?? db.prepare("SELECT doc_id FROM live_doc_public_addresses WHERE label = ?").get(label)) as { doc_id: string } | undefined;
+  return row?.doc_id ?? null;
 }
 
 export interface LiveDocBinding {
@@ -274,5 +399,6 @@ export function removeLiveDoc(docId: string): void {
     db.prepare("DELETE FROM live_doc_sessions WHERE doc_id = ?").run(docId);
     db.prepare("DELETE FROM live_doc_tickets WHERE doc_id = ?").run(docId);
     db.prepare("DELETE FROM live_doc_addresses WHERE doc_id = ?").run(docId);
+    db.prepare("DELETE FROM live_doc_public_addresses WHERE doc_id = ?").run(docId);
   })();
 }

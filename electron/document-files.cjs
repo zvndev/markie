@@ -137,6 +137,11 @@ function createDocumentFileService({ dialog, getWindow = () => undefined, fileSy
       }).finally(() => { pendingWriteBytes -= bytes.length; }); } catch (error) { pendingWriteBytes -= bytes.length; throw error; }
     }); },
     release(owner, args) { return protect(() => { const v = validObject(args, ["leaseId"]); lease(owner, v.leaseId); leases.delete(v.leaseId); return null; }); },
+    // Main-process only, never an IPC channel: the real folder a leased
+    // document lives in, so a .wd preview can show the pictures beside it
+    // (electron/darkmown-preview.js). The renderer names a lease it owns and
+    // gets back a picture scope; this path itself never leaves main.
+    leaseFolder(owner, leaseId) { try { const entry = lease(owner, leaseId); assertParent(entry); return entry.parent.real; } catch { return null; } },
     releaseOwner(owner) {
       owners.set(owner, epoch(owner) + 1);
       for (const [id, entry] of leases) if (entry.owner === owner) leases.delete(id);

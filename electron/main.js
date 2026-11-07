@@ -67,6 +67,7 @@ const { guardStdio, isBrokenPipeError } = require("./stdio-guard");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createLinkPreviews } = require("./link-preview");
 const { externalWebTarget } = require("./external-web.cjs");
+const { darkmownLinkTarget, blocksSrcdocNavigation, createDarkmownPictureScopes, createLinkGate } = require("./darkmown-preview");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic: writeAuthorizedFileAtomic } = require("./atomic-write");
 function writeFileAtomic(...args) {
@@ -364,6 +365,9 @@ function noteOpenedDocument(target) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("library-changed");
 }
 const documentFiles = createDocumentFileService({ dialog, getWindow: () => mainWindow, onGranted: noteOpenedDocument });
+// Pictures beside an open .wd, served to its preview frame one folder at a
+// time (electron/darkmown-preview.js). Scopes die with the window's renderer.
+const darkmownPictureScopes = createDarkmownPictureScopes();
 let pendingNativeDocumentError = null;
 let nativeDocumentQueued = false;
 let rendererReady = false;
@@ -985,6 +989,22 @@ function createWindow() {
     }
   });
 
+  // A Darkmown preview is a srcdoc frame, and it is only ever replaced by new
+  // srcdoc. A link it shows leaves through darkmown-preview-open-link; a
+  // navigation inside the frame would put an arbitrary page inside Markie.
+  // The frame's sandbox and markup already rule that out; this is the wall
+  // that holds if either ever slips.
+  mainWindow.webContents.on("will-frame-navigate", (event) => {
+    let frameUrl = null;
+    try { frameUrl = event.frame ? event.frame.url : null; } catch { /* the frame is already gone */ }
+    if (blocksSrcdocNavigation({ isMainFrame: event.isMainFrame, isSameDocument: event.isSameDocument, frameUrl, url: event.url })) event.preventDefault();
+  });
+  const pictureOwner = mainWindow.webContents.id;
+  const releasePictureScopes = () => darkmownPictureScopes.releaseOwner(pictureOwner);
+  mainWindow.webContents.once("destroyed", releasePictureScopes);
+  mainWindow.webContents.on("render-process-gone", releasePictureScopes);
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) releasePictureScopes(); });
+
   // Closing the window must not throw away a keystroke that has not reached
   // disk yet. Ask the renderer to settle, then destroy; destroy() bypasses the
   // close event, so the handshake always terminates. Cmd+Q goes through the
@@ -1129,6 +1149,14 @@ function cloudDocForPath(docPath, requested) {
 function registerAssetProtocol() {
   protocol.handle(ASSET_SCHEME, async (request) => {
     if (!privateRelease.authorized()) return new Response("Private release authorization required", { status: 403 });
+    // A .wd preview's picture scope: one document's folder, pictures only,
+    // and none of the wider rule below (electron/darkmown-preview.js).
+    let address;
+    try { address = new URL(request.url); } catch { return new Response("Bad request", { status: 400 }); }
+    if (darkmownPictureScopes.isScopeHost(address.hostname)) {
+      const picture = darkmownPictureScopes.resolve(address.hostname, address.pathname);
+      return picture ? serveFileRange(picture.path, picture.mime, request.headers.get("range")) : new Response("Forbidden", { status: 403 });
+    }
     let requested;
     try {
       // The path is one percent-encoded segment, so the standard scheme's own
@@ -2440,6 +2468,39 @@ handle("open-external", (event, target) => {
   try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
   catch { logCrash("open-external-failed", "Could not open the external browser."); }
 });
+
+// IPC: the two doors a .wd preview has out of its sandbox (super-nightly),
+// both described in electron/darkmown-preview.js. Neither takes a path or an
+// arbitrary URL from the renderer: one turns a lease or an already granted
+// Markdown file into a picture scope for that file's folder, the other opens
+// a link the user clicked, if it is a web page or a mail draft.
+function darkmownPreviewExtrasEnabled() {
+  return !!privateReleaseConfig || !app.isPackaged;
+}
+const darkmownLinkGate = createLinkGate();
+handle("darkmown-preview-picture-scope", (event, request) => {
+  if (!darkmownPreviewExtrasEnabled() || !currentCloseSender(event)) return { ok: false };
+  if (!request || typeof request !== "object" || Array.isArray(request) || Object.keys(request).length !== 1) return { ok: false };
+  let folder = null;
+  if (typeof request.leaseId === "string") {
+    folder = documentFiles.leaseFolder(event.sender.id, request.leaseId);
+  } else if (typeof request.markdownPath === "string" && /\.(?:md|markdown|mdx)$/i.test(request.markdownPath)) {
+    // A Markdown file this window already opened (Make interactive keeps
+    // its pictures until the copy is saved). canRead realpaths it.
+    const grant = fileGrants.canRead(request.markdownPath);
+    folder = grant.ok ? path.dirname(grant.path) : null;
+  }
+  const host = folder ? darkmownPictureScopes.scopeFor(event.sender.id, folder) : null;
+  return host ? { ok: true, base: `${ASSET_SCHEME}://${host}` } : { ok: false };
+}, { onFailure: () => ({ ok: false }) });
+handle("darkmown-preview-open-link", (event, href) => {
+  if (!darkmownPreviewExtrasEnabled() || !currentCloseSender(event)) return { ok: false };
+  const target = darkmownLinkTarget(href);
+  if (!target || !darkmownLinkGate.allow()) return { ok: false };
+  try { shell.openExternal(target).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+  catch { logCrash("open-external-failed", "Could not open the external browser."); return { ok: false }; }
+  return { ok: true };
+}, { onFailure: () => ({ ok: false }) });
 
 // ── Browse: device-wide markdown index ──
 // A scan walks the user's files, so it only ever runs because a panel asked

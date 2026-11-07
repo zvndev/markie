@@ -83,3 +83,13 @@ describe("native WebFileHandle-shaped workspace adapter", () => {
     const f = fixture(), adapter = createNativeDocumentFileAdapter(f.api); await expect(adapter.saveDocument({ name: "copy.txt", bytes: new DataView(new ArrayBuffer(1)) as unknown as Uint8Array })).rejects.toMatchObject({ code: "too-large" }); expect(f.saveAs).not.toHaveBeenCalled();
   });
 });
+
+describe("leaseIdOf", () => {
+  it("names the lease only for a live handle this adapter made", async () => {
+    const f = fixture({ name: "trip.wd" }), adapter = createNativeDocumentFileAdapter(f.api), payload = await adapter.pickDocument();
+    expect(adapter.leaseIdOf(payload!.handle!)).toBe("opaque");
+    expect(adapter.leaseIdOf({ name: "forged.wd", getFile: vi.fn() })).toBeNull();
+    await adapter.releaseDocument(payload!.handle!);
+    expect(adapter.leaseIdOf(payload!.handle!)).toBeNull();
+  });
+});

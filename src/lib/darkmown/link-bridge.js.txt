@@ -1,0 +1,19 @@
+/* Host-owned link bridge. The frame never navigates; the host opens clicked links. */
+(() => {
+  "use strict";
+  // Every anchor the sanitizer keeps opens a new window, which this sandbox
+  // refuses, so without this script a link does nothing at all. With it, a
+  // real click hands the host the href and nothing else: no reply, no state,
+  // no selectors. The host checks the sender, the user's activation and the
+  // URL, and main checks the URL again before the system browser sees it.
+  const anchorOf = (event) => event.target instanceof Element ? event.target.closest("a[href]") : null;
+  window.addEventListener("click", (event) => {
+    const anchor = anchorOf(event);
+    if (!anchor) return;
+    event.preventDefault();
+    // A script can dispatch a click; only a person can make a trusted one.
+    if (!event.isTrusted || event.button !== 0) return;
+    parent.postMessage({ type: "markie:wd-link", href: anchor.getAttribute("href") }, "*");
+  }, true);
+  window.addEventListener("auxclick", (event) => { if (anchorOf(event)) event.preventDefault(); }, true);
+})();

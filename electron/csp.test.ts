@@ -7,6 +7,7 @@ import {
   EMBED_FRAME_ORIGINS,
   DARKMOWN_RUNTIME_HASH,
   DARKMOWN_BOOTSTRAP_HASH,
+  DARKMOWN_LINK_BRIDGE_HASH,
   buildAppCsp,
   collectInlineScriptHashes,
   inlineScriptHashesForHtml,
@@ -70,7 +71,7 @@ describe("packaged app CSP", () => {
   it("renders local DOCX image blobs without allowing executable blob content", () => {
     const directives = buildAppCsp("missing-out-dir").split("; ");
     expect(directives.find((value) => value.startsWith("img-src "))).toBe("img-src 'self' data: blob: https: markie-asset:");
-    expect(directives.find((value) => value.startsWith("script-src "))).toBe(`script-src 'self' ${DARKMOWN_RUNTIME_HASH} ${DARKMOWN_BOOTSTRAP_HASH}`);
+    expect(directives.find((value) => value.startsWith("script-src "))).toBe(`script-src 'self' ${DARKMOWN_RUNTIME_HASH} ${DARKMOWN_BOOTSTRAP_HASH} ${DARKMOWN_LINK_BRIDGE_HASH}`);
     expect(directives.find((value) => value.startsWith("object-src "))).toBe("object-src 'none'");
     expect(directives.find((value) => value.startsWith("frame-src "))).not.toContain("blob:");
   });

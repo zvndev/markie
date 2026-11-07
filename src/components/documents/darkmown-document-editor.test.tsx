@@ -249,3 +249,62 @@ describe("Darkmown source and isolated preview", () => {
     expect(screen.getByRole("status")).toHaveTextContent("External requests are disabled.");
   });
 });
+
+describe("Live Docs pictures and links (super-nightly)", () => {
+  const BASE = "markie-asset://wd-0123456789abcdef0123456789abcdef";
+  const handle = { name: "trip.wd", getFile: vi.fn() };
+  const liveDocsWith = (base: string | null = BASE) => ({ pictureBase: vi.fn(async () => base), openLink: vi.fn() });
+  const setActivation = (isActive: boolean | undefined) => Object.defineProperty(navigator, "userActivation", { configurable: true, value: isActive === undefined ? undefined : { isActive } });
+  afterEach(() => setActivation(undefined));
+
+  it("asks main for the saved file's picture scope and builds the preview with it and with links", async () => {
+    const liveDocs = liveDocsWith();
+    const session = { ...await createDocumentSession("darkmown"), text: "![A](pics/a.png)", handle };
+    render(<DarkmownDocumentEditor session={session} liveDocs={liveDocs} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    await waitFor(() => expect(frame()).toHaveAttribute("sandbox", "allow-scripts"));
+    expect(liveDocs.pictureBase).toHaveBeenCalledExactlyOnceWith({ handle });
+    expect(compile).toHaveBeenCalledTimes(1);
+    expect(compile.mock.calls[0][1]).toBe(false);
+    expect(compile.mock.calls[0][2]).toMatchObject({ links: true, pictureBase: BASE });
+    expect(screen.getByText(/Pictures come from this document’s folder and links open in your browser/)).toBeInTheDocument();
+  });
+
+  it("uses the Markdown file a copy came from until it is saved, and builds without pictures when there is no folder", async () => {
+    const liveDocs = liveDocsWith();
+    const unsaved = { ...await createDocumentSession("darkmown"), text: "![A](a.png)", pictureOrigin: "/Users/me/trip/notes.md" };
+    const { unmount } = render(<DarkmownDocumentEditor session={unsaved} liveDocs={liveDocs} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    await waitFor(() => expect(frame()).not.toBeNull());
+    expect(liveDocs.pictureBase).toHaveBeenCalledExactlyOnceWith({ markdownPath: "/Users/me/trip/notes.md" });
+    unmount(); compile.mockClear();
+    const nowhere = liveDocsWith();
+    render(<DarkmownDocumentEditor session={{ ...await createDocumentSession("darkmown"), text: "x" }} liveDocs={nowhere} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    await waitFor(() => expect(frame()).not.toBeNull());
+    expect(nowhere.pictureBase).not.toHaveBeenCalled();
+    expect(compile.mock.calls[0][2]).toMatchObject({ links: true, pictureBase: null });
+  });
+
+  it("opens a clicked link from its own frame, and refuses one fired without a click", async () => {
+    const liveDocs = liveDocsWith(null);
+    const session = { ...await createDocumentSession("darkmown"), text: "[site](https://example.com)" };
+    render(<DarkmownDocumentEditor session={session} liveDocs={liveDocs} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    await waitFor(() => expect(frame()).not.toBeNull());
+    const send = (data: unknown, source: MessageEventSource | null = frame()!.contentWindow) => act(() => { window.dispatchEvent(new MessageEvent("message", { data, source, origin: "null" })); });
+    setActivation(false);
+    send({ type: "markie:wd-link", href: "https://example.com/" });
+    expect(liveDocs.openLink).not.toHaveBeenCalled();
+    setActivation(true);
+    send({ type: "markie:wd-link", href: "javascript:alert(1)" });
+    send({ type: "markie:wd-link", href: "file:///etc/passwd" });
+    send({ type: "markie:wd-link", href: "https://example.com/" }, window);
+    expect(liveDocs.openLink).not.toHaveBeenCalled();
+    send({ type: "markie:wd-link", href: "https://example.com/" });
+    expect(liveDocs.openLink).toHaveBeenCalledExactlyOnceWith("https://example.com/");
+  });
+
+  it("keeps today's offline preview when Live Docs is off", async () => {
+    const session = { ...await createDocumentSession("darkmown"), text: "[site](https://example.com)", handle };
+    render(<DarkmownDocumentEditor session={session} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    await waitFor(() => expect(frame()).toHaveAttribute("sandbox", ""));
+    expect(compile.mock.calls[0][2]).toMatchObject({ links: false, pictureBase: null });
+  });
+});

@@ -22,6 +22,12 @@ export interface DocumentSession {
   readonly externalBaseline?: Uint8Array;
   readonly externalGeneration?: number;
   readonly warnings: readonly string[];
+  /**
+   * The Markdown file an unsaved .wd was made from (Make interactive), so its
+   * preview can show that file's pictures until the copy is saved. A hint for
+   * main, which only honours a file this window already opened.
+   */
+  readonly pictureOrigin?: string;
 }
 
 /** A textarea/rich editor emits LF. Preserve untouched line separators exactly. */

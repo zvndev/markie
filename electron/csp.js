@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { runtimeSha256, bootstrapSha256 } = require("./darkmown-runtime-policy.json");
+const { linkBridgeSha256 } = require("./darkmown-link-bridge-policy.json");
 const { DEFAULT_SERVER, CLOUD_ALIASES } = require("./share-origin");
 
 // The scheme the viewer serves a document's own pictures over. Named here
@@ -15,6 +16,9 @@ const ASSET_SCHEME = "markie-asset";
 const EMBED_FRAME_ORIGINS = ["https://www.youtube-nocookie.com", "https://player.vimeo.com"];
 const DARKMOWN_RUNTIME_HASH = `'sha256-${runtimeSha256}'`;
 const DARKMOWN_BOOTSTRAP_HASH = `'sha256-${bootstrapSha256}'`;
+// The desktop preview's link bridge (src/lib/darkmown/link-bridge.js.txt):
+// it forwards a clicked link's href to the host and does nothing else.
+const DARKMOWN_LINK_BRIDGE_HASH = `'sha256-${linkBridgeSha256}'`;
 
 const CLOUD_CONNECT_SOURCES = [DEFAULT_SERVER, ...CLOUD_ALIASES].flatMap((origin) => [origin, origin.replace(/^https:/, "wss:")]);
 
@@ -64,7 +68,7 @@ function scriptSrcDirective(hashes = []) {
 function buildAppCsp(outDir) {
   // srcdoc inherits this policy in addition to its own restrictive policy.
   // Author JavaScript is never permitted: this hash names the pinned interpreter.
-  const scriptHashes = [...collectInlineScriptHashes(outDir), DARKMOWN_RUNTIME_HASH, DARKMOWN_BOOTSTRAP_HASH];
+  const scriptHashes = [...collectInlineScriptHashes(outDir), DARKMOWN_RUNTIME_HASH, DARKMOWN_BOOTSTRAP_HASH, DARKMOWN_LINK_BRIDGE_HASH];
   return [
     "default-src 'self'",
     scriptSrcDirective(scriptHashes),
@@ -120,6 +124,7 @@ module.exports = {
   ASSET_SCHEME,
   DARKMOWN_RUNTIME_HASH,
   DARKMOWN_BOOTSTRAP_HASH,
+  DARKMOWN_LINK_BRIDGE_HASH,
   EMBED_FRAME_ORIGINS,
   buildAppCsp,
   collectInlineScriptHashes,

@@ -41,7 +41,6 @@ assert.ok(liveDocs, "LIVE_DOCS_DOMAIN is set, so Live Docs are on");
 const APP_HOST = "127.0.0.1:8787";
 const APP_ORIGIN = `http://${APP_HOST}`;
 const liveHost = (label: string) => `${label}.live.localhost:8787`;
-const liveOrigin = (label: string) => `http://${liveHost(label)}`;
 const COOKIE = "__Host-markie-live";
 const STATE_COOKIE = "__Host-markie-live-state";
 

@@ -323,16 +323,15 @@ export function createLiveDocs({
       let finished = false;
       let release = () => {};
       const done = new Promise<void>((resolve) => { release = resolve; });
-      let recheckTimer: ReturnType<typeof setInterval> | undefined;
-      let pingTimer: ReturnType<typeof setInterval> | undefined;
-      let lifeTimer: ReturnType<typeof setTimeout> | undefined;
+      // Set once the stream is up; finish() clears whichever exist.
+      const timers: { recheck?: ReturnType<typeof setInterval>; ping?: ReturnType<typeof setInterval>; life?: ReturnType<typeof setTimeout> } = {};
       let unregister = () => {};
       const finish = (reason?: LiveDocRevokeReason) => {
         if (finished) return;
         finished = true;
-        clearInterval(recheckTimer);
-        clearInterval(pingTimer);
-        clearTimeout(lifeTimer);
+        clearInterval(timers.recheck);
+        clearInterval(timers.ping);
+        clearTimeout(timers.life);
         unregister();
         giveBack();
         if (!reason) {
@@ -380,11 +379,11 @@ export function createLiveDocs({
         await done;
         return;
       }
-      recheckTimer = setInterval(recheck, recheckMs);
-      pingTimer = setInterval(() => {
+      timers.recheck = setInterval(recheck, recheckMs);
+      timers.ping = setInterval(() => {
         stream.write(": ping\n\n").catch(() => finish());
       }, pingMs);
-      lifeTimer = setTimeout(() => finish(), LIVE_DOC_CHANNEL_MAX_MS);
+      timers.life = setTimeout(() => finish(), LIVE_DOC_CHANNEL_MAX_MS);
       await done;
     }, async (error) => {
       // A stream that failed before it reached `finish` still gives its place back.

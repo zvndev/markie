@@ -964,6 +964,22 @@ function createWindow() {
     logCrash("window-unresponsive", "main window stopped responding");
   });
 
+  // A Darkmown preview is a srcdoc frame, and it is only ever replaced by new
+  // srcdoc. A link it shows leaves through darkmown-preview-open-link; a
+  // navigation inside the frame would put an arbitrary page inside Markie.
+  // The frame's sandbox and markup already rule that out; this is the wall
+  // that holds if either ever slips.
+  mainWindow.webContents.on("will-frame-navigate", (event) => {
+    let frameUrl = null;
+    try { frameUrl = event.frame ? event.frame.url : null; } catch { /* the frame is already gone */ }
+    if (blocksSrcdocNavigation({ isMainFrame: event.isMainFrame, isSameDocument: event.isSameDocument, frameUrl, url: event.url })) event.preventDefault();
+  });
+  const pictureOwner = mainWindow.webContents.id;
+  const releasePictureScopes = () => darkmownPictureScopes.releaseOwner(pictureOwner);
+  mainWindow.webContents.once("destroyed", releasePictureScopes);
+  mainWindow.webContents.on("render-process-gone", releasePictureScopes);
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) releasePictureScopes(); });
+
   // Nothing in Markie opens a second Electron window. A target=_blank in
   // rendered markdown should reach the user's browser, not a chrome-less window
   // with no way back.
@@ -988,22 +1004,6 @@ function createWindow() {
       catch { logCrash("open-external-failed", "Could not open the external browser."); }
     }
   });
-
-  // A Darkmown preview is a srcdoc frame, and it is only ever replaced by new
-  // srcdoc. A link it shows leaves through darkmown-preview-open-link; a
-  // navigation inside the frame would put an arbitrary page inside Markie.
-  // The frame's sandbox and markup already rule that out; this is the wall
-  // that holds if either ever slips.
-  mainWindow.webContents.on("will-frame-navigate", (event) => {
-    let frameUrl = null;
-    try { frameUrl = event.frame ? event.frame.url : null; } catch { /* the frame is already gone */ }
-    if (blocksSrcdocNavigation({ isMainFrame: event.isMainFrame, isSameDocument: event.isSameDocument, frameUrl, url: event.url })) event.preventDefault();
-  });
-  const pictureOwner = mainWindow.webContents.id;
-  const releasePictureScopes = () => darkmownPictureScopes.releaseOwner(pictureOwner);
-  mainWindow.webContents.once("destroyed", releasePictureScopes);
-  mainWindow.webContents.on("render-process-gone", releasePictureScopes);
-  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) releasePictureScopes(); });
 
   // Closing the window must not throw away a keystroke that has not reached
   // disk yet. Ask the renderer to settle, then destroy; destroy() bypasses the
@@ -2440,35 +2440,6 @@ handle(
   { onFailure: (err) => ({ ok: false, error: errorMessage(err) }) }
 );
 
-// IPC: the card that appears when somebody hovers a link.
-//
-// Main does the fetching because the renderer's connect-src is locked to
-// Markie's own API on purpose, and widening it to the whole web to draw a
-// preview card would be a poor trade. Nothing is fetched when a document opens,
-// only when a person points at a link: see electron/link-preview.js.
-const linkPreviews = createLinkPreviews({
-  // The end-to-end check serves its own page on loopback, which the guard
-  // refuses by design. Nothing else ever sets this.
-  allowPrivate: process.env.MARKIE_E2E === "1",
-});
-handle("link-preview", async (event, url) => currentCloseSender(event) ? linkPreviews.get(url) : null, {
-  onFailure: () => null,
-});
-
-// IPC: open an https URL in the system browser (OAuth flows)
-handle("open-external", (event, target) => {
-  if (!currentCloseSender(event)) return;
-  const webTarget = externalWebTarget(target);
-  if (!webTarget) return;
-  if (privateReleaseConfig && !privateRelease.authorized() && (new URL(webTarget).origin !== PRIVATE_AUTH_ORIGIN || !isStableDesktopAuthUrl(webTarget))) return;
-  if (isDesktopPreview && isStableDesktopAuthUrl(webTarget)) {
-    void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
-    return;
-  }
-  try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
-  catch { logCrash("open-external-failed", "Could not open the external browser."); }
-});
-
 // IPC: the two doors a .wd preview has out of its sandbox (super-nightly),
 // both described in electron/darkmown-preview.js. Neither takes a path or an
 // arbitrary URL from the renderer: one turns a lease or an already granted
@@ -2501,6 +2472,35 @@ handle("darkmown-preview-open-link", (event, href) => {
   catch { logCrash("open-external-failed", "Could not open the external browser."); return { ok: false }; }
   return { ok: true };
 }, { onFailure: () => ({ ok: false }) });
+
+// IPC: the card that appears when somebody hovers a link.
+//
+// Main does the fetching because the renderer's connect-src is locked to
+// Markie's own API on purpose, and widening it to the whole web to draw a
+// preview card would be a poor trade. Nothing is fetched when a document opens,
+// only when a person points at a link: see electron/link-preview.js.
+const linkPreviews = createLinkPreviews({
+  // The end-to-end check serves its own page on loopback, which the guard
+  // refuses by design. Nothing else ever sets this.
+  allowPrivate: process.env.MARKIE_E2E === "1",
+});
+handle("link-preview", async (event, url) => currentCloseSender(event) ? linkPreviews.get(url) : null, {
+  onFailure: () => null,
+});
+
+// IPC: open an https URL in the system browser (OAuth flows)
+handle("open-external", (event, target) => {
+  if (!currentCloseSender(event)) return;
+  const webTarget = externalWebTarget(target);
+  if (!webTarget) return;
+  if (privateReleaseConfig && !privateRelease.authorized() && (new URL(webTarget).origin !== PRIVATE_AUTH_ORIGIN || !isStableDesktopAuthUrl(webTarget))) return;
+  if (isDesktopPreview && isStableDesktopAuthUrl(webTarget)) {
+    void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
+    return;
+  }
+  try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+  catch { logCrash("open-external-failed", "Could not open the external browser."); }
+});
 
 // ── Browse: device-wide markdown index ──
 // A scan walks the user's files, so it only ever runs because a panel asked

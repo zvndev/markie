@@ -26,6 +26,7 @@ import { formatMarkdownTables } from "@/lib/format-tables";
 import { csvToMarkdownTable, csvDropsContent, markdownTableToCSV } from "@/lib/csv";
 import { classifyDocumentFormat } from "@/lib/document-formats";
 import { CommandPalette } from "@/components/command-palette";
+import { LiveDocsPreviewPanel } from "@/components/live-docs-preview-panel";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings, type SettingsSection } from "@/components/settings";
 import { Library } from "@/components/library";
@@ -134,6 +135,7 @@ import {
   getSafeAPI,
   type DocUpdate,
   type FilePayload,
+  type LiveDocsPreviewChoice,
   type SaveResult,
 } from "@/lib/electron";
 import { pathDirname, sameDocumentPath } from "@/lib/path-utils";
@@ -245,6 +247,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const [showSettings, setShowSettings] = useState(false);
   const [showNewDocument, setShowNewDocument] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  // Live Docs preview (super-nightly, step M1). The folder lives in the main
+  // process; this holds only what the picker answered, for the panel.
+  const [liveDocsPreviewAvailable] = useState(() => nightlyFeaturesEnabled() && !!getElectronAPI()?.liveDocsPreview);
+  const [liveDocsChoice, setLiveDocsChoice] = useState<{ id: number; choice: LiveDocsPreviewChoice } | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   // Non-null while a gated surface is asking for a session; the value is what
   // it wants the session for, which is what the dialog puts at the top.
@@ -1434,6 +1440,13 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const openVault = useCallback(async () => {
     if (await openDocumentsWorkspace()) documentShellRef.current?.showVault();
   }, [openDocumentsWorkspace]);
+  const openLiveDocsPreview = useCallback(async () => {
+    const api = getElectronAPI()?.liveDocsPreview;
+    if (!api) return;
+    const choice = await api.choose();
+    if (!choice.ok && choice.code === "canceled") return;
+    setLiveDocsChoice((prev) => ({ id: (prev?.id ?? 0) + 1, choice }));
+  }, []);
   const runDocumentCommand = useCallback((command: string) => {
     if (!documentMenuCommands.some((item) => item.id === command) && !["find", "undo", "redo", "zoom-in", "zoom-out"].includes(command)) return;
     if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
@@ -2121,6 +2134,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => documentsOpenRef.current ? documentShellRef.current?.share() : setShowShare(true) },
       { id: "history", title: "History…", group: "File", keywords: "versions restore snapshot revert previous", run: () => documentsOpenRef.current ? scheduleDocumentCommand("document-history") : setShowHistory(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
+      ...(liveDocsPreviewAvailable ? [{ id: "live-docs-preview", title: "Open Darkmown project preview…", group: "File", keywords: "darkmown live docs site project dev server localhost wd run", run: () => { void openLiveDocsPreview(); } }] as AppCommand[] : []),
     ] satisfies AppCommand[]).filter((command) => {
       if (command.id === "format-tables" && !docEditable) return false;
       if (!documentsOpen) return true;
@@ -2150,6 +2164,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       documentShell,
       scheduleDocumentCommand,
       docEditable,
+      liveDocsPreviewAvailable,
+      openLiveDocsPreview,
     ]
   );
 
@@ -2603,6 +2619,16 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
       {showStats && (
         <StatsPanel content={content} onClose={() => setShowStats(false)} />
+      )}
+
+      {liveDocsChoice && (
+        <LiveDocsPreviewPanel
+          key={liveDocsChoice.id}
+          choice={liveDocsChoice.choice}
+          // The native view draws over every overlay, so it steps aside for them.
+          suspended={showPalette || showSearch || showHelp || showSettings || showTheme || showNewDocument}
+          onClose={() => setLiveDocsChoice(null)}
+        />
       )}
 
       {showPalette && (

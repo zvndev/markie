@@ -12,6 +12,7 @@ const {
   session,
   safeStorage,
   systemPreferences,
+  WebContentsView,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -26,6 +27,7 @@ const privateRelease = createPrivateReleaseGate({ config: privateReleaseConfig, 
   try { privateUpdateCancellation?.cancel(); if (autoUpdater) autoUpdater.requestHeaders = {}; } catch { /* No active private download. */ }
   try { sync.setConfig({ token: null, serverURL: PRIVATE_AUTH_ORIGIN, userId: null }); } catch { /* Already locked. */ }
   try { terminal.killAll(); } catch { /* No active terminal. */ }
+  try { stopLiveDocsPreviewNow(); } catch { /* No preview running. */ }
   if (mainWindow && !mainWindow.isDestroyed()) { documentFiles.releaseOwner(mainWindow.webContents.id); mainWindow.webContents.reload(); }
 } });
 const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUpdater;
@@ -204,10 +206,17 @@ function localComments() {
   return _localComments;
 }
 
-// Local comments are a super-nightly feature: on in the private build and in a
-// dev run, refused everywhere else (the renderer gate is src/lib/nightly.ts).
+// Super-nightly features are on in the private build, in a dev run, and in
+// the local Markie Preview build (so a packaged build can prove them before
+// they ship), and refused everywhere else. The renderer gate is
+// src/lib/nightly.ts; preload learns about the preview build from
+// --markie-desktop-preview below.
+function nightlyEnabledInMain() {
+  return !!privateReleaseConfig || !app.isPackaged || isDesktopPreview;
+}
+
 function localCommentsEnabled() {
-  return !!privateReleaseConfig || !app.isPackaged;
+  return nightlyEnabledInMain();
 }
 
 // Copy what is on disk before replacing it. Never allowed to fail a save: a
@@ -876,13 +885,16 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      additionalArguments: privateReleaseConfig ? ["--markie-private-release"] : [],
+      additionalArguments: [
+        ...(privateReleaseConfig ? ["--markie-private-release"] : []),
+        ...(isDesktopPreview ? ["--markie-desktop-preview"] : []),
+      ],
     },
   });
   const nativeDocumentOwner = mainWindow.webContents.id;
   mainWindow.webContents.once("destroyed", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
-  mainWindow.webContents.on("render-process-gone", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
-  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); } });
+  mainWindow.webContents.on("render-process-gone", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); stopLiveDocsPreviewNow(); });
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); stopLiveDocsPreviewNow(); } });
 
   // Escape from a focused provider iframe cannot bubble to the host document.
   // Forward only dismissal over the existing private command channel; leave
@@ -1021,6 +1033,8 @@ function createWindow() {
     } catch {
       // terminal module may not have loaded
     }
+    // ...or a dev server nobody can see
+    stopLiveDocsPreviewNow();
   });
 
   if (isDev) {
@@ -1736,6 +1750,166 @@ handle("term-resize", (_e, { id, cols, rows }) => terminal.resize(id, cols, rows
 handle("term-kill", (_e, id) => terminal.kill(id));
 handle("term-external-apps", () => terminal.externalApps(), { onFailure: () => [] });
 handle("term-open-external", (_e, { app, cwd }) => terminal.openExternal(app, cwd));
+
+// ── Live Docs preview (M1, super-nightly) ──
+// One Darkmown project at a time, run by the project's own `darkmown dev` and
+// shown in a native view laid over the renderer's placeholder. The folder
+// comes from the picker below and stays here: the renderer can start, stop
+// and place the preview of that folder, and can never name a path. Every
+// handler checks the build and the sender before anything else.
+const liveDocs = require("./live-docs-preview");
+const liveDocsRunner = liveDocs.createDevServerRunner();
+let liveDocsProject = null;
+let liveDocsView = null;
+let liveDocsLayout = null;
+let liveDocsVisible = false;
+
+function liveDocsRefusal(event) {
+  if (!nightlyEnabledInMain()) return { ok: false, phase: "error", code: "unavailable", message: "The Darkmown project preview is not in this build of Markie." };
+  if (!currentCloseSender(event)) return { ok: false, phase: "error", code: "forbidden", message: "Only Markie's own window can run a preview." };
+  return null;
+}
+
+function liveDocsPublicProject(project) {
+  return project ? { name: project.name, root: project.root, reasons: [...project.reasons] } : null;
+}
+
+function sendLiveDocsStatus(status) {
+  const payload = { ...status, project: liveDocsPublicProject(liveDocsProject) };
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("live-docs-preview-status", payload);
+  return payload;
+}
+
+// Where the folder picker opens: beside the last project. A dev or Markie
+// Preview run can point it at a scratch project for
+// scripts/live-docs-preview-check.mjs. The user still confirms the folder in
+// the native picker, and stable and private builds ignore the variable.
+function liveDocsPickerStart() {
+  const requested = process.env.MARKIE_E2E_LIVE_DOCS_START_DIR;
+  if (requested && (isDesktopPreview || !app.isPackaged) && path.isAbsolute(requested)) return requested;
+  return dialogStartDir(liveDocsProject?.root) ?? undefined;
+}
+
+function openLiveDocsLink(target) {
+  try { shell.openExternal(target).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }
+  catch { logCrash("open-external-failed", "Could not open the external browser."); }
+}
+
+function placeLiveDocsView() {
+  const view = liveDocsView;
+  if (!view || !mainWindow || mainWindow.isDestroyed()) return;
+  const bounds = liveDocsVisible
+    ? liveDocs.previewBounds(liveDocsLayout, mainWindow.getContentBounds(), mainWindow.webContents.getZoomFactor())
+    : null;
+  if (!bounds) {
+    // A hidden view keeps keyboard focus unless something takes it back, and
+    // the keys then go to a page nobody can see.
+    if (view.webContents.isFocused()) mainWindow.webContents.focus();
+    view.setVisible(false);
+    return;
+  }
+  view.setBounds(bounds);
+  view.setVisible(true);
+}
+
+function removeLiveDocsView() {
+  const view = liveDocsView;
+  liveDocsView = null;
+  if (!view) return;
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view); } catch { /* window already gone */ }
+  try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch { /* already closed */ }
+}
+
+function showLiveDocsView(origin) {
+  removeLiveDocsView();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const view = new WebContentsView({ webPreferences: liveDocs.previewWebPreferences({ isPackaged: app.isPackaged }) });
+  liveDocs.lockDownSession(view.webContents.session);
+  liveDocs.lockNavigation(view.webContents, { origin, openExternal: openLiveDocsLink });
+  view.setBackgroundColor("#ffffff");
+  view.setVisible(false);
+  mainWindow.contentView.addChildView(view);
+  liveDocsView = view;
+  placeLiveDocsView();
+  view.webContents.loadURL(`${origin}/`).catch(() => { /* the page shows its own error */ });
+}
+
+async function stopLiveDocsPreview() {
+  removeLiveDocsView();
+  liveDocsLayout = null;
+  liveDocsVisible = false;
+  await liveDocsRunner.stop();
+}
+
+// Quit, crash and lock paths: nothing here may wait. A dev server that
+// outlives even this is stopped by its watchdog when Markie's pipe closes.
+function stopLiveDocsPreviewNow() {
+  removeLiveDocsView();
+  liveDocsLayout = null;
+  liveDocsVisible = false;
+  liveDocsRunner.stopNow();
+}
+
+handle("live-docs-preview-choose", async (event) => {
+  const refused = liveDocsRefusal(event);
+  if (refused) return refused;
+  const defaultPath = liveDocsPickerStart();
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Open Darkmown project preview",
+    message: "Choose a Darkmown project folder to preview.",
+    buttonLabel: "Preview",
+    properties: ["openDirectory"],
+    ...(defaultPath ? { defaultPath } : {}),
+  });
+  if (result.canceled || !result.filePaths[0]) return { ok: false, code: "canceled", message: "" };
+  const checked = liveDocs.checkProjectFolder(result.filePaths[0]);
+  if (!checked.ok) return checked;
+  await stopLiveDocsPreview();
+  liveDocsProject = checked;
+  return { ok: true, project: liveDocsPublicProject(checked) };
+});
+
+handle("live-docs-preview-start", async (event) => {
+  const refused = liveDocsRefusal(event);
+  if (refused) return refused;
+  const project = liveDocsProject;
+  if (!project) return sendLiveDocsStatus({ ok: false, phase: "error", code: "no-project", message: "Choose a Darkmown project folder first." });
+  // The folder can move or change between picking it and running it.
+  const checked = liveDocs.checkProjectFolder(project.root);
+  if (!checked.ok) return sendLiveDocsStatus({ phase: "error", ...checked });
+  if (checked.root !== project.root) return sendLiveDocsStatus({ ok: false, phase: "error", code: "moved", message: `${project.name} moved. Choose it again.` });
+  removeLiveDocsView();
+  sendLiveDocsStatus({ ok: true, phase: "starting" });
+  const result = await liveDocsRunner.start(project.root, {
+    onExit: ({ code, signal, log }) => {
+      removeLiveDocsView();
+      sendLiveDocsStatus({ ok: false, phase: "error", code: "exited", message: `The Darkmown dev server stopped (${signal || `exit code ${code}`}).`, log });
+    },
+  });
+  // Stopped, or another folder picked, while this one was starting.
+  if (liveDocsProject !== project || result.code === "superseded") return { ok: false, phase: "stopped", code: "superseded", message: "" };
+  if (!result.ok) return sendLiveDocsStatus({ phase: "error", ...result });
+  showLiveDocsView(result.origin);
+  return sendLiveDocsStatus({ ok: true, phase: "ready", url: `${result.origin}/`, node: result.node });
+});
+
+handle("live-docs-preview-stop", async (event) => {
+  const refused = liveDocsRefusal(event);
+  if (refused) return refused;
+  await stopLiveDocsPreview();
+  return { ok: true };
+});
+
+handle("live-docs-preview-layout", (event, layout) => {
+  const refused = liveDocsRefusal(event);
+  if (refused) return refused;
+  liveDocsLayout = layout && typeof layout === "object"
+    ? { x: layout.x, y: layout.y, width: layout.width, height: layout.height }
+    : null;
+  liveDocsVisible = layout?.visible === true;
+  placeLiveDocsView();
+  return { ok: true };
+});
 
 handle("sync-config", async (_event, cfg) => {
   if (privateReleaseConfig && cfg?.serverURL !== PRIVATE_AUTH_ORIGIN) return { error: "Private builds use the trusted Markie authentication server." };
@@ -3772,6 +3946,11 @@ app.on("will-quit", () => {
     // best effort
   }
   try {
+    stopLiveDocsPreviewNow();
+  } catch {
+    // best effort
+  }
+  try {
     require("./terminal").killAll();
   } catch {
     // best effort
@@ -3781,6 +3960,12 @@ app.on("will-quit", () => {
   } catch {
     // best effort
   }
+});
+
+// The main process's last synchronous moment, for an exit that skipped
+// will-quit. Signals only; the preview's watchdog does the rest.
+process.on("exit", () => {
+  try { liveDocsRunner.stopNow(); } catch { /* best effort */ }
 });
 
 app.on("window-all-closed", () => {

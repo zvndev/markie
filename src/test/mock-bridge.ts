@@ -82,6 +82,8 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
   const bridge = {
     platform: "darwin",
     privateReleaseAuthOrigin: "",
+    // A stable-looking build: false keeps super-nightly features off.
+    desktopPreview: false,
     privateReleaseStatus: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
     privateReleaseSession: vi.fn(async () => ({ token: null })),
     privateReleaseAuthorize: vi.fn(async () => ({ required: false, authorized: true, channel: null, gitCommit: null, authOrigin: "https://api.markiedocs.com" })),
@@ -133,6 +135,13 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onTermExit: vi.fn(subscribe("onTermExit")),
     termExternalApps: vi.fn(async () => []),
     termOpenExternal: vi.fn(async () => noopResult),
+    liveDocsPreview: {
+      choose: vi.fn(async () => ({ ok: false as const, code: "canceled", message: "" })),
+      start: vi.fn(async () => ({ ok: false, phase: "stopped" as const })),
+      stop: vi.fn(async () => noopResult),
+      layout: vi.fn(async () => noopResult),
+      onStatus: vi.fn(subscribe("onLiveDocsPreviewStatus")),
+    },
 
     getInitialFile: vi.fn(async () => null),
     documentFiles: {

@@ -33,6 +33,12 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
     release: (args) => ipcRenderer.invoke("document-files:release", args),
     takeInitial: () => ipcRenderer.invoke("document-files:take-initial"),
   },
+  // A .wd preview's pictures and clicked links (super-nightly). Neither takes
+  // a path or an arbitrary URL: main checks both (electron/darkmown-preview.js).
+  darkmownPreview: {
+    pictureScope: (request) => ipcRenderer.invoke("darkmown-preview-picture-scope", request),
+    openLink: (href) => ipcRenderer.invoke("darkmown-preview-open-link", href),
+  },
   onDocumentFileOpened: (callback) => subscribe("document-file-opened", callback),
   onDocumentCommand: (callback) => subscribe("document-command", callback, (command) => command),
   setDocumentMenuState: (state) => ipcRenderer.invoke("document-menu-state", state),

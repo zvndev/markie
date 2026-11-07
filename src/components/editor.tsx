@@ -57,6 +57,16 @@ function handleFor(view: EditorView): SourceHandle {
     focus: () => view.focus(),
     findTarget: () => sourceFindTarget(view),
     commentTarget: () => sourceCommentTarget(view),
+    selection: () => {
+      const { from, to } = view.state.selection.main;
+      return { from, to };
+    },
+    select: (from, to) => {
+      const length = view.state.doc.length;
+      const clamp = (offset: number) => Math.max(0, Math.min(Math.trunc(offset) || 0, length));
+      view.dispatch({ selection: { anchor: clamp(from), head: clamp(to) }, scrollIntoView: true });
+      view.focus();
+    },
   };
 }
 

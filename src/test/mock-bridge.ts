@@ -152,6 +152,10 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       release: vi.fn(async () => ({ ok: true as const, value: null })),
       takeInitial: vi.fn(async () => ({ ok: true as const, value: null })),
     },
+    darkmownPreview: {
+      pictureScope: vi.fn(async () => ({ ok: false as const })),
+      openLink: vi.fn(async () => ({ ok: false })),
+    },
     onDocumentFileOpened: vi.fn(subscribe("onDocumentFileOpened")),
     onDocumentCommand: vi.fn(subscribe("onDocumentCommand")),
     setDocumentMenuState: vi.fn(async () => noopResult),

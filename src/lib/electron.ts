@@ -167,6 +167,15 @@ export interface LiveDocsPreviewApi {
   onStatus(callback: (status: LiveDocsPreviewStatus) => void): Unsubscribe;
 }
 
+/** Either names a document main already granted; the answer is never a path. */
+export type DarkmownPictureScopeRequest = { leaseId: string } | { markdownPath: string };
+export interface DarkmownPreviewApi {
+  /** A markie-asset base whose pictures are confined to that document's folder. */
+  pictureScope(request: DarkmownPictureScopeRequest): Promise<{ ok: true; base: string } | { ok: false }>;
+  /** Open a clicked http(s) or mailto link in the system browser or mail app. */
+  openLink(href: string): Promise<{ ok: boolean }>;
+}
+
 export interface ElectronAPI {
   platform: string;
   privateReleaseAuthOrigin?: string;
@@ -179,6 +188,8 @@ export interface ElectronAPI {
   /** A Google sign-in hand-back that reached a locked private build, once. */
   privateReleaseTakeAuthLink?(): Promise<string | null>;
   documentFiles?: NativeDocumentFileApi;
+  /** A .wd preview's pictures and clicked links (super-nightly, electron/darkmown-preview.js). */
+  darkmownPreview?: DarkmownPreviewApi;
   onDocumentFileOpened?(callback: () => void): Unsubscribe;
   onDocumentCommand?(callback: (command: string) => void): Unsubscribe;
   setDocumentMenuState?(state: { renderer: "markdown" | "word" | "text" | "none"; enabledCommands: readonly string[] }): Promise<{ ok: boolean; error?: string }>;

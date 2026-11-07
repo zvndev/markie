@@ -1,12 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { LibraryRecord } from "@/lib/document-library";
-import type { DocumentShellState } from "@/lib/document-shell";
+import type { DocumentShellState, InteractiveDraft } from "@/lib/document-shell";
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import { documentNeedsRecoverySave, type EditableDocumentFormat } from "@/lib/document-session";
 import type { WebDocumentPayload } from "@/lib/web-files";
 import { DocumentLibrary } from "./document-library";
 import { TextDocumentEditor } from "./text-document-editor";
-import { DarkmownDocumentEditor } from "./darkmown-document-editor";
+import { DarkmownDocumentEditor, type DarkmownLiveDocs } from "./darkmown-document-editor";
 import { WordDocumentEditor } from "./word-document-editor";
 import { useDocumentWorkspace, type DocumentWorkspaceServices } from "./use-document-workspace";
 import { AppearanceMenu } from "./appearance-menu";
@@ -27,6 +27,8 @@ export interface DocumentWorkspaceProps extends DocumentWorkspaceServices {
   /** Consumed requests explicitly distinguish imported files from safe errors/conversion prompts. */
   onIncomingDocumentHandled?: (requestId: string, imported: boolean) => void;
   onPrepareClose?: (prepare: (() => Promise<boolean>) | null) => void;
+  /** Desktop super-nightly: pictures, clicked links and CodeMirror in the .wd editor. */
+  darkmownLiveDocs?: DarkmownLiveDocs | null;
 }
 const NEW_FORMATS: { format: EditableDocumentFormat; label: string; detail: string }[] = [
   { format: "docx", label: "Word document", detail: ".docx" }, { format: "text", label: "Plain text", detail: ".txt" },
@@ -34,7 +36,7 @@ const NEW_FORMATS: { format: EditableDocumentFormat; label: string; detail: stri
   { format: "darkmown", label: "Darkmown interactive document", detail: ".wd" },
   { format: "json", label: "JSON", detail: ".json" }, { format: "yaml", label: "YAML", detail: ".yaml" }, { format: "xml", label: "XML", detail: ".xml" },
 ];
-export function DocumentWorkspace({ embedded = false, active = true, onShellChange, externalModalOpen = false, incomingDocument, onIncomingDocumentHandled, onPrepareClose, ...services }: DocumentWorkspaceProps) {
+export function DocumentWorkspace({ embedded = false, active = true, onShellChange, externalModalOpen = false, incomingDocument, onIncomingDocumentHandled, onPrepareClose, darkmownLiveDocs = null, ...services }: DocumentWorkspaceProps) {
   const [vault, setVault] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -118,11 +120,12 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
   outputInFlight.current = output.isBusy;
   const actionsBlocked = blocked || output.busy;
   const create = (format: EditableDocumentFormat) => { if (blocked || output.isBusy() || !canLeaveVault()) return; setNewMenu(false); setVault(false); setShowLibrary(false); void workspace.create(format); };
+  const createFrom = (draft: InteractiveDraft) => { if (blocked || output.isBusy() || !canLeaveVault()) return false; setNewMenu(false); setVault(false); setShowLibrary(false); void workspace.createFrom(draft); return true; };
   const open = (record: LibraryRecord) => { if (blocked || output.isBusy() || !canLeaveVault()) return; setVault(false); setShowLibrary(false); void workspace.open(record); };
   const importFile = () => { if (blocked || output.isBusy() || !canLeaveVault()) return; setVault(false); void workspace.importFile(); };
   const showVault = () => { if (!blocked && !output.isBusy() && !vault) void workspace.recoverNow().then(() => { if (!output.isBusy()) setVault(true); }); };
-  const actions = useRef({ create, open, importFile, showVault, workspace, blocked: actionsBlocked, output });
-  actions.current = { create, open, importFile, showVault, workspace, blocked: actionsBlocked, output };
+  const actions = useRef({ create, createFrom, open, importFile, showVault, workspace, blocked: actionsBlocked, output });
+  actions.current = { create, createFrom, open, importFile, showVault, workspace, blocked: actionsBlocked, output };
   const shellChanged = useRef(onShellChange); shellChanged.current = onShellChange;
   useEffect(() => {
     shellChanged.current?.({
@@ -140,7 +143,7 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
           else editorCommands?.execute(command);
         },
       },
-      create: (format) => actions.current.create(format), open: (record) => actions.current.open(record),
+      create: (format) => actions.current.create(format), createFrom: (draft) => actions.current.createFrom(draft), open: (record) => actions.current.open(record),
       importFile: () => actions.current.importFile(), save: (asCopy) => { if (!navigation.current.vault && !actions.current.blocked) void actions.current.workspace.saveFile(asCopy); },
       share: () => { if (!navigation.current.vault && !actions.current.blocked) void actions.current.workspace.share(); }, showVault: () => actions.current.showVault(),
       prepareClose, prepareLeave,
@@ -178,7 +181,7 @@ export function DocumentWorkspace({ embedded = false, active = true, onShellChan
             <button type="button" disabled={!session.record || !!workspace.busy} onClick={() => void workspace.showRecovery()}>Recovery history</button><button type="button" onClick={() => void workspace.copy()}>Copy text</button><button type="button" disabled={!session.record || !!workspace.busy} onClick={() => setPendingDelete(session.record)}>Remove from library</button>
           </section> : null}
           {workspace.recovery ? <section className="docs-recovery" aria-label="Recovery history" inert={output.busy}><div><strong>Recovery history</strong><button type="button" onClick={workspace.closeRecovery}>Close</button></div><p>Restoring makes a new local revision. Your external file stays unchanged.</p>{workspace.recovery.length ? workspace.recovery.map((entry) => <button type="button" key={entry.revision} disabled={!!workspace.busy} onClick={() => void workspace.restore(entry.revision)}>Restore revision {entry.revision} <span>{new Date(entry.savedAt).toLocaleString()}</span></button>) : <p>No earlier recovery revisions yet.</p>}</section> : null}
-          <div className="docs-editor-area">{session.office ? <WordDocumentEditor key={session.epoch} document={session.office} readOnly={!!workspace.busy || output.busy || externalModalOpen || !active} isReadOnly={output.isBusy} onChange={workspace.changeOffice} onCommandsReady={registerEditorCommands} onHistory={hasHistory ? showDocumentHistory : undefined} /> : session.format === "darkmown" ? <DarkmownDocumentEditor key={session.epoch} session={session} active={active} readOnly={actionsBlocked} onChange={workspace.changeText} onRestoreText={workspace.restoreText} onFlushReady={workspace.setFlush} onCommandsReady={registerEditorCommands} /> : <TextDocumentEditor key={session.epoch} session={session} readOnly={!!workspace.busy || output.busy || externalModalOpen || !active} onChange={workspace.changeText} onRestoreText={workspace.restoreText} onFlushReady={workspace.setFlush} onCommandsReady={registerEditorCommands} />}</div>
+          <div className="docs-editor-area">{session.office ? <WordDocumentEditor key={session.epoch} document={session.office} readOnly={!!workspace.busy || output.busy || externalModalOpen || !active} isReadOnly={output.isBusy} onChange={workspace.changeOffice} onCommandsReady={registerEditorCommands} onHistory={hasHistory ? showDocumentHistory : undefined} /> : session.format === "darkmown" ? <DarkmownDocumentEditor key={session.epoch} session={session} liveDocs={darkmownLiveDocs} active={active} readOnly={actionsBlocked} onChange={workspace.changeText} onRestoreText={workspace.restoreText} onFlushReady={workspace.setFlush} onCommandsReady={registerEditorCommands} /> : <TextDocumentEditor key={session.epoch} session={session} readOnly={!!workspace.busy || output.busy || externalModalOpen || !active} onChange={workspace.changeText} onRestoreText={workspace.restoreText} onFlushReady={workspace.setFlush} onCommandsReady={registerEditorCommands} />}</div>
           <footer className="docs-status"><span role="status" title={statusDetail}>{status}</span><span>{session.text.trim() ? session.text.trim().split(/\s+/).length : 0} words · {session.format.toUpperCase()}{session.text.length > 1024 * 1024 ? " · First 1M characters searchable" : ""}</span></footer>
         </> : embedded ? <section className="docs-empty-editor" aria-label="Document editor"><p>Open a document or create one from Markie’s toolbar.</p></section> : <section className="docs-welcome"><span className="docs-welcome-glyph" aria-hidden="true">M</span><p className="docs-eyebrow">YOUR WORDS, IN ONE PLACE</p><h1>Make room for your next idea.</h1><p>Documents, notes and working copy.<br />Local first. Ready when you are.</p><div><button type="button" className="docs-primary" onClick={() => create("docx")}>New Word document</button><button type="button" onClick={importFile}>Import a file</button></div><small>DOCX · RTF · ODT · Markdown · Text · CSV · JSON · YAML · XML<br />Legacy DOC and HTML import as text-only copies.</small></section>}
       </>}

@@ -4,6 +4,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import { DARKMOWN_MAX_COMPUTED_GROWTH } from "./compiler-types";
+import { darkmownLinkTarget, darkmownPictureRef, darkmownPictureUrl, isDarkmownPictureBase } from "./links";
 
 const TAGS = ["main", "article", "section", "header", "footer", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i", "u", "s", "del", "mark", "small", "sub", "sup", "blockquote", "pre", "code", "ul", "ol", "li", "hr", "br", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "a", "button", "input", "label", "select", "option", "textarea", "form", "template"];
 const STRIP = new Set(["script", "style", "svg", "math", "iframe", "object", "embed", "link", "meta", "base", "img", "video", "audio", "source", "picture", "track", "noscript"]);
@@ -124,9 +125,19 @@ function textOf(node: Element): string {
   return node.children.map((child) => child.type === "text" ? child.value : "").join("");
 }
 
+/**
+ * What a desktop preview may keep beyond the offline default. `links` keeps an
+ * http(s) or mailto href, as a new-window link the sandbox itself refuses; the
+ * host's link bridge is what opens it. `pictureBase` is a picture scope main
+ * issued for this document's folder; a relative picture is pointed into it.
+ */
+export interface DarkmownSanitizeOptions { links?: boolean; pictureBase?: string | null }
+
 /** Parse inertly (never into a browser document), then expose only offline, bounded runtime data. */
-export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): Promise<{ bodyHtml: string; seeds: string[]; warnings: string[] }> {
+export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean, options: DarkmownSanitizeOptions = {}): Promise<{ bodyHtml: string; seeds: string[]; warnings: string[] }> {
   if (bodyHtml.length > 2_000_000) throw new Error("Darkmown preview exceeds the safe rendering limit");
+  const links = options.links === true;
+  const pictureBase = isDarkmownPictureBase(options.pictureBase) ? options.pictureBase : null;
   const parser = unified().use(rehypeRaw);
   const tree = await parser.run({ type: "root", children: [{ type: "raw", value: bodyHtml }] } as Root);
   const seeds: string[] = [];
@@ -169,6 +180,17 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): 
         } else if (!(properties.type === "module" && properties.src === "/__wd/runtime.js")) removed = true;
         return [];
       }
+      if (child.tagName === "img" && pictureBase) {
+        // Only a picture in the document's own folder, through the scope main
+        // issued for that folder. Remote, absolute and `..` pictures stay out.
+        const ref = darkmownPictureRef(properties.src);
+        if (!ref) { removed = true; return []; }
+        if (Object.keys(properties).some((key) => /^(on|style$|srcSet$)/i.test(key))) removed = true;
+        const picture: Element["properties"] = { src: darkmownPictureUrl(pictureBase, ref) };
+        for (const key of ["alt", "title"]) if (typeof properties[key] === "string") picture[key] = String(properties[key]).slice(0, 10_000);
+        child.properties = picture; child.children = [];
+        return [child];
+      }
       if (STRIP.has(child.tagName)) { removed = true; return []; }
       if (child.tagName === "template") {
         const known = TEMPLATE_MARKERS.filter((key) => key in properties);
@@ -189,12 +211,17 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): 
       if (child.tagName === "input" && !["text", "number", "range", "checkbox", "radio", "email", "url"].includes(String(properties.type || "text"))) { removed = true; return []; }
       const next: Element["properties"] = {};
       if (localForm) next.dataWdForm = properties.dataWdForm;
+      // A link keeps its address only when it is a web page or a mail draft.
+      // It opens a new window, which the frame's sandbox refuses, so the frame
+      // itself never navigates; the link bridge hands the click to the host.
+      const href = links && child.tagName === "a" ? darkmownLinkTarget(properties.href) : null;
+      if (href) { next.href = href; next.target = "_blank"; next.rel = ["noopener", "noreferrer"]; }
       for (const key of ["title", "ariaLabel", "ariaHidden", "colSpan", "rowSpan"]) {
         if (properties[key] != null) next[key] = properties[key];
       }
       const hasUnsupported = Object.keys(properties).some((key) =>
         key.startsWith("dataWd") && !RUNTIME_ATTRIBUTES.includes(key)
-        || /^(on|style$|src|href$|poster$|action$|formAction$|ping$)/i.test(key) && !(key === "href" && properties[key] === "#main"));
+        || /^(on|style$|src|href$|poster$|action$|formAction$|ping$)/i.test(key) && !(key === "href" && (properties[key] === "#main" || href)));
       if (hasUnsupported) removed = true;
       if (trusted) {
         for (const key of MARKERS) if (key in properties && !TEMPLATE_MARKERS.includes(key)) next[key] = "";
@@ -288,8 +315,14 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): 
     // IDs/form names are never admitted. Validated field names must remain
     // exact for FormData; GitHub's defaults otherwise rename and disable them.
     clobber: [], required: {},
-    tagNames: TAGS,
-    attributes: { "*": ["title", "ariaLabel", "ariaHidden", "colSpan", "rowSpan", ...RUNTIME_ATTRIBUTES], button: ["type", "disabled"], input: ["name", "type", "disabled", "maxLength", "min", "max", "step", "value", "placeholder", "checked"], textarea: ["name", "disabled", "maxLength", "placeholder"], select: ["name", "disabled"], option: ["value", "selected"] },
+    tagNames: pictureBase ? [...TAGS, "img"] : TAGS,
+    attributes: {
+      "*": ["title", "ariaLabel", "ariaHidden", "colSpan", "rowSpan", ...RUNTIME_ATTRIBUTES], button: ["type", "disabled"], input: ["name", "type", "disabled", "maxLength", "min", "max", "step", "value", "placeholder", "checked"], textarea: ["name", "disabled", "maxLength", "placeholder"], select: ["name", "disabled"], option: ["value", "selected"],
+      ...(links ? { a: ["href", "target", "rel"] } : {}),
+      ...(pictureBase ? { img: ["src", "alt", "title"] } : {}),
+    },
+    // A second, independent check on the two URL-bearing attributes.
+    protocols: { href: ["http", "https", "mailto"], src: ["markie-asset"] },
   }).use(rehypeStringify);
   const clean = await processor.run(tree);
   (function restoreTemplates(node: Root | Element) {

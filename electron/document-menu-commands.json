@@ -3,6 +3,7 @@
   {"group":"File","id":"new-word","label":"New Word Document"},
   {"group":"File","id":"new-text","label":"New Text Document"},
   {"group":"File","id":"new-darkmown","label":"New Darkmown Document"},
+  {"group":"File","id":"make-interactive","label":"Make Interactive","hiddenUntilEnabled":true},
   {"group":"File","id":"document-details","label":"Document Details…"},
   {"group":"File","id":"document-history","label":"History…"},
   {"group":"File","id":"document-print","label":"Print…"},

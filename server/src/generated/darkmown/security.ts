@@ -6,6 +6,82 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import { DARKMOWN_MAX_COMPUTED_GROWTH } from "./darkmown-limits.mjs";
+// ---- inlined from src/lib/darkmown/links.ts by the sync ----
+// Which links and pictures a .wd preview keeps.
+//
+// The renderer's copy of electron/darkmown-preview.js's rules. The sanitizer
+// uses them to decide what reaches the frame at all, and the host uses
+// darkmownLinkTarget before it asks main to open anything. Main applies its
+// own copy again, because the renderer is not trusted to have done this.
+// links.test.ts runs both copies over the same cases so they cannot drift.
+
+const MAX_URL = 8192;
+const MAX_REF = 2048;
+const ADDRESS = /^[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
+const MAIL_FIELDS = new Set(["subject", "body", "cc", "bcc"]);
+const PICTURE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
+
+function addressList(value: string): boolean {
+  const parts = value.split(",").map((part) => part.trim());
+  return parts.length > 0 && parts.length <= 20 && parts.every((part) => ADDRESS.test(part));
+}
+
+/** An http(s) page or a simple mail draft, normalized; anything else is null. */
+export function darkmownLinkTarget(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_URL) return null;
+  if (/[\x00-\x20\x7f\\]/.test(value)) return null;
+  let url: URL;
+  try { url = new URL(value); } catch { return null; }
+  if (url.protocol === "http:" || url.protocol === "https:") {
+    if (!/^https?:\/\//i.test(value) || !url.hostname || url.username || url.password) return null;
+    return url.href;
+  }
+  if (url.protocol !== "mailto:" || url.hash) return null;
+  let to: string;
+  try { to = decodeURIComponent(url.pathname); } catch { return null; }
+  if (to && !addressList(to)) return null;
+  let fields = 0;
+  for (const [key, field] of url.searchParams) {
+    const name = key.toLowerCase();
+    if (!MAIL_FIELDS.has(name) || ++fields > 8 || field.length > 2000) return null;
+    // A line break in a header field can start another header (Bcc:, ...).
+    if (name !== "body" && /[\r\n]/.test(field)) return null;
+    if ((name === "cc" || name === "bcc") && !addressList(field)) return null;
+  }
+  if (!to && fields === 0) return null;
+  return url.href;
+}
+
+/**
+ * The picture reference exactly as the document wrote it, when it names an
+ * image file inside the document's own folder; otherwise null. A remote
+ * picture, an absolute path, a scheme and any `..` are refused here, and
+ * main refuses them again by realpath.
+ */
+export function darkmownPictureRef(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw || raw.length > MAX_REF || /[\x00-\x1f\x7f\\]/.test(raw)) return null;
+  if (raw.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
+  const bare = raw.split("#")[0].split("?")[0];
+  let decoded: string;
+  try { decoded = decodeURIComponent(bare); } catch { decoded = bare; }
+  if (!decoded || decoded.startsWith("/") || /^[a-z]:/i.test(decoded) || /[\x00-\x1f\x7f\\]/.test(decoded)) return null;
+  if (decoded.split("/").includes("..") || !PICTURE.test(decoded)) return null;
+  return raw;
+}
+
+/** The address of a picture inside a scope main issued for this document. */
+export function darkmownPictureUrl(base: string, ref: string): string {
+  return `${base}/${encodeURIComponent(ref)}`;
+}
+
+/** A base exactly as main issues it: markie-asset://wd-<32 hex>. */
+export function isDarkmownPictureBase(value: unknown): value is string {
+  return typeof value === "string" && /^markie-asset:\/\/wd-[0-9a-f]{32}$/.test(value);
+}
+// ---- end of src/lib/darkmown/links.ts ----
+
 
 const TAGS = ["main", "article", "section", "header", "footer", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i", "u", "s", "del", "mark", "small", "sub", "sup", "blockquote", "pre", "code", "ul", "ol", "li", "hr", "br", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "a", "button", "input", "label", "select", "option", "textarea", "form", "template"];
 const STRIP = new Set(["script", "style", "svg", "math", "iframe", "object", "embed", "link", "meta", "base", "img", "video", "audio", "source", "picture", "track", "noscript"]);
@@ -126,9 +202,19 @@ function textOf(node: Element): string {
   return node.children.map((child) => child.type === "text" ? child.value : "").join("");
 }
 
+/**
+ * What a desktop preview may keep beyond the offline default. `links` keeps an
+ * http(s) or mailto href, as a new-window link the sandbox itself refuses; the
+ * host's link bridge is what opens it. `pictureBase` is a picture scope main
+ * issued for this document's folder; a relative picture is pointed into it.
+ */
+export interface DarkmownSanitizeOptions { links?: boolean; pictureBase?: string | null }
+
 /** Parse inertly (never into a browser document), then expose only offline, bounded runtime data. */
-export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): Promise<{ bodyHtml: string; seeds: string[]; warnings: string[] }> {
+export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean, options: DarkmownSanitizeOptions = {}): Promise<{ bodyHtml: string; seeds: string[]; warnings: string[] }> {
   if (bodyHtml.length > 2_000_000) throw new Error("Darkmown preview exceeds the safe rendering limit");
+  const links = options.links === true;
+  const pictureBase = isDarkmownPictureBase(options.pictureBase) ? options.pictureBase : null;
   const parser = unified().use(rehypeRaw);
   const tree = await parser.run({ type: "root", children: [{ type: "raw", value: bodyHtml }] } as Root);
   const seeds: string[] = [];
@@ -171,6 +257,17 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): 
         } else if (!(properties.type === "module" && properties.src === "/__wd/runtime.js")) removed = true;
         return [];
       }
+      if (child.tagName === "img" && pictureBase) {
+        // Only a picture in the document's own folder, through the scope main
+        // issued for that folder. Remote, absolute and `..` pictures stay out.
+        const ref = darkmownPictureRef(properties.src);
+        if (!ref) { removed = true; return []; }
+        if (Object.keys(properties).some((key) => /^(on|style$|srcSet$)/i.test(key))) removed = true;
+        const picture: Element["properties"] = { src: darkmownPictureUrl(pictureBase, ref) };
+        for (const key of ["alt", "title"]) if (typeof properties[key] === "string") picture[key] = String(properties[key]).slice(0, 10_000);
+        child.properties = picture; child.children = [];
+        return [child];
+      }
       if (STRIP.has(child.tagName)) { removed = true; return []; }
       if (child.tagName === "template") {
         const known = TEMPLATE_MARKERS.filter((key) => key in properties);
@@ -191,12 +288,17 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): 
       if (child.tagName === "input" && !["text", "number", "range", "checkbox", "radio", "email", "url"].includes(String(properties.type || "text"))) { removed = true; return []; }
       const next: Element["properties"] = {};
       if (localForm) next.dataWdForm = properties.dataWdForm;
+      // A link keeps its address only when it is a web page or a mail draft.
+      // It opens a new window, which the frame's sandbox refuses, so the frame
+      // itself never navigates; the link bridge hands the click to the host.
+      const href = links && child.tagName === "a" ? darkmownLinkTarget(properties.href) : null;
+      if (href) { next.href = href; next.target = "_blank"; next.rel = ["noopener", "noreferrer"]; }
       for (const key of ["title", "ariaLabel", "ariaHidden", "colSpan", "rowSpan"]) {
         if (properties[key] != null) next[key] = properties[key];
       }
       const hasUnsupported = Object.keys(properties).some((key) =>
         key.startsWith("dataWd") && !RUNTIME_ATTRIBUTES.includes(key)
-        || /^(on|style$|src|href$|poster$|action$|formAction$|ping$)/i.test(key) && !(key === "href" && properties[key] === "#main"));
+        || /^(on|style$|src|href$|poster$|action$|formAction$|ping$)/i.test(key) && !(key === "href" && (properties[key] === "#main" || href)));
       if (hasUnsupported) removed = true;
       if (trusted) {
         for (const key of MARKERS) if (key in properties && !TEMPLATE_MARKERS.includes(key)) next[key] = "";
@@ -290,8 +392,14 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean): 
     // IDs/form names are never admitted. Validated field names must remain
     // exact for FormData; GitHub's defaults otherwise rename and disable them.
     clobber: [], required: {},
-    tagNames: TAGS,
-    attributes: { "*": ["title", "ariaLabel", "ariaHidden", "colSpan", "rowSpan", ...RUNTIME_ATTRIBUTES], button: ["type", "disabled"], input: ["name", "type", "disabled", "maxLength", "min", "max", "step", "value", "placeholder", "checked"], textarea: ["name", "disabled", "maxLength", "placeholder"], select: ["name", "disabled"], option: ["value", "selected"] },
+    tagNames: pictureBase ? [...TAGS, "img"] : TAGS,
+    attributes: {
+      "*": ["title", "ariaLabel", "ariaHidden", "colSpan", "rowSpan", ...RUNTIME_ATTRIBUTES], button: ["type", "disabled"], input: ["name", "type", "disabled", "maxLength", "min", "max", "step", "value", "placeholder", "checked"], textarea: ["name", "disabled", "maxLength", "placeholder"], select: ["name", "disabled"], option: ["value", "selected"],
+      ...(links ? { a: ["href", "target", "rel"] } : {}),
+      ...(pictureBase ? { img: ["src", "alt", "title"] } : {}),
+    },
+    // A second, independent check on the two URL-bearing attributes.
+    protocols: { href: ["http", "https", "mailto"], src: ["markie-asset"] },
   }).use(rehypeStringify);
   const clean = await processor.run(tree);
   (function restoreTemplates(node: Root | Element) {

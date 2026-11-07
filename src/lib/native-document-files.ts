@@ -99,6 +99,8 @@ export function createNativeDocumentFileAdapter(api: NativeDocumentFileApi, menu
       return () => { for (const cleanup of cleanups) cleanup?.(); };
     },
     releaseDocument,
+    /** The lease behind a handle this adapter made, for main-side lookups like a .wd's picture scope. */
+    leaseIdOf(handle: WebFileHandle): string | null { const state = handles.get(handle); return state && !state.released ? state.descriptor.leaseId : null; },
     async dispose() { disposed = true; await Promise.allSettled([...handles.keys()].map(releaseDocument)); },
   };
 }

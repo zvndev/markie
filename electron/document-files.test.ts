@@ -209,3 +209,27 @@ describe("bounded opaque native document grants", () => {
     const read = value<{ bytes: Uint8Array }>(await api.read(1, { leaseId: opened.leaseId })); expect(read.bytes).toEqual(new Uint8Array(original)); expect(fs.readFileSync(target)).toEqual(original);
   });
 });
+
+describe("leaseFolder", () => {
+  it("answers the real folder of a document only to the window that holds its lease", async () => {
+    const directory = fs.realpathSync(fixture()), folder = path.join(directory, "trip"); fs.mkdirSync(folder);
+    const target = path.join(folder, "notes.wd"); fs.writeFileSync(target, "# Trip");
+    const api = service(target);
+    const opened = value<{ leaseId: string }>(await api.open(1));
+    expect(api.leaseFolder(1, opened.leaseId)).toBe(folder);
+    expect(api.leaseFolder(2, opened.leaseId)).toBeNull();
+    expect(api.leaseFolder(1, "00000000-0000-4000-8000-000000000000")).toBeNull();
+    expect(api.leaseFolder(1, "../../etc")).toBeNull();
+    expect(api.leaseFolder(0, opened.leaseId)).toBeNull();
+    value(await api.release(1, { leaseId: opened.leaseId }));
+    expect(api.leaseFolder(1, opened.leaseId)).toBeNull();
+  });
+  it("refuses once the folder was swapped for another one", async () => {
+    const directory = fs.realpathSync(fixture()), folder = path.join(directory, "trip"), moved = path.join(directory, "moved"); fs.mkdirSync(folder);
+    const target = path.join(folder, "notes.wd"); fs.writeFileSync(target, "# Trip");
+    const api = service(target);
+    const opened = value<{ leaseId: string }>(await api.open(1));
+    fs.renameSync(folder, moved); fs.mkdirSync(folder);
+    expect(api.leaseFolder(1, opened.leaseId)).toBeNull();
+  });
+});

@@ -6,7 +6,7 @@ import { runInNewContext } from "node:vm";
 const load = createRequire(import.meta.url);
 const { createDocumentMenuController, validMenuState, MARKDOWN_MENU_IDS, ZOOM_MENU_IDS } = load("./document-menu.js");
 const commands: { id: string; group: string; label: string }[] = load("./document-menu-commands.json");
-type Item = { id?: string; label?: string; type?: string; enabled?: boolean; accelerator?: string; click?: () => void; submenu?: Item[] };
+type Item = { id?: string; label?: string; type?: string; enabled?: boolean; visible?: boolean; accelerator?: string; click?: () => void; submenu?: Item[] };
 
 function fixture() {
   const legacy = vi.fn(), sendCommand = vi.fn(), historyAllowed = vi.fn(() => false);
@@ -173,5 +173,21 @@ describe("native menu IPC wiring", () => {
     expect(lifecycle).toMatch(/if \(isMainFrame && !isInPlace\)[^\n]+documentMenu\.reset\(\)/);
     expect(source.slice(source.indexOf('mainWindow.on("closed"'), source.indexOf('if (isDev) {', source.indexOf('mainWindow.on("closed"')))).toContain("documentMenu.reset()");
     expect(source).toContain('mainWindow.webContents.send("document-command", command)');
+  });
+
+  it("shows Make Interactive only while the renderer, which owns the nightly gate, has enabled it", () => {
+    const f = fixture(), item = f.items.get("make-interactive")!;
+    expect(item.label).toBe("Make Interactive");
+    expect(item.visible).toBe(false); expect(item.enabled).toBe(false);
+    item.click!(); expect(f.sendCommand).not.toHaveBeenCalled();
+    f.controller.update({ renderer: "markdown", enabledCommands: ["make-interactive"] });
+    expect(item.visible).toBe(true); expect(item.enabled).toBe(true);
+    item.click!(); expect(f.sendCommand).toHaveBeenCalledExactlyOnceWith("make-interactive");
+    f.controller.update({ renderer: "text", enabledCommands: [] });
+    expect(item.visible).toBe(false);
+    f.controller.update({ renderer: "markdown", enabledCommands: ["make-interactive"] });
+    f.controller.reset();
+    expect(item.visible).toBe(false);
+    expect(f.items.get("new-darkmown")!.visible).toBeUndefined();
   });
 });

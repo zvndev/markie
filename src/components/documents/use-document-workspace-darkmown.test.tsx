@@ -33,4 +33,24 @@ describe("Darkmown local source sessions", () => {
     expect(hook.result.current.error).toContain("Darkmown cloud sharing is not supported yet");
     hook.unmount(); library.close();
   });
+
+  it("makes a new, unsaved .wd from Markdown byte for byte, and Save asks where it goes", async () => {
+    const library = createMemoryDocumentLibrary();
+    const markdown = "# Trip\r\n\r\nSee [the site](https://example.com).\r\n\r\n![Shot](pics/shot.png)\r\n\r\n- [ ] pack\r\n- [x] book\r\n";
+    const saveDocument = vi.fn(async () => ({ method: "download" as const, name: "Trip notes.wd" }));
+    const hook = renderHook(() => useDocumentWorkspace({ library, saveDocument }));
+    await waitFor(() => expect(hook.result.current.ready).toBe(true));
+    await act(async () => { await hook.result.current.createFrom({ name: "Trip notes.wd", text: markdown, pictureOrigin: "/Users/me/trip/Trip notes.md" }); });
+    const session = hook.result.current.session!;
+    expect(session).toMatchObject({ format: "darkmown", name: "Trip notes.wd", text: markdown, pictureOrigin: "/Users/me/trip/Trip notes.md", textMetadata: { newline: "crlf" } });
+    expect(session.handle).toBeUndefined();
+    expect(session.externalGeneration).toBeUndefined();
+    expect(hook.result.current.notice).toContain("The Markdown file is unchanged");
+    await act(async () => { await hook.result.current.saveFile(); });
+    expect(saveDocument).toHaveBeenCalledOnce();
+    const saved = (saveDocument.mock.calls[0] as unknown as [{ name: string; bytes: Uint8Array; handle?: unknown }])[0];
+    expect(saved).toMatchObject({ name: "Trip notes.wd", handle: undefined });
+    expect(new TextDecoder().decode(saved.bytes)).toBe(markdown);
+    hook.unmount(); library.close();
+  });
 });

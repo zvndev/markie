@@ -7,6 +7,9 @@ import { applyTheme, findTheme, loadThemeStore } from "@/lib/theme";
 import { getElectronAPI, isTooLarge } from "@/lib/electron";
 import { createNativeDocumentFileAdapter } from "@/lib/native-document-files";
 import { classifyDocumentFormat, decodeTextDocument } from "@/lib/document-formats";
+import { nightlyFeaturesEnabled } from "@/lib/nightly";
+import { isDarkmownPictureBase } from "@/lib/darkmown/links";
+import type { DarkmownLiveDocs } from "./documents/darkmown-document-editor";
 
 const CloudDialog = lazy(() => import("./document-cloud-dialog").then((module) => ({ default: module.DocumentCloudDialog })));
 
@@ -32,6 +35,24 @@ export function DocumentWorkspaceHost({ embedded = false, active = true, onActiv
   const [pending, setPending] = useState<{ file?: CloudFile; cloudDocumentId?: string } | null>(null);
   const [desktop] = useState(getElectronAPI);
   const [native] = useState(() => desktop?.documentFiles ? createNativeDocumentFileAdapter(desktop.documentFiles, desktop) : null);
+  // Live Docs (super-nightly): a .wd shows the pictures beside it and opens a
+  // clicked link in the browser. The renderer names a lease or an already
+  // granted Markdown file; main answers with a picture scope and checks every
+  // link again (electron/darkmown-preview.js).
+  const [darkmownLiveDocs] = useState<DarkmownLiveDocs | null>(() => {
+    const bridge = desktop?.darkmownPreview;
+    if (!bridge || !nightlyFeaturesEnabled()) return null;
+    return {
+      async pictureBase({ handle, markdownPath }) {
+        const leaseId = handle && native ? native.leaseIdOf(handle) : null;
+        const request = leaseId ? { leaseId } : !handle && markdownPath ? { markdownPath } : null;
+        if (!request) return null;
+        const scope = await bridge.pictureScope(request).catch(() => null);
+        return scope?.ok && isDarkmownPictureBase(scope.base) ? scope.base : null;
+      },
+      openLink(href) { void bridge.openLink(href).catch(() => {}); },
+    };
+  });
   const [incoming, setIncoming] = useState<IncomingDocumentRequest[]>([]);
   const [hostError, setHostError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
@@ -251,7 +272,7 @@ export function DocumentWorkspaceHost({ embedded = false, active = true, onActiv
       pickDocument={native?.pickDocument} saveDocument={native?.saveDocument} subscribeCommands={embedded ? undefined : native?.subscribeCommands}
       releaseDocument={native?.releaseDocument} incomingDocument={incoming[0]}
       onIncomingDocumentHandled={incomingHandled}
-      onPrepareClose={registerPrepareClose} /></div>
+      onPrepareClose={registerPrepareClose} darkmownLiveDocs={darkmownLiveDocs} /></div>
     {pending ? <Suspense fallback={<p role="status">Opening sharing…</p>}><CloudDialog {...pending} onClose={close} onCloseGuard={registerCloudGuard} /></Suspense> : null}
   </div>;
 }

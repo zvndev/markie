@@ -7,6 +7,7 @@ import {
 import { openRichDocument, type RichDocument } from "@/lib/office/rich-document";
 import { extractLegacyDocTextOffThread } from "@/lib/office/legacy-doc-worker-client";
 import { classifyDocumentFormat, decodeTextDocument, encodeTextDocument } from "@/lib/document-formats";
+import type { InteractiveDraft } from "@/lib/document-shell";
 import { pickWebDocument, saveWebDocument, type WebDocumentPayload, type WebFileHandle } from "@/lib/web-files";
 import type { DocumentLibrary, LibraryRecord, LibraryResult, RecoveryRecord } from "@/lib/document-library";
 
@@ -227,6 +228,28 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
       if (token !== request.current) return;
       persistedGenerations.current.set(next.id, next.persistedGeneration);
       flushRef.current = null; setSession(next); setRecovery(null); setNotice(null);
+      if (repositoryRef.current) await persist(next);
+    });
+  }, [capture, persist, run, setSession]);
+
+  // Make interactive: a new .wd holding the Markdown byte for byte. It has
+  // no file yet, so Save asks where it goes; the Markdown file is never
+  // written. Its line endings and text are kept exactly as they came.
+  const createFrom = useCallback(async (draft: InteractiveDraft) => {
+    activeImport.current?.abort();
+    const token = ++request.current;
+    await run("Making an interactive copy", async () => {
+      const current = capture();
+      if (current && documentNeedsRecoverySave(current)) await persist(current);
+      const blank = await createDocumentSession("darkmown", draft.name);
+      const next: DocumentSession = {
+        ...blank, text: draft.text, textMetadata: decodeTextDocument(encodeTextDocument(draft.text)), generation: blank.generation + 1,
+        ...(draft.pictureOrigin ? { pictureOrigin: draft.pictureOrigin } : {}),
+      };
+      if (token !== request.current) return;
+      persistedGenerations.current.set(next.id, next.persistedGeneration);
+      flushRef.current = null; setSession(next); setRecovery(null);
+      setNotice("This is a new interactive copy. Save it to choose where it goes. The Markdown file is unchanged.");
       if (repositoryRef.current) await persist(next);
     });
   }, [capture, persist, run, setSession]);
@@ -462,7 +485,7 @@ export function useDocumentWorkspace(services: DocumentWorkspaceServices, keyboa
 
   return {
     records, session, ready, busy, saving: saving > 0, error, notice, recovery, conversion,
-    open, create, importFile, importPayload, saveFile, changeText, restoreText, changeOffice, changeDetails, showRecovery, restore, remove, copy, share,
+    open, create, createFrom, importFile, importPayload, saveFile, changeText, restoreText, changeOffice, changeDetails, showRecovery, restore, remove, copy, share,
     closeRecovery: () => setRecovery(null), dismissError: () => setError(null),
     confirmConversion, cancelConversion: () => setConversion(null),
     hasPendingConversion,

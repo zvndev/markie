@@ -41,6 +41,9 @@ function createDocumentMenuController({ getWindow, getMenu, sendCommand, canUseL
       const item = menu.getMenuItemById(command.id);
       if (item) {
         item.enabled = canExecute(command.id) || canUseFallback(command.id);
+        // A super-nightly command (Make Interactive) is not shown at all until
+        // the renderer, which owns the nightly gate, says it can run.
+        if (command.hiddenUntilEnabled) item.visible = item.enabled;
         item.label = isMarkdown() ? legacyFallbacks.get(command.id)?.label || command.label : command.label;
       }
     }
@@ -54,6 +57,7 @@ function createDocumentMenuController({ getWindow, getMenu, sendCommand, canUseL
     id: command.id,
     label: command.label,
     ...(command.accelerator ? { accelerator: command.accelerator } : {}),
+    ...(command.hiddenUntilEnabled ? { visible: false } : {}),
     enabled: false,
     click: () => {
       if (canExecute(command.id)) sendCommand(command.id);

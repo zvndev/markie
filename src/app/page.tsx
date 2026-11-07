@@ -166,6 +166,9 @@ const sizeUnlessConverted = (md: string, raw: string, bytes: number): number | u
 type ViewMode = "edit" | "preview" | "split";
 
 const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
+const isMarkdownName = (name: string | null) => !!name && /\.(?:md|markdown|mdx)$/i.test(name);
+// "Trip notes.md" becomes "Trip notes.wd"; an untitled document becomes "Untitled.wd".
+const interactiveCopyName = (name: string | null) => `${(name ?? "").replace(/\.(?:md|markdown|mdx)$/i, "").trim() || "Untitled"}.wd`;
 const isPlainTextName = (name: string | null) => !!name && classifyDocumentFormat(name).kind === "text";
 
 // What handleSave returns when a write was refused because the file moved
@@ -1447,12 +1450,36 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (!choice.ok && choice.code === "canceled") return;
     setLiveDocsChoice((prev) => ({ id: (prev?.id ?? 0) + 1, choice }));
   }, []);
+  // Make interactive (Live Docs, super-nightly): the open Markdown becomes a
+  // new, unsaved .wd in the document workspace, which the user then saves
+  // with Save As. The Markdown file is never written by this. It crosses
+  // panes the way the cloud handoff does: take the text as it stands first,
+  // let the Markdown pane settle and step aside, then hand the workspace a
+  // draft it can refuse.
+  const [makeInteractiveAvailable] = useState(() => documentsEnabled && nightlyFeaturesEnabled());
+  const makingInteractive = useRef(false);
+  const makeInteractive = useCallback(async () => {
+    if (!makeInteractiveAvailable || makingInteractive.current || documentsOpenRef.current) return;
+    if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
+    const shell = documentShellRef.current;
+    if (!shell?.ready || shell.private || !shell.createFrom) { setForkError("Document tools are still loading. Try again in a moment."); return; }
+    const { filePath: origin, fileName: name } = docRef.current;
+    if (isPlainTextName(name) || isCSVName(name)) return;
+    const text = currentMarkdown();
+    makingInteractive.current = true;
+    try {
+      if (!await openDocumentsWorkspace()) return;
+      const draft = { name: interactiveCopyName(name), text, pictureOrigin: origin && isMarkdownName(origin) ? origin : null };
+      if (!documentShellRef.current?.createFrom?.(draft)) setForkError("Markie could not open the interactive copy. Your Markdown file was not changed.");
+    } finally { makingInteractive.current = false; }
+  }, [makeInteractiveAvailable, currentMarkdown, openDocumentsWorkspace]);
   const runDocumentCommand = useCallback((command: string) => {
     if (!documentMenuCommands.some((item) => item.id === command) && !["find", "undo", "redo", "zoom-in", "zoom-out"].includes(command)) return;
     if (document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) return;
     if (command === "new-markdown" || command === "new-word" || command === "new-text" || command === "new-darkmown") {
       void createDocument(command === "new-markdown" ? "markdown" : command === "new-word" ? "docx" : command === "new-darkmown" ? "darkmown" : "text"); return;
     }
+    if (command === "make-interactive") { void makeInteractive(); return; }
     if (documentsOpenRef.current) {
       const shell = documentShellRef.current;
       if (shell?.private || shell?.busy || shell?.commands?.modalOpen || document.querySelector(".docs-embedded-host")?.closest("[inert]")) return;
@@ -1464,7 +1491,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     const action = FORMAT_MENU_ACTIONS[command], style = FORMAT_MENU_STYLES[command];
     if (action) executeDocToolbarAction(richEditor, action);
     else if (style) setDocToolbarStyle(richEditor, style);
-  }, [docEditable, mode, richEditor, createDocument]);
+  }, [docEditable, mode, richEditor, createDocument, makeInteractive]);
   const nativeCommandHandler = useRef(runDocumentCommand);
   const scheduleDocumentCommand = useCallback((command: string) => {
     setShowPalette(false);
@@ -1480,12 +1507,13 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     const renderer = paused ? "none" : documentsOpen ? documentShell?.renderer ?? "none" : "markdown";
     const capable = documentsOpen ? documentShell?.private || documentShell?.busy ? [] : documentShell?.commands?.enabledCommands ?? []
       : docEditable && mode !== "edit" && richEditor && !richEditor.isDestroyed && richEditor.isEditable ? [...Object.keys(FORMAT_MENU_ACTIONS), ...Object.keys(FORMAT_MENU_STYLES)] : [];
-    const enabledCommands = paused || renderer === "none" ? [] : [...new Set([...(documentsEnabled ? ["new-markdown", ...(documentShell?.ready ? ["new-word", "new-text", "new-darkmown"] : [])] : []), ...capable])].filter((id) => documentMenuCommands.some((item) => item.id === id));
+    const interactive = makeInteractiveAvailable && !documentsOpen && !!documentShell?.ready && !documentShell.private && !plainText && !isCSVName(fileName) ? ["make-interactive"] : [];
+    const enabledCommands = paused || renderer === "none" ? [] : [...new Set([...(documentsEnabled ? ["new-markdown", ...(documentShell?.ready ? ["new-word", "new-text", "new-darkmown"] : [])] : []), ...interactive, ...capable])].filter((id) => documentMenuCommands.some((item) => item.id === id));
     const signature = JSON.stringify({ renderer, enabledCommands });
     if (signature === menuSignature.current) return;
     menuSignature.current = signature;
     void api.setDocumentMenuState({ renderer, enabledCommands }).then((result) => { if (!result.ok) menuSignature.current = ""; }).catch(() => { menuSignature.current = ""; });
-  }, [booted, closingWindow, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, documentsOpen, documentShell, docEditable, mode, richEditor, documentsEnabled]);
+  }, [booted, closingWindow, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, documentsOpen, documentShell, docEditable, mode, richEditor, documentsEnabled, makeInteractiveAvailable, plainText, fileName]);
 
   // The one way a user edit reaches the buffer, and so the only thing that may
   // ever arm a write. Loads, pulls, and reloads go through the document hook's
@@ -2079,6 +2107,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         { id: "new-word", title: "New Word document", group: "File", keywords: "docx office", run: () => createDocument("docx") },
         { id: "new-text", title: "New text document", group: "File", keywords: "txt plain", run: () => createDocument("text") },
         { id: "new-darkmown", title: "New Darkmown document", group: "File", keywords: "wd interactive state", run: () => createDocument("darkmown") },
+        ...(makeInteractiveAvailable && !documentsOpen && !plainText && !isCSVName(fileName) ? [{ id: "make-interactive", title: "Make interactive", group: "File", keywords: "darkmown wd live doc interactive convert copy checklist calculator", run: () => scheduleDocumentCommand("make-interactive") }] as AppCommand[] : []),
         { id: "private-vault", title: "Open Vault", group: "File", keywords: "locked private secure passphrase env keys secrets environment", run: openVault },
       ] as AppCommand[] : []),
       ...(documentsOpen ? documentMenuCommands.filter((item) => !item.id.startsWith("new-") && item.id !== "document-history" && documentShell?.commands?.enabledCommands.includes(item.id)).map((item): AppCommand => ({ id: item.id, title: `${item.group}: ${item.label}`, group: item.group === "View" ? "View" : item.group === "File" ? "File" : "Format", run: () => scheduleDocumentCommand(item.id) })) : []),
@@ -2160,6 +2189,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       documentsEnabled,
       documentsOpen,
       createDocument,
+      makeInteractiveAvailable,
+      fileName,
       openVault,
       documentShell,
       scheduleDocumentCommand,

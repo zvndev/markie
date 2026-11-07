@@ -42,6 +42,7 @@ const APP_ORIGIN = `http://${APP_HOST}`;
 const liveHost = (label: string) => `${label}.live.localhost:8787`;
 const liveOrigin = (label: string) => `http://${liveHost(label)}`;
 const COOKIE = "__Host-markie-live";
+const STATE_COOKIE = "__Host-markie-live-state";
 
 let callers = 0;
 interface Ask {
@@ -95,10 +96,15 @@ const labelOf = (url: string) => {
 
 /** The pass flow a browser takes; the Live Doc cookie it ends with. */
 async function openPrivate(label: string, appCookie: string): Promise<string> {
-  const pass = await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: appCookie });
+  const start = await ask(liveHost(label), "/");
+  assert.equal(start.status, 302);
+  const state = new URL(start.headers.get("location")!).searchParams.get("state");
+  const stateCookie = start.headers.getSetCookie().find((line) => line.startsWith(`${STATE_COOKIE}=`))!.split(";")[0];
+  const pass = await ask(APP_HOST, `/live-docs/pass/${label}?state=${state}`, { cookie: appCookie });
   assert.equal(pass.status, 302, "a pass");
   const redeem = new URL(pass.headers.get("location")!);
-  const redeemed = await ask(liveHost(label), `${redeem.pathname}${redeem.search}`);
+  assert.equal(redeem.pathname, "/__markie/pass");
+  const redeemed = await ask(liveHost(label), `${redeem.pathname}${redeem.search}`, { cookie: stateCookie });
   assert.equal(redeemed.status, 303);
   const line = redeemed.headers.getSetCookie().find((value) => value.startsWith(`${COOKIE}=`) && !value.startsWith(`${COOKIE}=;`));
   assert.ok(line);
@@ -215,7 +221,7 @@ test("a viewer opens a shared Live Doc through the pass; a stranger is refused e
   assert.match(await pass.text(), /shared with you, sign in with that account/);
   const bare = await ask(liveHost(label), "/");
   assert.equal(bare.status, 302);
-  assert.equal(bare.headers.get("location"), `${APP_ORIGIN}/live-docs/pass/${label}`);
+  assert.ok(bare.headers.get("location")!.startsWith(`${APP_ORIGIN}/live-docs/pass/${label}?state=`));
   // The viewer's cookie is no key for the stranger's browser, and a stream
   // with no cookie is refused like any other.
   const tab = await tabOn(label);
@@ -353,8 +359,8 @@ test("a rotated public link kills the old address and closes its open tabs", asy
   const dead = await ask(liveHost(oldLabel), "/");
   const never = await ask(liveHost("aaaaaaaaaaaaaaaa"), "/");
   assert.equal(dead.status, 302);
-  assert.equal(dead.headers.get("location"), `${APP_ORIGIN}/live-docs/pass/${oldLabel}`);
-  assert.equal(never.headers.get("location"), `${APP_ORIGIN}/live-docs/pass/aaaaaaaaaaaaaaaa`);
+  assert.ok(dead.headers.get("location")!.startsWith(`${APP_ORIGIN}/live-docs/pass/${oldLabel}?state=`));
+  assert.ok(never.headers.get("location")!.startsWith(`${APP_ORIGIN}/live-docs/pass/aaaaaaaaaaaaaaaa?state=`));
   assert.equal((await ask(APP_HOST, `/s/${oldToken}`)).headers.get("location"), null, "the old link forwards nowhere");
 
   // The new link gets a new address.

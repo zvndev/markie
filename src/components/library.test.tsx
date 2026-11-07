@@ -5,8 +5,9 @@ import type { ElectronAPI, LibraryItem } from "@/lib/electron";
 import type { LibraryRecord } from "@/lib/document-library";
 import { installBridge } from "@/test/mock-bridge";
 
+const liveDocAddress = vi.fn<(docId: string) => Promise<string | null>>(async () => "https://abcdefghijklmnop.markie.live/");
 vi.mock("@/lib/auth-client", () => ({
-  sharesClient: { sharedByMe: async () => [] },
+  sharesClient: { sharedByMe: async () => [], liveDocAddress: (docId: string) => liveDocAddress(docId) },
   getAuthToken: () => "confirmed-session", getServerURL: () => "https://account.example.test", getConfirmedAuthIdentity: () => ({ userId: "user-a", serverURL: "https://account.example.test" }),
 }));
 vi.mock("@/lib/auth-store", () => ({ authStore: { getSnapshot: () => ({ status: "in", user: { id: "user-a" } }), subscribe: () => () => {} } }));
@@ -983,5 +984,60 @@ describe("deleting a file from the Library", () => {
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Remove from Library" }));
     expect(libraryTrashFile).toHaveBeenCalledExactlyOnceWith({ path: "/notes/one.md", deleteRemote: false });
     expect(await screen.findByText("Removed gone.md from your library.")).toBeInTheDocument();
+  });
+});
+
+describe("a cloud Live Doc's address (nightly)", () => {
+  const wd = () => item({ name: "counter.wd", path: "/notes/counter.wd", state: "synced", cloudId: "w1" });
+  beforeEach(() => {
+    liveDocAddress.mockClear();
+    localStorage.setItem("markie.nightly", "1");
+  });
+
+  it("offers to copy or open the address of an owned cloud .wd", async () => {
+    renderLibrary([wd()]);
+    const writeText = stubClipboard();
+    const menu = await openMenu("counter.wd");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy Live Doc address" }));
+    expect(liveDocAddress).toHaveBeenCalledExactlyOnceWith("w1");
+    expect(writeText).toHaveBeenCalledWith("https://abcdefghijklmnop.markie.live/");
+    expect(await screen.findByText(/Live Doc address copied/)).toBeInTheDocument();
+  });
+
+  it("opens the address in the browser", async () => {
+    const openExternal = vi.fn(async () => {});
+    renderLibrary([wd()], { overrides: { openExternal } as Partial<ElectronAPI> });
+    const menu = await openMenu("counter.wd");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Open Live Doc" }));
+    await waitFor(() => expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://abcdefghijklmnop.markie.live/"));
+  });
+
+  it("says so when the server has no address for it", async () => {
+    liveDocAddress.mockResolvedValueOnce(null);
+    const openExternal = vi.fn(async () => {});
+    renderLibrary([wd()], { overrides: { openExternal } as Partial<ElectronAPI> });
+    const menu = await openMenu("counter.wd");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Open Live Doc" }));
+    expect(await screen.findByText(/no Live Doc address/)).toBeInTheDocument();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("is not offered for a .md, a local-only .wd, a .wd shared with me, or outside nightly", async () => {
+    const cases: Array<[LibraryItem, string]> = [
+      [item({ name: "notes.md", state: "synced", cloudId: "m1" }), "notes.md"],
+      [item({ name: "solo.wd", path: "/notes/solo.wd" }), "solo.wd"],
+      [item({ name: "theirs.wd", path: "/notes/theirs.wd", state: "synced", cloudId: "t1", shared: true, owned: false } as Partial<LibraryItem>), "theirs.wd"],
+    ];
+    for (const [row, name] of cases) {
+      const { view } = renderLibrary([row]);
+      const menu = await openMenu(name);
+      expect(within(menu).queryByRole("menuitem", { name: "Copy Live Doc address" }), name).not.toBeInTheDocument();
+      view.unmount();
+    }
+    localStorage.removeItem("markie.nightly");
+    const { view } = renderLibrary([wd()]);
+    const menu = await openMenu("counter.wd");
+    expect(within(menu).queryByRole("menuitem", { name: "Open Live Doc" })).not.toBeInTheDocument();
+    view.unmount();
   });
 });

@@ -1,7 +1,7 @@
 // Live collaboration: custom WebSocket rooms speaking the y-websocket wire
 // protocol (y-protocols sync + awareness). One room per doc, share-gated on
 // upgrade. Yjs updates persist to a SQLite log, compacted past 500 rows.
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
@@ -687,7 +687,17 @@ async function legacyTokenHolder(token: string): Promise<TicketHolder | null> {
 // refused by ws (close code 1009) before any Yjs decoding runs.
 export const COLLAB_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
-export function attachCollab(server: Server): void {
+export interface AttachCollabOptions {
+  /**
+   * Whether an upgrade may reach live editing at all, from its headers. The
+   * server refuses every upgrade on the hosted Live Docs domain here
+   * (live-docs-config.ts upgradeAllowed), since an upgrade never passes
+   * through the Hono middleware that keeps that domain off the app.
+   */
+  allowUpgrade?: (req: IncomingMessage) => boolean;
+}
+
+export function attachCollab(server: Server, options: AttachCollabOptions = {}): void {
   const wss = new WebSocketServer({ noServer: true, maxPayload: COLLAB_MAX_PAYLOAD_BYTES });
 
   server.on("upgrade", async (req, socket, head) => {
@@ -696,6 +706,10 @@ export function attachCollab(server: Server): void {
     // exception. ws's own noServer example guards the socket the same way.
     const onSocketError = () => socket.destroy();
     socket.on("error", onSocketError);
+    if (options.allowUpgrade && !options.allowUpgrade(req)) {
+      socket.destroy();
+      return;
+    }
     if (!acceptingUpgrades) {
       socket.destroy();
       return;

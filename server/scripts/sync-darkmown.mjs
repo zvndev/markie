@@ -1,0 +1,75 @@
+#!/usr/bin/env node
+// Regenerates server/src/generated/darkmown/ from the Mac app's pinned
+// Darkmown pipeline, for hosted Live Docs (src/live-docs*.ts).
+//
+// The server's Docker build context is server/ alone, so it cannot import
+// src/lib/darkmown/ or mcp/. It compiles with these copies instead, and
+// src/live-docs-parity.test.ts fails whenever a copy and its source differ.
+// Run after any change to the vendored compiler, the runtime, the bootstrap,
+// the sanitizer or the preview limits:
+//
+//   (cd server && npm run darkmown:sync)
+//
+// Every file is copied byte for byte, with two exceptions. The sanitizer's
+// one import of the limits goes through compiler-types.ts, an extensionless
+// app import Node cannot resolve, so the copy imports the same limits file
+// directly; the sync refuses to run if that line is not there exactly once.
+// And the preview's page style is lifted out of preview.ts as plain CSS.
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = new URL("../../", import.meta.url);
+export const COPY_DIR = fileURLToPath(new URL("../src/generated/darkmown/", import.meta.url));
+
+const LIMITS_IMPORT = 'import { DARKMOWN_MAX_COMPUTED_GROWTH } from "./compiler-types";';
+const LIMITS_IMPORT_COPY = 'import { DARKMOWN_MAX_COMPUTED_GROWTH } from "./darkmown-limits.mjs";';
+const SECURITY_HEADER =
+  "// GENERATED from src/lib/darkmown/security.ts by server/scripts/sync-darkmown.mjs.\n" +
+  "// Do not edit. Change the source, then run: (cd server && npm run darkmown:sync)\n";
+
+function rewriteSecurity(source) {
+  const count = source.split(LIMITS_IMPORT).length - 1;
+  if (count !== 1) {
+    throw new Error(`src/lib/darkmown/security.ts must import the limits exactly once as:\n  ${LIMITS_IMPORT}\nfound ${count}. Update sync-darkmown.mjs to match.`);
+  }
+  return SECURITY_HEADER + source.replace(LIMITS_IMPORT, LIMITS_IMPORT_COPY);
+}
+
+// The preview's page style, so a hosted Live Doc looks like the Mac preview.
+// Lifted out of preview.ts's one STYLE constant, which holds no interpolation.
+function extractStyle(source) {
+  const matches = [...source.matchAll(/^const STYLE = `([^`$\\]*)`;$/gm)];
+  if (matches.length !== 1) throw new Error("src/lib/darkmown/preview.ts must declare exactly one plain `const STYLE = `...`;` line.");
+  return matches[0][1];
+}
+
+/** Every generated file: its name in the copy, its source, and how it is derived. */
+export const FILES = [
+  { name: "compiler-browser.mjs", source: "src/lib/darkmown/vendor/compiler-browser.mjs" },
+  { name: "runtime.js.txt", source: "src/lib/darkmown/vendor/runtime.js.txt" },
+  { name: "PROVENANCE.json", source: "src/lib/darkmown/vendor/PROVENANCE.json" },
+  { name: "THIRD-PARTY-NOTICES.txt", source: "src/lib/darkmown/vendor/THIRD-PARTY-NOTICES.txt" },
+  { name: "local-form-bootstrap.js.txt", source: "src/lib/darkmown/local-form-bootstrap.js.txt" },
+  { name: "runtime-policy.json", source: "electron/darkmown-runtime-policy.json" },
+  { name: "darkmown-limits.mjs", source: "mcp/darkmown-limits.mjs" },
+  { name: "security.ts", source: "src/lib/darkmown/security.ts", transform: rewriteSecurity },
+  { name: "preview-style.css", source: "src/lib/darkmown/preview.ts", transform: extractStyle },
+];
+
+export function sourcePath(file) {
+  return fileURLToPath(new URL(file.source, ROOT));
+}
+
+export function expectedCopy(file) {
+  const bytes = readFileSync(sourcePath(file), "utf8");
+  return file.transform ? file.transform(bytes) : bytes;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  mkdirSync(COPY_DIR, { recursive: true });
+  for (const file of FILES) {
+    writeFileSync(join(COPY_DIR, file.name), expectedCopy(file));
+    console.log(`wrote ${file.name}`);
+  }
+}

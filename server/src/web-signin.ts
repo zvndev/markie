@@ -14,15 +14,16 @@
 // on purpose (account-context.ts), so the page says to use the primary
 // address or Google.
 //
-// `next` is only ever a /d/<id> path or a web app page (/app, /app/new,
-// /app/d/<id>) on this origin. Anything else becomes "/",
+// `next` is only ever a /d/<id> path, a web app page (/app, /app/new,
+// /app/d/<id>) on this origin, or the pass route a hosted Live Doc sends a
+// signed-out visitor to (live-docs.ts). Anything else becomes "/",
 // so neither route can be used to bounce a browser somewhere else.
 import { Hono } from "hono";
 import { auth } from "./auth.ts";
 import { reportRouteFault } from "./little-friend.ts";
 import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
 
-const NEXT = /^\/d\/[A-Za-z0-9_-]{1,128}$/;
+const NEXT = /^(?:\/d\/[A-Za-z0-9_-]{1,128}|\/live-docs\/pass\/[a-z2-7]{16}(?:\?state=[a-f0-9]{64})?)$/;
 // The web app's pages (web-app.ts): its library, the new-document chooser,
 // and one document. A signed-out visit to any of them comes back here.
 const APP_NEXT = /^\/app(?:\/|\/new|\/d\/[A-Za-z0-9_-]{1,128})?$/;
@@ -38,7 +39,11 @@ export function safeNext(value: string | null | undefined): string {
  * the refusal they just came from.
  */
 export function webSignInHref(authBase: string, docId: string, { switchAccount = false }: { switchAccount?: boolean } = {}): string | null {
-  const next = `/d/${docId}`;
+  return webSignInHrefFor(authBase, `/d/${docId}`, { switchAccount });
+}
+
+/** The same sign-in for any path `safeNext` accepts, or null for one it would not. */
+export function webSignInHrefFor(authBase: string, next: string, { switchAccount = false }: { switchAccount?: boolean } = {}): string | null {
   if (!NEXT.test(next)) return null;
   return `${authBase}/auth/web-signin?next=${encodeURIComponent(next)}${switchAccount ? "&switch=1" : ""}`;
 }

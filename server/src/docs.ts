@@ -17,6 +17,7 @@ import { purgeDocThreads } from "./comments.ts";
 import { revokePublicLink } from "./public-links.ts";
 import { serveAsset, unlinkDocAssets } from "./assets.ts";
 import { removeDocLinks } from "./doc-links.ts";
+import { removeLiveDoc } from "./live-docs-store.ts";
 import { CloudAreaError, createCloudAreas, type CloudAreasStore } from "./cloud-areas.ts";
 import { quotaRefusal, storageQuotaBytes } from "./quota.ts";
 import {
@@ -452,6 +453,9 @@ docs.delete("/:id", async (c) => {
   revokePublicLink(docId);
   purgeDocThreads(docId);
   removeDocLinks(docId);
+  // Its Live Doc address, passes and cookies. The next load would refuse
+  // anyway (live-docs.ts re-reads the document); this leaves nothing behind.
+  removeLiveDoc(docId);
   await unlinkDocAssets(docId);
   return c.json({ ok: true });
 });

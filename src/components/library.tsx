@@ -46,7 +46,8 @@ import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, matchesLibraryDo
 import { LibraryDocumentFilters } from "@/components/library-document-filters";
 import { NewDocumentModal } from "@/components/new-document-modal";
 import { FormatBadge, FormatFileIcon, ServerBadge } from "@/components/format-badge";
-import { serverLabel, useTrustedServers } from "@/lib/server-sessions";
+import { serverLabel, sharesClientFor, useTrustedServers } from "@/lib/server-sessions";
+import { nightlyFeaturesEnabled } from "@/lib/nightly";
 import { DEFAULT_APPS_CHANGED } from "@/components/default-apps-section";
 import { CloudAreaPicker, CloudAreaProvider, CloudAreaScopePicker } from "./cloud-area-picker";
 import { accountScopeKey, confirmedAccountScope, subscribeAccountScope } from "@/lib/account-identities";
@@ -483,6 +484,35 @@ export function Library({
     }
   };
 
+  // Nightly: a cloud .wd's own hosted address (server/src/live-docs.ts). The
+  // server gives it to the owner only, and it opens only for them, after
+  // signing in, on any device.
+  const liveDocAddress = async (item: LibraryItem): Promise<string | null> => {
+    if (!item.cloudId) return null;
+    const url = await sharesClientFor(item.server).liveDocAddress(item.cloudId).catch(() => null);
+    if (!url) flashError("This document has no Live Doc address on its server yet.");
+    return url;
+  };
+
+  const copyLiveDoc = async (item: LibraryItem) => {
+    const url = await liveDocAddress(item);
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      flash("Live Doc address copied. It opens only for you, after you sign in.");
+    } catch {
+      flashError("Couldn't copy the address.");
+    }
+  };
+
+  const openLiveDoc = async (item: LibraryItem) => {
+    const url = await liveDocAddress(item);
+    if (!url) return;
+    const api = getElectronAPI();
+    if (api?.openExternal) void api.openExternal(url);
+    else window.open(url, "_blank", "noopener");
+  };
+
   const copyPath = async (path: string) => {
     try {
       await navigator.clipboard.writeText(path);
@@ -571,6 +601,11 @@ export function Library({
     const entries: FileMenuEntry[] = [];
     if (item.cloudId && item.state !== "local-only") {
       entries.push({ key: "copy-link", label: "Copy link", icon: MENU_ICONS.link, onSelect: () => void copyPrivateLink(item) });
+    }
+    if (rowSignedIn && item.cloudId && item.state !== "local-only" && !item.shared && item.owned !== false
+      && libraryDocumentFormat(item.name) === "darkmown" && nightlyFeaturesEnabled()) {
+      entries.push({ key: "copy-live-doc", label: "Copy Live Doc address", icon: MENU_ICONS.link, onSelect: () => void copyLiveDoc(item) });
+      entries.push({ key: "open-live-doc", label: "Open Live Doc", icon: MENU_ICONS.link, onSelect: () => void openLiveDoc(item) });
     }
     if (item.path) {
       entries.push({ key: "copy-path", label: "Copy path", icon: MENU_ICONS.path, onSelect: () => void copyPath(item.path!) });

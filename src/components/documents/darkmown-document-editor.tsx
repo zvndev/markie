@@ -151,7 +151,7 @@ export function DarkmownDocumentEditor({ session, liveDocs = null, readOnly = fa
   const revealSource = () => setMode((currentMode) => currentMode === "preview" ? "split" : currentMode);
 
   return <div ref={host} className="docs-darkmown-host" data-darkmown-trusted={trusted ? "true" : "false"}>
-    <TextDocumentEditor session={session} readOnly={readOnly || !active} onChange={changeSource} onRestoreText={restoreSource} onFlushReady={onFlushReady} onCommandsReady={registerSourceCommands} onFindRequested={revealSource} onSourceEditRequested={revealSource} renderSource={(source) => <div className={`docs-darkmown-panes docs-darkmown-mode-${mode}`}>
+    <TextDocumentEditor session={session} codeSource={!!liveDocs} readOnly={readOnly || !active} onChange={changeSource} onRestoreText={restoreSource} onFlushReady={onFlushReady} onCommandsReady={registerSourceCommands} onFindRequested={revealSource} onSourceEditRequested={revealSource} renderSource={(source) => <div className={`docs-darkmown-panes docs-darkmown-mode-${mode}`}>
       <section className="docs-darkmown-source" aria-label="Darkmown source" hidden={mode === "preview"}>{source}</section>
       {canPreview ? <section className="docs-darkmown-preview" aria-label="Darkmown preview">
         <header className="docs-darkmown-preview-header">

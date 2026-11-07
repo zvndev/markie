@@ -874,6 +874,19 @@
   height:100%
 }
 
+/* The .wd source in CodeMirror (Live Docs). The editor scrolls itself. */
+.docs-code-source {
+  flex:1;
+  min-height:0;
+  overflow:hidden;
+  background:var(--background)
+}
+
+.docs-code-source .cm-editor {
+  height:100%;
+  font-size:inherit
+}
+
 .docs-darkmown-preview-header {
   display:flex;
   align-items:center;

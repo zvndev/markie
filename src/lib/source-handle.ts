@@ -17,4 +17,8 @@ export interface SourceHandle {
   findTarget(): FindTarget;
   /** Local comments' view of this pane (src/lib/source-comments.ts). Absent in panes that do not paint them. */
   commentTarget?(): CommentTarget;
+  /** The selected range, so a toolbar can wrap it (the .wd source's Bold, headings, find next). */
+  selection?(): { from: number; to: number };
+  /** Select a range, scroll it into view and focus the pane. */
+  select?(from: number, to: number): void;
 }

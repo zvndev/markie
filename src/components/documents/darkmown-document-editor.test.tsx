@@ -6,6 +6,7 @@ import type { DocumentCommandTarget } from "@/lib/document-commands";
 import { compileDarkmownPreview } from "@/lib/darkmown/preview";
 import { loadThemeStore, MARKIE_DARK, MARKIE_LIGHT, saveThemeStore, THEME_APPLIED_EVENT } from "@/lib/theme";
 import { DarkmownDocumentEditor } from "./darkmown-document-editor";
+import { EditorView } from "@codemirror/view";
 
 vi.mock("@/lib/darkmown/preview", () => ({ compileDarkmownPreview: vi.fn() }));
 const compile = vi.mocked(compileDarkmownPreview);
@@ -301,10 +302,37 @@ describe("Live Docs pictures and links (super-nightly)", () => {
     expect(liveDocs.openLink).toHaveBeenCalledExactlyOnceWith("https://example.com/");
   });
 
+  it("edits the source in CodeMirror, with the toolbar, find and undo acting on its selection", async () => {
+    const onChange = vi.fn();
+    let commands: DocumentCommandTarget | null = null;
+    const session = { ...await createDocumentSession("darkmown"), text: "Hello world, hello world" };
+    const { container } = render(<DarkmownDocumentEditor session={session} liveDocs={liveDocsWith(null)} onChange={onChange} onFlushReady={vi.fn()} onCommandsReady={(target) => { commands = target; }} />);
+    await waitFor(() => expect(container.querySelector(".docs-darkmown-source .cm-editor")).not.toBeNull());
+    expect(container.querySelector("textarea[data-document-text-editor]")).toBeNull();
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    act(() => { view.dispatch({ selection: { anchor: 6, head: 11 } }); });
+    fireEvent.click(screen.getByRole("button", { name: "Bold" }));
+    expect(onChange).toHaveBeenLastCalledWith("Hello **world**, hello world");
+    act(() => { view.dispatch({ changes: { from: 0, to: 5, insert: "Howdy" } }); });
+    expect(onChange).toHaveBeenLastCalledWith("Howdy world, hello world");
+    await waitFor(() => expect(commands?.enabledCommands).toContain("undo"));
+    act(() => commands!.execute("undo"));
+    expect(view.state.doc.toString()).toBe("Hello world, hello world");
+    act(() => commands!.execute("find"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Find document text" }), { target: { value: "world" } });
+    act(() => { view.dispatch({ selection: { anchor: 0 } }); });
+    fireEvent.click(screen.getByRole("button", { name: "Find next" }));
+    expect(view.state.selection.main).toMatchObject({ from: 6, to: 11 });
+    fireEvent.click(screen.getByRole("button", { name: "Find next" }));
+    expect(view.state.selection.main).toMatchObject({ from: 19, to: 24 });
+  });
+
   it("keeps today's offline preview when Live Docs is off", async () => {
     const session = { ...await createDocumentSession("darkmown"), text: "[site](https://example.com)", handle };
-    render(<DarkmownDocumentEditor session={session} onChange={vi.fn()} onFlushReady={vi.fn()} />);
+    const { container } = render(<DarkmownDocumentEditor session={session} onChange={vi.fn()} onFlushReady={vi.fn()} />);
     await waitFor(() => expect(frame()).toHaveAttribute("sandbox", ""));
     expect(compile.mock.calls[0][2]).toMatchObject({ links: false, pictureBase: null });
+    expect(container.querySelector("textarea[data-document-text-editor]")).not.toBeNull();
+    expect(container.querySelector(".cm-editor")).toBeNull();
   });
 });

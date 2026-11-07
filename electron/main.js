@@ -2445,12 +2445,9 @@ handle(
 // arbitrary URL from the renderer: one turns a lease or an already granted
 // Markdown file into a picture scope for that file's folder, the other opens
 // a link the user clicked, if it is a web page or a mail draft.
-function darkmownPreviewExtrasEnabled() {
-  return !!privateReleaseConfig || !app.isPackaged;
-}
 const darkmownLinkGate = createLinkGate();
 handle("darkmown-preview-picture-scope", (event, request) => {
-  if (!darkmownPreviewExtrasEnabled() || !currentCloseSender(event)) return { ok: false };
+  if (!nightlyEnabledInMain() || !currentCloseSender(event)) return { ok: false };
   if (!request || typeof request !== "object" || Array.isArray(request) || Object.keys(request).length !== 1) return { ok: false };
   let folder = null;
   if (typeof request.leaseId === "string") {
@@ -2465,7 +2462,7 @@ handle("darkmown-preview-picture-scope", (event, request) => {
   return host ? { ok: true, base: `${ASSET_SCHEME}://${host}` } : { ok: false };
 }, { onFailure: () => ({ ok: false }) });
 handle("darkmown-preview-open-link", (event, href) => {
-  if (!darkmownPreviewExtrasEnabled() || !currentCloseSender(event)) return { ok: false };
+  if (!nightlyEnabledInMain() || !currentCloseSender(event)) return { ok: false };
   const target = darkmownLinkTarget(href);
   if (!target || !darkmownLinkGate.allow()) return { ok: false };
   try { shell.openExternal(target).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }

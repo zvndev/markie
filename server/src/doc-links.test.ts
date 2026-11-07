@@ -242,3 +242,37 @@ test("the page resolvers look a repeated target up once per page, not once per l
   assert.deepEqual(publicAnswers[2], publicAnswers[0]);
   assert.equal(tokenLookups, 1);
 });
+
+test("a public page publishes a target's link only for pointers its owner stored", async () => {
+  const a = await makeDoc(owner.token, "# a\n\n[b](b.md)\n");
+  const b = await makeDoc(owner.token, "# b\n");
+  await share(owner.token, a, EDITOR_EMAIL, "editor");
+  await share(owner.token, b, EDITOR_EMAIL, "viewer");
+  assert.equal((await json("POST", `/api/docs/${a}/public-link`, owner.token)).status, 200);
+  const made = await json("POST", `/api/docs/${b}/public-link`, owner.token);
+  assert.equal(made.status, 200);
+
+  // The editor is removed from B, which rotates B's public link because they
+  // may have kept it.
+  const removed = await json("DELETE", `/api/docs/${b}/shares/${encodeURIComponent(editor.id)}`, owner.token);
+  assert.equal(removed.status, 200);
+  const rotated = String(removed.data.url).split("/s/")[1];
+  assert.ok(rotated && !String(made.data.url).endsWith(rotated));
+
+  // They still edit A, and point it at B, whose id they know.
+  assert.equal((await json("PUT", `/api/docs/${a}/links`, editor.token, { links: [{ ref: "b.md", target: b }] })).status, 200);
+  assert.deepEqual(publicPageLinkFor(a)("b.md"), { muted: true }, "A's public page does not hand them B's new link");
+
+  // The owner saving the same pointer vouches for it, and the link appears.
+  assert.equal((await json("PUT", `/api/docs/${a}/links`, owner.token, { links: [{ ref: "b.md", target: b }] })).status, 200);
+  assert.deepEqual(publicPageLinkFor(a)("b.md"), { href: `/s/${rotated}` });
+
+  // An editor saving the unchanged set leaves it the owner's.
+  assert.equal((await json("PUT", `/api/docs/${a}/links`, editor.token, { links: [{ ref: "b.md", target: b }] })).status, 200);
+  assert.deepEqual(publicPageLinkFor(a)("b.md"), { href: `/s/${rotated}` });
+
+  // Anything the editor changes is theirs again.
+  assert.equal((await json("PUT", `/api/docs/${a}/links`, editor.token, { links: [{ ref: "b.md", target: b }, { ref: "b2.md", target: b }] })).status, 200);
+  assert.deepEqual(publicPageLinkFor(a)("b.md"), { href: `/s/${rotated}` });
+  assert.deepEqual(publicPageLinkFor(a)("b2.md"), { muted: true });
+});

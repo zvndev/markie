@@ -21,9 +21,21 @@ db.exec(`
     doc_id TEXT NOT NULL,
     ref TEXT NOT NULL,
     target_id TEXT NOT NULL,
+    written_by TEXT,
     PRIMARY KEY (doc_id, ref)
   );
 `);
+// Who stored each pointer. The public page publishes a target's public link
+// only for pointers its owner stored (publicPageLinkFor). Rows from before the
+// column existed are taken as the owner's: that is who stored them until
+// editors could, and leaving them unattributed would mute every cross-link on
+// every public page until its owner saved again.
+if (!(db.prepare("PRAGMA table_info(doc_links)").all() as { name: string }[]).some((column) => column.name === "written_by")) {
+  db.transaction(() => {
+    db.exec("ALTER TABLE doc_links ADD COLUMN written_by TEXT");
+    db.exec("UPDATE doc_links SET written_by = (SELECT owner_id FROM docs WHERE docs.id = doc_links.doc_id)");
+  })();
+}
 
 export const MAX_DOC_LINKS = 500;
 // Ids are minted by the client (crypto.randomUUID today), so the shape check
@@ -78,6 +90,12 @@ export function docLinksFor(docId: string): Map<string, string> {
   return new Map(rows.map((r) => [r.ref, r.target_id]));
 }
 
+// Each pointer with who stored it, for the public page's check.
+function docLinkAuthorsFor(docId: string): Map<string, { target: string; writtenBy: string | null }> {
+  const rows = db.prepare("SELECT ref, target_id, written_by FROM doc_links WHERE doc_id = ? ORDER BY rowid").all(docId) as { ref: string; target_id: string; written_by: string | null }[];
+  return new Map(rows.map((r) => [r.ref, { target: r.target_id, writtenBy: r.written_by }]));
+}
+
 export function removeDocLinks(docId: string): number {
   return db.prepare("DELETE FROM doc_links WHERE doc_id = ?").run(docId).changes;
 }
@@ -126,26 +144,35 @@ function liveOwner(docId: string): string | null {
 // own public page and publish that account's /s/ token to the world: a token
 // its owner handed to some people became a token everybody could find. Only
 // the owner of both ends may join their public pages together.
+//
+// And the owner must be the one who stored the pointer. An editor of a public
+// page can store a pointer to any id, so an editor who was removed from one
+// of the owner's documents (which rotates its public link because they may
+// have kept it) could point the page they still edit at it, and read the new
+// link off the page's public view.
 export function publicPageLinkFor(docId: string): (ref: string) => DocLinkAnswer {
-  const rows = docLinksFor(docId);
+  const rows = docLinkAuthorsFor(docId);
   const pageOwner = liveOwner(docId);
   // Same per-target memo as sharedPageLinkFor, and worth more here: this path
   // is unauthenticated, so a page with many repeated links is a free way to
   // run its owner + getPublicLinkToken lookups over and over.
   const cache = new Map<string, DocLinkAnswer>();
   return (ref) => {
-    const target = rows.get(ref);
-    if (target === undefined) return null;
-    const cached = cache.get(target);
+    const row = rows.get(ref);
+    if (row === undefined) return null;
+    const target = row.target;
+    // Keyed by the author too: the same target stored by two people answers twice.
+    const key = `${row.writtenBy ?? ""}\u0000${target}`;
+    const cached = cache.get(key);
     if (cached !== undefined) return cached;
     let answer: DocLinkAnswer;
-    if (pageOwner === null || liveOwner(target) !== pageOwner) {
+    if (pageOwner === null || row.writtenBy !== pageOwner || liveOwner(target) !== pageOwner) {
       answer = { muted: true };
     } else {
       const token = getPublicLinkToken(target);
       answer = token ? { href: `/s/${encodeURIComponent(token)}` } : { muted: true };
     }
-    cache.set(target, answer);
+    cache.set(key, answer);
     return answer;
   };
 }
@@ -183,9 +210,18 @@ docLinksApi.put("/docs/:id/links", async (c) => {
       const doc = db.prepare("SELECT version FROM docs WHERE id = ? AND deleted_at IS NULL").get(docId) as { version: number } | undefined;
       if (!doc || doc.version !== baseVersion) return { serverVersion: doc?.version ?? null };
     }
+    // Whoever saves is the author of what they changed. The owner saving
+    // vouches for the whole set; an editor saving leaves every unchanged
+    // pointer with whoever stored it, so it cannot take over the owner's links
+    // or launder its own through them.
+    const before = docLinkAuthorsFor(docId);
+    const savedByOwner = liveOwner(docId) === gate.user.id;
     db.prepare("DELETE FROM doc_links WHERE doc_id = ?").run(docId);
-    const ins = db.prepare("INSERT INTO doc_links (doc_id, ref, target_id) VALUES (?, ?, ?)");
-    for (const [ref, target] of next) ins.run(docId, ref, target);
+    const ins = db.prepare("INSERT INTO doc_links (doc_id, ref, target_id, written_by) VALUES (?, ?, ?, ?)");
+    for (const [ref, target] of next) {
+      const kept = before.get(ref);
+      ins.run(docId, ref, target, !savedByOwner && kept && kept.target === target ? kept.writtenBy : gate.user.id);
+    }
     return null;
   })();
   if (stale) return c.json({ error: "version mismatch", serverVersion: stale.serverVersion }, 409);

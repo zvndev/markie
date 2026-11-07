@@ -30,7 +30,8 @@ const { app, liveDocs } = await import("./index.ts");
 const { createLiveDocs, LIVE_DOC_CHANNELS_PER_KEY } = await import("./live-docs.ts");
 const { liveDocsConfig } = await import("./live-docs-config.ts");
 const { takeDownLiveDoc, restoreLiveDoc, liveDocLabel } = await import("./live-docs-store.ts");
-const { openLiveDocChannels } = await import("./live-docs-channels.ts");
+const { openLiveDocChannels, recheckLiveDocChannels } = await import("./live-docs-channels.ts");
+const { liveDocClientKey } = await import("./live-docs.ts");
 const Database = (await import("better-sqlite3")).default;
 const db = new Database(process.env.DB_PATH);
 after(() => db.close());
@@ -82,7 +83,7 @@ async function browserSignIn(email: string): Promise<string> {
   return session;
 }
 
-interface Address { url: string; access: string; publicUrl?: string }
+interface Address { url: string; access: string; publicUrl?: string; publishedAs?: string }
 async function addressFor(docId: string, token: string): Promise<Address> {
   const res = await ask(APP_HOST, `/api/docs/${docId}/live-doc`, { bearer: token });
   assert.equal(res.status, 200, `address: ${await res.clone().text()}`);
@@ -99,7 +100,7 @@ async function openPrivate(label: string, appCookie: string): Promise<string> {
   const start = await ask(liveHost(label), "/");
   assert.equal(start.status, 302);
   const state = new URL(start.headers.get("location")!).searchParams.get("state");
-  const stateCookie = start.headers.getSetCookie().find((line) => line.startsWith(`${STATE_COOKIE}=`))!.split(";")[0];
+  const stateCookie = start.headers.getSetCookie().find((line) => line.startsWith(`${STATE_COOKIE}-${state!.slice(0, 16)}=`))!.split(";")[0];
   const pass = await ask(APP_HOST, `/live-docs/pass/${label}?state=${state}`, { cookie: appCookie });
   assert.equal(pass.status, 302, "a pass");
   const redeem = new URL(pass.headers.get("location")!);
@@ -480,4 +481,101 @@ test("one address cannot hold more than its share of open streams, and closing o
   await expectReady(room);
   tabs.push(room);
   for (const tab of tabs) await tab.close();
+});
+
+// ── review findings ──────────────────────────────────────────────────────────
+
+test("access checks never read the document's text, however large it is", async () => {
+  const id = `h2-heavy-${stamp}`;
+  await putDoc(owner.token, id, "Heavy.wd", COUNTER);
+  await makePublic(id);
+  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
+  // 40 MB, written straight to the database: past every size the page will read.
+  db.prepare("UPDATE docs SET content = ? WHERE id = ?").run(`# Heavy\n\n${"x".repeat(40 * 1024 * 1024)}`, id);
+  let started = performance.now();
+  const page = await ask(liveHost(label), "/");
+  const pageMs = performance.now() - started;
+  assert.equal(page.status, 422);
+  assert.match(await page.text(), /200,000 characters/);
+  const tabs = await Promise.all(Array.from({ length: 10 }, () => tabOn(label)));
+  for (const tab of tabs) await expectReady(tab);
+  started = performance.now();
+  recheckLiveDocChannels(id);
+  const checkMs = performance.now() - started;
+  for (const tab of tabs) await tab.close();
+  assert.ok(pageMs < 50, `the refused page held the event loop ${pageMs.toFixed(0)} ms`);
+  assert.ok(checkMs < 20, `ten tabs' re-check held the event loop ${checkMs.toFixed(0)} ms`);
+});
+
+test("one IPv6 /64 is one client for public streams", async () => {
+  assert.equal(liveDocClientKey("2001:db8:1:2::5"), liveDocClientKey("2001:0db8:0001:0002:aaaa:bbbb:cccc:dddd"));
+  assert.notEqual(liveDocClientKey("2001:db8:1:2::5"), liveDocClientKey("2001:db8:1:3::5"));
+  assert.equal(liveDocClientKey("::ffff:203.0.113.9"), liveDocClientKey("203.0.113.9"));
+  assert.equal(liveDocClientKey("[2001:db8:1:2::9]:443"), liveDocClientKey("2001:db8:1:2::1"));
+  const id = `h2-v6-${stamp}`;
+  await putDoc(owner.token, id, "V6.wd", COUNTER);
+  await makePublic(id);
+  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
+  const tabs: Tab[] = [];
+  for (let index = 1; index <= LIVE_DOC_CHANNELS_PER_KEY; index++) {
+    const tab = await tabOn(label, { headers: { "x-forwarded-for": `2001:db8:1:2::${index.toString(16)}` } });
+    await expectReady(tab);
+    tabs.push(tab);
+  }
+  const extra = await ask(liveHost(label), "/__markie/live", { headers: { "x-forwarded-for": "2001:db8:1:2::ffff" } });
+  assert.equal(extra.status, 429, "another address in the same /64 is the same client");
+  for (const tab of tabs) await tab.close();
+});
+
+test("strangers on public pages cannot use up the streams members need", async () => {
+  const { LIVE_DOC_PUBLIC_CHANNELS_PER_OWNER } = await import("./live-docs.ts");
+  const id = `h2-pool-${stamp}`;
+  await putDoc(owner.token, id, "Pool.wd", COUNTER);
+  await share(id, viewer.email, "viewer");
+  await makePublic(id);
+  const view = await addressFor(id, owner.token);
+  const publicLabel = labelOf(view.publicUrl!);
+  // Fill the owner's public allowance from many clients.
+  const tabs: Tab[] = [];
+  for (let index = 0; index < LIVE_DOC_PUBLIC_CHANNELS_PER_OWNER; index++) {
+    const tab = await tabOn(publicLabel, { headers: { "x-forwarded-for": `198.51.${Math.floor(index / 200)}.${index % 200}` } });
+    assert.equal(tab.res.status, 200);
+    tabs.push(tab);
+  }
+  assert.equal((await ask(liveHost(publicLabel), "/__markie/live", { headers: { "x-forwarded-for": "192.0.2.77" } })).status, 429, "one owner's public pages hold at most their share");
+  // A member's own tab still gets its stream.
+  const member = await tabOn(labelOf(view.url), { cookie: await openPrivate(labelOf(view.url), viewerCookie) });
+  await expectReady(member);
+  await member.close();
+  for (const tab of tabs) await tab.close();
+});
+
+test("a taken-down Live Doc's public link serves none of its source or assets", async () => {
+  const id = `h2-tdraw-${stamp}`;
+  await putDoc(owner.token, id, "Abuse.wd", COUNTER);
+  const token = await makePublic(id);
+  takeDownLiveDoc(id, "review");
+  try {
+    for (const path of [`/s/${token}/raw`, `/s/${token}/assets`, `/s/${token}?view=1`]) {
+      const res = await ask(APP_HOST, path);
+      assert.notEqual(res.status, 200, path);
+      assert.ok(!(await res.text()).includes("Counter"), path);
+    }
+  } finally {
+    restoreLiveDoc(id);
+  }
+  assert.equal((await ask(APP_HOST, `/s/${token}/raw`)).status, 200, "restoring brings the link's source back");
+});
+
+test("a public page does not show a name that is just the owner's email address", async () => {
+  const plain = await signUpVerified(app, { name: `h2-plain-${stamp}`, email: `h2-plain-${stamp}@example.com` });
+  const id = `h2-name-${stamp}`;
+  await putDoc(plain.token, id, "Name.wd", COUNTER);
+  const made = await ask(APP_HOST, `/api/docs/${id}/public-link`, { method: "POST", bearer: plain.token });
+  assert.equal(made.status, 200);
+  const view = await addressFor(id, plain.token);
+  assert.equal(view.publishedAs, "a Markie account", "the owner is told which name the page shows");
+  const html = await (await ask(liveHost(labelOf(view.publicUrl!)), "/")).text();
+  assert.match(html, /published with Markie by a Markie account\./);
+  assert.ok(!html.includes(`h2-plain-${stamp}`));
 });

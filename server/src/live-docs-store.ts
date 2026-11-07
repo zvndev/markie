@@ -160,19 +160,53 @@ export function docIdForLabel(label: string): string | null {
   return row?.doc_id ?? null;
 }
 
-export interface LiveDocRow {
+export interface LiveDocMeta {
   id: string;
   name: string;
-  content: string;
   ownerId: string;
 }
 
-/** A document that is a Live Doc right now: present, not deleted, format darkmown. */
-export function loadLiveDoc(docId: string): LiveDocRow | null {
+export interface LiveDocRow extends LiveDocMeta {
+  /** null when the source is too large to host, so it was never read. */
+  content: string | null;
+}
+
+// The most a hosted page ever reads of a source: 200,000 characters (the
+// compile limit, live-docs-compile.ts) at four UTF-8 bytes each. Anything
+// larger is refused without its text leaving the database.
+export const LIVE_DOC_READ_BYTES = 200_000 * 4;
+
+/**
+ * Whether a document is a Live Doc right now (present, not deleted, format
+ * darkmown), and whose. Never reads the document's text, so every access
+ * check, including the ones an open tab repeats, costs the same however
+ * large the document is.
+ */
+export function liveDocMeta(docId: string): LiveDocMeta | null {
+  // INDEXED BY: deleted_at and format sit after content in the row, and the
+  // planner, with no statistics, would read the row itself and walk the
+  // text's overflow pages to reach them. The covering index (docs.ts) holds
+  // every column this reads.
   const row = db
-    .prepare("SELECT id, name, content, owner_id FROM docs WHERE id = ? AND deleted_at IS NULL AND format = 'darkmown'")
-    .get(docId) as { id: string; name: string; content: string; owner_id: string } | undefined;
-  return row ? { id: row.id, name: row.name, content: row.content, ownerId: row.owner_id } : null;
+    .prepare("SELECT id, name, owner_id FROM docs INDEXED BY idx_docs_access WHERE id = ? AND deleted_at IS NULL AND format = 'darkmown'")
+    .get(docId) as { id: string; name: string; owner_id: string } | undefined;
+  return row ? { id: row.id, name: row.name, ownerId: row.owner_id } : null;
+}
+
+/**
+ * A Live Doc with its text, for rendering the page only. The size is checked
+ * in SQL first (octet_length reads it from the record header), so a source
+ * over LIVE_DOC_READ_BYTES comes back with content null, unread.
+ */
+export function loadLiveDoc(docId: string): LiveDocRow | null {
+  const meta = liveDocMeta(docId);
+  if (!meta) return null;
+  // Only content is read from the row, and it sits before every column the
+  // check above needed, so a refused size costs a header read, nothing more.
+  const row = db
+    .prepare("SELECT CASE WHEN octet_length(content) <= ? THEN content END AS content FROM docs WHERE id = ?")
+    .get(LIVE_DOC_READ_BYTES, docId) as { content: string | null } | undefined;
+  return row ? { ...meta, content: row.content } : null;
 }
 
 /**
@@ -187,7 +221,7 @@ export function liveDocLevelOpens(level: ShareAccessLevel): boolean {
 
 /** Whether `userId` may open `docId` as a hosted Live Doc, read live from the database. */
 export function canOpenLiveDoc(docId: string, userId: string): boolean {
-  return loadLiveDoc(docId) !== null && !liveDocTakenDown(docId) && liveDocLevelOpens(accessLevel(docId, userId));
+  return liveDocMeta(docId) !== null && !liveDocTakenDown(docId) && liveDocLevelOpens(accessLevel(docId, userId));
 }
 
 // ---------------------------------------------------------------- public
@@ -199,7 +233,7 @@ export function canOpenLiveDoc(docId: string, userId: string): boolean {
  * be shown this (the caller checks); it needs no sign-in to open.
  */
 export function ensurePublicLiveDocLabel(docId: string, now = Date.now()): string | null {
-  if (!loadLiveDoc(docId) || liveDocTakenDown(docId)) return null;
+  if (!liveDocMeta(docId) || liveDocTakenDown(docId)) return null;
   const token = getPublicLinkToken(docId);
   if (!token) return null;
   const tokenHash = hash(token);
@@ -234,20 +268,26 @@ export function publicLiveDocFor(label: string): string | null {
   if (!row) return null;
   const token = getPublicLinkToken(row.doc_id);
   if (!token || hash(token) !== row.token_hash) return null;
-  if (!loadLiveDoc(row.doc_id) || liveDocTakenDown(row.doc_id)) return null;
+  if (!liveDocMeta(row.doc_id) || liveDocTakenDown(row.doc_id)) return null;
   return row.doc_id;
 }
 
 /**
  * The name a public page shows as its publisher (design, "Security model" 6):
- * the owner's display name, never their email address.
+ * the owner's display name, never their email address. A name that is just
+ * the email's local part (what a sign-up fills in when nobody types a name)
+ * would give the address away next to a guessable domain, so it is not shown
+ * either. The owner is told which name the page shows when they copy its
+ * address.
  */
 export function liveDocPublisherName(docId: string): string {
   const row = db
-    .prepare('SELECT u.name AS name FROM docs d JOIN "user" u ON u.id = d.owner_id WHERE d.id = ?')
-    .get(docId) as { name: string | null } | undefined;
-  const name = row?.name?.trim().replace(/\s+/g, " ").slice(0, 80);
-  return name || "a Markie account";
+    .prepare('SELECT u.name AS name, u.email AS email FROM docs d JOIN "user" u ON u.id = d.owner_id WHERE d.id = ?')
+    .get(docId) as { name: string | null; email: string | null } | undefined;
+  const name = row?.name?.trim().replace(/\s+/g, " ").slice(0, 80) ?? "";
+  const local = row?.email?.split("@")[0]?.trim().toLowerCase() ?? "";
+  if (!name || name.toLowerCase() === local || name.includes("@")) return "a Markie account";
+  return name;
 }
 
 // ---------------------------------------------------------------- takedowns
@@ -318,14 +358,21 @@ export function issueLiveDocTicket(binding: LiveDocBinding, stateHash: string, n
  * with one pass cannot both win, and a pass shown to the wrong host or from
  * the wrong browser is burned rather than kept for the right one.
  */
-export function consumeLiveDocTicket(ticket: string, label: string, stateNonce: string | null, now = Date.now()): LiveDocBinding | null {
+export function consumeLiveDocTicket(
+  ticket: string,
+  label: string,
+  nonceFor: (stateHash: string) => string | null,
+  now = Date.now(),
+): (LiveDocBinding & { stateHash: string }) | null {
   if (!ticket || ticket.length > 128) return null;
   const row = db
     .prepare("DELETE FROM live_doc_tickets WHERE ticket_hash = ? RETURNING doc_id, user_id, auth_session_id, label, state_hash, expires_at")
     .get(hash(ticket)) as { doc_id: string; user_id: string; auth_session_id: string; label: string; state_hash: string; expires_at: number } | undefined;
-  if (!row || row.label !== label || row.expires_at <= now) return null;
-  if (!stateNonce || stateNonce.length > 128 || !row.state_hash || hash(stateNonce) !== row.state_hash) return null;
-  return { docId: row.doc_id, userId: row.user_id, authSessionId: row.auth_session_id, label: row.label };
+  if (!row || row.label !== label || row.expires_at <= now || !/^[a-f0-9]{64}$/.test(row.state_hash)) return null;
+  // The browser's nonce for this flow, from the cookie named after it.
+  const stateNonce = nonceFor(row.state_hash);
+  if (!stateNonce || stateNonce.length > 128 || hash(stateNonce) !== row.state_hash) return null;
+  return { docId: row.doc_id, userId: row.user_id, authSessionId: row.auth_session_id, label: row.label, stateHash: row.state_hash };
 }
 
 /** A fresh browser nonce for the pass, and the hash the app host is told. */

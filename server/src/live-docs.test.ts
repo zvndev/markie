@@ -102,8 +102,8 @@ async function startAt(label: string): Promise<{ state: string; stateCookie: str
   const location = new URL(res.headers.get("location")!);
   const state = location.searchParams.get("state");
   assert.ok(state && /^[a-f0-9]{64}$/.test(state), `a state on ${location}`);
-  const line = res.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}=`) && !value.startsWith(`${STATE_COOKIE}=;`));
-  assert.ok(line, "the live host sets the nonce cookie");
+  const line = res.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}-${state.slice(0, 16)}=`) && !/^[^=]+=;/.test(value));
+  assert.ok(line, "the live host sets this flow's nonce cookie");
   return { state, stateCookie: line.split(";")[0] };
 }
 
@@ -200,12 +200,13 @@ test("the owner opens their private Live Doc through the pass", async () => {
   assert.equal(first.status, 302);
   const firstLocation = first.headers.get("location")!;
   assert.match(firstLocation, new RegExp(`^${APP_ORIGIN.replace(/\./g, "\\.")}/live-docs/pass/${labelA}\\?state=[a-f0-9]{64}$`));
-  const stateLine = first.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}=`))!;
-  const [statePair, ...stateAttributes] = stateLine.split(";").map((part) => part.trim());
-  assert.match(statePair, /^__Host-markie-live-state=[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(stateAttributes.sort(), ["HttpOnly", "Max-Age=600", "Path=/", "SameSite=Lax", "Secure"].sort());
   const state = new URL(firstLocation).searchParams.get("state")!;
-  assert.equal(state, sha(statePair.slice(`${STATE_COOKIE}=`.length)), "the app host is told only the nonce's hash");
+  const stateName = `${STATE_COOKIE}-${state.slice(0, 16)}`;
+  const stateLine = first.headers.getSetCookie().find((value) => value.startsWith(`${stateName}=`))!;
+  const [statePair, ...stateAttributes] = stateLine.split(";").map((part) => part.trim());
+  assert.match(statePair, /^__Host-markie-live-state-[a-f0-9]{16}=[A-Za-z0-9_-]{43}$/, "one cookie per flow, named after its state");
+  assert.deepEqual(stateAttributes.sort(), ["HttpOnly", "Max-Age=600", "Path=/", "SameSite=Lax", "Secure"].sort());
+  assert.equal(state, sha(statePair.slice(`${stateName}=`.length)), "the app host is told only the nonce's hash");
 
   // 2. Signed in on the app host: a pass, sent to the label stored for the doc.
   const pass = await ask(APP_HOST, `/live-docs/pass/${labelA}?state=${state}`, { cookie: ownerCookie });
@@ -227,7 +228,7 @@ test("the owner opens their private Live Doc through the pass", async () => {
   assert.equal(redeemed.headers.get("location"), "/");
   const setCookie = redeemed.headers.getSetCookie();
   assert.equal(setCookie.length, 2);
-  assert.match(setCookie[1], /^__Host-markie-live-state=; Path=\/; Max-Age=0/);
+  assert.ok(setCookie[1].startsWith(`${stateName}=; Path=/; Max-Age=0`), "this flow's nonce is cleared");
   const [pair, ...attributes] = setCookie[0].split(";").map((part) => part.trim());
   assert.match(pair, /^__Host-markie-live=[A-Za-z0-9_-]{43}$/);
   assert.deepEqual(attributes.sort(), ["HttpOnly", "Max-Age=43200", "Path=/", "SameSite=Lax", "Secure"].sort());
@@ -287,6 +288,20 @@ test("a pass opens only in the browser that asked for it, and is burned by any o
   assert.equal((await redeem(labelA, second, someoneElse)).cookie, null, "another browser's own nonce does not match");
 });
 
+test("two tabs opening the same Live Doc at once both get in", async () => {
+  const appCookie = await browserSignIn(owner.email);
+  const [one, two] = [await startAt(labelA), await startAt(labelA)];
+  // The browser holds both nonce cookies, one per flow.
+  const jar = `${one.stateCookie}; ${two.stateCookie}`;
+  for (const flow of [one, two]) {
+    const pass = await ask(APP_HOST, `/live-docs/pass/${labelA}?state=${flow.state}`, { cookie: appCookie });
+    const ticket = new URL(pass.headers.get("location")!).searchParams.get("ticket")!;
+    const { res, cookie } = await redeem(labelA, ticket, jar);
+    assert.equal(res.status, 303);
+    assert.ok(cookie);
+  }
+});
+
 test("a pass link opened without the browser's nonce starts over at the Live Doc's own address", async () => {
   const before = (db.prepare("SELECT COUNT(*) AS n FROM live_doc_tickets WHERE user_id = ?").get(owner.id) as { n: number }).n;
   for (const query of ["", "?state=", "?state=abc", `?state=${"g".repeat(64)}`]) {
@@ -322,7 +337,7 @@ test("a ticket works once: replay fails", async () => {
   const replay = await redeem(labelA, ticket);
   assert.equal(replay.res.status, 403);
   assert.equal(replay.cookie, null);
-  assert.deepEqual(replay.res.headers.getSetCookie().map((line) => line.split(";")[0]), [`${STATE_COOKIE}=`], "only the spent nonce is cleared");
+  assert.deepEqual(replay.res.headers.getSetCookie(), [], "a refused redeem sets and clears nothing");
 });
 
 test("a HEAD request to the redeem path does not spend the ticket", async () => {
@@ -343,7 +358,7 @@ test("an expired ticket fails", async () => {
   const sessionId = (await auth.api.getSession({ headers: new Headers({ cookie: ownerCookie }) }))!.session.id;
   const binding = { docId: docA, userId: owner.id, authSessionId: sessionId, label: labelA };
   const browser = newLiveDocState();
-  const stateCookie = `${STATE_COOKIE}=${browser.nonce}`;
+  const stateCookie = `${STATE_COOKIE}-${browser.hash.slice(0, 16)}=${browser.nonce}`;
   const stale = issueLiveDocTicket(binding, browser.hash, Date.now() - LIVE_DOC_TICKET_TTL_MS - 1000)!;
   const res = await redeem(labelA, stale.ticket, stateCookie);
   assert.equal(res.res.status, 403);

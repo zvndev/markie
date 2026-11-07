@@ -601,6 +601,8 @@ export interface LiveDocAddress {
   url: string;
   access: "private" | "shared" | "public";
   publicUrl: string | null;
+  /** The publisher name the public page shows, for the owner. null when not public. */
+  publishedAs: string | null;
 }
 
 /** An https address, or http on a loopback name for local development; else null. */
@@ -713,12 +715,14 @@ export function makeSharesClient(request: ApiRequest) {
     // 404 and the Library says it has no address. Anything that is not a web
     // address is no address.
     liveDocAddress: async (docId: string): Promise<LiveDocAddress | null> => {
-      const res = await request<{ url?: unknown; access?: unknown; publicUrl?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
+      const res = await request<{ url?: unknown; access?: unknown; publicUrl?: unknown; publishedAs?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
       if (!res.ok || !res.data) return null;
       const url = liveDocUrl(res.data.url);
       if (!url) return null;
       const access = res.data.access === "shared" || res.data.access === "public" ? res.data.access : "private";
-      return { url, access, publicUrl: liveDocUrl(res.data.publicUrl) };
+      const publicUrl = liveDocUrl(res.data.publicUrl);
+      const publishedAs = publicUrl && typeof res.data.publishedAs === "string" ? res.data.publishedAs.slice(0, 80) : null;
+      return { url, access, publicUrl, publishedAs };
     },
 
     // A pass for the live-editing socket, so the session token stays out of

@@ -56,7 +56,7 @@ import { liveSession } from "./collab-tickets.ts";
 import { accessLevel, canManageLevel, hasAudience } from "./shares.ts";
 import { clientIpHeader } from "./runtime-config.ts";
 import { resolvePublicToken } from "./public-links.ts";
-import { openLiveDocChannels, registerLiveDocChannel } from "./live-docs-channels.ts";
+import { registerLiveDocChannel } from "./live-docs-channels.ts";
 import { renderSignInNotice, webSignInHrefFor } from "./web-signin.ts";
 import { classifyRequestHost, liveDocOrigin, LIVE_DOC_LABEL, type LiveDocsConfig } from "./live-docs-config.ts";
 import { createLiveDocCompiler, type LiveDocCompiler } from "./live-docs-compile.ts";
@@ -66,7 +66,7 @@ import {
 import {
   LIVE_DOC_SESSION_TTL_MS, canOpenLiveDoc, consumeLiveDocTicket, createLiveDocSession, docIdForAnyLabel, docIdForLabel,
   endLiveDocSession, ensureLiveDocLabel, ensurePublicLiveDocLabel, issueLiveDocTicket, liveDocCookieRefused, liveDocLabel,
-  liveDocLevelOpens, liveDocPublisherName, liveDocSessionFor, liveDocTakenDown, loadLiveDoc, markLiveDocSessionUsed,
+  liveDocLevelOpens, liveDocMeta, liveDocPublisherName, liveDocSessionFor, liveDocTakenDown, loadLiveDoc, markLiveDocSessionUsed,
   newLiveDocState, publicLiveDocFor, type LiveDocBinding, type LiveDocRow,
 } from "./live-docs-store.ts";
 
@@ -76,8 +76,13 @@ export const LIVE_DOC_COOKIE = "__Host-markie-live";
 export const LIVE_DOC_REDEEM_PATH = "/__markie/pass";
 /** Where the app host mints one. */
 export const LIVE_DOC_PASS_PREFIX = "/live-docs/pass/";
-/** The nonce cookie that binds a pass to the browser that asked for it. */
+/**
+ * The nonce cookies that bind a pass to the browser that asked for it. One
+ * per flow, named after the first 16 characters of its state hash, so two
+ * tabs opening the same Live Doc at once never overwrite each other's.
+ */
 export const LIVE_DOC_STATE_COOKIE = "__Host-markie-live-state";
+export const liveDocStateCookieName = (stateHash: string) => `${LIVE_DOC_STATE_COOKIE}-${stateHash.slice(0, 16)}`;
 /** Long enough to sign in to Markie on the way, short enough to go stale. */
 export const LIVE_DOC_STATE_TTL_S = 10 * 60;
 const STATE_HASH = /^[a-f0-9]{64}$/;
@@ -90,10 +95,29 @@ export const LIVE_DOC_RECHECK_MS = 5_000;
 export const LIVE_DOC_PING_MS = 15_000;
 /** A stream ends after this long and the page reconnects, so none lives forever. */
 export const LIVE_DOC_CHANNEL_MAX_MS = 30 * 60 * 1000;
-/** Open streams this process holds at most, over every Live Doc. */
-export const LIVE_DOC_CHANNELS_MAX = 2_000;
-/** Open streams one person, or one address on a public page, holds at most. */
+/**
+ * Open streams this process holds at most, in two separate pools, so
+ * strangers on public pages can never use up the streams members need.
+ */
+export const LIVE_DOC_MEMBER_CHANNELS_MAX = 1_000;
+export const LIVE_DOC_PUBLIC_CHANNELS_MAX = 1_000;
+/** Open streams one person, or one client on public pages, holds at most. An IPv6 /64 is one client. */
 export const LIVE_DOC_CHANNELS_PER_KEY = 24;
+/** Open public streams on all of one owner's Live Docs together. */
+export const LIVE_DOC_PUBLIC_CHANNELS_PER_OWNER = 200;
+
+/** The client a public stream is counted against: an IPv4 address, or an IPv6 /64. */
+export function liveDocClientKey(address: string): string {
+  const ip = address.trim().toLowerCase().replace(/^\[|\](?::\d+)?$/g, "");
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
+  if (mapped) return `v4:${mapped[1]}`;
+  if (!ip.includes(":")) return ip ? `v4:${ip}` : "unknown";
+  const [head = "", tail = ""] = ip.split("::", 2);
+  const front = head ? head.split(":") : [];
+  const back = ip.includes("::") ? (tail ? tail.split(":") : []) : [];
+  const groups = ip.includes("::") ? [...front, ...Array(Math.max(0, 8 - front.length - back.length)).fill("0"), ...back] : front;
+  return `v6:${groups.slice(0, 4).map((group) => group.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
 
 /** Why a stream was closed, which picks the words the page shows. */
 export type LiveDocRevokeReason = "access" | "link" | "gone";
@@ -112,9 +136,9 @@ function cookieFrom(request: Request, name: string): string | null {
 const setCookieHeader = (value: string, maxAgeSeconds: number) =>
   `${LIVE_DOC_COOKIE}=${value}; Path=/; Max-Age=${maxAgeSeconds}; Secure; HttpOnly; SameSite=Lax`;
 const clearCookieHeader = () => `${LIVE_DOC_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`;
-const setStateHeader = (nonce: string) =>
-  `${LIVE_DOC_STATE_COOKIE}=${nonce}; Path=/; Max-Age=${LIVE_DOC_STATE_TTL_S}; Secure; HttpOnly; SameSite=Lax`;
-const clearStateHeader = () => `${LIVE_DOC_STATE_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`;
+const setStateHeader = (state: { nonce: string; hash: string }) =>
+  `${liveDocStateCookieName(state.hash)}=${state.nonce}; Path=/; Max-Age=${LIVE_DOC_STATE_TTL_S}; Secure; HttpOnly; SameSite=Lax`;
+const clearStateHeader = (stateHash: string) => `${liveDocStateCookieName(stateHash)}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`;
 
 /** Whether a stored binding still opens `label`, read from the database now. */
 function stillOpens(binding: LiveDocBinding, label: string): boolean {
@@ -162,6 +186,7 @@ export function createLiveDocs({
     notice(c, 410, "This Live Doc was taken down", "Markie took this page down. Its owner still has the document.");
 
   async function servePage(c: Context, doc: LiveDocRow, publishedBy?: string) {
+    if (doc.content === null) return notice(c, 422, "This Live Doc can't be hosted yet", "Live Docs can be up to 200,000 characters.");
     const compiled = await compiler.compile(doc.content, doc.ownerId);
     if (!compiled.ok) {
       if (compiled.kind === "refused") return notice(c, 422, "This Live Doc can't be hosted yet", compiled.message);
@@ -176,7 +201,7 @@ export function createLiveDocs({
     const state = newLiveDocState();
     const headers = new Headers({ location: `${passUrl(label)}?state=${state.hash}` });
     if (clearCookie) headers.append("set-cookie", clearCookieHeader());
-    headers.append("set-cookie", setStateHeader(state.nonce));
+    headers.append("set-cookie", setStateHeader(state));
     return new Response(null, { status: 302, headers });
   };
 
@@ -185,16 +210,15 @@ export function createLiveDocs({
     // browser's own GET is about to bring.
     if (c.req.method !== "GET") return c.text("Not found", 404);
     const label = c.env.label;
-    const stateNonce = cookieFrom(c.req.raw, LIVE_DOC_STATE_COOKIE);
-    const binding = consumeLiveDocTicket(c.req.query("ticket") ?? "", label, stateNonce);
+    const binding = consumeLiveDocTicket(c.req.query("ticket") ?? "", label, (stateHash) => cookieFrom(c.req.raw, liveDocStateCookieName(stateHash)));
     if (!binding || !stillOpens(binding, label)) {
-      c.header("set-cookie", clearStateHeader());
+      // Nothing is cleared: another tab's flow may still be on its way.
       return notice(c, 403, "This pass didn't work", "A pass works once, for a minute, in the browser that asked for it. If cookies are off for this site, turn them on. Then open the Live Doc again.", { href: "/", label: "Open this Live Doc" });
     }
     const session = createLiveDocSession(binding);
     const headers = new Headers({ location: "/" });
     headers.append("set-cookie", setCookieHeader(session.value, Math.floor(LIVE_DOC_SESSION_TTL_MS / 1000)));
-    headers.append("set-cookie", clearStateHeader());
+    headers.append("set-cookie", clearStateHeader(binding.stateHash));
     return new Response(null, { status: 303, headers });
   });
 
@@ -232,25 +256,30 @@ export function createLiveDocs({
   // tell "you lost access" from "the server is restarting" (the script in
   // live-docs-page.ts retries the second and blanks only on the first). The
   // same answer comes back for a label that does not exist.
+  type Pool = "member" | "public";
   type Target =
-    | { docId: string; key: string; check: () => LiveDocRevokeReason | null; onRevoke?: () => void }
+    | { docId: string; pool: Pool; keys: Array<[string, number]>; check: () => LiveDocRevokeReason | null; onRevoke?: () => void }
     | { reason: LiveDocRevokeReason };
+  const poolMax: Record<Pool, number> = { member: LIVE_DOC_MEMBER_CHANNELS_MAX, public: LIVE_DOC_PUBLIC_CHANNELS_MAX };
+  const poolOpen: Record<Pool, number> = { member: 0, public: 0 };
 
   function channelTarget(request: Request, label: string): Target {
     const publicDoc = publicLiveDocFor(label);
     if (publicDoc) {
-      const ip = (request.headers.get(ipHeader) ?? "").split(",")[0]!.trim() || "unknown";
+      const client = liveDocClientKey((request.headers.get(ipHeader) ?? "").split(",")[0] ?? "");
+      const owner = liveDocMeta(publicDoc)?.ownerId ?? "";
       return {
         docId: publicDoc,
-        key: `ip:${ip}`,
-        check: () => (publicLiveDocFor(label) === publicDoc ? null : loadLiveDoc(publicDoc) && !liveDocTakenDown(publicDoc) ? "link" : "gone"),
+        pool: "public",
+        keys: [[`client:${client}`, LIVE_DOC_CHANNELS_PER_KEY], [`owner:${owner}`, LIVE_DOC_PUBLIC_CHANNELS_PER_OWNER]],
+        check: () => (publicLiveDocFor(label) === publicDoc ? null : liveDocMeta(publicDoc) && !liveDocTakenDown(publicDoc) ? "link" : "gone"),
       };
     }
     const value = cookieFrom(request, LIVE_DOC_COOKIE);
     const binding = value ? liveDocSessionFor(value, label) : null;
     if (!value || !binding) return { reason: "access" };
     const check = (): LiveDocRevokeReason | null => {
-      if (!loadLiveDoc(binding.docId) || liveDocTakenDown(binding.docId)) return "gone";
+      if (!liveDocMeta(binding.docId) || liveDocTakenDown(binding.docId)) return "gone";
       return liveDocSessionFor(value, label) && stillOpens(binding, label) ? null : "access";
     };
     const now = check();
@@ -258,12 +287,12 @@ export function createLiveDocs({
       endLiveDocSession(value);
       return { reason: now };
     }
-    return { docId: binding.docId, key: `user:${binding.userId}`, check, onRevoke: () => endLiveDocSession(value) };
+    return { docId: binding.docId, pool: "member", keys: [[`user:${binding.userId}`, LIVE_DOC_CHANNELS_PER_KEY]], check, onRevoke: () => endLiveDocSession(value) };
   }
 
   live.get(LIVE_DOC_CHANNEL_PATH, (c) => {
     const target = channelTarget(c.req.raw, c.env.label);
-    if ("docId" in target && (openLiveDocChannels() >= LIVE_DOC_CHANNELS_MAX || (channelsByKey.get(target.key) ?? 0) >= LIVE_DOC_CHANNELS_PER_KEY)) {
+    if ("docId" in target && (poolOpen[target.pool] >= poolMax[target.pool] || target.keys.some(([key, max]) => (channelsByKey.get(key) ?? 0) >= max))) {
       // Busy, not refused: the page backs off and tries again.
       c.header("Retry-After", "30");
       return c.text("Too many open Live Doc pages", 429);
@@ -272,13 +301,19 @@ export function createLiveDocs({
     // Counted before the response is returned, so requests arriving together
     // cannot all pass the check above before any of them is counted.
     let counted = "docId" in target;
-    if ("docId" in target) channelsByKey.set(target.key, (channelsByKey.get(target.key) ?? 0) + 1);
+    if ("docId" in target) {
+      poolOpen[target.pool] += 1;
+      for (const [key] of target.keys) channelsByKey.set(key, (channelsByKey.get(key) ?? 0) + 1);
+    }
     const giveBack = () => {
       if (!counted || !("docId" in target)) return;
       counted = false;
-      const left = (channelsByKey.get(target.key) ?? 1) - 1;
-      if (left > 0) channelsByKey.set(target.key, left);
-      else channelsByKey.delete(target.key);
+      poolOpen[target.pool] -= 1;
+      for (const [key] of target.keys) {
+        const left = (channelsByKey.get(key) ?? 1) - 1;
+        if (left > 0) channelsByKey.set(key, left);
+        else channelsByKey.delete(key);
+      }
     };
     return streamSSE(c, async (stream) => {
       if (!("docId" in target)) {
@@ -304,12 +339,26 @@ export function createLiveDocs({
           release();
           return;
         }
-        target.onRevoke?.();
+        try {
+          target.onRevoke?.();
+        } catch (error) {
+          console.error("live doc revoke cleanup failed:", error instanceof Error ? error.message : error);
+        }
         stream.writeSSE({ event: "revoked", data: JSON.stringify({ reason }) }).catch(() => {}).finally(release);
       };
       const recheck = () => {
         if (finished) return;
-        const reason = target.check();
+        let reason: LiveDocRevokeReason | null;
+        try {
+          reason = target.check();
+        } catch (error) {
+          // A database that is busy or closing must not take the server down
+          // from a timer. The stream ends without "revoked", and the page
+          // reconnects, which checks again.
+          console.error("live doc recheck failed:", error instanceof Error ? error.message : error);
+          finish();
+          return;
+        }
         if (reason) finish(reason);
       };
       unregister = registerLiveDocChannel(target.docId, { recheck });
@@ -450,12 +499,12 @@ export function createLiveDocs({
     const docId = c.req.param("id");
     const level = accessLevel(docId, session.user.id);
     if (!liveDocLevelOpens(level)) return c.json({ error: "not_found" }, 404);
-    if (!loadLiveDoc(docId)) return c.json({ error: "not_a_live_doc" }, 404);
+    if (!liveDocMeta(docId)) return c.json({ error: "not_a_live_doc" }, 404);
     if (liveDocTakenDown(docId)) return c.json({ error: "taken_down" }, 410);
     const url = `${liveDocOrigin(config, ensureLiveDocLabel(docId))}/`;
     if (!canManageLevel(level)) return c.json({ url, access: "shared" });
     const publicLabel = ensurePublicLiveDocLabel(docId);
-    if (publicLabel) return c.json({ url, access: "public", publicUrl: `${liveDocOrigin(config, publicLabel)}/` });
+    if (publicLabel) return c.json({ url, access: "public", publicUrl: `${liveDocOrigin(config, publicLabel)}/`, publishedAs: liveDocPublisherName(docId) });
     return c.json({ url, access: hasAudience(docId) ? "shared" : "private" });
   });
 
@@ -466,7 +515,7 @@ export function createLiveDocs({
   app.get("/s/:token", async (c, next) => {
     const token = c.req.param("token");
     const link = token.length <= 128 ? resolvePublicToken(token) : null;
-    if (link && loadLiveDoc(link.doc_id) && liveDocTakenDown(link.doc_id)) {
+    if (link && liveDocMeta(link.doc_id) && liveDocTakenDown(link.doc_id)) {
       c.header("Cache-Control", "private, no-store");
       return c.text("This Live Doc was taken down.", 410);
     }

@@ -93,6 +93,12 @@ db.exec(`
   // Only token-made rows are in it, so it costs nothing for everyone else.
   db.exec("CREATE INDEX IF NOT EXISTS idx_docs_origin_token ON docs(origin_token_id, updated_at) WHERE origin_token_id IS NOT NULL");
   db.exec("CREATE INDEX IF NOT EXISTS idx_docs_owner_updated ON docs(owner_id, updated_at)");
+  // Every access check reads only these columns, and deleted_at and format
+  // sit after content in the row: without a covering index, each check on a
+  // large document walks its overflow pages to reach them. Hosted Live Docs
+  // re-check access from every open tab (live-docs-store.ts liveDocMeta,
+  // shares.ts isOwner), so that walk must not happen.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_docs_access ON docs(id, deleted_at, format, owner_id, name)");
 }
 
 // How many snapshots of one document the server keeps, newest first, the

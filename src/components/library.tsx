@@ -519,7 +519,9 @@ export function Library({
       flashError("This Live Doc isn't public. Turn on its public link in Share first.");
       return;
     }
-    await copyText(address.publicUrl, "Public Live Doc address copied. Anyone with it can open the page, no sign-in needed.");
+    await copyText(address.publicUrl, address.publishedAs
+      ? `Public Live Doc address copied. Anyone with it can open the page, which names its publisher as ${address.publishedAs}.`
+      : "Public Live Doc address copied. Anyone with it can open the page, no sign-in needed.");
   };
 
   const openLiveDoc = async (item: LibraryItem) => {

@@ -116,7 +116,9 @@ export function getShare(docId: string, userId: string) {
 
 export function isOwner(docId: string, userId: string): boolean {
   const row = db
-    .prepare("SELECT owner_id FROM docs WHERE id = ? AND deleted_at IS NULL")
+    // The covering index (docs.ts): deleted_at sits after content in the
+    // row, so reading the row would walk a large document's text to reach it.
+    .prepare("SELECT owner_id FROM docs INDEXED BY idx_docs_access WHERE id = ? AND deleted_at IS NULL")
     .get(docId) as { owner_id: string } | undefined;
   return row?.owner_id === userId;
 }

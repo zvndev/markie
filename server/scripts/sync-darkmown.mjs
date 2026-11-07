@@ -11,10 +11,16 @@
 //   (cd server && npm run darkmown:sync)
 //
 // Every file is copied byte for byte, with two exceptions. The sanitizer's
-// one import of the limits goes through compiler-types.ts, an extensionless
-// app import Node cannot resolve, so the copy imports the same limits file
-// directly; the sync refuses to run if that line is not there exactly once.
-// And the preview's page style is lifted out of preview.ts as plain CSS.
+// imports are extensionless app imports Node cannot resolve: its import of
+// the limits goes through compiler-types.ts, so the copy imports the same
+// limits file directly, and its import of the link and picture rules is
+// replaced by links.ts itself, inlined, so the copy stays one file the app's
+// typecheck can also read (hosted-parity.test.ts imports it). The sync
+// refuses to run unless each of those lines is there exactly once. And the
+// preview's page style is lifted out of preview.ts as plain CSS.
+//
+// Hosted pages call the sanitizer without its link and picture options, so a
+// hosted Live Doc keeps neither; live-docs.test.ts checks that.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,16 +30,24 @@ export const COPY_DIR = fileURLToPath(new URL("../src/generated/darkmown/", impo
 
 const LIMITS_IMPORT = 'import { DARKMOWN_MAX_COMPUTED_GROWTH } from "./compiler-types";';
 const LIMITS_IMPORT_COPY = 'import { DARKMOWN_MAX_COMPUTED_GROWTH } from "./darkmown-limits.mjs";';
+const LINKS_IMPORT = 'import { darkmownLinkTarget, darkmownPictureRef, darkmownPictureUrl, isDarkmownPictureBase } from "./links";';
+const LINKS_SOURCE = "src/lib/darkmown/links.ts";
+const linksInline = () =>
+  `// ---- inlined from ${LINKS_SOURCE} by the sync ----\n${readFileSync(fileURLToPath(new URL(LINKS_SOURCE, ROOT)), "utf8")}// ---- end of ${LINKS_SOURCE} ----\n`;
 const SECURITY_HEADER =
   "// GENERATED from src/lib/darkmown/security.ts by server/scripts/sync-darkmown.mjs.\n" +
   "// Do not edit. Change the source, then run: (cd server && npm run darkmown:sync)\n";
 
 function rewriteSecurity(source) {
-  const count = source.split(LIMITS_IMPORT).length - 1;
-  if (count !== 1) {
-    throw new Error(`src/lib/darkmown/security.ts must import the limits exactly once as:\n  ${LIMITS_IMPORT}\nfound ${count}. Update sync-darkmown.mjs to match.`);
+  let out = source;
+  for (const [line, copy] of [[LIMITS_IMPORT, () => LIMITS_IMPORT_COPY], [LINKS_IMPORT, linksInline]]) {
+    const count = out.split(line).length - 1;
+    if (count !== 1) {
+      throw new Error(`src/lib/darkmown/security.ts must have this import exactly once:\n  ${line}\nfound ${count}. Update sync-darkmown.mjs to match.`);
+    }
+    out = out.replace(line, () => copy());
   }
-  return SECURITY_HEADER + source.replace(LIMITS_IMPORT, LIMITS_IMPORT_COPY);
+  return SECURITY_HEADER + out;
 }
 
 // The preview's page style, so a hosted Live Doc looks like the Mac preview.

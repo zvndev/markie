@@ -217,7 +217,8 @@ test("the page resolvers look a repeated target up once per page, not once per l
   const token = String(made.data.url).split("/s/")[1];
 
   const forOwner = sharedPageLinkFor(a, owner.id);
-  const { result: sharedAnswers, count: docsLookups } = await countPrepares("FROM docs WHERE id", () => [
+  // "FROM docs ": isOwner names its covering index (FROM docs INDEXED BY ...).
+  const { result: sharedAnswers, count: docsLookups } = await countPrepares("FROM docs ", () => [
     forOwner("plan.md"),
     forOwner("plan-again.md"),
     forOwner("plan-once-more.md"),

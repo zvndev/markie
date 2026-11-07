@@ -1,6 +1,6 @@
 # Hosting Live Docs
 
-Every cloud document with format `darkmown` (a `.wd`) gets its own address, `<label>.<LIVE_DOCS_DOMAIN>`. In H1 it opens only for its owner, through a one-time pass. This page covers turning it on, running it locally, and putting it on `markie.live` in production.
+Every cloud document with format `darkmown` (a `.wd`) gets its own address, `<label>.<LIVE_DOCS_DOMAIN>`. It opens through a one-time pass for its owner and everyone it is shared with. While its public link is on, it also has a public address that opens for anyone. This page covers turning it on, running it locally, who can open what, and putting it on `markie.live` in production.
 
 The design is `markie-darkmown-sites-design-2026-11-01.md` (Circular ENG-7835). The code is `server/src/live-docs*.ts`.
 
@@ -42,19 +42,58 @@ Measured on 2026-11-03 with Playwright 1.63 against a local server:
 | Signed-in stranger gets 404 | yes | yes | yes |
 | Owner's cookie after delete: refused | yes | not run | not run |
 
+## Who can open a Live Doc
+
+Access follows the document's Share settings. Nothing new is stored about who may see what.
+
+| Level | Who | How |
+|---|---|---|
+| Private | The owner | The private address, through the pass |
+| Shared | The owner and every member, viewer or editor | The private address, through the pass. A pending invite opens nothing until a verified account claims it |
+| Public | Anyone, signed in or not | A second address, `<public label>.<domain>`, with no cookie and no pass. The private address still needs the pass |
+
+- The public address exists only while the document's public link is on. It is bound to the hash of that link's token, so rotating the link (which removing a member does) or turning it off kills the address in the same moment.
+- The document's public link, `/s/<token>`, forwards to the public address when the document is a Live Doc. Every other document keeps its usual page.
+- Only the owner is shown the public address, the same as the public link. `GET /api/docs/:id/live-doc` gives a member `{ url, access: "shared" }` and the owner `{ url, access, publicUrl? }`.
+- A public page names its publisher in a footer: the owner's display name, never an email address. A name that is just the email's local part shows as "a Markie account" instead. The owner's copy of the public address says which name the page shows.
+
+### Open tabs
+
+Every hosted page keeps one server-sent event stream open to its own host, `/__markie/live`. It carries no content: `ready`, a comment every 15 seconds, and `revoked` when access ends.
+
+- The stream re-reads access every 5 seconds. Removing a member, rotating or turning off the public link, and deleting the document also re-check every open stream of that document at once.
+- On `revoked`, the page empties itself and clears its address's storage, and says why: access ended, the public link changed, or the Live Doc is gone.
+- A refusal is a `200` with `revoked`, never an error status, so the page can tell "you lost access" from "the server is restarting". Anything else that drops the stream is retried with backoff, and never blanks the page.
+- Limits: members and public visitors draw from separate pools of 1,000 streams each, so strangers cannot use up the streams members need. One person holds at most 24, one client on public pages at most 24 (an IPv6 /64 is one client), and one owner's public pages at most 200 together. Past any limit, the stream answers `429` and the page retries.
+- Access checks never read a document's text. They read a covering index (`idx_docs_access`), so a check costs the same for a 40 MB document as for a short one. The page reads the text only when it is within the 200,000-character limit.
+- A stream ends after 30 minutes and the page reconnects, so none lives forever.
+
+### Taking one down
+
+A Live Doc can be taken down at every level from the server, without touching the document:
+
+```
+node --experimental-strip-types scripts/live-doc-takedown.ts <address-or-doc-id> "<reason>"
+node --experimental-strip-types scripts/live-doc-takedown.ts --restore <address-or-doc-id>
+node --experimental-strip-types scripts/live-doc-takedown.ts --list
+```
+
+Its addresses then answer "taken down" with a `410`, its public link serves nothing (not the page, its source or its assets), its passes and cookies are deleted, and its open tabs close within 5 seconds. Restoring brings back the same addresses. A takedown follows the document, so the same text uploaded as a new document needs its own.
+
 ## How a request is routed
 
 | Host | Answers |
 |---|---|
-| `<label>.<domain>`, 16 base32 characters | `/` the page, `/__markie/pass` the redeem. Everything else is 404 |
+| `<label>.<domain>`, 16 base32 characters | `/` the page, `/__markie/pass` the redeem, `/__markie/live` the page's stream. Everything else is 404 |
 | `<domain>` itself | `/` redirects to `MARKIE_SITE_URL`. No cookie. Everything else is 404 |
 | Any other name under `<domain>` | 404 |
-| Any other host | The app, as before. `/live-docs/pass/<label>` and `/api/docs/:id/live-doc` live here |
+| Any other host | The app, as before. `/live-docs/pass/<label>` and `/api/docs/:id/live-doc` live here, and `/s/<token>` forwards a public Live Doc |
 
-- The live domain is answered before every app middleware, so no app route, CORS grant or app cookie can come back from a Live Doc host.
+- The live domain is answered before every app middleware, so no app route, CORS grant or app cookie can come back from a Live Doc host. WebSocket upgrades never pass through that middleware, so the upgrade listener refuses every one whose `Host` or `X-Forwarded-Host` names the live domain.
+- A pass works only in the browser that asked for it. Before sending a browser for a pass, the live host sets a 10-minute `__Host-markie-live-state-<16 hex>` nonce cookie, one per flow, and the app host binds the pass to the nonce's hash, carried as `?state=` through the web sign-in. Redeem requires the matching cookie, so a copied pass URL opens nothing, and two tabs opening at once both get in.
 - When `Host` or `X-Forwarded-Host` names the live domain, the two must agree exactly, or the request is a 404. kamal-proxy forwards a client's own `X-Forwarded-*` headers for markie-api (Kamal's `forward_headers` defaults to on without `ssl`), so neither header alone can carry a request across.
 - Every live response carries HSTS, `nosniff`, `Referrer-Policy: no-referrer`, COOP and CORP `same-origin`, `X-Frame-Options: DENY`, a Permissions-Policy denying camera, microphone and geolocation, `X-Robots-Tag: noindex, nofollow` and `Cache-Control: private, no-store`.
-- The page's CSP admits the pinned runtime and its bootstrap by hash, and its one style block by hash. `connect-src` and `form-action` are `'none'` in H1.
+- The page's CSP admits three scripts by hash: the pinned runtime, its bootstrap, and Markie's stream script. It admits its one style block by hash. `connect-src` is `'self'`, for the stream; the live host answers nothing else a page could use. `form-action` is `'none'`. The per-page network list is H3.
 
 ## Production on markie.live
 
@@ -124,7 +163,7 @@ Each compile runs in its own short-lived Node process (`server/src/live-docs-chi
 
 Production runs Node 22, whose permission model has no network permission. The child removes the network globals (`fetch`, `WebSocket` and the like) before the compiler loads, but `node:net` and `node:http` stay importable. That is acceptable only because the compiler never runs the source as code: Darkmown parses it, and its expressions are a closed AST, so nothing in a Live Doc can reach an import. Moving the image to Node 25 or later turns on the network permission as a second wall.
 
-A compile that fails (out of time or memory) is remembered for 5 minutes, so reloading a broken Live Doc starts no new process. Each owner may have one compile running and four in flight at once, and past that gets "busy" for themselves alone, so one account cannot hold every slot.
+A compile that fails (out of time or memory) is remembered for a minute, so reloading a broken Live Doc starts no new process. A compiler that could not start at all is never remembered. Each owner may have one compile running, three in flight and 30 new compiles a minute, and past that gets "busy" for themselves alone. It takes six accounts at once to fill the queue.
 
 Results are cached by source hash and compiler version, so each change to a Live Doc pays for one process start. The server image needs nothing extra: the child and everything it imports are under `src/` and the production `node_modules`.
 

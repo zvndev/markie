@@ -163,6 +163,31 @@ test("one owner cannot hold every compile slot, or more than their share of the 
   assert.ok((await compiler.compile(doc(5), "heavy")).ok);
 });
 
+test("five accounts cannot fill the compile queue for everyone else", async () => {
+  const compiler = compilerFor({ timeoutMs: UNHURRIED });
+  const doc = (who: string, n: number) => `# ${who} ${n}\n\n${Math.random()}\n`;
+  const flood = ["a", "b", "c", "d", "e"].flatMap((who) => [0, 1, 2, 3].map((n) => compiler.compile(doc(who, n), who)));
+  const victim = await compiler.compile(doc("victim", 0), "victim");
+  await Promise.all(flood);
+  assert.ok(victim.ok, JSON.stringify(victim));
+});
+
+test("one owner can start only so many new compiles a minute", async () => {
+  const compiler = compilerFor({ timeoutMs: UNHURRIED, maxStartsPerOwnerPerMinute: 2 });
+  const doc = (n: number) => `# Rate ${n}\n\n${Math.random()}\n`;
+  assert.ok((await compiler.compile(doc(0), "owner")).ok);
+  assert.ok((await compiler.compile(doc(1), "owner")).ok);
+  const third = await compiler.compile(doc(2), "owner");
+  assert.equal(!third.ok && third.kind, "busy");
+  assert.ok((await compiler.compile(doc(3), "someone else")).ok, "the limit is per owner");
+});
+
+test("a compile the host could not start is never remembered against the source", async () => {
+  const run = interpretLiveDocChildRun({ pid: undefined, end: "spawn-failed", code: null, signal: null, stdout: "", stderr: "" });
+  assert.equal(!run.ok && run.kind, "failed");
+  assert.equal(!run.ok && run.kind === "failed" && run.transient, true);
+});
+
 test("warnings are not kept with a compiled page", async () => {
   const result = await compilerFor({ timeoutMs: UNHURRIED }).compile(":nope one\n:nope two\n\n# Page\n");
   assert.ok(result.ok, JSON.stringify(result));

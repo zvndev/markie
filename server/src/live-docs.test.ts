@@ -102,8 +102,8 @@ async function startAt(label: string): Promise<{ state: string; stateCookie: str
   const location = new URL(res.headers.get("location")!);
   const state = location.searchParams.get("state");
   assert.ok(state && /^[a-f0-9]{64}$/.test(state), `a state on ${location}`);
-  const line = res.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}=`) && !value.startsWith(`${STATE_COOKIE}=;`));
-  assert.ok(line, "the live host sets the nonce cookie");
+  const line = res.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}-${state.slice(0, 16)}=`) && !/^[^=]+=;/.test(value));
+  assert.ok(line, "the live host sets this flow's nonce cookie");
   return { state, stateCookie: line.split(";")[0] };
 }
 
@@ -177,14 +177,18 @@ test("only the owner gets the address, and only for a .wd", async () => {
   assert.equal(liveDocLabel(markdown), null, "no address is handed out for a document that is not a Live Doc");
 });
 
-test("a shared editor is not the owner, so H1 gives them no address and no pass", async () => {
+test("a shared editor gets the private address and a pass, never the public one", async () => {
+  const editor = await signUpVerified(app, { name: "Editor", email: `live-editor-${stamp}@example.com` });
+  const editorCookie = await browserSignIn(editor.email);
   const shared = `live-shared-${stamp}`;
   await putDoc(owner.token, shared, "Shared.wd", COUNTER);
-  const res = await ask(APP_HOST, `/api/docs/${shared}/shares`, { method: "POST", bearer: owner.token, body: { email: stranger.email, role: "editor" } });
+  const res = await ask(APP_HOST, `/api/docs/${shared}/shares`, { method: "POST", bearer: owner.token, body: { email: editor.email, role: "editor" } });
   assert.equal(res.status, 200);
-  assert.equal((await ask(APP_HOST, `/api/docs/${shared}/live-doc`, { bearer: stranger.token })).status, 404);
   const { label } = await addressOf(shared, owner.token);
-  assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: strangerCookie })).status, 404);
+  const member = await ask(APP_HOST, `/api/docs/${shared}/live-doc`, { bearer: editor.token });
+  assert.equal(member.status, 200);
+  assert.deepEqual(await member.json(), { url: `${liveOrigin(label)}/`, access: "shared" });
+  assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: editorCookie })).status, 302);
 });
 
 // ── the pass flow ────────────────────────────────────────────────────────────
@@ -196,12 +200,13 @@ test("the owner opens their private Live Doc through the pass", async () => {
   assert.equal(first.status, 302);
   const firstLocation = first.headers.get("location")!;
   assert.match(firstLocation, new RegExp(`^${APP_ORIGIN.replace(/\./g, "\\.")}/live-docs/pass/${labelA}\\?state=[a-f0-9]{64}$`));
-  const stateLine = first.headers.getSetCookie().find((value) => value.startsWith(`${STATE_COOKIE}=`))!;
-  const [statePair, ...stateAttributes] = stateLine.split(";").map((part) => part.trim());
-  assert.match(statePair, /^__Host-markie-live-state=[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(stateAttributes.sort(), ["HttpOnly", "Max-Age=600", "Path=/", "SameSite=Lax", "Secure"].sort());
   const state = new URL(firstLocation).searchParams.get("state")!;
-  assert.equal(state, sha(statePair.slice(`${STATE_COOKIE}=`.length)), "the app host is told only the nonce's hash");
+  const stateName = `${STATE_COOKIE}-${state.slice(0, 16)}`;
+  const stateLine = first.headers.getSetCookie().find((value) => value.startsWith(`${stateName}=`))!;
+  const [statePair, ...stateAttributes] = stateLine.split(";").map((part) => part.trim());
+  assert.match(statePair, /^__Host-markie-live-state-[a-f0-9]{16}=[A-Za-z0-9_-]{43}$/, "one cookie per flow, named after its state");
+  assert.deepEqual(stateAttributes.sort(), ["HttpOnly", "Max-Age=600", "Path=/", "SameSite=Lax", "Secure"].sort());
+  assert.equal(state, sha(statePair.slice(`${stateName}=`.length)), "the app host is told only the nonce's hash");
 
   // 2. Signed in on the app host: a pass, sent to the label stored for the doc.
   const pass = await ask(APP_HOST, `/live-docs/pass/${labelA}?state=${state}`, { cookie: ownerCookie });
@@ -223,7 +228,7 @@ test("the owner opens their private Live Doc through the pass", async () => {
   assert.equal(redeemed.headers.get("location"), "/");
   const setCookie = redeemed.headers.getSetCookie();
   assert.equal(setCookie.length, 2);
-  assert.match(setCookie[1], /^__Host-markie-live-state=; Path=\/; Max-Age=0/);
+  assert.ok(setCookie[1].startsWith(`${stateName}=; Path=/; Max-Age=0`), "this flow's nonce is cleared");
   const [pair, ...attributes] = setCookie[0].split(";").map((part) => part.trim());
   assert.match(pair, /^__Host-markie-live=[A-Za-z0-9_-]{43}$/);
   assert.deepEqual(attributes.sort(), ["HttpOnly", "Max-Age=43200", "Path=/", "SameSite=Lax", "Secure"].sort());
@@ -283,6 +288,20 @@ test("a pass opens only in the browser that asked for it, and is burned by any o
   assert.equal((await redeem(labelA, second, someoneElse)).cookie, null, "another browser's own nonce does not match");
 });
 
+test("two tabs opening the same Live Doc at once both get in", async () => {
+  const appCookie = await browserSignIn(owner.email);
+  const [one, two] = [await startAt(labelA), await startAt(labelA)];
+  // The browser holds both nonce cookies, one per flow.
+  const jar = `${one.stateCookie}; ${two.stateCookie}`;
+  for (const flow of [one, two]) {
+    const pass = await ask(APP_HOST, `/live-docs/pass/${labelA}?state=${flow.state}`, { cookie: appCookie });
+    const ticket = new URL(pass.headers.get("location")!).searchParams.get("ticket")!;
+    const { res, cookie } = await redeem(labelA, ticket, jar);
+    assert.equal(res.status, 303);
+    assert.ok(cookie);
+  }
+});
+
 test("a pass link opened without the browser's nonce starts over at the Live Doc's own address", async () => {
   const before = (db.prepare("SELECT COUNT(*) AS n FROM live_doc_tickets WHERE user_id = ?").get(owner.id) as { n: number }).n;
   for (const query of ["", "?state=", "?state=abc", `?state=${"g".repeat(64)}`]) {
@@ -318,7 +337,7 @@ test("a ticket works once: replay fails", async () => {
   const replay = await redeem(labelA, ticket);
   assert.equal(replay.res.status, 403);
   assert.equal(replay.cookie, null);
-  assert.deepEqual(replay.res.headers.getSetCookie().map((line) => line.split(";")[0]), [`${STATE_COOKIE}=`], "only the spent nonce is cleared");
+  assert.deepEqual(replay.res.headers.getSetCookie(), [], "a refused redeem sets and clears nothing");
 });
 
 test("a HEAD request to the redeem path does not spend the ticket", async () => {
@@ -339,7 +358,7 @@ test("an expired ticket fails", async () => {
   const sessionId = (await auth.api.getSession({ headers: new Headers({ cookie: ownerCookie }) }))!.session.id;
   const binding = { docId: docA, userId: owner.id, authSessionId: sessionId, label: labelA };
   const browser = newLiveDocState();
-  const stateCookie = `${STATE_COOKIE}=${browser.nonce}`;
+  const stateCookie = `${STATE_COOKIE}-${browser.hash.slice(0, 16)}=${browser.nonce}`;
   const stale = issueLiveDocTicket(binding, browser.hash, Date.now() - LIVE_DOC_TICKET_TTL_MS - 1000)!;
   const res = await redeem(labelA, stale.ticket, stateCookie);
   assert.equal(res.res.status, 403);
@@ -567,7 +586,7 @@ test("authored script, style, links and network never survive into the hosted pa
   assert.equal(res.status, 200);
   const html = await res.text();
   const scripts = [...html.matchAll(/<script(?: [^>]*)?>/g)].map((match) => match[0]);
-  assert.deepEqual(scripts.filter((tag) => tag !== '<script type="application/json" data-wd-state>'), ["<script>", "<script>"], "only the runtime and its bootstrap");
+  assert.deepEqual(scripts.filter((tag) => tag !== '<script type="application/json" data-wd-state>'), ["<script>", "<script>", "<script>"], "only the runtime, its bootstrap and Markie's stream script");
   // Darkmown escapes authored HTML into text, so what is left to check is the
   // markup itself: which elements exist and which attributes they carry.
   const tags = [...html.matchAll(/<([a-zA-Z][\w-]*)([^>]*)>/g)];
@@ -584,13 +603,14 @@ test("authored script, style, links and network never survive into the hosted pa
 
 const generated = (name: string) => readFileSync(new URL(`./generated/darkmown/${name}`, import.meta.url), "utf8");
 const policy = JSON.parse(generated("runtime-policy.json")) as { runtimeSha256: string; bootstrapSha256: string };
-const PAGE_STYLE = `:root{color-scheme:light dark}${generated("preview-style.css")}`;
-const EXPECTED_CSP =
+const { LIVE_DOC_CHANNEL_SCRIPT } = await import("./live-docs-page.ts");
+const PAGE_STYLE_START = `:root{color-scheme:light dark}${generated("preview-style.css")}`;
+const expectedCsp = (style: string) =>
   "default-src 'none'; " +
-  `script-src 'sha256-${policy.runtimeSha256}' 'sha256-${policy.bootstrapSha256}'; ` +
+  `script-src 'sha256-${policy.runtimeSha256}' 'sha256-${policy.bootstrapSha256}' 'sha256-${b64sha(LIVE_DOC_CHANNEL_SCRIPT)}'; ` +
   "script-src-attr 'none'; " +
-  `style-src 'sha256-${b64sha(PAGE_STYLE)}'; ` +
-  "img-src 'none'; media-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; worker-src 'none'; " +
+  `style-src 'sha256-${b64sha(style)}'; ` +
+  "img-src 'none'; media-src 'none'; font-src 'none'; connect-src 'self'; frame-src 'none'; worker-src 'none'; " +
   "manifest-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
 const EXPECTED_HEADERS: Record<string, string> = {
   "strict-transport-security": "max-age=63072000; includeSubDomains",
@@ -610,7 +630,9 @@ function assertLiveHeaders(res: Response, what: string) {
   for (const directive of ["default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'"]) {
     assert.ok(csp.split("; ").includes(directive), `${what}: ${directive}`);
   }
-  assert.ok(!/unsafe-inline|unsafe-eval|'self'|\*|https?:/.test(csp), `${what}: nothing loose in ${csp}`);
+  // The page's one 'self' is connect-src, for its stream to its own host.
+  const rest = csp.split("; ").filter((directive) => directive !== "connect-src 'self'").join("; ");
+  assert.ok(!/unsafe-inline|unsafe-eval|'self'|\*|https?:/.test(rest), `${what}: nothing loose in ${csp}`);
 }
 
 test("the hosted page carries exactly this CSP and header set", async () => {
@@ -619,14 +641,14 @@ test("the hosted page carries exactly this CSP and header set", async () => {
   const cookie = await openLiveDoc(labelA, ownerCookie);
   const res = await ask(liveHost(labelA), "/", { cookie });
   assert.equal(res.status, 200);
-  assert.equal(res.headers.get("content-security-policy"), EXPECTED_CSP);
-  assertLiveHeaders(res, "page");
   const html = await res.text();
+  const style = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+  assert.ok(style.startsWith(PAGE_STYLE_START), "the Mac preview's style, then Markie's own two rules");
+  assert.equal(res.headers.get("content-security-policy"), expectedCsp(style));
+  assertLiveHeaders(res, "page");
   // Each inline script and the style block is exactly what its hash names.
   const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => b64sha(match[1]));
-  assert.deepEqual(inline, [policy.runtimeSha256, policy.bootstrapSha256]);
-  const style = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
-  assert.equal(style, PAGE_STYLE);
+  assert.deepEqual(inline, [policy.runtimeSha256, policy.bootstrapSha256, b64sha(LIVE_DOC_CHANNEL_SCRIPT)]);
   assert.equal(res.headers.get("access-control-allow-origin"), null);
 });
 

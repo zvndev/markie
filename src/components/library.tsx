@@ -10,7 +10,7 @@ import {
 } from "react";
 import { stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, isTooLarge, type LibraryItem } from "@/lib/electron";
-import { getServerURL } from "@/lib/auth-client";
+import { getServerURL, type LiveDocAddress } from "@/lib/auth-client";
 import { tooLargeMessage } from "@/lib/doc-tiers";
 import { ProjectsPanelContainer } from "@/components/projects-panel";
 import { BrowseView } from "@/components/browse-view";
@@ -484,30 +484,50 @@ export function Library({
     }
   };
 
-  // Nightly: a cloud .wd's own hosted address (server/src/live-docs.ts). The
-  // server gives it to the owner only, and it opens only for them, after
-  // signing in, on any device.
-  const liveDocAddress = async (item: LibraryItem): Promise<string | null> => {
+  // Nightly: a cloud .wd's own hosted address (server/src/live-docs.ts). It
+  // opens, after signing in, for the owner and everyone the document is
+  // shared with, on any device. The owner also gets the public address while
+  // the document's public link is on.
+  const liveDocAddress = async (item: LibraryItem): Promise<LiveDocAddress | null> => {
     if (!item.cloudId) return null;
-    const url = await sharesClientFor(item.server).liveDocAddress(item.cloudId).catch(() => null);
-    if (!url) flashError("This document has no Live Doc address on its server yet.");
-    return url;
+    const address = await sharesClientFor(item.server).liveDocAddress(item.cloudId).catch(() => null);
+    if (!address) flashError("This document has no Live Doc address on its server yet.");
+    return address;
   };
 
-  const copyLiveDoc = async (item: LibraryItem) => {
-    const url = await liveDocAddress(item);
-    if (!url) return;
+  const copyText = async (text: string, done: string) => {
     try {
-      await navigator.clipboard.writeText(url);
-      flash("Live Doc address copied. It opens only for you, after you sign in.");
+      await navigator.clipboard.writeText(text);
+      flash(done);
     } catch {
       flashError("Couldn't copy the address.");
     }
   };
 
+  const copyLiveDoc = async (item: LibraryItem) => {
+    const address = await liveDocAddress(item);
+    if (!address) return;
+    await copyText(address.url, address.access === "private"
+      ? "Live Doc address copied. It opens only for you, after you sign in."
+      : "Live Doc address copied. It opens for you and everyone it's shared with, after they sign in.");
+  };
+
+  const copyPublicLiveDoc = async (item: LibraryItem) => {
+    const address = await liveDocAddress(item);
+    if (!address) return;
+    if (!address.publicUrl) {
+      flashError("This Live Doc isn't public. Turn on its public link in Share first.");
+      return;
+    }
+    await copyText(address.publicUrl, address.publishedAs
+      ? `Public Live Doc address copied. Anyone with it can open the page, which names its publisher as ${address.publishedAs}.`
+      : "Public Live Doc address copied. Anyone with it can open the page, no sign-in needed.");
+  };
+
   const openLiveDoc = async (item: LibraryItem) => {
-    const url = await liveDocAddress(item);
-    if (!url) return;
+    const address = await liveDocAddress(item);
+    if (!address) return;
+    const url = address.url;
     const api = getElectronAPI();
     if (api?.openExternal) void api.openExternal(url);
     else window.open(url, "_blank", "noopener");
@@ -602,9 +622,12 @@ export function Library({
     if (item.cloudId && item.state !== "local-only") {
       entries.push({ key: "copy-link", label: "Copy link", icon: MENU_ICONS.link, onSelect: () => void copyPrivateLink(item) });
     }
-    if (rowSignedIn && item.cloudId && item.state !== "local-only" && !item.shared && item.owned !== false
+    if (rowSignedIn && item.cloudId && item.state !== "local-only"
       && libraryDocumentFormat(item.name) === "darkmown" && nightlyFeaturesEnabled()) {
       entries.push({ key: "copy-live-doc", label: "Copy Live Doc address", icon: MENU_ICONS.link, onSelect: () => void copyLiveDoc(item) });
+      if (!item.shared && item.owned !== false) {
+        entries.push({ key: "copy-public-live-doc", label: "Copy public Live Doc address", icon: MENU_ICONS.link, onSelect: () => void copyPublicLiveDoc(item) });
+      }
       entries.push({ key: "open-live-doc", label: "Open Live Doc", icon: MENU_ICONS.link, onSelect: () => void openLiveDoc(item) });
     }
     if (item.path) {

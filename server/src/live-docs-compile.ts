@@ -205,7 +205,7 @@ export type LiveDocCompile =
    * Remembered for LIVE_DOC_FAILED_TTL_MS, since the same source under the
    * same limits fails the same way, and a reload must not start a new process.
    */
-  | { ok: false; kind: "failed"; message: string }
+  | { ok: false; kind: "failed"; message: string; transient?: true }
   /** Too many compiles in flight, overall or for this owner. Not cached; the next load tries again. */
   | { ok: false; kind: "busy"; message: string };
 
@@ -249,7 +249,9 @@ const failed = (message: string): LiveDocCompile => ({ ok: false, kind: "failed"
 
 /** What a finished child run means for the page. Exported for the protocol tests. */
 export function interpretLiveDocChildRun(run: LiveDocChildRun): LiveDocCompile {
-  if (run.end === "spawn-failed") return failed("The Live Doc compiler could not start.");
+  // The host could not start a process: nothing to do with this source, so
+  // it is never remembered against it.
+  if (run.end === "spawn-failed") return { ok: false, kind: "failed", message: "The Live Doc compiler could not start.", transient: true };
   if (run.end === "timeout") return failed("This Live Doc took too long to compile, so it was stopped.");
   if (run.code !== 0 && OUT_OF_MEMORY.test(run.stderr)) return failed("This Live Doc needed too much memory to compile, so it was stopped.");
   if (run.end === "overflow") return failed("The Live Doc compiler returned an invalid result.");
@@ -258,8 +260,12 @@ export function interpretLiveDocChildRun(run: LiveDocChildRun): LiveDocCompile {
   return parseReply(run.stdout) ?? failed("The Live Doc compiler returned an invalid result.");
 }
 
-/** How long a source that failed to compile is answered from memory. */
-export const LIVE_DOC_FAILED_TTL_MS = 5 * 60 * 1000;
+/**
+ * How long a source that failed to compile is answered from memory. Long
+ * enough that reloading a broken Live Doc starts no new process, short enough
+ * that a compile that timed out under a load spike gets a fresh try soon.
+ */
+export const LIVE_DOC_FAILED_TTL_MS = 60 * 1000;
 
 export interface LiveDocCompilerOptions {
   timeoutMs?: number;
@@ -270,6 +276,8 @@ export interface LiveDocCompilerOptions {
   maxRunningPerOwner?: number;
   /** Compiles one owner may have running or waiting. Past it, "busy" for them alone. */
   maxInFlightPerOwner?: number;
+  /** New (uncached) compiles one owner may start a minute. */
+  maxStartsPerOwnerPerMinute?: number;
   failedTtlMs?: number;
   failedEntries?: number;
   cacheEntries?: number;
@@ -286,7 +294,10 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
   const cacheEntries = options.cacheEntries ?? 200;
   const cacheBytes = options.cacheBytes ?? 64 * 1024 * 1024;
   const maxRunningPerOwner = options.maxRunningPerOwner ?? 1;
-  const maxInFlightPerOwner = options.maxInFlightPerOwner ?? 4;
+  // Three per owner, against 16 waiting places: it takes six accounts at once
+  // to fill the queue, and each is also held to its starts a minute.
+  const maxInFlightPerOwner = options.maxInFlightPerOwner ?? 3;
+  const maxStartsPerOwnerPerMinute = options.maxStartsPerOwnerPerMinute ?? 30;
   const failedTtlMs = options.failedTtlMs ?? LIVE_DOC_FAILED_TTL_MS;
   const failedEntries = options.failedEntries ?? 1_000;
 
@@ -302,6 +313,20 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
   const inFlightBy = new Map<string, number>();
   // Sources whose compile failed, with when they may be tried again.
   const failures = new Map<string, { result: LiveDocCompile; until: number }>();
+  // When each owner's recent uncached compiles started, oldest first.
+  const startsBy = new Map<string, number[]>();
+  const overStartRate = (owner: string, now = Date.now()) => {
+    const recent = (startsBy.get(owner) ?? []).filter((at) => at > now - 60_000);
+    if (recent.length >= maxStartsPerOwnerPerMinute) {
+      startsBy.set(owner, recent);
+      return true;
+    }
+    recent.push(now);
+    startsBy.set(owner, recent);
+    // Owners with nothing recent drop out, so the map stays the size of the active set.
+    if (startsBy.size > 10_000) for (const [key, times] of startsBy) if (!times.some((at) => at > now - 60_000)) startsBy.delete(key);
+    return false;
+  };
   let childrenStarted = 0;
 
   const bump = (counts: Map<string, number>, owner: string, by: number) => {
@@ -321,7 +346,7 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
 
   const remember = (key: string, result: LiveDocCompile) => {
     if (!result.ok && result.kind === "failed") {
-      rememberFailure(key, result);
+      if (!result.transient) rememberFailure(key, result);
       return;
     }
     if (!result.ok && result.kind !== "refused") return;
@@ -364,6 +389,7 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
   const withSlot = async (source: string, owner: string | undefined): Promise<LiveDocCompile> => {
     if (owner !== undefined && (inFlightBy.get(owner) ?? 0) >= maxInFlightPerOwner) return BUSY;
     if (!mayStart(owner) && waiting.length >= maxQueued) return BUSY;
+    if (owner !== undefined && overStartRate(owner)) return BUSY;
     // Counted from the moment it is accepted, waiting included, so an owner's
     // queue is bounded too.
     if (owner !== undefined) bump(inFlightBy, owner, 1);
@@ -437,6 +463,7 @@ export function createLiveDocCompiler(options: LiveDocCompilerOptions = {}) {
       cache.clear();
       cachedBytes = 0;
       failures.clear();
+      startsBy.clear();
     },
   };
 }

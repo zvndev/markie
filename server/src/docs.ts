@@ -18,6 +18,7 @@ import { revokePublicLink } from "./public-links.ts";
 import { serveAsset, unlinkDocAssets } from "./assets.ts";
 import { removeDocLinks } from "./doc-links.ts";
 import { removeLiveDoc } from "./live-docs-store.ts";
+import { recheckLiveDocChannels } from "./live-docs-channels.ts";
 import { CloudAreaError, createCloudAreas, type CloudAreasStore } from "./cloud-areas.ts";
 import { quotaRefusal, storageQuotaBytes } from "./quota.ts";
 import {
@@ -92,6 +93,12 @@ db.exec(`
   // Only token-made rows are in it, so it costs nothing for everyone else.
   db.exec("CREATE INDEX IF NOT EXISTS idx_docs_origin_token ON docs(origin_token_id, updated_at) WHERE origin_token_id IS NOT NULL");
   db.exec("CREATE INDEX IF NOT EXISTS idx_docs_owner_updated ON docs(owner_id, updated_at)");
+  // Every access check reads only these columns, and deleted_at and format
+  // sit after content in the row: without a covering index, each check on a
+  // large document walks its overflow pages to reach them. Hosted Live Docs
+  // re-check access from every open tab (live-docs-store.ts liveDocMeta,
+  // shares.ts isOwner), so that walk must not happen.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_docs_access ON docs(id, deleted_at, format, owner_id, name)");
 }
 
 // How many snapshots of one document the server keeps, newest first, the
@@ -456,6 +463,7 @@ docs.delete("/:id", async (c) => {
   // Its Live Doc address, passes and cookies. The next load would refuse
   // anyway (live-docs.ts re-reads the document); this leaves nothing behind.
   removeLiveDoc(docId);
+  recheckLiveDocChannels(docId);
   await unlinkDocAssets(docId);
   return c.json({ ok: true });
 });

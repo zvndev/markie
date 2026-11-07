@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
 import { liveDocTakenDown } from "./live-docs-store.ts";
-import { publicPageLinkFor } from "./doc-links.ts";
+import { docLinksFor, publicPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import {
   renderDownloadPage,
@@ -292,6 +292,24 @@ publicShare.get("/s/:token/raw", (c) => {
     `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
   );
   return c.body(doc.content);
+});
+
+// Where the public page's links to other documents lead, for the read view
+// (src/web/doc-view.tsx), which draws the page in the browser from /raw. The
+// same answers the static page writes into its HTML (publicPageLinkFor): a
+// target's public link only when its owner joined the two pages, muted
+// otherwise. Read with the link alone, like /raw, so it names nothing the
+// static page does not already print.
+publicShare.get("/s/:token/links", (c) => {
+  c.header("Cache-Control", "private, no-store");
+  const doc = docForToken(c.req.param("token"));
+  if (!doc) return c.json({ error: "not found" }, 404);
+  const linkFor = publicPageLinkFor(doc.doc_id);
+  const links = [...docLinksFor(doc.doc_id).keys()].map((ref) => {
+    const answer = linkFor(ref);
+    return answer && "href" in answer ? { ref, href: answer.href } : { ref, muted: true };
+  });
+  return c.json({ links });
 });
 
 publicShare.get("/s/:token/assets", (c) => {

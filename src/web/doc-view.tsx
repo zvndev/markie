@@ -25,10 +25,10 @@ import { ImageLightbox } from "@/components/image-lightbox";
 import { HtmlSectionRail } from "@/components/section-rail";
 import { HideBarButton, ShowBarButton } from "./bar-controls";
 import { useBarVisibility } from "./bar-visibility";
-import { SessionEndedError, type EditorKind } from "./cloud";
+import { loadDocLinks, SessionEndedError, type EditorKind } from "./cloud";
 import { viewSignInHref, type ViewRoute } from "./routes";
 import type { WebSessionUser } from "./session";
-import { memberAssetUrl, publicAssetUrl, viewHtml, type AssetUrl } from "./view-content";
+import { memberAssetUrl, parseViewLinks, publicAssetUrl, viewHtml, type AssetUrl, type ViewLinks } from "./view-content";
 import { loadDoc } from "./web-document";
 import { WebExportMenu, type WebExportSource } from "./web-export";
 
@@ -43,6 +43,8 @@ export interface ViewDoc {
   /** The id the editor opens, when this account may edit. */
   editId: string | null;
   assetUrl: AssetUrl | null;
+  /** Where its links to other documents lead for this reader; null mutes them all. */
+  links: ViewLinks | null;
 }
 
 type ViewState =
@@ -66,6 +68,8 @@ export function publicKind(format: string): EditorKind {
 async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | null): Promise<ViewState> {
   if (!user) return { state: "signed-out" };
   try {
+    // Asked alongside the document rather than after it; it never throws.
+    const links = loadDocLinks(id);
     const doc = await loadDoc(id);
     if (!doc) return { state: "no-access" };
     // A Word, RTF or ODT file Markie keeps read-only to protect what it can't
@@ -77,8 +81,10 @@ async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | 
       doc: {
         name: doc.name, kind: doc.kind, text: doc.text, office: doc.office,
         editId: editable ? doc.id : null,
-        // Only the text store has per-document assets (server/src/assets.ts).
+        // Only the text store has per-document assets (server/src/assets.ts)
+        // and links to other documents (server/src/doc-links.ts).
         assetUrl: doc.store === "docs" ? memberAssetUrl(apiOrigin, id) : null,
+        links: doc.store === "docs" && doc.kind === "markdown" ? await links : null,
       },
     };
   } catch (error) {
@@ -112,7 +118,24 @@ async function loadPublic(token: string, apiOrigin: string, user: WebSessionUser
       // Reading never depends on it.
     }
   }
-  return { state: "ready", doc: { name, kind: publicKind(format), text, office: null, editId, assetUrl: publicAssetUrl(apiOrigin, token) } };
+  const kind = publicKind(format);
+  const links = kind === "markdown" ? await loadPublicLinks(token, apiOrigin, fetcher) : null;
+  return { state: "ready", doc: { name, kind, text, office: null, editId, assetUrl: publicAssetUrl(apiOrigin, token), links } };
+}
+
+/**
+ * Where a public page's links lead (server/src/public.ts GET /s/:token/links):
+ * another public page of the same owner, or muted. Read with the link alone,
+ * like the text. Null when the server could not say.
+ */
+async function loadPublicLinks(token: string, apiOrigin: string, fetcher: typeof fetch): Promise<ViewLinks | null> {
+  try {
+    const res = await fetcher(`${apiOrigin}/s/${encodeURIComponent(token)}/links`, { cache: "no-store", credentials: "omit" });
+    if (!res.ok) return null;
+    return parseViewLinks(await res.json(), () => "");
+  } catch {
+    return null;
+  }
 }
 
 /** The tab's title for each state that has no document to name, matching what the page says. */
@@ -173,7 +196,7 @@ export function DocView({ route, apiOrigin, user, onEdit }: DocViewProps) {
   }, [doc, view.state]);
 
   const signIn = route.kind === "member" ? viewSignInHref(route.id, apiOrigin) : null;
-  const html = useMemo(() => (doc && (doc.kind === "markdown" || doc.kind === "text") ? viewHtml(doc.kind, doc.text, doc.assetUrl) : null), [doc]);
+  const html = useMemo(() => (doc && (doc.kind === "markdown" || doc.kind === "text") ? viewHtml(doc.kind, doc.text, doc.assetUrl, doc.links ?? new Map()) : null), [doc]);
   const readText = useCallback(() => doc?.text ?? "", [doc]);
   const original = useMemo(() => (doc?.office ? async () => new Uint8Array(await exportRichDocument(doc.office!)) : undefined), [doc]);
 

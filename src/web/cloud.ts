@@ -16,7 +16,7 @@ import { classifyDocumentFormat, decodeTextDocument } from "@/lib/document-forma
 import { DocumentCloudClient, DocumentCloudError } from "@/lib/document-cloud";
 import { libraryDocumentFormat } from "@/lib/library-document-query";
 import type { LibraryFormat } from "@/lib/document-library";
-import { mediaRef } from "./view-content";
+import { mediaRef, parseViewLinks, type ViewLinks } from "./view-content";
 
 export type CloudStore = "docs" | "platform";
 export type CloudRole = "owner" | "editor" | "viewer";
@@ -187,6 +187,23 @@ export async function openTextDoc(id: string, fetcher: Fetch = fetch): Promise<T
     throw new CloudRequestError(502, "The server's answer wasn't a document.");
   }
   return { store: "docs", id, name: doc.name, content: doc.content, version: doc.version, role: role(doc.role, "viewer") };
+}
+
+/**
+ * Where a text document's links to other documents lead for this account
+ * (server/src/doc-links.ts GET /docs/:id/links): a target it may read opens
+ * that document's read view, anything else is muted. Null when the server
+ * could not say, so the caller can mute rather than guess.
+ */
+export async function loadDocLinks(id: string, fetcher: Fetch = fetch): Promise<ViewLinks | null> {
+  if (!DOC_ID.test(id)) return null;
+  try {
+    const { status, data } = await request(`/api/docs/${encodeURIComponent(id)}/links`, {}, fetcher);
+    if (status !== 200) return null;
+    return parseViewLinks(data, (target) => `/d/${encodeURIComponent(target)}`);
+  } catch {
+    return null;
+  }
 }
 
 /** How many of a document's references the share dialog asks about. */

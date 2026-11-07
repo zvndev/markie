@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // sign-in and nothing of the document; the bar goes away and comes back.
 const loadDoc = vi.fn();
 vi.mock("./web-document", () => ({ loadDoc: (id: string) => loadDoc(id) }));
+const loadDocLinks = vi.fn();
+vi.mock("./cloud", async (original) => ({ ...(await original<typeof import("./cloud")>()), loadDocLinks: (id: string) => loadDocLinks(id) }));
 
 const { DocView } = await import("./doc-view");
 
@@ -21,6 +23,8 @@ function doc(role: "owner" | "editor" | "viewer") {
 beforeEach(() => {
   localStorage.clear();
   loadDoc.mockReset();
+  loadDocLinks.mockReset();
+  loadDocLinks.mockResolvedValue(new Map());
   document.head.innerHTML = "";
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -68,9 +72,11 @@ describe("the read view", () => {
     vi.stubGlobal("fetch", fetcher);
     render(<DocView route={{ kind: "public", token: TOKEN }} apiOrigin={API} user={null} onEdit={() => {}} />);
     await screen.findByRole("heading", { name: "Plan" });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[0][0]).toBe(`${API}/s/${TOKEN}/raw`);
     expect(fetcher.mock.calls[0][1]?.credentials).toBe("omit");
+    expect(fetcher.mock.calls[1][0]).toBe(`${API}/s/${TOKEN}/links`);
+    expect(fetcher.mock.calls[1][1]?.credentials).toBe("omit");
     expect(document.querySelector("[data-web-edit]")).toBeNull();
     expect(document.querySelector("[data-web-sign-in-to-edit]")).toBeNull();
   });
@@ -127,5 +133,37 @@ describe("the read view", () => {
     expect(img.tabIndex).toBe(0);
     fireEvent.keyDown(img, { key: "Enter" });
     await waitFor(() => expect(document.querySelector("[data-markie-lightbox-image]")).toBeTruthy());
+  });
+
+  it("sends a member's link to another page to that page's read view, not the Library", async () => {
+    loadDoc.mockResolvedValue({ ...doc("owner"), text: "[Step 1](step-1.md) [Step 2](step%202.md#top) [Secret](secret.md) [Draft](draft.md) [Spec](spec.pdf)" });
+    loadDocLinks.mockResolvedValue(new Map([["step-1.md", { href: "/d/id-1" }], ["step 2.md", { href: "/d/id-2" }], ["secret.md", { muted: true }]]));
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    const step1 = await screen.findByText("Step 1");
+    expect(loadDocLinks).toHaveBeenCalledWith("doc-1");
+    expect(step1.getAttribute("href")).toBe("/d/id-1");
+    expect(screen.getByText("Step 2").getAttribute("href")).toBe("/d/id-2");
+    // Not shared with this reader, and never uploaded: no way to navigate.
+    for (const [text, title] of [["Secret", "This document isn't shared with you."], ["Draft", "This page isn't in Markie Cloud, so it can't open here."]]) {
+      const muted = screen.getByText(text);
+      expect(muted.hasAttribute("href")).toBe(false);
+      expect(muted.classList.contains("doc-link-muted")).toBe(true);
+      expect(muted.getAttribute("title")).toBe(title);
+    }
+    // Not a document: left as written.
+    expect(screen.getByText("Spec").getAttribute("href")).toBe("spec.pdf");
+  });
+
+  it("sends a public page's link to the other public page the server names", async () => {
+    document.head.innerHTML = '<meta name="markie-doc-name" content="Home.md"><meta name="markie-doc-format" content="markdown">';
+    const links = { links: [{ ref: "step-1.md", href: "/s/" + "c".repeat(43) }, { ref: "step-2.md", muted: true }, { ref: "evil.md", href: "https://evil.test/s/x" }] };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url.endsWith("/links") ? new Response(JSON.stringify(links), { status: 200 }) : new Response("[One](step-1.md) [Two](step-2.md) [Evil](evil.md)", { status: 200 })));
+    render(<DocView route={{ kind: "public", token: TOKEN }} apiOrigin={API} user={null} onEdit={() => {}} />);
+    const one = await screen.findByText("One");
+    expect(one.getAttribute("href")).toBe("/s/" + "c".repeat(43));
+    expect(screen.getByText("Two").hasAttribute("href")).toBe(false);
+    // Only a path on this host is taken from the answer.
+    expect(screen.getByText("Evil").hasAttribute("href")).toBe(false);
   });
 });

@@ -556,6 +556,40 @@ async function pushLinksSafe(filePath, cloudId, content, baseVersion) {
   }
 }
 
+// A page that links to one uploaded after it resolved that link to nothing,
+// and kept the gap until its next edit or the reconciler's pass (up to ten
+// minutes). Uploading a folder of pages that link to each other is the
+// ordinary case, so a first upload re-resolves the pages near it that mention
+// its file name. pushLinks sends nothing when a page's links have not changed.
+const MAX_RELINK = 200;
+async function relinkNeighbours(filePath, server, binding) {
+  if (!linkSync) return;
+  const name = path.basename(filePath);
+  const names = [...new Set([name, encodeURI(name), encodeURIComponent(name)])];
+  // Siblings, children and cousins: what `x.md`, `sub/x.md` and `../x.md`
+  // from the pages around it can reach.
+  const near = path.dirname(path.dirname(filePath)) + path.sep;
+  const rows = registry
+    .list()
+    .filter((row) => row.path !== filePath && row.path.startsWith(near) && row.cloud_doc_id && row.sync_state === "synced")
+    .filter((row) => originOfRow(row) === server && docRoles.get(roleKey(server, row.cloud_doc_id)) !== "viewer")
+    .slice(0, MAX_RELINK);
+  for (const row of rows) {
+    if (!currentUpload(binding)) return;
+    let content;
+    try {
+      content = fs.readFileSync(row.path, "utf8");
+    } catch {
+      continue;
+    }
+    if (!names.some((n) => content.includes(n))) continue;
+    // A page edited since it last went up sends its links with that edit;
+    // these would describe text the server does not have.
+    if (registry.hashContent(content) !== row.content_hash) continue;
+    await pushLinksSafe(row.path, row.cloud_doc_id, content, row.cloud_version ?? 0);
+  }
+}
+
 // Everything up to and including the uploads. Safe before the text PUT: the
 // server keeps an uploaded asset nothing points at for an hour, so bytes can
 // wait for a snapshot that may never land.
@@ -681,7 +715,12 @@ async function syncOnSnapshot(filePath, name, content, areaId, row, binding, ser
     if (staged && staged.staged) media = await linkMedia(filePath, cloudId, staged.staged, version);
     if (!currentUpload(binding)) return { error: STALE_UPLOAD };
     acknowledge();
-    return { ok: true, version, media };
+    // After the row names its cloud id, so a page that links back to this one
+    // resolves it. A first upload used to send no links at all: they went up
+    // on the page's next edit or the reconciler's pass, minutes later.
+    const links = await pushLinksSafe(filePath, cloudId, content, version);
+    if (!linked) await relinkNeighbours(filePath, server, binding);
+    return { ok: true, version, media, links };
   }
   if (res.status === 409) {
     registry.update(filePath, { sync_state: "conflict" });

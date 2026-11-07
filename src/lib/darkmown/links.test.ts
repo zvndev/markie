@@ -25,6 +25,7 @@ const LINK_CASES: unknown[] = [
   "javascript:alert(1)", "JAVASCRIPT:alert(1)", "file:///etc/passwd", "data:text/html,x", "markie://open", "markie-asset://local/x", "ftp://x.y",
   "other.md", "/abs", "../up", "//example.com", "https://u:p@example.com", "https:example.com", "https:\\\\example.com", " https://example.com",
   "java\nscript:alert(1)", "", null, 7, {}, `https://example.com/${"x".repeat(9000)}`, "mailto:", "mailto:x", "mailto:a@b.co#x",
+  "mailto:x&attach=/etc/passwd&y@a.co", "mailto:a@b.co?subject=Hi%0D%0ABcc:%20evil@x.co", "mailto:a@b.co?body=one%0D%0Atwo",
 ];
 
 describe("the renderer's link and picture rules", () => {
@@ -35,6 +36,13 @@ describe("the renderer's link and picture rules", () => {
   it("refuse javascript: and file: links", () => {
     expect(darkmownLinkTarget("javascript:alert(document.cookie)")).toBeNull();
     expect(darkmownLinkTarget("file:///Users/me/.ssh/id_rsa")).toBeNull();
+  });
+
+  it("refuse a mail draft that hides attach= in its address or a header in its subject, in both copies", () => {
+    for (const href of ["mailto:x&attach=/etc/passwd&y@a.co", "mailto:a@b.co?subject=Hi%0D%0ABcc:%20evil@x.co"]) {
+      expect(darkmownLinkTarget(href), href).toBeNull();
+      expect(main.darkmownLinkTarget(href), href).toBeNull();
+    }
   });
 
   it("keep only pictures inside the document's folder, and agree with main on those", () => {

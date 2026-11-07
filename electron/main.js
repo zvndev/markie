@@ -67,7 +67,7 @@ const { guardStdio, isBrokenPipeError } = require("./stdio-guard");
 const { createPdfExporter, ensureExtension } = require("./export-pdf");
 const { createLinkPreviews } = require("./link-preview");
 const { externalWebTarget } = require("./external-web.cjs");
-const { darkmownLinkTarget, blocksSrcdocNavigation, createDarkmownPictureScopes, createLinkGate } = require("./darkmown-preview");
+const { darkmownLinkTarget, createSrcdocNavigationGuard, markdownGrantFolder, createDarkmownPictureScopes, createLinkGate } = require("./darkmown-preview");
 const { createIpcHandler, errorMessage } = require("./ipc-result");
 const { writeFileAtomic: writeAuthorizedFileAtomic } = require("./atomic-write");
 function writeFileAtomic(...args) {
@@ -969,11 +969,19 @@ function createWindow() {
   // navigation inside the frame would put an arbitrary page inside Markie.
   // The frame's sandbox and markup already rule that out; this is the wall
   // that holds if either ever slips.
+  const srcdocGuard = createSrcdocNavigationGuard();
+  const topFrame = mainWindow.webContents;
   mainWindow.webContents.on("will-frame-navigate", (event) => {
-    let frameUrl = null;
-    try { frameUrl = event.frame ? event.frame.url : null; } catch { /* the frame is already gone */ }
-    if (blocksSrcdocNavigation({ isMainFrame: event.isMainFrame, isSameDocument: event.isSameDocument, frameUrl, url: event.url })) event.preventDefault();
+    let frameUrl = null, frameId = null, parentIsTop = false;
+    try {
+      frameUrl = event.frame ? event.frame.url : null;
+      frameId = event.frame ? event.frame.frameTreeNodeId : null;
+      const parent = event.frame ? event.frame.parent : null;
+      parentIsTop = Boolean(parent && parent.frameTreeNodeId === topFrame.mainFrame.frameTreeNodeId);
+    } catch { /* the frame is already gone */ }
+    if (srcdocGuard.blocks({ isMainFrame: event.isMainFrame, isSameDocument: event.isSameDocument, frameUrl, url: event.url, frameId, parentIsTop })) event.preventDefault();
   });
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) srcdocGuard.reset(); });
   const pictureOwner = mainWindow.webContents.id;
   const releasePictureScopes = () => darkmownPictureScopes.releaseOwner(pictureOwner);
   mainWindow.webContents.once("destroyed", releasePictureScopes);
@@ -2453,10 +2461,11 @@ handle("darkmown-preview-picture-scope", (event, request) => {
   if (typeof request.leaseId === "string") {
     folder = documentFiles.leaseFolder(event.sender.id, request.leaseId);
   } else if (typeof request.markdownPath === "string" && /\.(?:md|markdown|mdx)$/i.test(request.markdownPath)) {
-    // A Markdown file this window already opened (Make interactive keeps
-    // its pictures until the copy is saved). canRead realpaths it.
-    const grant = fileGrants.canRead(request.markdownPath);
-    folder = grant.ok ? path.dirname(grant.path) : null;
+    // A Markdown file this window may read (Make interactive keeps its
+    // pictures until the copy is saved). canRead realpaths it, and the
+    // result must itself be a regular Markdown file, not a folder behind a
+    // .md-named symlink.
+    folder = markdownGrantFolder(fileGrants.canRead(request.markdownPath));
   }
   const host = folder ? darkmownPictureScopes.scopeFor(event.sender.id, folder) : null;
   return host ? { ok: true, base: `${ASSET_SCHEME}://${host}` } : { ok: false };

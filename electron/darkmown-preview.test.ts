@@ -1,11 +1,11 @@
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { darkmownLinkTarget, blocksSrcdocNavigation, createDarkmownPictureScopes, createLinkGate } = require("./darkmown-preview.js");
+const { darkmownLinkTarget, blocksSrcdocNavigation, createSrcdocNavigationGuard, markdownGrantFolder, createDarkmownPictureScopes, createLinkGate } = require("./darkmown-preview.js");
 
 describe("darkmownLinkTarget", () => {
   it("opens ordinary web pages and mail drafts", () => {
@@ -36,7 +36,42 @@ describe("darkmownLinkTarget", () => {
       "mailto:ada@example.com?attach=/etc/passwd", "mailto:ada@example.com?Attach=~/.ssh/id_rsa", "mailto:ada@example.com?body=x&file=y",
       "mailto:", "mailto:not-an-address", "mailto:ada@localhost", "mailto:ada@example.com#frag", "mailto:ada@example.com?cc=nobody",
       "mailto:%22quoted%22@example.com",
+      // `attach=` hidden in the address, for a client that parses fields loosely.
+      "mailto:x&attach=/etc/passwd&y@a.co", "mailto:x=1@a.co", "mailto:x/y@a.co",
+      // A line break in a header field starts another header.
+      "mailto:a@b.co?subject=Hi%0D%0ABcc:%20evil@x.co", "mailto:a@b.co?subject=Hi%0ABcc:evil@x.co", "mailto:a@b.co?cc=c@d.co%0D%0Abcc:e@f.co",
     ]) expect(darkmownLinkTarget(href), href).toBeNull();
+  });
+
+  it("still opens a body with line breaks, which is what a body is for", () => {
+    expect(darkmownLinkTarget("mailto:a@b.co?body=line%20one%0D%0Aline%20two")).toBe("mailto:a@b.co?body=line%20one%0D%0Aline%20two");
+    expect(darkmownLinkTarget("mailto:first.last+tag@example.co.uk")).toBe("mailto:first.last+tag@example.co.uk");
+  });
+});
+
+describe("createSrcdocNavigationGuard", () => {
+  it("keeps judging a preview frame after it steps through about:blank", () => {
+    const guard = createSrcdocNavigationGuard();
+    const frame = { isMainFrame: false, frameId: 42, parentIsTop: true };
+    expect(guard.blocks({ ...frame, frameUrl: "about:srcdoc", url: "about:blank" })).toBe(false);
+    expect(guard.blocks({ ...frame, frameUrl: "about:blank", url: "https://evil.example/" })).toBe(true);
+    expect(guard.blocks({ ...frame, frameUrl: "about:blank", url: "about:srcdoc" })).toBe(false);
+    // The stateless rule alone would have let it through.
+    expect(blocksSrcdocNavigation({ isMainFrame: false, frameUrl: "about:blank", url: "https://evil.example/" })).toBe(false);
+  });
+
+  it("leaves frames nested inside other frames, and frames that never showed srcdoc, alone", () => {
+    const guard = createSrcdocNavigationGuard();
+    expect(guard.blocks({ isMainFrame: false, frameId: 7, parentIsTop: false, frameUrl: "about:srcdoc", url: "https://player.example/next" })).toBe(false);
+    expect(guard.blocks({ isMainFrame: false, frameId: 8, parentIsTop: true, frameUrl: "https://www.youtube-nocookie.com/embed/x", url: "https://www.youtube-nocookie.com/embed/y" })).toBe(false);
+    expect(guard.blocks({ isMainFrame: true, frameId: 1, parentIsTop: false, frameUrl: "about:srcdoc", url: "https://example.com/" })).toBe(false);
+  });
+
+  it("forgets every frame when the app's top frame navigates", () => {
+    const guard = createSrcdocNavigationGuard();
+    guard.blocks({ isMainFrame: false, frameId: 42, parentIsTop: true, frameUrl: "about:srcdoc", url: "about:srcdoc" });
+    guard.reset();
+    expect(guard.blocks({ isMainFrame: false, frameId: 42, parentIsTop: true, frameUrl: "https://www.youtube-nocookie.com/embed/x", url: "https://www.youtube-nocookie.com/embed/y" })).toBe(false);
   });
 });
 
@@ -126,6 +161,24 @@ describe("createDarkmownPictureScopes", () => {
     expect(scopes.scopeFor(7, "")).toBeNull();
   });
 
+  it("stops serving when the folder is replaced, even by a symlink to the same contents", () => {
+    const scopes = createDarkmownPictureScopes({ randomUUID: uuid });
+    const host = scopes.scopeFor(7, docDir);
+    expect(ask(scopes, host, "pics/shot.png")).not.toBeNull();
+    // The folder is moved aside and its name now points somewhere else.
+    const aside = path.join(root, "trip-old");
+    renameSync(docDir, aside);
+    mkdirSync(path.join(outside, "pics"));
+    writeFileSync(path.join(outside, "pics", "shot.png"), "someone else's");
+    symlinkSync(outside, docDir);
+    expect(ask(scopes, host, "pics/shot.png")).toBeNull();
+    // And it stays dead: putting the original back does not revive it.
+    rmSync(docDir);
+    renameSync(aside, docDir);
+    expect(ask(scopes, host, "pics/shot.png")).toBeNull();
+    expect(scopes.scopeFor(7, docDir)).not.toBe(host);
+  });
+
   it("reuses one scope per window and folder, and evicts the oldest", () => {
     const scopes = createDarkmownPictureScopes({ randomUUID: uuid, maxScopes: 2 });
     const first = scopes.scopeFor(7, docDir);
@@ -149,5 +202,31 @@ describe("createLinkGate", () => {
     expect(gate.allow()).toBe(false);
     now += 1;
     expect(gate.allow()).toBe(true);
+  });
+});
+
+describe("markdownGrantFolder", () => {
+  let root: string;
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), "markie-md-grant-")));
+    mkdirSync(path.join(root, "sub"));
+    writeFileSync(path.join(root, "sub", "real.md"), "# real");
+    // A .md-named symlink to a folder: the reviewer's case.
+    symlinkSync(root, path.join(root, "sub", "notes.md"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("scopes a real Markdown file to its folder", () => {
+    expect(markdownGrantFolder({ ok: true, path: path.join(root, "sub", "real.md") })).toBe(path.join(root, "sub"));
+  });
+
+  it("refuses a grant that resolves to a folder, a non-Markdown name, or no grant at all", () => {
+    // canRead realpaths sub/notes.md to the root folder itself.
+    expect(markdownGrantFolder({ ok: true, path: realpathSync(path.join(root, "sub", "notes.md")) })).toBeNull();
+    expect(markdownGrantFolder({ ok: true, path: path.join(root, "sub") })).toBeNull();
+    expect(markdownGrantFolder({ ok: true, path: path.join(root, "sub", "real.txt") })).toBeNull();
+    expect(markdownGrantFolder({ ok: true, path: path.join(root, "sub", "missing.md") })).toBeNull();
+    expect(markdownGrantFolder({ ok: false })).toBeNull();
+    expect(markdownGrantFolder(null)).toBeNull();
   });
 });

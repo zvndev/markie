@@ -8,7 +8,7 @@
 
 const MAX_URL = 8192;
 const MAX_REF = 2048;
-const ADDRESS = /^[A-Za-z0-9.!$&'*+/=^_`{|}~-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
+const ADDRESS = /^[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
 const MAIL_FIELDS = new Set(["subject", "body", "cc", "bcc"]);
 const PICTURE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
 
@@ -35,6 +35,8 @@ export function darkmownLinkTarget(value: unknown): string | null {
   for (const [key, field] of url.searchParams) {
     const name = key.toLowerCase();
     if (!MAIL_FIELDS.has(name) || ++fields > 8 || field.length > 2000) return null;
+    // A line break in a header field can start another header (Bcc:, ...).
+    if (name !== "body" && /[\r\n]/.test(field)) return null;
     if ((name === "cc" || name === "bcc") && !addressList(field)) return null;
   }
   if (!to && fields === 0) return null;

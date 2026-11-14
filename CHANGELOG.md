@@ -8,6 +8,29 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-11-13
+
+### Changed
+
+- **Copied links point to markiedocs.com.** Copy link in the share dialog, Copy
+  private link in the Library, and the links Markie gives AI agents now name
+  markiedocs.com, where shared documents are read. Links copied before still
+  open.
+
+### Fixed
+
+- **Links between your synced pages work right away.** A page that links to
+  another of your pages now uploads those links on its first sync. Pages that
+  point to a file you just uploaded pick it up at once, instead of up to ten
+  minutes later.
+- **Links between shared pages open on the web.** On markiedocs.com, a link from
+  one shared page to another opens that page for anyone allowed to read it,
+  instead of the Library. A link the reader can't open shows as muted, with a
+  note saying why.
+- **A public page only publishes links its owner added.** Someone removed from
+  a document can no longer use a page they still edit to read that document's
+  new public link.
+
 ## [0.9.5] - 2026-11-04
 
 ### Added

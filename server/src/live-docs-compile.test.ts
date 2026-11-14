@@ -388,3 +388,13 @@ test("no compile process outlives its compile", () => {
   const left = spawned.filter(isRunning);
   assert.deepEqual(left, [], "every child has exited");
 });
+
+test("a child's network list holds only origins darkmownFetchOrigin would write", () => {
+  const run = (stdout: string) => ({ pid: 1, end: "exited" as const, code: 0, signal: null, stdout, stderr: "" });
+  for (const origin of ["https://127.0.0.1", "https://10.0.0.1:8443", "https://localhost", "https://printer.local", "https://intranet", "https://API.example.com", "https://api.example.com:443", "http://api.example.com"]) {
+    const page = { bodyHtml: "<p>Hi</p>", network: [origin], seeds: [], title: "", warnings: [] };
+    assert.equal(interpretLiveDocChildRun(run(`${JSON.stringify({ ok: true, result: page })}\n`)).ok, false, origin);
+  }
+  const fine = { bodyHtml: "<p>Hi</p>", network: ["https://api.example.com", "https://stats.example.org:8443"], seeds: [], title: "", warnings: [] };
+  assert.equal(interpretLiveDocChildRun(run(`${JSON.stringify({ ok: true, result: fine })}\n`)).ok, true);
+});

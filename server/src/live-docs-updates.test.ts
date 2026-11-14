@@ -231,8 +231,45 @@ test("a stream still closes a tab when access ends after an update", async () =>
 test("the page script handles updates, and only reloads an untouched page", async () => {
   const { LIVE_DOC_CHANNEL_SCRIPT } = await import("./live-docs-page.ts");
   assert.match(LIVE_DOC_CHANNEL_SCRIPT, /addEventListener\("updated",updated\)/);
-  assert.match(LIVE_DOC_CHANNEL_SCRIPT, /if\(!touched\)\{setTimeout\(\(\)=>location\.reload\(\)/);
+  assert.match(LIVE_DOC_CHANNEL_SCRIPT, /if\(!touched&&!recently\(\)\)\{/, "an untouched page reloads, but at most once every 30 seconds");
+  assert.match(LIVE_DOC_CHANNEL_SCRIPT, /<3e4/);
   assert.match(LIVE_DOC_CHANNEL_SCRIPT, /markie-live-updated/);
   assert.match(LIVE_DOC_CHANNEL_SCRIPT, /markie-live-version/);
   assert.ok(!/innerHTML|eval\(|Function\(/.test(LIVE_DOC_CHANNEL_SCRIPT), "the script builds its bar from text nodes");
+});
+
+test("a burst of saves sends an open page at most two notices: one at once, one trailing", async () => {
+  const { LIVE_DOC_UPDATE_INTERVAL_MS } = await import("./live-docs-channels.ts");
+  const id = `h3-burst-${stamp}`;
+  await putDoc(owner.token, id, "Burst.wd", "# Burst\n");
+  await makePublic(owner.token, id);
+  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
+  const tab = await openTab(ask(liveHost(label), "/__markie/live"));
+  assert.deepEqual(await tab.next(), { event: "ready", data: "{}" });
+  for (let version = 1; version <= 10; version++) await putDoc(owner.token, id, "Burst.wd", "# Burst\n", version);
+  const events: string[] = [];
+  const until = Date.now() + LIVE_DOC_UPDATE_INTERVAL_MS + 1_500;
+  while (Date.now() < until) {
+    const next = await tab.next(until - Date.now());
+    if (next === "timeout" || next === "closed") break;
+    events.push(next.event);
+  }
+  await tab.close();
+  assert.ok(events.length >= 1 && events.length <= 2, `got ${events.join(", ")}`);
+  assert.ok(events.every((event) => event === "updated"));
+  // And the page then shows the last version.
+  assert.match(await (await ask(liveHost(label), "/")).text(), /<meta name="markie-live-version" content="11">/);
+});
+
+test("the address says the network is unknown when the compile could not finish", async () => {
+  const busy = createLiveDocs({
+    config: liveDocsConfig()!, appOrigin: APP_ORIGIN, siteUrl: "https://markie.test",
+    compiler: { compile: async () => ({ ok: false as const, kind: "busy" as const, message: "Live Docs are busy." }), childrenStarted: () => 0, clearCache: () => {} },
+  });
+  const id = `h3-unknown-${stamp}`;
+  await putDoc(owner.token, id, "Unknown.wd", ROSTER);
+  const [url, init] = requestFor(APP_HOST, `/api/docs/${id}/live-doc`, { bearer: owner.token });
+  const res = await busy.app.request(url, init);
+  assert.equal(res.status, 200);
+  assert.equal(((await res.json()) as { network: unknown }).network, null);
 });

@@ -392,12 +392,14 @@ export function createLiveDocs({
         }
         // A new version: the page reloads, or offers to if someone is using
         // it. The stream carries no content, only that it changed.
-        if (version !== null && version !== lastVersion) {
-          lastVersion = version;
-          stream.writeSSE({ event: "updated", data: "{}" }).catch(() => finish());
-        }
+        if (version !== null) versionChanged(version);
       };
-      unregister = registerLiveDocChannel(target.docId, { recheck });
+      const versionChanged = (version: number) => {
+        if (finished || version === lastVersion || (lastVersion !== null && version < lastVersion)) return;
+        lastVersion = version;
+        stream.writeSSE({ event: "updated", data: "{}" }).catch(() => finish());
+      };
+      unregister = registerLiveDocChannel(target.docId, { recheck, versionChanged });
       stream.onAbort(() => finish());
       if (stream.aborted) {
         finish();
@@ -541,9 +543,13 @@ export function createLiveDocs({
     // What the page can reach on the network (design, "Security model" 3),
     // from the same cached compile the page uses. Shown before the page is
     // made public; anyone who can open the page can read its source anyway.
+    // null means "not known right now" (busy, or the compile did not finish):
+    // the Share dialog then asks rather than assuming the page reaches nothing.
     const doc = loadLiveDoc(docId);
     const compiled = doc?.content ? await compiler.compile(doc.content, doc.ownerId) : null;
-    const network = compiled?.ok && !networkRefusal(compiled.page.network) ? compiled.page.network : [];
+    const network = !compiled || (!compiled.ok && compiled.kind === "refused") ? []
+      : compiled.ok ? (networkRefusal(compiled.page.network) ? [] : compiled.page.network)
+      : null;
     if (!canManageLevel(level)) return c.json({ url, access: "shared", network });
     const publicLabel = ensurePublicLiveDocLabel(docId);
     if (publicLabel) return c.json({ url, access: "public", publicUrl: `${liveDocOrigin(config, publicLabel)}/`, publishedAs: liveDocPublisherName(docId), network });

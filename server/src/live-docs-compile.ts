@@ -28,6 +28,7 @@
 // starting a process is paid once per change. Compile errors are cached the
 // same way (they are a property of the source); a timeout, a crash or a full
 // queue is not, so a slow moment never sticks to a document.
+import { darkmownFetchOrigin } from "./generated/darkmown/security.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
@@ -210,9 +211,10 @@ export type LiveDocCompile =
   | { ok: false; kind: "busy"; message: string };
 
 const PAGE_KEYS = "bodyHtml,network,seeds,title,warnings";
-// What a page's network list may hold: https origins only, written exactly as
-// darkmownFetchOrigin writes them. The child is trusted for none of it.
-const NETWORK_ORIGIN = /^https:\/\/[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?(?::\d{1,5})?$/;
+// What a page's network list may hold: origins exactly as darkmownFetchOrigin
+// writes them, checked again here with the same function, because the child
+// is trusted for none of it (no IP, private name or single label gets in).
+const networkOriginOk = (origin: unknown) => typeof origin === "string" && origin.length <= 300 && darkmownFetchOrigin(origin) === origin;
 export const LIVE_DOC_NETWORK_LIMIT = 20;
 
 function validPage(value: unknown): value is LiveDocPage {
@@ -223,7 +225,7 @@ function validPage(value: unknown): value is LiveDocPage {
     && typeof page.title === "string" && page.title.length <= 10_000
     && Array.isArray(page.seeds) && page.seeds.length <= 1_000 && page.seeds.every((seed) => typeof seed === "string" && seed.length <= 200_000)
     && Array.isArray(page.warnings) && page.warnings.length <= 5_000 && page.warnings.every((warning) => typeof warning === "string" && warning.length <= 128_000)
-    && Array.isArray(page.network) && page.network.length <= 1_000 && page.network.every((origin) => typeof origin === "string" && NETWORK_ORIGIN.test(origin));
+    && Array.isArray(page.network) && page.network.length <= 1_000 && page.network.every(networkOriginOk);
 }
 
 /** The child's reply, if it is exactly one line of the protocol in live-docs-child.ts; null otherwise. */

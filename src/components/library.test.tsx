@@ -1034,7 +1034,7 @@ describe("a cloud Live Doc's address (nightly)", () => {
     menu = await openMenu("counter.wd");
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy public Live Doc address" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://qrstuvwxyz234567.markie.live/"));
-    expect(await screen.findByText(/names its publisher as Olive Owner\. It fetches data from api\.example\.com\./)).toBeInTheDocument();
+    expect(await screen.findByText(/names its publisher as Olive Owner\. It sends requests to api\.example\.com, which learn its address/)).toBeInTheDocument();
   });
 
   it("offers a .wd shared with me its private address, never a public one", async () => {

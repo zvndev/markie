@@ -70,21 +70,22 @@ Every hosted page keeps one server-sent event stream open to its own host, `/__m
 
 ### Live updates
 
-An open page learns of every new version of its document within seconds. Every write goes through `upsertDocRow` (docs.ts), which re-checks that document's open streams once its transaction commits; the 5-second timer covers anything else.
+An open page learns of every new version of its document within seconds. Every write goes through `upsertDocRow` (docs.ts), which tells that document's open streams once its transaction commits. The first write after a quiet spell goes out at once; writes during a burst fold into one notice at most every 5 seconds, carrying the newest version, with no access re-checks (a write never changes who may read). The 5-second timer covers anything else.
 
 - The page tells its stream which version it shows (`<meta name="markie-live-version">`, sent as `?v=`), so a save between the page load and the stream is still reported.
-- On `updated`, an untouched page reloads itself after a random delay of up to 1.5 seconds, so a public page with many readers does not reload all at once. A page someone has typed in or clicked shows an "Updated" bar with a button instead, so it never reloads under them.
+- On `updated`, an untouched page reloads itself after a random delay of up to 1.5 seconds, so a public page with many readers does not reload all at once, and at most once every 30 seconds per tab. A page someone has typed in or clicked, or one that reloaded less than 30 seconds ago, shows an "Updated" bar with a button instead.
 - The stream carries no content, only that the document changed. The reload goes through the same access check as any load, and a version compiles once however many pages reload.
 
 ### What a page can reach
 
 A Live Doc reaches the network only through Darkmown's `:fetch`, and only at the addresses it names (design, "Security model" 3).
 
-- Each address must be `https://`, with its host written out before any `{ state }` interpolation, so the origin is fixed when the page compiles. IP addresses, single-label and private names (`localhost`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like), credentials and relative paths are dropped, and the page says something was disabled.
+- Each address must be `https://`, with its host (and port) ending at a `/`, `?`, `#` or the end of the address before any `{ state }` interpolation, so no interpolation can extend the host and the origin is fixed when the page compiles. The server holds the compile child's list to the same rule. IP addresses, single-label and private names (`localhost`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like), credentials and relative paths are dropped, and the page says something was disabled.
 - The page's `connect-src` is `'self'` plus exactly those origins. A page with no `:fetch` can reach nothing but its own host, and the browser blocks any address not on the list.
 - A page may name at most 20 origins, and none may be Markie's own (the app, its aliases, the site, the docs host, the live domain). Either refuses the page with a plain notice.
-- `GET /api/docs/:id/live-doc` returns the list as `network`. The Share dialog (nightly) names those sites and asks before a Live Doc that fetches anything goes public, and shows them while it is public.
-- Forms still post nowhere, and `:every` actions are still disabled on hosted pages.
+- Every listed site sees the page's own address (the `Origin` header carries it whatever the referrer policy), so it can open a public page too, and a `:fetch` can carry what a reader typed. A form has no action of its own, but a `:fetch` with `body=` or an interpolated field sends that state on each change.
+- `GET /api/docs/:id/live-doc` returns the list as `network`, or `null` when it cannot tell right now (a busy or failed compile). The Share dialog (nightly) asks before a Live Doc goes public unless the server confirmed its page reaches nothing, names the sites and what they receive, and shows them while it is public. The confirm is advice to the owner; the CSP is what enforces the list.
+- `:every` actions and form actions stay disabled on hosted pages.
 
 ### Taking one down
 

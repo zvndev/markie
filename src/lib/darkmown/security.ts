@@ -59,9 +59,10 @@ export function darkmownFetchOrigin(url: unknown): string | null {
   // brace must belong to a well-formed one.
   const bare = url.replace(/\{\s*[A-Za-z_][\w.-]{0,199}\s*\}/g, "");
   if (/[\x00-\x20\x7f\\{}]/.test(bare)) return null;
-  const brace = url.indexOf("{");
-  const fixed = brace === -1 ? url : url.slice(0, brace);
-  const match = /^https:\/\/([A-Za-z0-9.-]+)(?::(\d{1,5}))?(?=[/?#]|$)/.exec(fixed);
+  // Matched on the whole address, so the host (and port) must end at a `/`,
+  // `?`, `#` or the end before anything else: a `{ }` straight after it
+  // could otherwise extend the host the browser actually fetches.
+  const match = /^https:\/\/([A-Za-z0-9.-]+)(?::(\d{1,5}))?(?=[/?#]|$)/.exec(url);
   if (!match) return null;
   const host = match[1]!.toLowerCase().replace(/\.$/, "");
   const labels = host.split(".");
@@ -179,7 +180,9 @@ export interface DarkmownSanitizeOptions {
   /**
    * Keep `:fetch` (hosted Live Docs only). Each address must pass
    * darkmownFetchOrigin, and the origins come back in `network`, for the
-   * page's CSP. Implies nothing else: forms still post nowhere.
+   * page's CSP. A form still has no action, but a :fetch can carry state,
+   * including what a reader typed, to its site, and every listed site sees
+   * the page's own address in the Origin header.
    */
   fetch?: boolean;
 }

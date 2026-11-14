@@ -86,7 +86,9 @@ export function ShareDialog({
   // A .wd is also a hosted Live Doc (nightly). Its page may fetch data from
   // other sites, and the owner is told which ones before it goes public.
   const isLiveDoc = /\.wd$/i.test(fileName) && nightlyFeaturesEnabled();
-  const [liveNetwork, setLiveNetwork] = useState<string[]>([]);
+  // undefined: still asking; null: not a hosted Live Doc on this server;
+  // "unknown": the server could not tell; otherwise the sites it reaches.
+  const [liveNetwork, setLiveNetwork] = useState<string[] | "unknown" | null | undefined>(undefined);
   const [confirmPublic, setConfirmPublic] = useState(false);
 
   const load = useCallback(() => {
@@ -114,12 +116,15 @@ export function ShareDialog({
     if (!isLiveDoc) return;
     let live = true;
     sharesClient.liveDocAddress(docId).then(
-      (address) => { if (live) setLiveNetwork(address?.network ?? []); },
-      () => {},
+      (address) => { if (live) setLiveNetwork(address === null ? null : address.network ?? "unknown"); },
+      () => { if (live) setLiveNetwork("unknown"); },
     );
     return () => { live = false; };
   }, [isLiveDoc, docId, sharesClient]);
-  const reachList = liveNetwork.map((origin) => origin.replace(/^https:\/\//, "")).join(", ");
+  const reachList = Array.isArray(liveNetwork) ? liveNetwork.map((origin) => origin.replace(/^https:\/\//, "")).join(", ") : "";
+  // Publishing goes straight through only when this is not a hosted Live Doc,
+  // or the server confirmed its page reaches nothing. Anything else asks.
+  const reachesNothing = !isLiveDoc || liveNetwork === null || (Array.isArray(liveNetwork) && liveNetwork.length === 0);
 
   const canManage = !!access?.canManage;
 
@@ -278,7 +283,7 @@ export function ShareDialog({
     if (!canManage) return setError("Only the owner can change general access.");
     // A Live Doc that fetches from other sites asks first, naming them
     // (design, "Who can see a Live Doc").
-    if (next === "link" && !confirmed && liveNetwork.length > 0) {
+    if (next === "link" && !confirmed && !reachesNothing) {
       setConfirmPublic(true);
       return;
     }
@@ -616,8 +621,10 @@ export function ShareDialog({
           {confirmPublic && (
             <div className="markie-share-note" role="alertdialog" aria-label="Make this Live Doc public" data-markie-live-confirm>
               <div>
-                Anyone with the link will be able to open this Live Doc. Its page fetches
-                data from {reachList}, so those sites will see each visit.
+                Anyone with the link will be able to open this Live Doc.{" "}
+                {reachList
+                  ? <>Its page sends requests to {reachList}. Those sites learn the page&apos;s address, so they can open it too, and they receive anything visitors type into it.</>
+                  : <>Its page may send requests to other sites, and Markie couldn&apos;t check which right now. Any such site would learn the page&apos;s address and receive anything visitors type into it.</>}
               </div>
               <div className="mt-2 flex gap-2">
                 <button type="button" className="markie-share-inline-link" onClick={() => void setGeneralAccess("link", true)}>
@@ -629,9 +636,9 @@ export function ShareDialog({
               </div>
             </div>
           )}
-          {generalIsPublic && !confirmPublic && liveNetwork.length > 0 && (
+          {generalIsPublic && !confirmPublic && reachList && (
             <div className="markie-share-sub" data-markie-live-reach>
-              This Live Doc fetches data from {reachList}.
+              This Live Doc sends requests to {reachList}, which learn its address and anything visitors type.
             </div>
           )}
           {rotatedUrl && (

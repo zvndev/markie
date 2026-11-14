@@ -17,6 +17,18 @@ describe("darkmownFetchOrigin", () => {
     expect(darkmownFetchOrigin("https://api.example.com")).toBe("https://api.example.com");
   });
 
+  it("refuses an address whose host an interpolation can still extend", () => {
+    for (const url of [
+      "https://api.example.com{ x }", "https://api.example.com{ x }/roster", "https://api.example.com.{ x }/roster",
+      "https://api.example.co{ x }/roster", "https://api.example.com:44{ x }/roster", "https://abcdefghijklmnop.markie.liv{ x }/__markie/live",
+      "https://api.example.com\u3002evil.com/x", "https://api.example.com{ x }\u3002evil.com/",
+    ]) expect(darkmownFetchOrigin(url), url).toBeNull();
+    // Interpolation after the host has ended is fine.
+    expect(darkmownFetchOrigin("https://api.example.com/{ x }")).toBe("https://api.example.com");
+    expect(darkmownFetchOrigin("https://api.example.com?q={ x }")).toBe("https://api.example.com");
+    expect(darkmownFetchOrigin("https://api.example.com:8443/{ x }")).toBe("https://api.example.com:8443");
+  });
+
   it("refuses anything whose origin is not fixed, public and https", () => {
     for (const url of [
       "http://api.example.com/x", "/api/x", "./x", "{ base }/x", "https://{ host }/x", "https://api.{ zone }.com/x", "//api.example.com/x",

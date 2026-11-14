@@ -27,6 +27,11 @@ describe("liveDocAddress", () => {
     expect(await client.liveDocAddress("d")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: [] });
   });
 
+  it("keeps an explicit null network as unknown, and reads a missing one as empty", async () => {
+    expect((await serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "private", network: null }).client.liveDocAddress("d"))?.network).toBeNull();
+    expect((await serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "private" }).client.liveDocAddress("d"))?.network).toEqual([]);
+  });
+
   it("accepts a loopback address for local development", async () => {
     expect((await serverAnswering(200, { url: "http://abcdefghijklmnop.localhost:8787/" }).client.liveDocAddress("d"))?.url).toBe("http://abcdefghijklmnop.localhost:8787/");
   });

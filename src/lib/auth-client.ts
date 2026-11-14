@@ -603,8 +603,12 @@ export interface LiveDocAddress {
   publicUrl: string | null;
   /** The publisher name the public page shows, for the owner. null when not public. */
   publishedAs: string | null;
-  /** The https origins the page's `:fetch` reaches; empty when it reaches nothing. */
-  network: string[];
+  /**
+   * The https origins the page's `:fetch` reaches: empty when it reaches
+   * nothing, null when the server could not tell right now (a busy or failed
+   * compile), which callers must treat as "may reach something".
+   */
+  network: string[] | null;
 }
 
 /** An https address, or http on a loopback name for local development; else null. */
@@ -725,8 +729,11 @@ export function makeSharesClient(request: ApiRequest) {
       const publicUrl = liveDocUrl(res.data.publicUrl);
       const publishedAs = publicUrl && typeof res.data.publishedAs === "string" ? res.data.publishedAs.slice(0, 80) : null;
       // Shown to the person before they publish, so only exact https origins.
-      const network = Array.isArray(res.data.network)
-        ? res.data.network.filter((origin): origin is string => typeof origin === "string" && /^https:\/\/[a-z0-9.-]{1,253}(?::\d{1,5})?$/.test(origin)).slice(0, 50)
+      // A server from before H3 sends no list and hosts no :fetch, so a
+      // missing list is an empty one; an explicit null is "not known".
+      const raw = res.data.network;
+      const network = raw === null ? null
+        : Array.isArray(raw) ? raw.filter((origin): origin is string => typeof origin === "string" && /^https:\/\/[a-z0-9.-]{1,253}(?::\d{1,5})?$/.test(origin)).slice(0, 50)
         : [];
       return { url, access, publicUrl, publishedAs, network };
     },

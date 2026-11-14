@@ -18,7 +18,7 @@ import { revokePublicLink } from "./public-links.ts";
 import { serveAsset, unlinkDocAssets } from "./assets.ts";
 import { removeDocLinks } from "./doc-links.ts";
 import { removeLiveDoc } from "./live-docs-store.ts";
-import { recheckLiveDocChannels } from "./live-docs-channels.ts";
+import { noteLiveDocWrite, recheckLiveDocChannels } from "./live-docs-channels.ts";
 import { CloudAreaError, createCloudAreas, type CloudAreasStore } from "./cloud-areas.ts";
 import { quotaRefusal, storageQuotaBytes } from "./quota.ts";
 import {
@@ -172,9 +172,11 @@ function upsertDocRow(w: DocWrite): void {
   // empties the history, so "older than the newest N" is a range on the
   // primary key.
   db.prepare("DELETE FROM doc_history WHERE doc_id = ? AND version <= ?").run(w.id, w.version - DOC_HISTORY_KEEP);
-  // Open Live Doc pages of this document learn of the new version at once.
-  // After the caller's transaction commits, so their own reads see it.
-  setImmediate(() => recheckLiveDocChannels(w.id));
+  // Open Live Doc pages of this document learn of the new version, at once
+  // after a quiet spell and at most every few seconds during a burst
+  // (live-docs-channels.ts). After the caller's transaction commits.
+  const docId = w.id, version = w.version;
+  setImmediate(() => noteLiveDocWrite(docId, version));
 }
 
 /**

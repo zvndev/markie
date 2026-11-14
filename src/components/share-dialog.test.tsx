@@ -301,7 +301,38 @@ describe("ShareDialog", () => {
       await user.selectOptions(screen.getByLabelText("General access"), "link");
       await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Make public" }));
       expect(createPublicLink).toHaveBeenCalledWith("doc-1");
-      expect(await screen.findByText("This Live Doc fetches data from api.example.com, stats.example.org.")).toBeInTheDocument();
+      expect(await screen.findByText(/This Live Doc sends requests to api\.example\.com, stats\.example\.org, which learn its address/)).toBeInTheDocument();
+    });
+
+    it("asks when it cannot yet tell what a Live Doc reaches: still loading, unknown, or failed", async () => {
+      localStorage.setItem("markie.nightly", "1");
+      const user = userEvent.setup();
+      // Made when asked for, so the failed answer is never an unhandled rejection.
+      const answers = [
+        () => new Promise(() => {}),
+        () => Promise.resolve({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: null }),
+        () => Promise.reject(new Error("offline")),
+      ];
+      for (const answer of answers) {
+        liveDocAddress.mockImplementationOnce(answer);
+        const { unmount } = renderDialog({ fileName: "team.wd" });
+        await user.selectOptions(await screen.findByLabelText("General access"), "link");
+        const ask = await screen.findByRole("alertdialog", { name: "Make this Live Doc public" });
+        expect(ask).toHaveTextContent(/couldn.t check which/);
+        expect(createPublicLink).not.toHaveBeenCalled();
+        unmount();
+      }
+    });
+
+    it("publishes at once when the server has no Live Doc for it", async () => {
+      localStorage.setItem("markie.nightly", "1");
+      liveDocAddress.mockResolvedValue(null);
+      const user = userEvent.setup();
+      renderDialog({ fileName: "team.wd" });
+      await waitFor(() => expect(liveDocAddress).toHaveBeenCalled());
+      await user.selectOptions(await screen.findByLabelText("General access"), "link");
+      expect(createPublicLink).toHaveBeenCalledWith("doc-1");
+      expect(screen.queryByRole("alertdialog")).toBeNull();
     });
 
     it("publishes a Live Doc that fetches nothing in one step, and never asks outside nightly", async () => {

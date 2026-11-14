@@ -187,7 +187,7 @@ test("a shared editor gets the private address and a pass, never the public one"
   const { label } = await addressOf(shared, owner.token);
   const member = await ask(APP_HOST, `/api/docs/${shared}/live-doc`, { bearer: editor.token });
   assert.equal(member.status, 200);
-  assert.deepEqual(await member.json(), { url: `${liveOrigin(label)}/`, access: "shared" });
+  assert.deepEqual(await member.json(), { url: `${liveOrigin(label)}/`, access: "shared", network: [] });
   assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: editorCookie })).status, 302);
 });
 
@@ -541,12 +541,12 @@ test("signing out of Markie refuses the Live Doc cookie on the next load", async
 test("an edit shows on the next load, compiled once per version", async () => {
   const id = `live-edit-${stamp}`;
   await putDoc(owner.token, id, "Edit.wd", "# First\n");
-  const { label } = await addressOf(id, owner.token);
   const before = liveDocs!.compiler.childrenStarted();
+  const { label } = await addressOf(id, owner.token);
   const cookie = await openLiveDoc(label, ownerCookie);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>First<\/h1>/);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>First<\/h1>/);
-  assert.equal(liveDocs!.compiler.childrenStarted() - before, 1, "three loads, one compile");
+  assert.equal(liveDocs!.compiler.childrenStarted() - before, 1, "the address and three loads, one compile");
   await putDoc(owner.token, id, "Edit.wd", "# Second\n", 1);
   assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>Second<\/h1>/);
 });

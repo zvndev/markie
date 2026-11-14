@@ -333,7 +333,7 @@ test("a child that floods stdout is killed at the cap and its output is not trus
 test("only exactly one line of the reply protocol is accepted", () => {
   const run = (stdout: string, extra: Partial<LiveDocChildRun> = {}): LiveDocChildRun =>
     ({ pid: 1, end: "exited", code: 0, signal: null, stdout, stderr: "", ...extra });
-  const page = { bodyHtml: "<p>Hi</p>", seeds: [], title: "", warnings: [] };
+  const page = { bodyHtml: "<p>Hi</p>", network: [], seeds: [], title: "", warnings: [] };
   const line = (value: unknown) => `${JSON.stringify(value)}\n`;
   assert.deepEqual(interpretLiveDocChildRun(run(line({ ok: true, result: page }))), { ok: true, page });
   assert.deepEqual(interpretLiveDocChildRun(run(line({ ok: false, error: "Bad source" }))), { ok: false, kind: "refused", message: "Bad source" });

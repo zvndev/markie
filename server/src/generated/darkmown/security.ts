@@ -115,6 +115,48 @@ const MAX_LOOP_ROWS = 20_000;
 const MAX_FORMAT_STAGES = 8;
 const MAX_FORMAT_ARG = 200;
 const WARNING = "Unsupported scripts, styling, navigation, media, persistence, network or advanced runtime features were disabled. The source is unchanged.";
+// The attributes of a `:fetch` marker, kept only when the caller asks for
+// network (a hosted Live Doc). The Mac preview never does: it stays offline.
+const FETCH_ATTRIBUTES = ["dataWdFetch", "dataWdFetchKey", "dataWdFetchUrl", "dataWdFetchMethod", "dataWdFetchWhen", "dataWdFetchTimeout", "dataWdFetchRetry", "dataWdFetchHeaders", "dataWdFetchBody", "dataWdFetchRefresh", "dataWdFetchDeps"];
+const FETCH_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+// Names that never resolve on the public internet, or that point back into
+// whoever is reading the page (their machine, their home or office network).
+const PRIVATE_SUFFIXES = ["localhost", "local", "internal", "intranet", "lan", "home", "corp", "home.arpa", "test", "example", "invalid", "onion"];
+
+/**
+ * The origin a hosted Live Doc's `:fetch` address reaches, or null when it
+ * may not be hosted. Only an https:// address whose host is written out in
+ * full, before any `{ state }` interpolation, so the origin is fixed when the
+ * page compiles and can go into the page's Content Security Policy. Never an
+ * IP address, a single-label or private name, credentials, or a relative path.
+ */
+export function darkmownFetchOrigin(url: unknown): string | null {
+  if (typeof url !== "string" || url.length === 0 || url.length > 2000) return null;
+  // `{ name }` interpolations may hold spaces; nothing else may, and every
+  // brace must belong to a well-formed one.
+  const bare = url.replace(/\{\s*[A-Za-z_][\w.-]{0,199}\s*\}/g, "");
+  if (/[\x00-\x20\x7f\\{}]/.test(bare)) return null;
+  const brace = url.indexOf("{");
+  const fixed = brace === -1 ? url : url.slice(0, brace);
+  const match = /^https:\/\/([A-Za-z0-9.-]+)(?::(\d{1,5}))?(?=[/?#]|$)/.exec(fixed);
+  if (!match) return null;
+  const host = match[1]!.toLowerCase().replace(/\.$/, "");
+  const labels = host.split(".");
+  if (host.length > 253 || labels.length < 2 || !labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) return null;
+  if (!/^[a-z]{2,63}$/.test(labels[labels.length - 1]!)) return null;
+  if (PRIVATE_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))) return null;
+  const port = match[2] === undefined ? null : Number(match[2]);
+  if (port !== null && (port < 1 || port > 65535)) return null;
+  return `https://${host}${port === null || port === 443 ? "" : `:${port}`}`;
+}
+
+function digits(value: unknown, max: number): string | null {
+  return typeof value === "string" && /^\d{1,9}$/.test(value) && Number(value) <= max ? value : null;
+}
+
+function stateKey(value: unknown): value is string {
+  return safeDarkmownPath(value) && !value.includes(".");
+}
 
 export function safeDarkmownPath(value: unknown): value is string {
   return typeof value === "string" && value.length <= 200 && /^[A-Za-z_][\w-]*(?:\.[A-Za-z_\d][\w-]*)*$/.test(value)
@@ -208,12 +250,23 @@ function textOf(node: Element): string {
  * host's link bridge is what opens it. `pictureBase` is a picture scope main
  * issued for this document's folder; a relative picture is pointed into it.
  */
-export interface DarkmownSanitizeOptions { links?: boolean; pictureBase?: string | null }
+export interface DarkmownSanitizeOptions {
+  links?: boolean;
+  pictureBase?: string | null;
+  /**
+   * Keep `:fetch` (hosted Live Docs only). Each address must pass
+   * darkmownFetchOrigin, and the origins come back in `network`, for the
+   * page's CSP. Implies nothing else: forms still post nowhere.
+   */
+  fetch?: boolean;
+}
 
 /** Parse inertly (never into a browser document), then expose only offline, bounded runtime data. */
-export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean, options: DarkmownSanitizeOptions = {}): Promise<{ bodyHtml: string; seeds: string[]; warnings: string[] }> {
+export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean, options: DarkmownSanitizeOptions = {}): Promise<{ bodyHtml: string; seeds: string[]; warnings: string[]; network: string[] }> {
   if (bodyHtml.length > 2_000_000) throw new Error("Darkmown preview exceeds the safe rendering limit");
   const links = options.links === true;
+  const fetchOn = options.fetch === true && trusted;
+  const network = new Set<string>();
   const pictureBase = isDarkmownPictureBase(options.pictureBase) ? options.pictureBase : null;
   const parser = unified().use(rehypeRaw);
   const tree = await parser.run({ type: "root", children: [{ type: "raw", value: bodyHtml }] } as Root);
@@ -266,6 +319,39 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean, o
         const picture: Element["properties"] = { src: darkmownPictureUrl(pictureBase, ref) };
         for (const key of ["alt", "title"]) if (typeof properties[key] === "string") picture[key] = String(properties[key]).slice(0, 10_000);
         child.properties = picture; child.children = [];
+        return [child];
+      }
+      if (child.tagName === "span" && "dataWdFetch" in properties) {
+        // A `:fetch` marker: kept, rebuilt from validated values only, when
+        // the caller asked for network. Every address it can reach (the URL,
+        // and a token-refresh URL) is recorded for the page's CSP.
+        const origin = fetchOn ? darkmownFetchOrigin(properties.dataWdFetchUrl) : null;
+        const refreshOrigin = properties.dataWdFetchRefresh == null ? undefined : fetchOn ? darkmownFetchOrigin(properties.dataWdFetchRefresh) : null;
+        const method = properties.dataWdFetchMethod == null ? undefined : FETCH_METHODS.has(String(properties.dataWdFetchMethod)) ? String(properties.dataWdFetchMethod) : null;
+        const when = properties.dataWdFetchWhen == null ? undefined : properties.dataWdFetchWhen === "visible" ? "visible" : null;
+        const timeout = properties.dataWdFetchTimeout == null ? undefined : digits(properties.dataWdFetchTimeout, 120_000);
+        const retry = properties.dataWdFetchRetry == null ? undefined : digits(properties.dataWdFetchRetry, 10);
+        const headers = properties.dataWdFetchHeaders == null ? undefined : stateKey(properties.dataWdFetchHeaders) ? properties.dataWdFetchHeaders : null;
+        const body = properties.dataWdFetchBody == null ? undefined : stateKey(properties.dataWdFetchBody) ? properties.dataWdFetchBody : null;
+        const depsRaw = properties.dataWdFetchDeps;
+        const deps = depsRaw == null ? undefined
+          : typeof depsRaw === "string" && depsRaw.split(",").length <= 32 && depsRaw.split(",").every(stateKey) ? depsRaw : null;
+        const extra = Object.keys(properties).some((key) => !FETCH_ATTRIBUTES.includes(key));
+        if (!origin || !stateKey(properties.dataWdFetchKey) || [refreshOrigin, method, when, timeout, retry, headers, body, deps].includes(null) || extra) {
+          removed = true;
+          return [];
+        }
+        network.add(origin);
+        if (refreshOrigin) network.add(refreshOrigin);
+        const marker: Element["properties"] = { dataWdFetch: "", dataWdFetchKey: properties.dataWdFetchKey, dataWdFetchUrl: String(properties.dataWdFetchUrl) };
+        const optional: Array<[string, string | undefined]> = [
+          ["dataWdFetchMethod", method ?? undefined], ["dataWdFetchWhen", when ?? undefined], ["dataWdFetchTimeout", timeout ?? undefined],
+          ["dataWdFetchRetry", retry ?? undefined], ["dataWdFetchHeaders", headers ?? undefined], ["dataWdFetchBody", body ?? undefined],
+          ["dataWdFetchRefresh", refreshOrigin ? String(properties.dataWdFetchRefresh) : undefined], ["dataWdFetchDeps", deps ?? undefined],
+        ];
+        for (const [key, value] of optional) if (value !== undefined) marker[key] = value;
+        child.properties = marker;
+        child.children = [];
         return [child];
       }
       if (STRIP.has(child.tagName)) { removed = true; return []; }
@@ -397,6 +483,7 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean, o
       "*": ["title", "ariaLabel", "ariaHidden", "colSpan", "rowSpan", ...RUNTIME_ATTRIBUTES], button: ["type", "disabled"], input: ["name", "type", "disabled", "maxLength", "min", "max", "step", "value", "placeholder", "checked"], textarea: ["name", "disabled", "maxLength", "placeholder"], select: ["name", "disabled"], option: ["value", "selected"],
       ...(links ? { a: ["href", "target", "rel"] } : {}),
       ...(pictureBase ? { img: ["src", "alt", "title"] } : {}),
+      ...(fetchOn ? { span: FETCH_ATTRIBUTES } : {}),
     },
     // A second, independent check on the two URL-bearing attributes.
     protocols: { href: ["http", "https", "mailto"], src: ["markie-asset"] },
@@ -412,5 +499,5 @@ export async function sanitizeDarkmownBody(bodyHtml: string, trusted: boolean, o
       }
     }
   })(clean as Root);
-  return { bodyHtml: processor.stringify(clean), seeds, warnings: removed ? [WARNING] : [] };
+  return { bodyHtml: processor.stringify(clean), seeds, warnings: removed ? [WARNING] : [], network: [...network].sort() };
 }

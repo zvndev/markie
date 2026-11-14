@@ -59,14 +59,14 @@ import { resolvePublicToken } from "./public-links.ts";
 import { registerLiveDocChannel } from "./live-docs-channels.ts";
 import { renderSignInNotice, webSignInHrefFor } from "./web-signin.ts";
 import { classifyRequestHost, liveDocOrigin, LIVE_DOC_LABEL, type LiveDocsConfig } from "./live-docs-config.ts";
-import { createLiveDocCompiler, type LiveDocCompiler } from "./live-docs-compile.ts";
+import { createLiveDocCompiler, LIVE_DOC_NETWORK_LIMIT, type LiveDocCompiler } from "./live-docs-compile.ts";
 import {
-  LIVE_DOC_CHANNEL_PATH, LIVE_DOC_HEADERS, LIVE_DOC_CSP, LIVE_NOTICE_CSP, renderLiveDocPage, renderLiveNotice,
+  LIVE_DOC_CHANNEL_PATH, LIVE_DOC_HEADERS, LIVE_NOTICE_CSP, liveDocCsp, renderLiveDocPage, renderLiveNotice,
 } from "./live-docs-page.ts";
 import {
   LIVE_DOC_SESSION_TTL_MS, canOpenLiveDoc, consumeLiveDocTicket, createLiveDocSession, docIdForAnyLabel, docIdForLabel,
   endLiveDocSession, ensureLiveDocLabel, ensurePublicLiveDocLabel, issueLiveDocTicket, liveDocCookieRefused, liveDocLabel,
-  liveDocLevelOpens, liveDocMeta, liveDocPublisherName, liveDocSessionFor, liveDocTakenDown, loadLiveDoc, markLiveDocSessionUsed,
+  liveDocLevelOpens, liveDocMeta, liveDocPublisherName, liveDocSessionFor, liveDocTakenDown, liveDocVersion, loadLiveDoc, markLiveDocSessionUsed,
   newLiveDocState, publicLiveDocFor, type LiveDocBinding, type LiveDocRow,
 } from "./live-docs-store.ts";
 
@@ -155,14 +155,33 @@ export interface LiveDocsOptions {
   /** Where the bare live domain sends a visitor. */
   siteUrl: string;
   compiler?: LiveDocCompiler;
+  /**
+   * Every host name the app answers on. A Live Doc's `:fetch` may not reach
+   * any of them, nor the live domain itself: a page has no business talking
+   * to Markie's own API or to another Live Doc.
+   */
+  appHosts?: readonly string[];
   /** Test hooks: how often a stream re-checks and pings. */
   recheckMs?: number;
   pingMs?: number;
 }
 
 export function createLiveDocs({
-  config, appOrigin, siteUrl, compiler = createLiveDocCompiler(), recheckMs = LIVE_DOC_RECHECK_MS, pingMs = LIVE_DOC_PING_MS,
+  config, appOrigin, siteUrl, compiler = createLiveDocCompiler(), recheckMs = LIVE_DOC_RECHECK_MS, pingMs = LIVE_DOC_PING_MS, appHosts = [],
 }: LiveDocsOptions) {
+  const hostOf = (value: string) => { try { return new URL(value).hostname.toLowerCase(); } catch { return value.toLowerCase(); } };
+  const forbiddenHosts = new Set([appOrigin, siteUrl, ...appHosts].filter(Boolean).map(hostOf));
+  /** Why a page's network list cannot be hosted, or null when it can. */
+  const networkRefusal = (network: readonly string[]): string | null => {
+    if (network.length > LIVE_DOC_NETWORK_LIMIT) return `A Live Doc can fetch from at most ${LIVE_DOC_NETWORK_LIMIT} addresses.`;
+    for (const origin of network) {
+      const host = hostOf(origin);
+      if (host === config.domain || host.endsWith(`.${config.domain}`) || forbiddenHosts.has(host)) {
+        return `A Live Doc can't fetch from ${origin}, which is part of Markie.`;
+      }
+    }
+    return null;
+  };
   const passUrl = (label: string) => `${appOrigin}${LIVE_DOC_PASS_PREFIX}${label}`;
   const ipHeader = clientIpHeader();
   const channelsByKey = new Map<string, number>();
@@ -192,9 +211,11 @@ export function createLiveDocs({
       if (compiled.kind === "refused") return notice(c, 422, "This Live Doc can't be hosted yet", compiled.message);
       return notice(c, 503, "This Live Doc didn't load", compiled.message, { href: "/", label: "Try again" });
     }
+    const refusal = networkRefusal(compiled.page.network);
+    if (refusal) return notice(c, 422, "This Live Doc can't be hosted yet", refusal);
     const title = compiled.page.title || doc.name.replace(/\.wd$/i, "") || "Live Doc";
-    c.header("Content-Security-Policy", LIVE_DOC_CSP);
-    return c.html(renderLiveDocPage({ ...compiled.page, title, ...(publishedBy === undefined ? {} : { publishedBy }) }));
+    c.header("Content-Security-Policy", liveDocCsp(compiled.page.network));
+    return c.html(renderLiveDocPage({ ...compiled.page, title, version: doc.version, ...(publishedBy === undefined ? {} : { publishedBy }) }));
   }
 
   const toPass = (c: Context, label: string, clearCookie: boolean) => {
@@ -292,6 +313,10 @@ export function createLiveDocs({
 
   live.get(LIVE_DOC_CHANNEL_PATH, (c) => {
     const target = channelTarget(c.req.raw, c.env.label);
+    // The version the page shows, so a save between its load and this
+    // stream is still reported. Anything else counts as "the current one".
+    const shownRaw = c.req.query("v");
+    const shown = shownRaw !== undefined && /^\d{1,15}$/.test(shownRaw) ? Number(shownRaw) : null;
     if ("docId" in target && (poolOpen[target.pool] >= poolMax[target.pool] || target.keys.some(([key, max]) => (channelsByKey.get(key) ?? 0) >= max))) {
       // Busy, not refused: the page backs off and tries again.
       c.header("Retry-After", "30");
@@ -345,11 +370,14 @@ export function createLiveDocs({
         }
         stream.writeSSE({ event: "revoked", data: JSON.stringify({ reason }) }).catch(() => {}).finally(release);
       };
+      let lastVersion = shown ?? liveDocVersion(target.docId);
       const recheck = () => {
         if (finished) return;
         let reason: LiveDocRevokeReason | null;
+        let version: number | null = null;
         try {
           reason = target.check();
+          if (!reason) version = liveDocVersion(target.docId);
         } catch (error) {
           // A database that is busy or closing must not take the server down
           // from a timer. The stream ends without "revoked", and the page
@@ -358,7 +386,16 @@ export function createLiveDocs({
           finish();
           return;
         }
-        if (reason) finish(reason);
+        if (reason) {
+          finish(reason);
+          return;
+        }
+        // A new version: the page reloads, or offers to if someone is using
+        // it. The stream carries no content, only that it changed.
+        if (version !== null && version !== lastVersion) {
+          lastVersion = version;
+          stream.writeSSE({ event: "updated", data: "{}" }).catch(() => finish());
+        }
       };
       unregister = registerLiveDocChannel(target.docId, { recheck });
       stream.onAbort(() => finish());
@@ -501,10 +538,16 @@ export function createLiveDocs({
     if (!liveDocMeta(docId)) return c.json({ error: "not_a_live_doc" }, 404);
     if (liveDocTakenDown(docId)) return c.json({ error: "taken_down" }, 410);
     const url = `${liveDocOrigin(config, ensureLiveDocLabel(docId))}/`;
-    if (!canManageLevel(level)) return c.json({ url, access: "shared" });
+    // What the page can reach on the network (design, "Security model" 3),
+    // from the same cached compile the page uses. Shown before the page is
+    // made public; anyone who can open the page can read its source anyway.
+    const doc = loadLiveDoc(docId);
+    const compiled = doc?.content ? await compiler.compile(doc.content, doc.ownerId) : null;
+    const network = compiled?.ok && !networkRefusal(compiled.page.network) ? compiled.page.network : [];
+    if (!canManageLevel(level)) return c.json({ url, access: "shared", network });
     const publicLabel = ensurePublicLiveDocLabel(docId);
-    if (publicLabel) return c.json({ url, access: "public", publicUrl: `${liveDocOrigin(config, publicLabel)}/`, publishedAs: liveDocPublisherName(docId) });
-    return c.json({ url, access: hasAudience(docId) ? "shared" : "private" });
+    if (publicLabel) return c.json({ url, access: "public", publicUrl: `${liveDocOrigin(config, publicLabel)}/`, publishedAs: liveDocPublisherName(docId), network });
+    return c.json({ url, access: hasAudience(docId) ? "shared" : "private", network });
   });
 
   // A document's public link, `/s/<token>`, opens its public address when

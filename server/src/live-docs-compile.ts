@@ -209,7 +209,11 @@ export type LiveDocCompile =
   /** Too many compiles in flight, overall or for this owner. Not cached; the next load tries again. */
   | { ok: false; kind: "busy"; message: string };
 
-const PAGE_KEYS = "bodyHtml,seeds,title,warnings";
+const PAGE_KEYS = "bodyHtml,network,seeds,title,warnings";
+// What a page's network list may hold: https origins only, written exactly as
+// darkmownFetchOrigin writes them. The child is trusted for none of it.
+const NETWORK_ORIGIN = /^https:\/\/[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?(?::\d{1,5})?$/;
+export const LIVE_DOC_NETWORK_LIMIT = 20;
 
 function validPage(value: unknown): value is LiveDocPage {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -218,7 +222,8 @@ function validPage(value: unknown): value is LiveDocPage {
   return typeof page.bodyHtml === "string" && page.bodyHtml.length <= 2 * DARKMOWN_OUTPUT_LIMIT
     && typeof page.title === "string" && page.title.length <= 10_000
     && Array.isArray(page.seeds) && page.seeds.length <= 1_000 && page.seeds.every((seed) => typeof seed === "string" && seed.length <= 200_000)
-    && Array.isArray(page.warnings) && page.warnings.length <= 5_000 && page.warnings.every((warning) => typeof warning === "string" && warning.length <= 128_000);
+    && Array.isArray(page.warnings) && page.warnings.length <= 5_000 && page.warnings.every((warning) => typeof warning === "string" && warning.length <= 128_000)
+    && Array.isArray(page.network) && page.network.length <= 1_000 && page.network.every((origin) => typeof origin === "string" && NETWORK_ORIGIN.test(origin));
 }
 
 /** The child's reply, if it is exactly one line of the protocol in live-docs-child.ts; null otherwise. */

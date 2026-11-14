@@ -169,6 +169,8 @@ export interface LiveDocMeta {
 export interface LiveDocRow extends LiveDocMeta {
   /** null when the source is too large to host, so it was never read. */
   content: string | null;
+  /** The document's version, so an open page can tell when it has changed. */
+  version: number;
 }
 
 // The most a hosted page ever reads of a source: 200,000 characters (the
@@ -204,9 +206,19 @@ export function loadLiveDoc(docId: string): LiveDocRow | null {
   // Only content is read from the row, and it sits before every column the
   // check above needed, so a refused size costs a header read, nothing more.
   const row = db
-    .prepare("SELECT CASE WHEN octet_length(content) <= ? THEN content END AS content FROM docs WHERE id = ?")
-    .get(LIVE_DOC_READ_BYTES, docId) as { content: string | null } | undefined;
-  return row ? { ...meta, content: row.content } : null;
+    .prepare("SELECT version, CASE WHEN octet_length(content) <= ? THEN content END AS content FROM docs WHERE id = ?")
+    .get(LIVE_DOC_READ_BYTES, docId) as { version: number; content: string | null } | undefined;
+  return row ? { ...meta, content: row.content, version: row.version } : null;
+}
+
+/**
+ * The document's version now, or null. version sits before content in the
+ * row, so this never reads the text however large it is; an open page's
+ * stream asks it on every check.
+ */
+export function liveDocVersion(docId: string): number | null {
+  const row = db.prepare("SELECT version FROM docs WHERE id = ?").get(docId) as { version: number } | undefined;
+  return typeof row?.version === "number" ? row.version : null;
 }
 
 /**

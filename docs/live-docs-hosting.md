@@ -68,6 +68,24 @@ Every hosted page keeps one server-sent event stream open to its own host, `/__m
 - Access checks never read a document's text. They read a covering index (`idx_docs_access`), so a check costs the same for a 40 MB document as for a short one. The page reads the text only when it is within the 200,000-character limit.
 - A stream ends after 30 minutes and the page reconnects, so none lives forever.
 
+### Live updates
+
+An open page learns of every new version of its document within seconds. Every write goes through `upsertDocRow` (docs.ts), which re-checks that document's open streams once its transaction commits; the 5-second timer covers anything else.
+
+- The page tells its stream which version it shows (`<meta name="markie-live-version">`, sent as `?v=`), so a save between the page load and the stream is still reported.
+- On `updated`, an untouched page reloads itself after a random delay of up to 1.5 seconds, so a public page with many readers does not reload all at once. A page someone has typed in or clicked shows an "Updated" bar with a button instead, so it never reloads under them.
+- The stream carries no content, only that the document changed. The reload goes through the same access check as any load, and a version compiles once however many pages reload.
+
+### What a page can reach
+
+A Live Doc reaches the network only through Darkmown's `:fetch`, and only at the addresses it names (design, "Security model" 3).
+
+- Each address must be `https://`, with its host written out before any `{ state }` interpolation, so the origin is fixed when the page compiles. IP addresses, single-label and private names (`localhost`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like), credentials and relative paths are dropped, and the page says something was disabled.
+- The page's `connect-src` is `'self'` plus exactly those origins. A page with no `:fetch` can reach nothing but its own host, and the browser blocks any address not on the list.
+- A page may name at most 20 origins, and none may be Markie's own (the app, its aliases, the site, the docs host, the live domain). Either refuses the page with a plain notice.
+- `GET /api/docs/:id/live-doc` returns the list as `network`. The Share dialog (nightly) names those sites and asks before a Live Doc that fetches anything goes public, and shows them while it is public.
+- Forms still post nowhere, and `:every` actions are still disabled on hosted pages.
+
 ### Taking one down
 
 A Live Doc can be taken down at every level from the server, without touching the document:
@@ -93,7 +111,7 @@ Its addresses then answer "taken down" with a `410`, its public link serves noth
 - A pass works only in the browser that asked for it. Before sending a browser for a pass, the live host sets a 10-minute `__Host-markie-live-state-<16 hex>` nonce cookie, one per flow, and the app host binds the pass to the nonce's hash, carried as `?state=` through the web sign-in. Redeem requires the matching cookie, so a copied pass URL opens nothing, and two tabs opening at once both get in.
 - When `Host` or `X-Forwarded-Host` names the live domain, the two must agree exactly, or the request is a 404. kamal-proxy forwards a client's own `X-Forwarded-*` headers for markie-api (Kamal's `forward_headers` defaults to on without `ssl`), so neither header alone can carry a request across.
 - Every live response carries HSTS, `nosniff`, `Referrer-Policy: no-referrer`, COOP and CORP `same-origin`, `X-Frame-Options: DENY`, a Permissions-Policy denying camera, microphone and geolocation, `X-Robots-Tag: noindex, nofollow` and `Cache-Control: private, no-store`.
-- The page's CSP admits three scripts by hash: the pinned runtime, its bootstrap, and Markie's stream script. It admits its one style block by hash. `connect-src` is `'self'`, for the stream; the live host answers nothing else a page could use. `form-action` is `'none'`. The per-page network list is H3.
+- The page's CSP admits three scripts by hash: the pinned runtime, its bootstrap, and Markie's stream script. It admits its one style block by hash. `connect-src` is `'self'`, for the stream (the live host answers nothing else a page could use), plus the page's own network list (above). `form-action` is `'none'`.
 
 ## Production on markie.live
 

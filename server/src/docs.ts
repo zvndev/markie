@@ -172,6 +172,9 @@ function upsertDocRow(w: DocWrite): void {
   // empties the history, so "older than the newest N" is a range on the
   // primary key.
   db.prepare("DELETE FROM doc_history WHERE doc_id = ? AND version <= ?").run(w.id, w.version - DOC_HISTORY_KEEP);
+  // Open Live Doc pages of this document learn of the new version at once.
+  // After the caller's transaction commits, so their own reads see it.
+  setImmediate(() => recheckLiveDocChannels(w.id));
 }
 
 /**

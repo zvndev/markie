@@ -207,7 +207,7 @@ test("a viewer opens a shared Live Doc through the pass; a stranger is refused e
   assert.equal(ownerView.access, "shared", "the owner sees it is shared");
   assert.equal(ownerView.publicUrl, undefined, "no public address while the public link is off");
   const label = labelOf(ownerView.url);
-  assert.deepEqual(await addressFor(id, viewer.token), { url: ownerView.url, access: "shared" });
+  assert.deepEqual(await addressFor(id, viewer.token), { url: ownerView.url, access: "shared", network: [] });
 
   const cookie = await openPrivate(label, viewerCookie);
   const page = await ask(liveHost(label), "/", { cookie });
@@ -335,7 +335,7 @@ test("members never see the public address; a viewer cannot make one", async () 
   await putDoc(owner.token, id, "Members.wd", COUNTER);
   await share(id, viewer.email, "viewer");
   await makePublic(id);
-  assert.deepEqual(Object.keys(await addressFor(id, viewer.token)).sort(), ["access", "url"]);
+  assert.deepEqual(Object.keys(await addressFor(id, viewer.token)).sort(), ["access", "network", "url"]);
   assert.equal((await addressFor(id, viewer.token)).access, "shared");
   assert.equal((await ask(APP_HOST, `/api/docs/${id}/public-link`, { method: "POST", bearer: viewer.token })).status, 403);
 });

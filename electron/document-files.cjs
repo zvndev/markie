@@ -17,6 +17,17 @@ const identity = (stat) => `${stat.dev}:${stat.ino}`;
 const stamp = (stat) => `${identity(stat)}:${stat.size}:${stat.mtimeNs ?? stat.mtimeMs}:${stat.ctimeNs ?? stat.ctimeMs}`;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const typedArrayName = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get;
+// A folder's real path and its device:inode. Taken when access is granted and
+// taken again before every later read or write, so a folder that was moved,
+// replaced, or swapped for a symlink after the grant is refused instead of
+// followed. Shared with electron/live-docs-projects.cjs, which holds a whole
+// project folder to the same rule.
+function folderState(io, folder) {
+  const real = io.realpathSync(folder), stat = io.lstatSync(real, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink()) fail("access-denied", "The selected folder is not a regular local directory.");
+  return { real, id: identity(stat) };
+}
+const sameFolderState = (a, b, key = (value) => value) => key(a.real) === key(b.real) && a.id === b.id;
 
 /** Filesystem paths enter only through these main-process OS/dialog entry points. */
 /** @param {{dialog?: {showOpenDialog?: Function, showSaveDialog?: Function}, getWindow?: Function, fileSystem?: typeof fs, platform?: string, maxBytes?: number, maxLeases?: number, maxQueued?: number, onGranted?: (target: string) => void}} options */
@@ -29,14 +40,9 @@ function createDocumentFileService({ dialog, getWindow = () => undefined, fileSy
   const epoch = (owner) => owners.get(owner) ?? 0;
   const ownerValid = (owner) => { if (!Number.isSafeInteger(owner) || owner < 1) fail("access-denied", "This window cannot access native documents."); };
   const protect = async (operation) => { try { return { ok: true, value: await operation() }; } catch (error) { return errorResult(error); } };
-  const parentState = (target) => {
-    const parent = path.dirname(target), real = io.realpathSync(parent), stat = io.lstatSync(real, { bigint: true });
-    if (!stat.isDirectory() || stat.isSymbolicLink()) fail("access-denied", "The selected folder is not a regular local directory.");
-    return { real, id: identity(stat) };
-  };
+  const parentState = (target) => folderState(io, path.dirname(target));
   const assertParent = (entry) => {
-    const current = parentState(entry.target);
-    if (key(current.real) !== key(entry.parent.real) || current.id !== entry.parent.id) fail("conflict", "The selected folder was replaced. Choose the file again.");
+    if (!sameFolderState(parentState(entry.target), entry.parent, key)) fail("conflict", "The selected folder was replaced. Choose the file again.");
   };
   const readSnapshot = (entry) => {
     assertParent(entry);
@@ -191,4 +197,4 @@ function registerDocumentFileIpc({ handle, service, ownerForEvent }) {
     handle(`document-files:${channel}`, (event, args) => { const owner = ownerForEvent(event); if (!owner) return errorResult(new NativeFileError("access-denied", "This frame cannot access native document files.")); return service[method](owner, args); });
   }
 }
-module.exports = { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc, MAX_DOCUMENT_BYTES, DOCUMENT_EXTENSIONS, EXTRA_LAUNCH };
+module.exports = { createDocumentFileService, findNativeDocumentLaunchFile, registerDocumentFileIpc, folderState, sameFolderState, NativeFileError, MAX_DOCUMENT_BYTES, DOCUMENT_EXTENSIONS, EXTRA_LAUNCH };

@@ -42,6 +42,19 @@ describe("ActivityBar", () => {
     expect(screen.getByRole("button", { name: "Vault: locked files and keys" })).toHaveAttribute("aria-current", "page");
   });
 
+  it("shows the Live Docs area's button only when it is offered, and marks it while the area is on screen", async () => {
+    const { rerender } = render(<ActivityBar {...props()} />);
+    expect(screen.queryByRole("button", { name: "Live Docs: Darkmown projects" })).not.toBeInTheDocument();
+    const onLiveDocs = vi.fn();
+    rerender(<ActivityBar {...props({ onLiveDocs })} />);
+    const button = screen.getByRole("button", { name: "Live Docs: Darkmown projects" });
+    expect(button).not.toHaveAttribute("aria-current");
+    await userEvent.click(button);
+    expect(onLiveDocs).toHaveBeenCalledOnce();
+    rerender(<ActivityBar {...props({ onLiveDocs, liveDocsActive: true })} />);
+    expect(screen.getByRole("button", { name: "Live Docs: Darkmown projects" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("offers a distinct entry to Word, text and private documents when provided", async () => {
     const onDocuments = vi.fn();
     render(<ActivityBar {...props({ onDocuments })} />);

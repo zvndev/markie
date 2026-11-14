@@ -9,6 +9,8 @@ import cloud from "../../electron/cloud-origin.json";
 
 export const CLOUD_ORIGIN: string = cloud.origin;
 export const CLOUD_ALIASES: readonly string[] = Object.freeze([...cloud.legacyAliases]);
+/** Where Markie Cloud's documents are read: /d/<id> and /s/<token> links name this host. */
+export const CLOUD_DOCS_ORIGIN: string = cloud.docsOrigin;
 
 /** Whether `origin` is Markie Cloud under its current name or an old one. */
 export function isCloudOrigin(origin: string | null | undefined): boolean {
@@ -28,4 +30,15 @@ export function canonicalCloudOrigin<T extends string | null | undefined>(origin
     return origin;
   }
   return CLOUD_ALIASES.includes(parsed) ? CLOUD_ORIGIN : origin;
+}
+
+/**
+ * The origin a document link names for a document on `server`. Markie Cloud,
+ * under any of its names, serves its documents on markiedocs.com, so its
+ * links go there (the API host still answers an old link with a redirect).
+ * Any other server, self-hosted or local, serves its own.
+ */
+export function docLinkOrigin(server: string): string {
+  const trimmed = server.replace(/\/+$/, "");
+  return isCloudOrigin(canonicalCloudOrigin(trimmed)) ? CLOUD_DOCS_ORIGIN : trimmed;
 }

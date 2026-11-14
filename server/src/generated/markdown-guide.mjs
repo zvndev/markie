@@ -513,7 +513,7 @@ With the local Markie tools:
 2. Run \`markie_check_md\` when the document has a picture, a clip or inline HTML, and fix what it reports.
 3. If the user asked to see it now, call \`markie_open_in_markie\`.
 4. For a link, a hosted copy, or reading away from this computer, call \`markie_cloud_sync\` with the file's path. It syncs \`.md\`, \`.markdown\`, \`.mdx\`, \`.txt\`, \`.text\` and \`.wd\`, and the result carries \`markdownLink\`.
-5. Paste \`markdownLink\` into your reply exactly as returned, for example \`[Plan.wd](https://api.markiedocs.com/d/abc123)\`. Do not rebuild it: the name inside is already escaped. \`privateLink\` is the bare address.
+5. Paste \`markdownLink\` into your reply exactly as returned, for example \`[Plan.wd](https://markiedocs.com/d/abc123)\`. Do not rebuild it: the name inside is already escaped. \`privateLink\` is the bare address.
 
 Call \`markie_cloud_sync\` again after you change the file, and it pushes the latest text to the same link. \`markie_cloud_status\` returns the links without uploading.
 

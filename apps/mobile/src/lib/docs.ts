@@ -2,6 +2,7 @@
 // The server is the user's own choice of origin, but the app still never
 // trusts a field's type, length or format just because it arrived as JSON.
 import { classifyDocumentFormat } from "@/lib/document-formats";
+import { docLinkOrigin } from "@/lib/cloud-origin";
 
 export type DocFormat = "markdown" | "darkmown" | "text";
 
@@ -171,8 +172,10 @@ function httpUrlOrNull(value: unknown): string | null {
   }
 }
 
+// The server sends each document's own link; this is the fallback, and it
+// names the same host the server does: markiedocs.com for Markie Cloud.
 export function privateLinkFor(origin: string, id: string): string {
-  return `${origin}/d/${encodeURIComponent(id)}`;
+  return `${docLinkOrigin(origin)}/d/${encodeURIComponent(id)}`;
 }
 
 function parseFormat(value: unknown, name: string): DocFormat {

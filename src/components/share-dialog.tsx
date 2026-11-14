@@ -6,6 +6,7 @@ import {
   type ShareMember,
 } from "@/lib/auth-client";
 import { sharesClientFor, useAuthFor } from "@/lib/server-sessions";
+import { docLinkOrigin } from "@/lib/cloud-origin";
 import { localAssetCount } from "@/lib/attach";
 import { colorForName, initials } from "@/lib/collab";
 import { shareMembersEmptyLine } from "@/lib/share-access-view";
@@ -278,7 +279,7 @@ export function ShareDialog({
 
   // The link Copy hands out: the public page when anyone may open it, and
   // otherwise the document's own page, which opens for the people above.
-  const privateUrl = `${(server ?? getServerURL()).replace(/\/+$/, "")}/d/${encodeURIComponent(docId)}`;
+  const privateUrl = `${docLinkOrigin(server ?? getServerURL())}/d/${encodeURIComponent(docId)}`;
   const linkToCopy = publicUrl ?? privateUrl;
 
   const copyLink = () => {

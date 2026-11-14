@@ -1,4 +1,5 @@
 {
   "origin": "https://api.markiedocs.com",
-  "legacyAliases": ["https://api-production-602f.up.railway.app"]
+  "legacyAliases": ["https://api-production-602f.up.railway.app"],
+  "docsOrigin": "https://markiedocs.com"
 }

@@ -5,6 +5,8 @@ import path from "node:path";
 const { createAgentCloud, markdownLinkFor, sanitizeAgentName, SYNCABLE } = require("./agent-cloud.js");
 
 const ORIGIN = "https://api.markiedocs.com";
+// Markie Cloud's documents are read on markiedocs.com, so the links name it.
+const DOCS = "https://markiedocs.com";
 
 function setup({ perms = {} as { cloudSync?: string }, answers = [] as Array<{ allowed: boolean; always?: boolean }>, unlocked = true, api = vi.fn() } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "markie-agent-cloud-")));
@@ -36,7 +38,7 @@ describe("agent cloud: syncing", () => {
     const res = await t.cloud.cloud_sync({ path: p });
     expect(t.confirm).toHaveBeenCalledWith({ kind: "sync", name: "plan.md", path: p });
     expect(t.registry.track).toHaveBeenCalledWith(p, "plan.md", "# Hi\n");
-    expect(res).toMatchObject({ synced: true, privateLink: `${ORIGIN}/d/doc-1`, server: ORIGIN });
+    expect(res).toMatchObject({ synced: true, privateLink: `${DOCS}/d/doc-1`, server: ORIGIN });
     expect(t.libraryChanged).toHaveBeenCalled();
     expect(t.permissions.set).not.toHaveBeenCalled();
   });
@@ -63,7 +65,7 @@ describe("agent cloud: syncing", () => {
     const res = await t.cloud.cloud_sync({ path: p });
     expect(t.sync.push).toHaveBeenCalledWith(p, "a.md", "new text");
     expect(t.sync.syncOn).not.toHaveBeenCalled();
-    expect(res.privateLink).toBe(`${ORIGIN}/d/doc-9`);
+    expect(res.privateLink).toBe(`${DOCS}/d/doc-9`);
   });
 
   it("says to sign in when Cloud has no session", async () => {
@@ -95,7 +97,7 @@ describe("agent cloud: Darkmown", () => {
     const res = await t.cloud.cloud_sync({ path: p });
     expect(t.confirm).toHaveBeenCalledWith({ kind: "sync", name: "budget.wd", path: p });
     expect(t.registry.track).toHaveBeenCalledWith(p, "budget.wd", "<Counter />\n");
-    expect(res).toMatchObject({ synced: true, name: "budget.wd", privateLink: `${ORIGIN}/d/doc-1` });
+    expect(res).toMatchObject({ synced: true, name: "budget.wd", privateLink: `${DOCS}/d/doc-1` });
   });
 
   it("asks before the first .wd upload and uploads nothing when declined", async () => {
@@ -154,8 +156,8 @@ describe("agent cloud: markdownLink", () => {
   it("is [name](privateLink) after a sync", async () => {
     const t = setup({ perms: { cloudSync: "always" } });
     const res = await t.cloud.cloud_sync({ path: t.file("plan.md") });
-    expect(res.privateLink).toBe(`${ORIGIN}/d/doc-1`);
-    expect(res.markdownLink).toBe(`[plan.md](${ORIGIN}/d/doc-1)`);
+    expect(res.privateLink).toBe(`${DOCS}/d/doc-1`);
+    expect(res.markdownLink).toBe(`[plan.md](${DOCS}/d/doc-1)`);
   });
 
   it("is on cloud_status too, and null with the privateLink when the file is local", async () => {
@@ -163,7 +165,7 @@ describe("agent cloud: markdownLink", () => {
     const p = t.file("a.wd");
     expect(await t.cloud.cloud_status({ path: p })).toMatchObject({ privateLink: null, markdownLink: null });
     t.rows.set(p, { cloud_doc_id: "d 2", sync_state: "synced" });
-    expect((await t.cloud.cloud_status({ path: p })).markdownLink).toBe(`[a.wd](${ORIGIN}/d/d%202)`);
+    expect((await t.cloud.cloud_status({ path: p })).markdownLink).toBe(`[a.wd](${DOCS}/d/d%202)`);
   });
 
   it("keeps a bracket in the file name from ending the link text", () => {
@@ -202,7 +204,7 @@ describe("agent cloud: status", () => {
     const p = t.file("a.md");
     expect(await t.cloud.cloud_status({ path: p })).toMatchObject({ synced: false, syncState: "local", privateLink: null });
     t.rows.set(p, { cloud_doc_id: "d 2", sync_state: "synced" });
-    expect((await t.cloud.cloud_status({ path: p })).privateLink).toBe(`${ORIGIN}/d/d%202`);
+    expect((await t.cloud.cloud_status({ path: p })).privateLink).toBe(`${DOCS}/d/d%202`);
     expect(t.confirm).not.toHaveBeenCalled();
   });
 });

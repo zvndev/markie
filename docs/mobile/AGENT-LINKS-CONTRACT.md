@@ -60,10 +60,13 @@ renders, and Darkmown (`.wd`) for documents that benefit from live state.
       so the proxy cannot loop.
     - The target is built from config only (`server/src/docs-host.ts`). `/api/*` and `/mcp` never
       redirect.
-  - Clients that build a private link themselves (the desktop's `markie_cloud_sync`, the phone's
-    share sheet) still build it on the server origin they are signed in to. That link is valid and
-    redirects; it just differs from the server's `privateLink` until those clients read the docs
-    origin from the server.
+  - Clients that build a link themselves (the desktop's Copy link and `markie_cloud_sync`, the
+    phone's fallback when a result carries no `privateLink`) name `https://markiedocs.com` for a
+    document on Markie Cloud, under any of its API names, so they match the server's
+    `privateLink`. The value is `docsOrigin` in `electron/cloud-origin.json`, read through
+    `docLinkOrigin` in `src/lib/cloud-origin.ts` and `electron/share-origin.js`. For any other
+    server they name that server's own origin. A self-hosted server that sets its own
+    `MARKIE_DOCS_ORIGIN` still gets links on its API origin from the desktop; those redirect.
 - Every API or tool result that names a document returns both:
   - `privateLink`: the URL above.
   - `markdownLink`: `[<name>](<privateLink>)`, ready to paste into chat.
@@ -150,7 +153,7 @@ item is:
   "createdAt": "…", "updatedAt": "…",
   "origin": { "kind": "agent", "agent": "Claude Code" },
   "shared": false, "role": "owner", "sharedBy": null,
-  "privateLink": "https://api.markiedocs.com/d/…" }
+  "privateLink": "https://markiedocs.com/d/…" }
 ```
 
 Document-platform documents (Word, ODT and others in `dp_documents`) are out of scope for this

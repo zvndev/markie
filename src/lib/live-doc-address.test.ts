@@ -13,18 +13,18 @@ function serverAnswering(status: number, data: unknown) {
 describe("liveDocAddress", () => {
   it("asks the document's live-doc route and hands back its address", async () => {
     const { client, request } = serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "private" });
-    expect(await client.liveDocAddress("doc/1")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null });
+    expect(await client.liveDocAddress("doc/1")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: [] });
     expect(request).toHaveBeenCalledWith("/api/docs/doc%2F1/live-doc");
   });
 
   it("hands the owner the public address too, while the public link is on", async () => {
-    const { client } = serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/", publishedAs: "Olive Owner" });
-    expect(await client.liveDocAddress("d")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/", publishedAs: "Olive Owner" });
+    const { client } = serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/", publishedAs: "Olive Owner", network: ["https://api.example.com", "http://evil.example", "javascript:x", 7] });
+    expect(await client.liveDocAddress("d")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/", publishedAs: "Olive Owner", network: ["https://api.example.com"] });
   });
 
   it("drops a public address that is not a web address, and an access level it does not know", async () => {
     const { client } = serverAnswering(200, { url: "https://abcdefghijklmnop.markie.live/", access: "everyone", publicUrl: "javascript:alert(1)", publishedAs: "x" });
-    expect(await client.liveDocAddress("d")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null });
+    expect(await client.liveDocAddress("d")).toEqual({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: [] });
   });
 
   it("accepts a loopback address for local development", async () => {

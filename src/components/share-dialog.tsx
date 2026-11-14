@@ -11,6 +11,7 @@ import { colorForName, initials } from "@/lib/collab";
 import { shareMembersEmptyLine } from "@/lib/share-access-view";
 import { roleDescription } from "@/lib/general-access";
 import { getElectronAPI } from "@/lib/electron";
+import { nightlyFeaturesEnabled } from "@/lib/nightly";
 
 // Shaped after Google Docs' share dialog, because that is the one people
 // already know: add people at the top, who has access in the middle, general
@@ -82,6 +83,11 @@ export function ShareDialog({
   const [copied, setCopied] = useState(false);
   // Which person's row is mid-change, so only that row shows it.
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  // A .wd is also a hosted Live Doc (nightly). Its page may fetch data from
+  // other sites, and the owner is told which ones before it goes public.
+  const isLiveDoc = /\.wd$/i.test(fileName) && nightlyFeaturesEnabled();
+  const [liveNetwork, setLiveNetwork] = useState<string[]>([]);
+  const [confirmPublic, setConfirmPublic] = useState(false);
 
   const load = useCallback(() => {
     // The public link is the owner's to see, and the server answers anyone
@@ -103,6 +109,17 @@ export function ShareDialog({
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!isLiveDoc) return;
+    let live = true;
+    sharesClient.liveDocAddress(docId).then(
+      (address) => { if (live) setLiveNetwork(address?.network ?? []); },
+      () => {},
+    );
+    return () => { live = false; };
+  }, [isLiveDoc, docId, sharesClient]);
+  const reachList = liveNetwork.map((origin) => origin.replace(/^https:\/\//, "")).join(", ");
 
   const canManage = !!access?.canManage;
 
@@ -257,8 +274,15 @@ export function ShareDialog({
 
   // General access. "Anyone with the link" publishes at once, the way Docs
   // does: the select itself is the decision, and Restricted takes it back.
-  const setGeneralAccess = async (next: "restricted" | "link") => {
+  const setGeneralAccess = async (next: "restricted" | "link", confirmed = false) => {
     if (!canManage) return setError("Only the owner can change general access.");
+    // A Live Doc that fetches from other sites asks first, naming them
+    // (design, "Who can see a Live Doc").
+    if (next === "link" && !confirmed && liveNetwork.length > 0) {
+      setConfirmPublic(true);
+      return;
+    }
+    setConfirmPublic(false);
     setLinkBusy(true);
     setError(null);
     // Turning the link off or on again leaves nothing to warn about.
@@ -589,6 +613,27 @@ export function ShareDialog({
             </div>
             {generalIsPublic && <span className="markie-share-sub shrink-0">Viewer</span>}
           </div>
+          {confirmPublic && (
+            <div className="markie-share-note" role="alertdialog" aria-label="Make this Live Doc public" data-markie-live-confirm>
+              <div>
+                Anyone with the link will be able to open this Live Doc. Its page fetches
+                data from {reachList}, so those sites will see each visit.
+              </div>
+              <div className="mt-2 flex gap-2">
+                <button type="button" className="markie-share-inline-link" onClick={() => void setGeneralAccess("link", true)}>
+                  Make public
+                </button>
+                <button type="button" className="markie-share-inline-link" onClick={() => setConfirmPublic(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {generalIsPublic && !confirmPublic && liveNetwork.length > 0 && (
+            <div className="markie-share-sub" data-markie-live-reach>
+              This Live Doc fetches data from {reachList}.
+            </div>
+          )}
           {rotatedUrl && (
             <div className="markie-share-note" role="status" data-markie-link-rotated>
               <div>

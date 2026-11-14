@@ -703,9 +703,8 @@ its own approval.
 > **2026-10-27: Markie Cloud runs on ZVN's own boxes, not Fly.** `markie-api` is a Kamal app on
 > `zvn-apps-a`, with `zvn-apps-b` as standby, behind Cloudflare for SaaS. Its config, deploy, failover
 > and rollback live in the private `ZVN-DEV/zvn-infra` repo: `kamal/apps/markie-api/` and
-> `docs/migrations/markie-api.md`. The Fly app is parked (`sleep infinity`) as the undo until it is
-> deleted. Fly's failing health check is expected and is not an outage. Check
-> `https://api.markiedocs.com/health` instead.
+> `docs/migrations/markie-api.md`. The Fly app has since been deleted. Check
+> `https://api.markiedocs.com/health` for the API's health.
 >
 > The zvndev.com zone's WAF rules apply to `api.markiedocs.com`. A client blocked there gets
 > Cloudflare's 403 and the box never sees the request.

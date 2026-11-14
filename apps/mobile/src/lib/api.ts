@@ -18,6 +18,7 @@ import {
   type RecentDoc,
 } from "./docs";
 import { DocumentCloudClient } from "@/lib/document-cloud";
+import { docLinkOrigin } from "@/lib/cloud-origin";
 import { COLLAB_SCHEMA_VERSION, type CollabTicketAnswer } from "@/lib/collab";
 import { NetworkError, type HttpMethod, type HttpResponse, type HttpTransport } from "./http";
 import { sha256Hex } from "./sha256";
@@ -262,7 +263,7 @@ export function createApiClient(options: ApiClientOptions) {
         content: response.text,
         updatedAt: null,
         origin: { kind: "app", agent: null },
-        privateLink: `${origin}/s/${encodeURIComponent(token)}`,
+        privateLink: `${docLinkOrigin(origin)}/s/${encodeURIComponent(token)}`,
         role: null,
         publicToken: token,
       };

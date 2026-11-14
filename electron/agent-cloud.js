@@ -17,6 +17,7 @@
 
 const nodeFs = require("fs");
 const nodePath = require("path");
+const { docLinkOrigin } = require("./share-origin");
 
 const SYNCABLE = /\.(md|markdown|mdx|txt|text|wd)$/i;
 const MAX_SYNC_BYTES = 10 * 1024 * 1024;
@@ -35,8 +36,11 @@ function sanitizeAgentName(raw) {
   return clipped || DEFAULT_AGENT_NAME;
 }
 
+// The same link the server hands an agent (server/src/doc-meta.ts
+// privateLinkFor): markiedocs.com for Markie Cloud, a server's own origin
+// otherwise.
 function privateLinkFor(origin, cloudId) {
-  return `${origin}/d/${encodeURIComponent(cloudId)}`;
+  return `${docLinkOrigin(origin)}/d/${encodeURIComponent(cloudId)}`;
 }
 
 // `[<file name>](<privateLink>)`, ready to paste into chat. The escaping is the

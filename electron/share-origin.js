@@ -17,6 +17,8 @@
 const CLOUD = require("./cloud-origin.json");
 const DEFAULT_SERVER = CLOUD.origin;
 const CLOUD_ALIASES = Object.freeze([...CLOUD.legacyAliases]);
+// Where Markie Cloud's documents are read: /d/<id> and /s/<token> links name this host.
+const CLOUD_DOCS_ORIGIN = CLOUD.docsOrigin;
 
 /** Whether `origin` is Markie Cloud under its current name or an old one. */
 function isCloudOrigin(origin) {
@@ -182,6 +184,18 @@ function untrustedShareOrigin(src, { allowDev = false } = {}) {
   return u.origin;
 }
 
+/**
+ * The origin a document link names for a document on `server`. Markie Cloud,
+ * under any of its names, serves its documents on markiedocs.com, so its
+ * links go there (the API host still answers an old link with a redirect).
+ * Any other server, self-hosted or local, serves its own. The renderer's
+ * src/lib/cloud-origin.ts docLinkOrigin is the same rule.
+ */
+function docLinkOrigin(server) {
+  const trimmed = String(server).replace(/\/+$/, "");
+  return isCloudOrigin(canonicalCloudOrigin(trimmed)) ? CLOUD_DOCS_ORIGIN : trimmed;
+}
+
 // May we forward the bearer token / sync to this server URL? Only to a server
 // the user added (plus localhost in dev), compared as an exact origin.
 function isAllowedServerOrigin(serverURL, { allowDev = false } = {}) {
@@ -200,7 +214,9 @@ function isAllowedServerOrigin(serverURL, { allowDev = false } = {}) {
 module.exports = {
   DEFAULT_SERVER,
   CLOUD_ALIASES,
+  CLOUD_DOCS_ORIGIN,
   isCloudOrigin,
+  docLinkOrigin,
   canonicalCloudOrigin,
   setTrustedOrigins,
   isTrustedOrigin,

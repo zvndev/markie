@@ -47,4 +47,28 @@ describe("one Markie Cloud origin", () => {
       expect(renderer.isCloudOrigin(value)).toBe(main.isCloudOrigin(value));
     }
   });
+
+  // The server names markiedocs.com in every link it hands out when
+  // MARKIE_DOCS_ORIGIN is set (server/src/doc-meta.ts privateLinkOrigin), as
+  // it is on Markie Cloud. A link the app copies itself must match it.
+  it("names markiedocs.com in Markie Cloud's document links, and a self-hosted server's own origin in its", () => {
+    const main = load("./share-origin.js");
+    expect(cloud.docsOrigin).toBe("https://markiedocs.com");
+    expect(renderer.CLOUD_DOCS_ORIGIN).toBe(cloud.docsOrigin);
+    expect(main.CLOUD_DOCS_ORIGIN).toBe(cloud.docsOrigin);
+    const cases: Array<[string, string]> = [
+      [cloud.origin, "https://markiedocs.com"],
+      [`${cloud.origin}/`, "https://markiedocs.com"],
+      [cloud.legacyAliases[0], "https://markiedocs.com"],
+      ["https://docs.example.com", "https://docs.example.com"],
+      ["https://docs.example.com/", "https://docs.example.com"],
+      ["http://localhost:3000", "http://localhost:3000"],
+    ];
+    for (const [server, expected] of cases) {
+      expect(renderer.docLinkOrigin(server), server).toBe(expected);
+      expect(main.docLinkOrigin(server), server).toBe(expected);
+    }
+    expect(load("./agent-cloud.js").privateLinkFor(cloud.origin, "abc")).toBe("https://markiedocs.com/d/abc");
+    expect(load("./agent-cloud.js").privateLinkFor("https://docs.example.com", "abc")).toBe("https://docs.example.com/d/abc");
+  });
 });

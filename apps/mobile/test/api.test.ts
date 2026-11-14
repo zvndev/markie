@@ -88,7 +88,7 @@ describe("api client: documents", () => {
     const api = createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN });
     const doc = await api.doc("doc-1");
     expect(calls[0].url).toBe(`${ORIGIN}/api/docs/doc-1`);
-    expect(doc).toMatchObject({ id: "doc-1", format: "darkmown", version: 3, content: ":state n = 0", origin: { kind: "agent", agent: "Codex" }, privateLink: `${ORIGIN}/d/doc-1` });
+    expect(doc).toMatchObject({ id: "doc-1", format: "darkmown", version: 3, content: ":state n = 0", origin: { kind: "agent", agent: "Codex" }, privateLink: "https://markiedocs.com/d/doc-1" });
     await expect(api.doc("../../api/me")).rejects.toMatchObject({ status: 404 });
     expect(calls).toHaveLength(1);
   });

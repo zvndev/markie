@@ -11,6 +11,7 @@ import {
 import { stableOrder } from "@/lib/stable-order";
 import { getElectronAPI, isTooLarge, type LibraryItem } from "@/lib/electron";
 import { getServerURL, type LiveDocAddress } from "@/lib/auth-client";
+import { docLinkOrigin } from "@/lib/cloud-origin";
 import { tooLargeMessage } from "@/lib/doc-tiers";
 import { ProjectsPanelContainer } from "@/components/projects-panel";
 import { BrowseView } from "@/components/browse-view";
@@ -471,11 +472,12 @@ export function Library({
   };
   const flashError = (msg: string) => flash(msg, "error");
 
-  // The server's own /d/<id> page: it opens for the owner and the people the
-  // document is shared with, after they sign in, on any browser or phone.
+  // The document's /d/<id> page (markiedocs.com for Markie Cloud): it opens
+  // for the owner and the people the document is shared with, after they sign
+  // in, on any browser or phone.
   const copyPrivateLink = async (item: LibraryItem) => {
     if (!item.cloudId) return;
-    const origin = (item.server ?? getServerURL()).replace(/\/+$/, "");
+    const origin = docLinkOrigin(item.server ?? getServerURL());
     try {
       await navigator.clipboard.writeText(`${origin}/d/${encodeURIComponent(item.cloudId)}`);
       flash("Private link copied. It opens for you after signing in, on any device.");

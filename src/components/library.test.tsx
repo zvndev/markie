@@ -5,8 +5,8 @@ import type { ElectronAPI, LibraryItem } from "@/lib/electron";
 import type { LibraryRecord } from "@/lib/document-library";
 import { installBridge } from "@/test/mock-bridge";
 
-type LiveDocAddressAnswer = { url: string; access: "private" | "shared" | "public"; publicUrl: string | null; publishedAs: string | null } | null;
-const liveDocAddress = vi.fn<(docId: string) => Promise<LiveDocAddressAnswer>>(async () => ({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null }));
+type LiveDocAddressAnswer = { url: string; access: "private" | "shared" | "public"; publicUrl: string | null; publishedAs: string | null; network?: string[] } | null;
+const liveDocAddress = vi.fn<(docId: string) => Promise<LiveDocAddressAnswer>>(async () => ({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: [] }));
 vi.mock("@/lib/auth-client", () => ({
   sharesClient: { sharedByMe: async () => [], liveDocAddress: (docId: string) => liveDocAddress(docId) },
   getAuthToken: () => "confirmed-session", getServerURL: () => "https://account.example.test", getConfirmedAuthIdentity: () => ({ userId: "user-a", serverURL: "https://account.example.test" }),
@@ -1030,15 +1030,15 @@ describe("a cloud Live Doc's address (nightly)", () => {
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy public Live Doc address" }));
     expect(await screen.findByText(/isn't public/)).toBeInTheDocument();
     expect(writeText).not.toHaveBeenCalled();
-    liveDocAddress.mockResolvedValueOnce({ url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/", publishedAs: "Olive Owner" });
+    liveDocAddress.mockResolvedValueOnce({ url: "https://abcdefghijklmnop.markie.live/", access: "public", publicUrl: "https://qrstuvwxyz234567.markie.live/", publishedAs: "Olive Owner", network: ["https://api.example.com"] });
     menu = await openMenu("counter.wd");
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy public Live Doc address" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://qrstuvwxyz234567.markie.live/"));
-    expect(await screen.findByText(/names its publisher as Olive Owner/)).toBeInTheDocument();
+    expect(await screen.findByText(/names its publisher as Olive Owner\. It sends requests to api\.example\.com, which learn its address/)).toBeInTheDocument();
   });
 
   it("offers a .wd shared with me its private address, never a public one", async () => {
-    liveDocAddress.mockResolvedValueOnce({ url: "https://abcdefghijklmnop.markie.live/", access: "shared", publicUrl: null, publishedAs: null });
+    liveDocAddress.mockResolvedValueOnce({ url: "https://abcdefghijklmnop.markie.live/", access: "shared", publicUrl: null, publishedAs: null, network: [] });
     renderLibrary([item({ name: "theirs.wd", path: "/notes/theirs.wd", state: "synced", cloudId: "t1", shared: true, owned: false } as Partial<LibraryItem>)]);
     const writeText = stubClipboard();
     const menu = await openMenu("theirs.wd");

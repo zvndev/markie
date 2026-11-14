@@ -521,9 +521,12 @@ export function Library({
       flashError("This Live Doc isn't public. Turn on its public link in Share first.");
       return;
     }
+    const reach = address.network === null
+      ? " It may send requests to other sites."
+      : address.network.length > 0 ? ` It sends requests to ${address.network.map((origin) => origin.replace(/^https:\/\//, "")).join(", ")}, which learn its address and anything visitors type.` : "";
     await copyText(address.publicUrl, address.publishedAs
-      ? `Public Live Doc address copied. Anyone with it can open the page, which names its publisher as ${address.publishedAs}.`
-      : "Public Live Doc address copied. Anyone with it can open the page, no sign-in needed.");
+      ? `Public Live Doc address copied. Anyone with it can open the page, which names its publisher as ${address.publishedAs}.${reach}`
+      : `Public Live Doc address copied. Anyone with it can open the page, no sign-in needed.${reach}`);
   };
 
   const openLiveDoc = async (item: LibraryItem) => {

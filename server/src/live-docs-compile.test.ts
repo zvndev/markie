@@ -333,7 +333,7 @@ test("a child that floods stdout is killed at the cap and its output is not trus
 test("only exactly one line of the reply protocol is accepted", () => {
   const run = (stdout: string, extra: Partial<LiveDocChildRun> = {}): LiveDocChildRun =>
     ({ pid: 1, end: "exited", code: 0, signal: null, stdout, stderr: "", ...extra });
-  const page = { bodyHtml: "<p>Hi</p>", seeds: [], title: "", warnings: [] };
+  const page = { bodyHtml: "<p>Hi</p>", network: [], seeds: [], title: "", warnings: [] };
   const line = (value: unknown) => `${JSON.stringify(value)}\n`;
   assert.deepEqual(interpretLiveDocChildRun(run(line({ ok: true, result: page }))), { ok: true, page });
   assert.deepEqual(interpretLiveDocChildRun(run(line({ ok: false, error: "Bad source" }))), { ok: false, kind: "refused", message: "Bad source" });
@@ -387,4 +387,14 @@ test("no compile process outlives its compile", () => {
   assert.ok(spawned.length > 10, `only ${spawned.length} children were started`);
   const left = spawned.filter(isRunning);
   assert.deepEqual(left, [], "every child has exited");
+});
+
+test("a child's network list holds only origins darkmownFetchOrigin would write", () => {
+  const run = (stdout: string) => ({ pid: 1, end: "exited" as const, code: 0, signal: null, stdout, stderr: "" });
+  for (const origin of ["https://127.0.0.1", "https://10.0.0.1:8443", "https://localhost", "https://printer.local", "https://intranet", "https://API.example.com", "https://api.example.com:443", "http://api.example.com"]) {
+    const page = { bodyHtml: "<p>Hi</p>", network: [origin], seeds: [], title: "", warnings: [] };
+    assert.equal(interpretLiveDocChildRun(run(`${JSON.stringify({ ok: true, result: page })}\n`)).ok, false, origin);
+  }
+  const fine = { bodyHtml: "<p>Hi</p>", network: ["https://api.example.com", "https://stats.example.org:8443"], seeds: [], title: "", warnings: [] };
+  assert.equal(interpretLiveDocChildRun(run(`${JSON.stringify({ ok: true, result: fine })}\n`)).ok, true);
 });

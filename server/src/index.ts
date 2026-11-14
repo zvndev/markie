@@ -69,15 +69,16 @@ const LIVE_DOCS_CONFIG = liveDocsConfig();
 const liveDocs = LIVE_DOCS_CONFIG
   ? (() => {
       const deploymentNow = deployment();
-      assertLiveDocsIsolated(LIVE_DOCS_CONFIG, [
+      const appNames = [
         deploymentNow.origin,
         ...deploymentNow.apiAliases,
         deploymentNow.siteUrl,
         deploymentNow.downloadSiteUrl,
         ...(deploymentNow.docsOrigin ? [deploymentNow.docsOrigin] : []),
         ...(process.env.MARKIE_WEB_ORIGINS?.split(",").map((value) => value.trim()) ?? []),
-      ]);
-      return createLiveDocs({ config: LIVE_DOCS_CONFIG, appOrigin: deploymentNow.origin, siteUrl: deploymentNow.siteUrl });
+      ].filter(Boolean);
+      assertLiveDocsIsolated(LIVE_DOCS_CONFIG, appNames);
+      return createLiveDocs({ config: LIVE_DOCS_CONFIG, appOrigin: deploymentNow.origin, siteUrl: deploymentNow.siteUrl, appHosts: appNames });
     })()
   : null;
 if (liveDocs) {

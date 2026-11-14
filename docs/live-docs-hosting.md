@@ -68,6 +68,25 @@ Every hosted page keeps one server-sent event stream open to its own host, `/__m
 - Access checks never read a document's text. They read a covering index (`idx_docs_access`), so a check costs the same for a 40 MB document as for a short one. The page reads the text only when it is within the 200,000-character limit.
 - A stream ends after 30 minutes and the page reconnects, so none lives forever.
 
+### Live updates
+
+An open page learns of every new version of its document within seconds. Every write goes through `upsertDocRow` (docs.ts), which tells that document's open streams once its transaction commits. The first write after a quiet spell goes out at once; writes during a burst fold into one notice at most every 5 seconds, carrying the newest version, with no access re-checks (a write never changes who may read). The 5-second timer covers anything else.
+
+- The page tells its stream which version it shows (`<meta name="markie-live-version">`, sent as `?v=`), so a save between the page load and the stream is still reported.
+- On `updated`, an untouched page reloads itself after a random delay of up to 1.5 seconds, so a public page with many readers does not reload all at once, and at most once every 30 seconds per tab. A page someone has typed in or clicked, or one that reloaded less than 30 seconds ago, shows an "Updated" bar with a button instead.
+- The stream carries no content, only that the document changed. The reload goes through the same access check as any load, and a version compiles once however many pages reload.
+
+### What a page can reach
+
+A Live Doc reaches the network only through Darkmown's `:fetch`, and only at the addresses it names (design, "Security model" 3).
+
+- Each address must be `https://`, with its host (and port) ending at a `/`, `?`, `#` or the end of the address before any `{ state }` interpolation, so no interpolation can extend the host and the origin is fixed when the page compiles. The server holds the compile child's list to the same rule. IP addresses, single-label and private names (`localhost`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like), credentials and relative paths are dropped, and the page says something was disabled.
+- The page's `connect-src` is `'self'` plus exactly those origins. A page with no `:fetch` can reach nothing but its own host, and the browser blocks any address not on the list.
+- A page may name at most 20 origins, and none may be Markie's own (the app, its aliases, the site, the docs host, the live domain). Either refuses the page with a plain notice.
+- Every listed site sees the page's own address (the `Origin` header carries it whatever the referrer policy), so it can open a public page too, and a `:fetch` can carry what a reader typed. A form has no action of its own, but a `:fetch` with `body=` or an interpolated field sends that state on each change.
+- `GET /api/docs/:id/live-doc` returns the list as `network`, or `null` when it cannot tell right now (a busy or failed compile). The Share dialog (nightly) asks before a Live Doc goes public unless the server confirmed its page reaches nothing, names the sites and what they receive, and shows them while it is public. The confirm is advice to the owner; the CSP is what enforces the list.
+- `:every` actions and form actions stay disabled on hosted pages.
+
 ### Taking one down
 
 A Live Doc can be taken down at every level from the server, without touching the document:
@@ -93,7 +112,7 @@ Its addresses then answer "taken down" with a `410`, its public link serves noth
 - A pass works only in the browser that asked for it. Before sending a browser for a pass, the live host sets a 10-minute `__Host-markie-live-state-<16 hex>` nonce cookie, one per flow, and the app host binds the pass to the nonce's hash, carried as `?state=` through the web sign-in. Redeem requires the matching cookie, so a copied pass URL opens nothing, and two tabs opening at once both get in.
 - When `Host` or `X-Forwarded-Host` names the live domain, the two must agree exactly, or the request is a 404. kamal-proxy forwards a client's own `X-Forwarded-*` headers for markie-api (Kamal's `forward_headers` defaults to on without `ssl`), so neither header alone can carry a request across.
 - Every live response carries HSTS, `nosniff`, `Referrer-Policy: no-referrer`, COOP and CORP `same-origin`, `X-Frame-Options: DENY`, a Permissions-Policy denying camera, microphone and geolocation, `X-Robots-Tag: noindex, nofollow` and `Cache-Control: private, no-store`.
-- The page's CSP admits three scripts by hash: the pinned runtime, its bootstrap, and Markie's stream script. It admits its one style block by hash. `connect-src` is `'self'`, for the stream; the live host answers nothing else a page could use. `form-action` is `'none'`. The per-page network list is H3.
+- The page's CSP admits three scripts by hash: the pinned runtime, its bootstrap, and Markie's stream script. It admits its one style block by hash. `connect-src` is `'self'`, for the stream (the live host answers nothing else a page could use), plus the page's own network list (above). `form-action` is `'none'`.
 
 ## Production on markie.live
 

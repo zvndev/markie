@@ -12,6 +12,7 @@ import { colorForName, initials } from "@/lib/collab";
 import { shareMembersEmptyLine } from "@/lib/share-access-view";
 import { roleDescription } from "@/lib/general-access";
 import { getElectronAPI } from "@/lib/electron";
+import { nightlyFeaturesEnabled } from "@/lib/nightly";
 
 // Shaped after Google Docs' share dialog, because that is the one people
 // already know: add people at the top, who has access in the middle, general
@@ -83,6 +84,13 @@ export function ShareDialog({
   const [copied, setCopied] = useState(false);
   // Which person's row is mid-change, so only that row shows it.
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  // A .wd is also a hosted Live Doc (nightly). Its page may fetch data from
+  // other sites, and the owner is told which ones before it goes public.
+  const isLiveDoc = /\.wd$/i.test(fileName) && nightlyFeaturesEnabled();
+  // undefined: still asking; null: not a hosted Live Doc on this server;
+  // "unknown": the server could not tell; otherwise the sites it reaches.
+  const [liveNetwork, setLiveNetwork] = useState<string[] | "unknown" | null | undefined>(undefined);
+  const [confirmPublic, setConfirmPublic] = useState(false);
 
   const load = useCallback(() => {
     // The public link is the owner's to see, and the server answers anyone
@@ -104,6 +112,20 @@ export function ShareDialog({
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!isLiveDoc) return;
+    let live = true;
+    sharesClient.liveDocAddress(docId).then(
+      (address) => { if (live) setLiveNetwork(address === null ? null : address.network ?? "unknown"); },
+      () => { if (live) setLiveNetwork("unknown"); },
+    );
+    return () => { live = false; };
+  }, [isLiveDoc, docId, sharesClient]);
+  const reachList = Array.isArray(liveNetwork) ? liveNetwork.map((origin) => origin.replace(/^https:\/\//, "")).join(", ") : "";
+  // Publishing goes straight through only when this is not a hosted Live Doc,
+  // or the server confirmed its page reaches nothing. Anything else asks.
+  const reachesNothing = !isLiveDoc || liveNetwork === null || (Array.isArray(liveNetwork) && liveNetwork.length === 0);
 
   const canManage = !!access?.canManage;
 
@@ -258,8 +280,15 @@ export function ShareDialog({
 
   // General access. "Anyone with the link" publishes at once, the way Docs
   // does: the select itself is the decision, and Restricted takes it back.
-  const setGeneralAccess = async (next: "restricted" | "link") => {
+  const setGeneralAccess = async (next: "restricted" | "link", confirmed = false) => {
     if (!canManage) return setError("Only the owner can change general access.");
+    // A Live Doc that fetches from other sites asks first, naming them
+    // (design, "Who can see a Live Doc").
+    if (next === "link" && !confirmed && !reachesNothing) {
+      setConfirmPublic(true);
+      return;
+    }
+    setConfirmPublic(false);
     setLinkBusy(true);
     setError(null);
     // Turning the link off or on again leaves nothing to warn about.
@@ -590,6 +619,29 @@ export function ShareDialog({
             </div>
             {generalIsPublic && <span className="markie-share-sub shrink-0">Viewer</span>}
           </div>
+          {confirmPublic && (
+            <div className="markie-share-note" role="alertdialog" aria-label="Make this Live Doc public" data-markie-live-confirm>
+              <div>
+                Anyone with the link will be able to open this Live Doc.{" "}
+                {reachList
+                  ? <>Its page sends requests to {reachList}. Those sites learn the page&apos;s address, so they can open it too, and they receive anything visitors type into it.</>
+                  : <>Its page may send requests to other sites, and Markie couldn&apos;t check which right now. Any such site would learn the page&apos;s address and receive anything visitors type into it.</>}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <button type="button" className="markie-share-inline-link" onClick={() => void setGeneralAccess("link", true)}>
+                  Make public
+                </button>
+                <button type="button" className="markie-share-inline-link" onClick={() => setConfirmPublic(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {generalIsPublic && !confirmPublic && reachList && (
+            <div className="markie-share-sub" data-markie-live-reach>
+              This Live Doc sends requests to {reachList}, which learn its address and anything visitors type.
+            </div>
+          )}
           {rotatedUrl && (
             <div className="markie-share-note" role="status" data-markie-link-rotated>
               <div>

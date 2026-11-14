@@ -48,6 +48,8 @@ export interface LiveDocPage {
   seeds: string[];
   title: string;
   warnings: string[];
+  /** The https origins the page's `:fetch` reaches, for its CSP (live-docs-page.ts). */
+  network: string[];
 }
 
 async function readSource(): Promise<string> {
@@ -76,13 +78,16 @@ async function compile(source: string): Promise<LiveDocPage> {
   if (start === -1 || end <= start) throw new Error("Darkmown did not produce a document body.");
   // Hosted pages always run the runtime: they are served on their own
   // origin under a CSP that admits only the pinned runtime (live-docs-page.ts).
-  const clean = await sanitizeDarkmownBody(compiled.html.slice(start + "<body>\n".length, end), true);
+  // `fetch` keeps `:fetch` to fixed public https origins, which come back in
+  // `network` and become the page's connect-src; nothing else gets out.
+  const clean = await sanitizeDarkmownBody(compiled.html.slice(start + "<body>\n".length, end), true, { fetch: true });
   const title = compiled.meta.title;
   return {
     bodyHtml: clean.bodyHtml,
     seeds: clean.seeds,
     title: typeof title === "string" ? title : "",
     warnings: [...compiled.warnings, ...clean.warnings],
+    network: clean.network,
   };
 }
 

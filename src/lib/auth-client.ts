@@ -603,6 +603,12 @@ export interface LiveDocAddress {
   publicUrl: string | null;
   /** The publisher name the public page shows, for the owner. null when not public. */
   publishedAs: string | null;
+  /**
+   * The https origins the page's `:fetch` reaches: empty when it reaches
+   * nothing, null when the server could not tell right now (a busy or failed
+   * compile), which callers must treat as "may reach something".
+   */
+  network: string[] | null;
 }
 
 /** An https address, or http on a loopback name for local development; else null. */
@@ -715,14 +721,21 @@ export function makeSharesClient(request: ApiRequest) {
     // 404 and the Library says it has no address. Anything that is not a web
     // address is no address.
     liveDocAddress: async (docId: string): Promise<LiveDocAddress | null> => {
-      const res = await request<{ url?: unknown; access?: unknown; publicUrl?: unknown; publishedAs?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
+      const res = await request<{ url?: unknown; access?: unknown; publicUrl?: unknown; publishedAs?: unknown; network?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
       if (!res.ok || !res.data) return null;
       const url = liveDocUrl(res.data.url);
       if (!url) return null;
       const access = res.data.access === "shared" || res.data.access === "public" ? res.data.access : "private";
       const publicUrl = liveDocUrl(res.data.publicUrl);
       const publishedAs = publicUrl && typeof res.data.publishedAs === "string" ? res.data.publishedAs.slice(0, 80) : null;
-      return { url, access, publicUrl, publishedAs };
+      // Shown to the person before they publish, so only exact https origins.
+      // A server from before H3 sends no list and hosts no :fetch, so a
+      // missing list is an empty one; an explicit null is "not known".
+      const raw = res.data.network;
+      const network = raw === null ? null
+        : Array.isArray(raw) ? raw.filter((origin): origin is string => typeof origin === "string" && /^https:\/\/[a-z0-9.-]{1,253}(?::\d{1,5})?$/.test(origin)).slice(0, 50)
+        : [];
+      return { url, access, publicUrl, publishedAs, network };
     },
 
     // A pass for the live-editing socket, so the session token stays out of

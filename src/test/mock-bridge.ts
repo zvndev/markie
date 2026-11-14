@@ -142,6 +142,17 @@ export function makeBridge(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
       layout: vi.fn(async () => noopResult),
       onStatus: vi.fn(subscribe("onLiveDocsPreviewStatus")),
     },
+    liveDocsProjects: {
+      list: vi.fn(async () => ({ ok: true as const, projects: [] })),
+      add: vi.fn(async () => ({ ok: false as const, code: "canceled", message: "" })),
+      remove: vi.fn(async () => ({ ok: true as const })),
+      open: vi.fn(async () => ({ ok: false as const, code: "unknown-project", message: "" })),
+      close: vi.fn(async () => ({ ok: true as const })),
+      tree: vi.fn(async () => ({ ok: false as const, code: "no-project", message: "" })),
+      read: vi.fn(async () => ({ ok: false as const, code: "no-project", message: "" })),
+      write: vi.fn(async () => ({ ok: false as const, code: "no-project", message: "" })),
+      onChanged: vi.fn(subscribe("onLiveDocsProjectChanged")),
+    },
 
     getInitialFile: vi.fn(async () => null),
     documentFiles: {

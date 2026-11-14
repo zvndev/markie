@@ -28,6 +28,7 @@ const privateRelease = createPrivateReleaseGate({ config: privateReleaseConfig, 
   try { sync.setConfig({ token: null, serverURL: PRIVATE_AUTH_ORIGIN, userId: null }); } catch { /* Already locked. */ }
   try { terminal.killAll(); } catch { /* No active terminal. */ }
   try { stopLiveDocsPreviewNow(); } catch { /* No preview running. */ }
+  try { closeLiveDocsProjectNow(); } catch { /* No project open. */ }
   if (mainWindow && !mainWindow.isDestroyed()) { documentFiles.releaseOwner(mainWindow.webContents.id); mainWindow.webContents.reload(); }
 } });
 const autoUpdater = isDesktopPreview ? null : require("electron-updater").autoUpdater;
@@ -896,9 +897,9 @@ function createWindow() {
     },
   });
   const nativeDocumentOwner = mainWindow.webContents.id;
-  mainWindow.webContents.once("destroyed", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); });
-  mainWindow.webContents.on("render-process-gone", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); stopLiveDocsPreviewNow(); });
-  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); stopLiveDocsPreviewNow(); } });
+  mainWindow.webContents.once("destroyed", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); closeLiveDocsProjectNow(); });
+  mainWindow.webContents.on("render-process-gone", () => { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); stopLiveDocsPreviewNow(); closeLiveDocsProjectNow(); });
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) { documentFiles.releaseOwner(nativeDocumentOwner); documentMenu.reset(); stopLiveDocsPreviewNow(); closeLiveDocsProjectNow(); } });
 
   // Escape from a focused provider iframe cannot bubble to the host document.
   // Forward only dismissal over the existing private command channel; leave
@@ -1063,6 +1064,8 @@ function createWindow() {
     }
     // ...or a dev server nobody can see
     stopLiveDocsPreviewNow();
+    // ...or a project watcher with no window to tell
+    closeLiveDocsProjectNow();
   });
 
   if (isDev) {
@@ -1946,6 +1949,49 @@ handle("live-docs-preview-layout", (event, layout) => {
   placeLiveDocsView();
   return { ok: true };
 });
+
+// ── Live Docs projects (M3, super-nightly) ──
+// The Live Docs area's list of local projects and the files of the open one
+// (electron/live-docs-projects.cjs). A folder enters only through the picker
+// below and stays here: the renderer names a project by an opaque id and a
+// file by a project-relative path, which the service resolves under the
+// project's real root. Each handler checks the build and that the sender is
+// the main window's main frame before it reads its arguments. Nothing here
+// starts a process.
+const { createLiveDocsProjects, createLiveDocsProjectIpc } = require("./live-docs-projects.cjs");
+const liveDocsProjects = createLiveDocsProjects({
+  storePath: path.join(app.getPath("userData"), "live-docs-projects.json"),
+  onChange: (change) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("live-docs-project-changed", change);
+  },
+});
+const liveDocsProjectIpc = createLiveDocsProjectIpc({
+  service: liveDocsProjects,
+  enabled: nightlyEnabledInMain,
+  trusted: currentCloseSender,
+  pickFolder: async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Add a Live Docs project",
+      message: "Choose a Darkmown project folder.",
+      buttonLabel: "Add Project",
+      properties: ["openDirectory"],
+    });
+    return result.canceled ? null : result.filePaths?.[0] ?? null;
+  },
+});
+// Window reload, renderer crash, window close, lock and quit: the watcher
+// never outlives the window it reports to.
+function closeLiveDocsProjectNow() {
+  liveDocsProjects.closeNow();
+}
+handle("live-docs-projects-list", (event, ...args) => liveDocsProjectIpc.list(event, ...args));
+handle("live-docs-projects-add", (event, ...args) => liveDocsProjectIpc.add(event, ...args));
+handle("live-docs-projects-remove", (event, ...args) => liveDocsProjectIpc.remove(event, ...args));
+handle("live-docs-project-open", (event, ...args) => liveDocsProjectIpc.open(event, ...args));
+handle("live-docs-project-close", (event, ...args) => liveDocsProjectIpc.close(event, ...args));
+handle("live-docs-project-tree", (event, ...args) => liveDocsProjectIpc.tree(event, ...args));
+handle("live-docs-project-read", (event, ...args) => liveDocsProjectIpc.read(event, ...args));
+handle("live-docs-project-write", (event, ...args) => liveDocsProjectIpc.write(event, ...args));
 
 handle("sync-config", async (_event, cfg) => {
   if (privateReleaseConfig && cfg?.serverURL !== PRIVATE_AUTH_ORIGIN) return { error: "Private builds use the trusted Markie authentication server." };
@@ -4014,6 +4060,11 @@ app.on("will-quit", () => {
   }
   try {
     stopLiveDocsPreviewNow();
+  } catch {
+    // best effort
+  }
+  try {
+    closeLiveDocsProjectNow();
   } catch {
     // best effort
   }

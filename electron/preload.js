@@ -239,6 +239,20 @@ if (process.isMainFrame === true) contextBridge.exposeInMainWorld("electronAPI",
     layout: (layout) => ipcRenderer.invoke("live-docs-preview-layout", layout),
     onStatus: (callback) => subscribe("live-docs-preview-status", callback, (status) => status),
   },
+  // Live Docs area (super-nightly). Main keeps the project folders: the
+  // renderer names a project by id and a file by its path inside the open
+  // project, and main resolves and checks both (electron/live-docs-projects.cjs).
+  liveDocsProjects: {
+    list: () => ipcRenderer.invoke("live-docs-projects-list"),
+    add: () => ipcRenderer.invoke("live-docs-projects-add"),
+    remove: (args) => ipcRenderer.invoke("live-docs-projects-remove", args),
+    open: (args) => ipcRenderer.invoke("live-docs-project-open", args),
+    close: () => ipcRenderer.invoke("live-docs-project-close"),
+    tree: () => ipcRenderer.invoke("live-docs-project-tree"),
+    read: (args) => ipcRenderer.invoke("live-docs-project-read", args),
+    write: (args) => ipcRenderer.invoke("live-docs-project-write", args),
+    onChanged: (callback) => subscribe("live-docs-project-changed", callback, (change) => change),
+  },
   // Auto-update
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
   updateStatus: () => ipcRenderer.invoke("update-status"),

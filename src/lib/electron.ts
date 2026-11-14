@@ -167,6 +167,69 @@ export interface LiveDocsPreviewApi {
   onStatus(callback: (status: LiveDocsPreviewStatus) => void): Unsubscribe;
 }
 
+/**
+ * A Live Docs project on this Mac, as main describes it. `id` is the only
+ * handle the renderer has; `location` is for display and is never sent back.
+ */
+export interface LiveDocsLocalProject {
+  id: string;
+  kind: "local";
+  name: string;
+  /** Where the folder is, with the home folder shortened to ~. Display only. */
+  location: string;
+  /** False when the folder is gone, moved, or no longer a Darkmown project. */
+  available: boolean;
+  open: boolean;
+}
+
+/** The project the area has open. */
+export interface LiveDocsOpenProject {
+  id: string;
+  name: string;
+  location: string;
+  /** False when the folder watcher could not start or stopped. */
+  watching: boolean;
+}
+
+/** One row of a project's file tree, by path inside the project ("site/pages/index.wd"). */
+export interface LiveDocsTreeEntry {
+  path: string;
+  kind: "file" | "dir" | "link";
+}
+
+/** A refusal from main. The private build's locked answer carries `error` instead of `message`. */
+export type LiveDocsRefusal = { ok: false; code: string; message?: string; error?: string };
+export type LiveDocsResult<T> = ({ ok: true } & T) | LiveDocsRefusal;
+
+/** Files that changed in the open project, batched by main's watcher. */
+export interface LiveDocsProjectChange {
+  projectId: string;
+  /** Paths inside the project. Empty with `overflow` when too many changed to list. */
+  paths: string[];
+  overflow: boolean;
+  watching: boolean;
+}
+
+/**
+ * The Live Docs area (super-nightly, step M3). Main keeps every folder: the
+ * renderer names a project by id and a file by its path inside the open
+ * project. Nothing here starts a process.
+ */
+export interface LiveDocsProjectsApi {
+  list(): Promise<LiveDocsResult<{ projects: LiveDocsLocalProject[] }>>;
+  /** Native folder picker in main; adds the folder if it is a Darkmown project. */
+  add(): Promise<LiveDocsResult<{ project: LiveDocsLocalProject; existed: boolean }>>;
+  /** Takes it off the list. The folder is never touched. */
+  remove(args: { id: string }): Promise<LiveDocsResult<object>>;
+  open(args: { id: string }): Promise<LiveDocsResult<{ project: LiveDocsOpenProject }>>;
+  close(): Promise<LiveDocsResult<object>>;
+  tree(): Promise<LiveDocsResult<{ project: LiveDocsOpenProject; entries: LiveDocsTreeEntry[]; truncated: boolean }>>;
+  read(args: { path: string }): Promise<LiveDocsResult<{ file: { path: string; text: string; revision: string; size: number } }>>;
+  /** Refused with code "conflict" when the file is no longer `baseRevision` on disk. */
+  write(args: { path: string; text: string; baseRevision: string }): Promise<LiveDocsResult<{ file: { path: string; revision: string; size: number } }>>;
+  onChanged(callback: (change: LiveDocsProjectChange) => void): Unsubscribe;
+}
+
 /** Either names a document main already granted; the answer is never a path. */
 export type DarkmownPictureScopeRequest = { leaseId: string } | { markdownPath: string };
 export interface DarkmownPreviewApi {
@@ -247,6 +310,7 @@ export interface ElectronAPI {
   termExternalApps(): Promise<Array<{ id: string; name: string }>>;
   termOpenExternal(app: string, cwd: string | null): Promise<WsResult>;
   liveDocsPreview?: LiveDocsPreviewApi;
+  liveDocsProjects?: LiveDocsProjectsApi;
   getInitialFile(): Promise<OpenResult | null>;
   // `success: false` with a reason is a real outcome here: the print can time
   // out, another export can already hold the hidden window, or the save sheet

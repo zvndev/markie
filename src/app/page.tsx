@@ -27,6 +27,7 @@ import { csvToMarkdownTable, csvDropsContent, markdownTableToCSV } from "@/lib/c
 import { classifyDocumentFormat } from "@/lib/document-formats";
 import { CommandPalette } from "@/components/command-palette";
 import { LiveDocsPreviewPanel } from "@/components/live-docs-preview-panel";
+import type { LiveDocsShell } from "@/components/live-docs/live-docs-area";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { Settings, type SettingsSection } from "@/components/settings";
 import { Library } from "@/components/library";
@@ -191,6 +192,11 @@ const toDisk = (name: string | null, md: string) =>
   isCSVName(name) ? markdownTableToCSV(md) : md;
 
 const DocumentEditor = lazy(() => import("@/components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
+// The Live Docs area (super-nightly, step M3), loaded the first time it opens.
+const LiveDocsArea = lazy(() => import("@/components/live-docs/live-docs-area").then((module) => ({ default: module.LiveDocsArea })));
+// The palette while the Live Docs area shows: commands that need no document
+// on screen. New documents (new-*) and themes (theme-*) are kept as well.
+const LIVE_DOCS_COMMANDS = new Set(["open", "private-vault", "save", "palette", "terminal", "theme-settings", "settings", "agents", "default-apps", "global-search", "library", "browse", "cloud", "skills", "new-file", "shortcuts", "live-docs", "live-docs-preview"]);
 const DocumentCloudLibrary = lazy(() => import("@/components/document-cloud-library").then((module) => ({ default: module.DocumentCloudLibrary })));
 // Lazy: it renders through the export pipeline, which stays off the launch path.
 const VersionHistoryView = lazy(() => import("@/components/version-history-view").then((module) => ({ default: module.VersionHistoryView })));
@@ -211,6 +217,23 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const [closingWindow, setClosingWindow] = useState(false);
   const closeGeneration = useRef(0);
   const documentsOpenRef = useRef(false);
+  // The Live Docs area (super-nightly, step M3) is a third pane. While it
+  // shows, the Markdown and documents panes stay mounted behind `inert`, and
+  // no command meant for them reaches them: each route below asks
+  // liveDocsOpenRef first.
+  const [liveDocsAreaAvailable] = useState(() => nightlyFeaturesEnabled() && !!getElectronAPI()?.liveDocsProjects);
+  const [liveDocsOpen, setLiveDocsOpen] = useState(false);
+  const liveDocsOpenRef = useRef(false);
+  const [liveDocsMounted, setLiveDocsMounted] = useState(false);
+  const [liveDocsShell, setLiveDocsShell] = useState<LiveDocsShell | null>(null);
+  const liveDocsShellRef = useRef<LiveDocsShell | null>(null);
+  const updateLiveDocsShell = useCallback((shell: LiveDocsShell | null) => { liveDocsShellRef.current = shell; setLiveDocsShell(shell); }, []);
+  // Leaving only hides the area: its project and unsaved tabs stay mounted,
+  // and the window close checks them.
+  const leaveLiveDocs = useCallback(() => {
+    if (!liveDocsOpenRef.current) return;
+    liveDocsOpenRef.current = false; setLiveDocsOpen(false);
+  }, []);
   const [documentShell, setDocumentShell] = useState<DocumentShellState | null>(null);
   const documentShellRef = useRef<DocumentShellState | null>(null);
   const [cloudHandoff, setCloudHandoff] = useState<CloudHandoff | null>(null);
@@ -218,11 +241,13 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   useEffect(() => () => { cloudHandoffRef.current = null; }, []);
   const updateDocumentShell = useCallback((state: DocumentShellState | null) => { documentShellRef.current = state; setDocumentShell(state); }, []);
   const leaveDocuments = useCallback(async () => {
+    // Every caller is about to show the Markdown pane.
+    leaveLiveDocs();
     if (!documentsOpenRef.current) return true;
     if (!await documentShellRef.current?.prepareLeave()) return false;
     documentsOpenRef.current = false; setDocumentsOpen(false);
     return true;
-  }, []);
+  }, [leaveLiveDocs]);
   // The confirmed account, for the surfaces that keep state per account. The
   // Library's own signedIn only says main holds a token, which stays true
   // when one account's token is replaced by another's.
@@ -269,6 +294,20 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
   const [sourceHandle, setSourceHandle] = useState<SourceHandle | null>(null);
   const [showFind, setShowFind] = useState(false);
+  const openLiveDocs = useCallback(() => {
+    if (!liveDocsAreaAvailable) return;
+    liveDocsOpenRef.current = true; setLiveDocsOpen(true); setLiveDocsMounted(true);
+    setShowFind(false);
+    // The area has its own file tree, and the Cloud page would cover it.
+    setShowLibrary(false);
+  }, [liveDocsAreaAvailable]);
+  // Menu Undo and Redo while the area shows: a focused text field keeps its
+  // own history, and otherwise the open file's editor takes it.
+  const liveDocsUndoRedo = useCallback((direction: "undo" | "redo") => {
+    if (document.querySelector('.markie-shell[inert], [role="dialog"][aria-modal="true"]')) return;
+    if (undoTargetFor(document.activeElement, { hasSource: true }) === "native") { document.execCommand(direction); return; }
+    liveDocsShellRef.current?.[direction]();
+  }, []);
   const [findWithReplace, setFindWithReplace] = useState(false);
   // In Split both panes are on screen, so find follows the one you last
   // touched. In the single-pane modes there is nothing to choose between.
@@ -837,6 +876,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   // The docked side panel is persistent navigation chrome, not an overlay:
   // it stays open so browsing file-to-file doesn't slam it shut.
   const dismissDocumentUI = useCallback(() => {
+    // A Markdown document landed, so its pane is the one to show.
+    leaveLiveDocs();
     // The next document gets its own attempt at a live session.
     liveUnavailableRef.current = false;
     setLiveUnavailable(false);
@@ -850,7 +891,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     setManageShare(null);
     if (!agentSecretShownRef.current) setShowAgents(false);
     setForkError(null);
-  }, []);
+  }, [leaveLiveDocs]);
 
   // Start a fresh, unsaved markdown doc.
   const handleNewFile = useCallback(async () => {
@@ -1330,7 +1371,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
   const openDocumentsWorkspace = useCallback(async (canActivate?: () => boolean) => {
     if (canActivate && !canActivate()) return false;
-    if (documentsEnabled && documentsOpenRef.current) return true;
+    if (documentsEnabled && documentsOpenRef.current) { leaveLiveDocs(); return true; }
     currentMarkdown();
     await settleDocument();
     if (canActivate && !canActivate()) return false;
@@ -1357,9 +1398,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       return false;
     }
     if (canActivate && !canActivate()) return false;
-    if (documentsEnabled) { documentsOpenRef.current = true; setDocumentsOpen(true); setShowFind(false); }
+    if (documentsEnabled) { documentsOpenRef.current = true; setDocumentsOpen(true); setShowFind(false); leaveLiveDocs(); }
     return true;
-  }, [currentMarkdown, settleDocument, documentsEnabled]);
+  }, [currentMarkdown, settleDocument, documentsEnabled, leaveLiveDocs]);
   useEffect(() => {
     if (!booted || (!plainText && mode !== "edit" && largeDocSize === null && !richEditor)
       || nativeDocumentRequest === handledNativeRequest.current) return;
@@ -1479,6 +1520,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (command === "new-markdown" || command === "new-word" || command === "new-text" || command === "new-darkmown") {
       void createDocument(command === "new-markdown" ? "markdown" : command === "new-word" ? "docx" : command === "new-darkmown" ? "darkmown" : "text"); return;
     }
+    // New documents leave the Live Docs area; nothing else here has a
+    // document in it to act on.
+    if (liveDocsOpenRef.current) return;
     if (command === "make-interactive") { void makeInteractive(); return; }
     if (documentsOpenRef.current) {
       const shell = documentShellRef.current;
@@ -1503,7 +1547,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   useEffect(() => {
     const api = getElectronAPI();
     if (!api?.setDocumentMenuState) return;
-    const paused = !booted || closingWindow || showSettings || showTheme || showPalette || showSearch || showHelp || showShare || !!signInReason || showAgents || !!manageShare || documentsOpen && !!documentShell?.commands?.modalOpen;
+    const paused = !booted || closingWindow || liveDocsOpen || showSettings || showTheme || showPalette || showSearch || showHelp || showShare || !!signInReason || showAgents || !!manageShare || documentsOpen && !!documentShell?.commands?.modalOpen;
     const renderer = paused ? "none" : documentsOpen ? documentShell?.renderer ?? "none" : "markdown";
     const capable = documentsOpen ? documentShell?.private || documentShell?.busy ? [] : documentShell?.commands?.enabledCommands ?? []
       : docEditable && mode !== "edit" && richEditor && !richEditor.isDestroyed && richEditor.isEditable ? [...Object.keys(FORMAT_MENU_ACTIONS), ...Object.keys(FORMAT_MENU_STYLES)] : [];
@@ -1513,7 +1557,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (signature === menuSignature.current) return;
     menuSignature.current = signature;
     void api.setDocumentMenuState({ renderer, enabledCommands }).then((result) => { if (!result.ok) menuSignature.current = ""; }).catch(() => { menuSignature.current = ""; });
-  }, [booted, closingWindow, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, documentsOpen, documentShell, docEditable, mode, richEditor, documentsEnabled, makeInteractiveAvailable, plainText, fileName]);
+  }, [booted, closingWindow, liveDocsOpen, showSettings, showTheme, showPalette, showSearch, showHelp, showShare, signInReason, showAgents, manageShare, documentsOpen, documentShell, docEditable, mode, richEditor, documentsEnabled, makeInteractiveAvailable, plainText, fileName]);
 
   // The one way a user edit reaches the buffer, and so the only thing that may
   // ever arm a write. Loads, pulls, and reloads go through the document hook's
@@ -1631,12 +1675,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
   // Window title tracks the open file and dirty state
   useEffect(() => {
-    const name = documentsOpen ? documentShell?.name : fileName;
-    const dirty = documentsOpen ? documentShell?.dirty : isDirty;
+    const name = liveDocsOpen ? liveDocsShell?.activeName ?? liveDocsShell?.projectName ?? "Live Docs" : documentsOpen ? documentShell?.name : fileName;
+    const dirty = liveDocsOpen ? liveDocsShell?.activeDirty : documentsOpen ? documentShell?.dirty : isDirty;
     document.title = name
       ? `${dirty ? "• " : ""}${name} — Markie`
       : "Markie";
-  }, [fileName, isDirty, documentsOpen, documentShell?.name, documentShell?.dirty]);
+  }, [fileName, isDirty, documentsOpen, documentShell?.name, documentShell?.dirty, liveDocsOpen, liveDocsShell?.activeName, liveDocsShell?.projectName, liveDocsShell?.activeDirty]);
 
   // Drag and drop
   useEffect(() => {
@@ -1707,6 +1751,16 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         e.preventDefault();
         if (!document.querySelector(".markie-shell[inert], [role=dialog][aria-modal=true]")) setShowSearch(true);
         return;
+      }
+      // The Live Docs area takes Save for its open file. Every other key
+      // below acts on a pane that is not on screen.
+      if (liveDocsOpenRef.current) {
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+          e.preventDefault();
+          liveDocsShellRef.current?.save();
+          return;
+        }
+        if (!["k", "l", "/"].includes(e.key.toLowerCase())) return;
       }
       if (documentsOpenRef.current && !["k", "l", "/"].includes(e.key.toLowerCase())) return;
       if (e.metaKey || e.ctrlKey) {
@@ -1961,11 +2015,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       api.onMenuOpenFile?.(() => handlersRef.current.openFile()),
       api.onMenuNewFile?.(() => handlersRef.current.newFile()),
       api.onMenuExportPDF?.((theme) => {
+        if (liveDocsOpenRef.current) return;
         if (documentsOpenRef.current) { if (theme === "light") nativeCommandHandler.current("document-export-pdf"); }
         else handlersRef.current.exportPDF(theme ?? "dark");
       }),
-      api.onSetMode?.((m) => { if (!documentsOpenRef.current) requestMode(m); }),
-      api.onToggleStats?.(() => { if (!documentsOpenRef.current) setShowStats((s) => !s); }),
+      api.onSetMode?.((m) => { if (!documentsOpenRef.current && !liveDocsOpenRef.current) requestMode(m); }),
+      api.onToggleStats?.(() => { if (!documentsOpenRef.current && !liveDocsOpenRef.current) setShowStats((s) => !s); }),
       api.onMenuCommandPalette?.(() => setShowPalette((v) => !v)),
       api.onMenuShortcuts?.(() => setShowHelp((v) => !v)),
       api.onMenuTheme?.(() => setShowTheme((v) => !v)),
@@ -2014,29 +2069,30 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         setShowSettings(true);
       }),
       api.onMenuFormatTables?.(() =>
-        !documentsOpenRef.current && docEditable && !document.querySelector('.markie-shell[inert], [role="dialog"][aria-modal="true"]') && editContent((prev) => formatMarkdownTables(prev))
+        !documentsOpenRef.current && !liveDocsOpenRef.current && docEditable && !document.querySelector('.markie-shell[inert], [role="dialog"][aria-modal="true"]') && editContent((prev) => formatMarkdownTables(prev))
       ),
       api.onMenuFind?.(() => {
-        if (documentsOpenRef.current) return;
+        if (documentsOpenRef.current || liveDocsOpenRef.current) return;
         setFindWithReplace(false);
         setShowFind(true);
       }),
-      api.onMenuPrint?.(() => { if (documentsOpenRef.current) nativeCommandHandler.current("document-print"); else handlersRef.current.print(); }),
-      api.onMenuZoom?.((step) => { if (documentsOpenRef.current) documentShellRef.current?.commands?.execute(step > 0 ? "zoom-in" : step < 0 ? "zoom-out" : "view-zoom-reset"); else handlersRef.current.zoom(step); }),
-      api.onMenuPageWidth?.((step) => { if (!documentsOpenRef.current) handlersRef.current.pageWidth(step); }),
-      api.onMenuUndo?.(() => { if (!documentsOpenRef.current) handlersRef.current.undoRedo("undo"); }),
-      api.onMenuRedo?.(() => { if (!documentsOpenRef.current) handlersRef.current.undoRedo("redo"); }),
+      api.onMenuPrint?.(() => { if (liveDocsOpenRef.current) return; if (documentsOpenRef.current) nativeCommandHandler.current("document-print"); else handlersRef.current.print(); }),
+      api.onMenuZoom?.((step) => { if (liveDocsOpenRef.current) return; if (documentsOpenRef.current) documentShellRef.current?.commands?.execute(step > 0 ? "zoom-in" : step < 0 ? "zoom-out" : "view-zoom-reset"); else handlersRef.current.zoom(step); }),
+      api.onMenuPageWidth?.((step) => { if (!documentsOpenRef.current && !liveDocsOpenRef.current) handlersRef.current.pageWidth(step); }),
+      api.onMenuUndo?.(() => { if (liveDocsOpenRef.current) liveDocsUndoRedo("undo"); else if (!documentsOpenRef.current) handlersRef.current.undoRedo("undo"); }),
+      api.onMenuRedo?.(() => { if (liveDocsOpenRef.current) liveDocsUndoRedo("redo"); else if (!documentsOpenRef.current) handlersRef.current.undoRedo("redo"); }),
       api.onMenuFindReplace?.(() => {
-        if (documentsOpenRef.current) return;
+        if (documentsOpenRef.current || liveDocsOpenRef.current) return;
         setFindWithReplace(true);
         setShowFind(true);
       }),
-      api.onMenuHistory?.(() => documentsOpenRef.current ? documentShellRef.current?.commands?.execute("document-history") : setShowHistory(true)),
-      api.onMenuSave?.(() => documentsOpenRef.current ? documentShellRef.current?.save() : handlersRef.current.save()),
-      api.onMenuSaveAs?.(() => documentsOpenRef.current ? documentShellRef.current?.save(true) : handlersRef.current.saveAs()),
-      api.onMenuFork?.(() => documentsOpenRef.current ? documentShellRef.current?.save(true) : handlersRef.current.fork()),
-      api.onMenuReveal?.(() => { if (!documentsOpenRef.current) handlersRef.current.reveal(); }),
-      api.onMenuExportHTML?.(() => { if (!documentsOpenRef.current) handlersRef.current.exportHTML(); }),
+      api.onMenuHistory?.(() => { if (liveDocsOpenRef.current) return; if (documentsOpenRef.current) documentShellRef.current?.commands?.execute("document-history"); else setShowHistory(true); }),
+      api.onMenuSave?.(() => liveDocsOpenRef.current ? liveDocsShellRef.current?.save() : documentsOpenRef.current ? documentShellRef.current?.save() : handlersRef.current.save()),
+      // The Live Docs area has no Save As, Duplicate, Reveal or Export yet.
+      api.onMenuSaveAs?.(() => { if (liveDocsOpenRef.current) return; if (documentsOpenRef.current) documentShellRef.current?.save(true); else handlersRef.current.saveAs(); }),
+      api.onMenuFork?.(() => { if (liveDocsOpenRef.current) return; if (documentsOpenRef.current) documentShellRef.current?.save(true); else handlersRef.current.fork(); }),
+      api.onMenuReveal?.(() => { if (!documentsOpenRef.current && !liveDocsOpenRef.current) handlersRef.current.reveal(); }),
+      api.onMenuExportHTML?.(() => { if (!documentsOpenRef.current && !liveDocsOpenRef.current) handlersRef.current.exportHTML(); }),
       api.onFileOpened?.((data) => handlersRef.current.fileOpened(data)),
       // A background reconciliation pass pushed a document's text or media.
       // Nothing else reports that: the pass is fire-and-forget, and the
@@ -2057,6 +2113,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         }, 2200);
         void (async () => {
           try {
+            // Unsaved Live Docs files keep the window open, with the area on
+            // screen saying why.
+            if (liveDocsShellRef.current && !liveDocsShellRef.current.prepareClose()) {
+              openLiveDocs();
+              cancel(); return;
+            }
             if (documentsEnabled && (!documentShellRef.current || !await documentShellRef.current.prepareClose())) {
               cancel(); return;
             }
@@ -2091,7 +2153,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       }),
     ];
     return () => { closeRequests.current++; offs.forEach((off) => off?.()); };
-  }, [requestMode, selectView, editContent, documentsEnabled, prepareMarkdownClose, docEditable]);
+  }, [requestMode, selectView, editContent, documentsEnabled, prepareMarkdownClose, docEditable, openLiveDocs, liveDocsUndoRedo]);
 
   // The source editor's chunk, fetched while idle so the first switch to
   // Source view does not wait on it (src/components/source-editor.tsx).
@@ -2111,7 +2173,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         { id: "private-vault", title: "Open Vault", group: "File", keywords: "locked private secure passphrase env keys secrets environment", run: openVault },
       ] as AppCommand[] : []),
       ...(documentsOpen ? documentMenuCommands.filter((item) => !item.id.startsWith("new-") && item.id !== "document-history" && documentShell?.commands?.enabledCommands.includes(item.id)).map((item): AppCommand => ({ id: item.id, title: `${item.group}: ${item.label}`, group: item.group === "View" ? "View" : item.group === "File" ? "File" : "Format", run: () => scheduleDocumentCommand(item.id) })) : []),
-      { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: () => documentsOpenRef.current ? documentShellRef.current?.save() : handleSave() },
+      { id: "save", title: "Save", group: "File", shortcut: "⌘S", run: () => liveDocsOpenRef.current ? liveDocsShellRef.current?.save() : documentsOpenRef.current ? documentShellRef.current?.save() : handleSave() },
       { id: "save-as", title: "Save As…", group: "File", shortcut: "⇧⌘S", run: () => documentsOpenRef.current ? documentShellRef.current?.save(true) : handleSaveAs() },
       { id: "fork", title: "Duplicate (Fork)", group: "File", shortcut: "⇧⌘D", keywords: "copy fork duplicate", run: () => documentsOpenRef.current ? documentShellRef.current?.save(true) : handleMakeCopy() },
       { id: "reveal", title: revealLabel, group: "File", shortcut: "⌥⌘R", keywords: "finder explorer folder show reveal drag locate", run: handleReveal },
@@ -2163,9 +2225,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       { id: "share", title: "Share…", group: "File", keywords: "collaborate invite live people sync cloud link", run: () => documentsOpenRef.current ? documentShellRef.current?.share() : setShowShare(true) },
       { id: "history", title: "History…", group: "File", keywords: "versions restore snapshot revert previous", run: () => documentsOpenRef.current ? scheduleDocumentCommand("document-history") : setShowHistory(true) },
       { id: "shortcuts", title: "Keyboard Shortcuts", group: "Help", shortcut: "⌘/", keywords: "help keys", run: () => setShowHelp((v) => !v) },
+      ...(liveDocsAreaAvailable ? [{ id: "live-docs", title: "Live Docs…", group: "File", keywords: "darkmown projects site wd skin api edit folder", run: openLiveDocs }] as AppCommand[] : []),
       ...(liveDocsPreviewAvailable ? [{ id: "live-docs-preview", title: "Open Darkmown project preview…", group: "File", keywords: "darkmown live docs site project dev server localhost wd run", run: () => { void openLiveDocsPreview(); } }] as AppCommand[] : []),
     ] satisfies AppCommand[]).filter((command) => {
       if (command.id === "format-tables" && !docEditable) return false;
+      // The Live Docs area offers what does not need a document on screen.
+      if (liveDocsOpen) return LIVE_DOCS_COMMANDS.has(command.id) || command.id.startsWith("new-") || command.id.startsWith("theme-");
       if (!documentsOpen) return true;
       if (["find", "find-replace"].includes(command.id)) return !!documentShell?.commands?.enabledCommands.includes("find");
       if (command.id === "history") return !!documentShell?.commands?.enabledCommands.includes("document-history");
@@ -2197,6 +2262,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       docEditable,
       liveDocsPreviewAvailable,
       openLiveDocsPreview,
+      liveDocsAreaAvailable,
+      liveDocsOpen,
+      openLiveDocs,
     ]
   );
 
@@ -2340,16 +2408,16 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       onSignIn={() => setSignInReason("sync")}
       onManageShare={handleManageShare}
       onSyncChanged={refreshCollab}
-      activePath={documentsOpen ? null : filePath}
+      activePath={documentsOpen || liveDocsOpen ? null : filePath}
       accountId={account?.id ?? null}
       refreshKey={libRefreshKey}
       documentRecords={documentShell?.records}
-      activeDocumentId={documentsOpen ? documentShell?.selectedId : undefined}
+      activeDocumentId={documentsOpen && !liveDocsOpen ? documentShell?.selectedId : undefined}
       onOpenDocument={documentsEnabled ? (record) => { if (presentation === "workspace") setShowLibrary(false); void openDocument(record); } : undefined}
       onCreateDocument={documentsEnabled ? (format) => { if (presentation === "workspace") setShowLibrary(false); void createDocument(format); } : undefined}
       onOpenDefaultApps={() => { setSettingsSection("files"); setShowSettings(true); }}
       renderCloudDocuments={documentsEnabled ? (query, cloudPresentation) => <Suspense fallback={<p role="status" className="px-2 py-2 text-xs text-muted">Loading cloud documents…</p>}><DocumentCloudLibrary query={query} presentation={cloudPresentation} onOpen={(id) => void openCloudDocument(id)} /></Suspense> : undefined}
-      retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
+      retainedDocument={documentsEnabled ? { name: fileName ?? "Untitled.md", path: filePath, dirty: isDirty, selected: !documentsOpen && !liveDocsOpen, onSelect: () => { void leaveDocuments(); } } : undefined}
     />
   );
 
@@ -2357,8 +2425,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     <div inert={closingWindow} aria-busy={addingFiles || closingWindow} className="markie-shell h-screen flex flex-col bg-background relative">
       <Toolbar
         onCommands={documentsEnabled ? () => setShowPalette(true) : undefined}
-        documentMode={documentsOpen}
-        onSave={documentsOpen && documentShell?.hasSession && !documentShell.private ? () => documentShell.save() : undefined}
+        documentMode={documentsOpen && !liveDocsOpen}
+        projectMode={liveDocsOpen}
+        onSave={liveDocsOpen ? (liveDocsShell?.activeDirty ? () => liveDocsShellRef.current?.save() : undefined) : documentsOpen && documentShell?.hasSession && !documentShell.private ? () => documentShell.save() : undefined}
         onOpenFile={handleOpenFile}
         openFileDisabled={documentsEnabled && !getElectronAPI() && !documentShell?.ready}
         onExportPDF={exportPDF}
@@ -2372,17 +2441,17 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         copyText={documentsOpen ? undefined : content}
         readCopyText={copyMarkdown}
         exporting={documentsOpen ? !!documentShell?.busy : exporting}
-        fileName={documentsOpen ? documentShell?.name ?? null : fileName}
-        isDirty={documentsOpen ? !!documentShell?.dirty : isDirty}
-        canRename={!documentsOpen && filePath !== null}
+        fileName={liveDocsOpen ? liveDocsShell?.activeName ?? liveDocsShell?.projectName ?? "Live Docs" : documentsOpen ? documentShell?.name ?? null : fileName}
+        isDirty={liveDocsOpen ? !!liveDocsShell?.activeDirty : documentsOpen ? !!documentShell?.dirty : isDirty}
+        canRename={!documentsOpen && !liveDocsOpen && filePath !== null}
         onRename={handleRename}
         onShare={() => documentsOpen ? documentShellRef.current?.share() : handleShareClick()}
         canShare={documentsOpen ? !!documentShell?.hasSession && !documentShell.private : canShare}
         onThemePresets={() => setShowTheme(true)}
-        live={!documentsOpen && !!collabCfg}
+        live={!documentsOpen && !liveDocsOpen && !!collabCfg}
         liveStatus={liveStatus}
-        peers={documentsOpen ? [] : peers}
-        themeLocked={!documentsOpen && !!enforcedTheme}
+        peers={documentsOpen || liveDocsOpen ? [] : peers}
+        themeLocked={!documentsOpen && !liveDocsOpen && !!enforcedTheme}
       />
 
       <div className="markie-workspace flex-1 flex overflow-hidden">
@@ -2391,14 +2460,18 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           activeView={leftView}
           panelOpen={showLibrary}
           onSelectView={selectView}
-          canFormat={!documentsOpen && (mode === "preview" || mode === "split")}
+          canFormat={!documentsOpen && !liveDocsOpen && (mode === "preview" || mode === "split")}
           onNewFile={requestNewFile}
           onAgents={() => setShowAgents(true)}
           onShortcuts={() => setShowHelp((v) => !v)}
           onAccount={() => setShowSettings(true)}
           onSearch={() => setShowSearch(true)}
           onVault={documentsEnabled ? () => void openVault() : undefined}
-          vaultActive={documentsOpen && !!documentShell?.private}
+          vaultActive={documentsOpen && !liveDocsOpen && !cloudOpen && !!documentShell?.private}
+          // A second click goes back to the pane underneath. Under the Cloud
+          // page the area is not on screen, so a click brings it back.
+          onLiveDocs={liveDocsAreaAvailable ? () => { if (liveDocsOpen && !cloudOpen) leaveLiveDocs(); else openLiveDocs(); } : undefined}
+          liveDocsActive={liveDocsOpen && !cloudOpen}
         />
 
         {/* Docked side panel (Library / Browse / Skills). Cloud now owns the
@@ -2409,7 +2482,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
         {/* Document column: the access strip sits above both panes, because it
             explains something about the document, not about one view of it. */}
-        <div inert={documentsOpen || cloudOpen} style={documentsOpen || cloudOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div inert={documentsOpen || cloudOpen || liveDocsOpen} style={documentsOpen || cloudOpen || liveDocsOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 flex flex-col overflow-hidden">
           <ShareBanner
             view={shareBanner}
             error={forkError}
@@ -2624,10 +2697,17 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
             )}
           </div>
         </div>
-        {documentsEnabled ? <div inert={!documentsOpen || cloudOpen} style={!documentsOpen || cloudOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
+        {documentsEnabled ? <div inert={!documentsOpen || cloudOpen || liveDocsOpen} style={!documentsOpen || cloudOpen || liveDocsOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
           {documentsOpen && forkError ? <div role="alert" className="px-3 py-2 border-b border-border text-sm text-foreground bg-surface">{forkError}<button type="button" className="ml-3 text-muted" onClick={() => setForkError(null)}>Dismiss</button></div> : null}
           <Suspense fallback={<p role="status" className="p-4 text-sm text-muted">Loading document tools…</p>}>
-            <DocumentEditor embedded active={documentsOpen && !cloudOpen} onActivate={requestNativeDocument} onShellChange={updateDocumentShell} />
+            <DocumentEditor embedded active={documentsOpen && !cloudOpen && !liveDocsOpen} onActivate={requestNativeDocument} onShellChange={updateDocumentShell} />
+          </Suspense>
+        </div> : null}
+        {/* The Live Docs area: mounted on first open and kept mounted, so a
+            project and its unsaved tabs survive a trip to another pane. */}
+        {liveDocsAreaAvailable && liveDocsMounted ? <div data-markie-live-docs-pane inert={!liveDocsOpen || cloudOpen} style={!liveDocsOpen || cloudOpen ? { display: "none" } : undefined} className="flex-1 min-w-0 min-h-0 overflow-hidden">
+          <Suspense fallback={<p role="status" className="p-4 text-sm text-muted">Loading Live Docs…</p>}>
+            <LiveDocsArea active={liveDocsOpen && !cloudOpen} onShellChange={updateLiveDocsShell} />
           </Suspense>
         </div> : null}
       </div>

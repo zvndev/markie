@@ -16,6 +16,9 @@ import { EXPORT_FORMAT_NOTE, type ExportFormat, type ExportFormatId } from "@/li
 
 interface ToolbarProps {
   documentMode?: boolean;
+  // The Live Docs area is on screen (super-nightly): a project of many files
+  // with its own Save, and no single document to export, copy or share.
+  projectMode?: boolean;
   onDocumentExportPDF?: () => void;
   onSave?: () => void;
   onCommands?: () => void;
@@ -57,6 +60,7 @@ interface ToolbarProps {
 
 export function Toolbar({
   documentMode = false,
+  projectMode = false,
   onDocumentExportPDF,
   onSave,
   onCommands,
@@ -186,8 +190,8 @@ export function Toolbar({
               </button>
             ))}
           <div className="w-px h-4 bg-border shrink-0" />
-          {documentMode && onSave ? <button type="button" onClick={onSave} className="markie-toolbar-action hidden h-7 shrink-0 rounded-md px-2 text-[12px] text-muted hover:text-foreground sm:block">Save file</button> : null}
-          <div className="relative" ref={menuRef}>
+          {(documentMode || projectMode) && onSave ? <button type="button" onClick={onSave} className="markie-toolbar-action hidden h-7 shrink-0 rounded-md px-2 text-[12px] text-muted hover:text-foreground sm:block">Save file</button> : null}
+          {!projectMode ? <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowPDFMenu(!showPDFMenu)}
               aria-label="Export menu"
@@ -289,8 +293,8 @@ export function Toolbar({
                 </div>
               </div>
             )}
-          </div>
-          {copyText !== undefined ? <CopyAllButton text={copyText} read={readCopyText} /> : null}
+          </div> : null}
+          {copyText !== undefined && !projectMode ? <CopyAllButton text={copyText} read={readCopyText} /> : null}
         </div>
       </div>
 
@@ -377,8 +381,8 @@ export function Toolbar({
             <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 22 11c0-4.97-4.48-9-10-9z" />
           </svg>
         </button>
-        <div className="hidden sm:block w-px h-4 bg-border" />
-        <button
+        {!projectMode ? <div className="hidden sm:block w-px h-4 bg-border" /> : null}
+        {!projectMode ? <button
           onClick={onShare}
           title={canShare ? "Share this document" : "Share this document (Markie will walk you through it)"}
           className={`markie-toolbar-action hidden h-7 items-center gap-1.5 rounded-md px-2 text-[12px] sm:flex ${
@@ -393,7 +397,7 @@ export function Toolbar({
             <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
           </svg>
           Share
-        </button>
+        </button> : null}
       </div>
     </div>
   );

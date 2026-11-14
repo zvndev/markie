@@ -46,7 +46,15 @@ const WATCH_MAX_PATHS = 200;
 // Not part of the editable project. Compared after NFKC and lower-casing, so
 // `.GIT` on a case-insensitive disk, or a look-alike letter that folds to the
 // same name, is refused as well.
-const HIDDEN_NAMES = new Set([".git", "node_modules"]);
+// Never shown, watched, read or written. .git and node_modules first: a
+// write into .git/hooks or node_modules/.bin runs code. The rest are the
+// other places a planted file runs by itself or holds a credential: git hook
+// managers (.husky, .githooks), package manager config (.npmrc can set
+// node-options and hold auth tokens; .yarnrc*), and editor task files that
+// run on open (.vscode, .idea). Everything else in a project stays editable,
+// which is why M4 starts Run only from an action taken in main, never from a
+// renderer call (docs/live-docs-area.md, "What hiding does not stop").
+const HIDDEN_NAMES = new Set([".git", "node_modules", ".husky", ".githooks", ".npmrc", ".yarnrc", ".yarnrc.yml", ".yarnrc.yaml", ".vscode", ".idea"]);
 const JUNK_NAMES = new Set([".ds_store"]);
 // The atomic writer's staging name (electron/atomic-write.js tempPathFor).
 const TEMP_NAME = /\.markie-[a-z0-9-]+\.tmp$/i;
@@ -85,8 +93,20 @@ function projectId(value) {
   return value;
 }
 
-const isHiddenName = (name) => HIDDEN_NAMES.has(name.normalize("NFKC").toLowerCase());
+// NFKC folds look-alike letters; the ignorable code points (zero-width
+// joiners, direction marks, the byte-order mark) are dropped because HFS+ and
+// exFAT drop them from file names too, so ".g\u200cit" opens the real .git.
+const foldName = (name) => name.normalize("NFKC").replace(/\p{Default_Ignorable_Code_Point}/gu, "").toLowerCase();
+const isHiddenName = (name) => {
+  const folded = foldName(name);
+  return HIDDEN_NAMES.has(folded) || folded.startsWith(".yarnrc");
+};
 const identity = (stat) => `${stat.dev}:${stat.ino}`;
+// Refuse a symlink in any part of the path, not only the last (macOS 11+).
+// Every path opened below is built from a realpath, so none legitimately has
+// one; a folder swapped for a symlink between the check and the open fails
+// with ELOOP instead of reaching outside the project.
+const O_NOFOLLOW_ANY_DARWIN = 0x20000000;
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // The atomic writer's xattr copy runs /usr/bin/xattr. M3 starts no process,
 // so the probe answers "nothing to copy" without running anything.
@@ -138,6 +158,9 @@ function createLiveDocsProjects({
   if (typeof storePath !== "string" || !path.isAbsolute(storePath)) throw new Error("Live Docs projects need an absolute store path.");
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > MAX_FILE_BYTES) throw new Error("Invalid Live Docs file cap.");
   const key = (value) => (platform === "win32" ? value.toLowerCase() : value);
+  // macOS refuses O_NOFOLLOW_ANY together with O_NOFOLLOW (EINVAL), and the
+  // first covers the second, so one or the other, never both.
+  const noFollow = io.constants.O_NOFOLLOW_ANY ?? (platform === "darwin" ? O_NOFOLLOW_ANY_DARWIN : (io.constants.O_NOFOLLOW ?? 0));
   let homeReal = home;
   try { homeReal = io.realpathSync(home); } catch { /* keep the unresolved home */ }
   /** @type {{ id: string, root: string, name: string, addedAt: number }[] | null} */
@@ -238,6 +261,9 @@ function createLiveDocsProjects({
     }
     if (stat.isSymbolicLink()) refuse("symlink", SYMLINK);
     if (!stat.isFile()) refuse("not-a-file", "That is not a regular file.");
+    // A hard link has the same bytes under another name, possibly outside
+    // the project; Markie edits only files that have one name.
+    if (stat.nlink > 1n) refuse("hard-link", "Markie edits files with one name only. This one is a hard link; open it in another editor.");
     return { path: segments.join("/"), target, parent, stat };
   }
   function decode(bytes) {
@@ -248,7 +274,8 @@ function createLiveDocsProjects({
   const tooLarge = () => refuse("too-large", `Markie edits project files up to ${Math.floor(maxFileBytes / 1024 / 1024) || 1} MB. Open larger files in another editor.`);
   function readEntry(entry) {
     if (entry.stat.size > BigInt(maxFileBytes)) tooLarge();
-    const fd = io.openSync(entry.target, io.constants.O_RDONLY | (io.constants.O_NOFOLLOW ?? 0));
+    // O_NONBLOCK: a FIFO swapped in for the file can never hang main here.
+    const fd = io.openSync(entry.target, io.constants.O_RDONLY | noFollow | (io.constants.O_NONBLOCK ?? 0));
     try {
       const opened = io.fstatSync(fd, { bigint: true });
       if (!opened.isFile() || identity(opened) !== identity(entry.stat)) refuse("conflict", "The file changed while it was being opened. Try again.");
@@ -461,6 +488,15 @@ function createLiveDocsProjects({
         // atomic-write resolves a symlink at the target and writes through it.
         // A project write never does; at worst the swap is caught at rename.
         staged.realpathSync = () => refuse("symlink", SYMLINK);
+        // The temporary file is created exclusively, refusing a symlink in any
+        // part of its path, so it is pinned in the checked folder: a folder
+        // swapped in later cannot receive it, and the rename then fails.
+        staged.writeFileSync = (temporary, data, options = {}) => {
+          const flags = io.constants.O_WRONLY | io.constants.O_CREAT | io.constants.O_EXCL | noFollow;
+          const fd = io.openSync(temporary, flags, options.mode ?? 0o666);
+          try { io.writeFileSync(fd, data, options.encoding ? { encoding: options.encoding } : undefined); }
+          finally { io.closeSync(fd); }
+        };
         staged.renameSync = (temporary, destination) => {
           if (destination !== entry.target || path.dirname(temporary) !== path.dirname(entry.target)) refuse("conflict", "The save target changed. Reopen the file.");
           const stat = verify();

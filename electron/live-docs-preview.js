@@ -90,7 +90,20 @@ function checkProjectFolder(candidate, { fs: fsMod = fs, home = os.homedir() } =
   const name = path.basename(root) || root;
   let homeRoot = home;
   try { homeRoot = fsMod.realpathSync(home); } catch { /* keep the unresolved home */ }
-  if (root === path.parse(root).root || root === homeRoot) {
+  // The folder itself, not its spelling: /System/Volumes/Data/Users/<me>,
+  // /users/<me> or the path in capitals are all the home folder on macOS.
+  // The root of the disk, the home folder and any folder that holds the home
+  // folder are never a project.
+  const same = (a, b) => Boolean(a && b) && a.dev === b.dev && a.ino === b.ino;
+  const homeStat = statOrNull(fsMod, homeRoot);
+  const diskRoot = statOrNull(fsMod, path.parse(root).root);
+  const holdsHome = (() => {
+    for (let at = homeRoot; ; at = path.dirname(at)) {
+      if (same(statOrNull(fsMod, at), stat)) return true;
+      if (path.dirname(at) === at) return false;
+    }
+  })();
+  if (root === path.parse(root).root || root === homeRoot || same(stat, homeStat) || same(stat, diskRoot) || holdsHome) {
     return refuse("too-broad", `${name} is not a project folder. Choose the folder that holds the project's site/pages.`);
   }
   const reasons = [];

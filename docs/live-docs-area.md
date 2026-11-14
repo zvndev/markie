@@ -40,12 +40,18 @@ The renderer is untrusted.
 
 | Folder | Tree | Watcher | Read | Write |
 |---|---|---|---|---|
-| `.git` | hidden | ignored | refused | refused |
-| `node_modules` | hidden | ignored | refused | refused |
+| `.git`, `node_modules` | hidden | ignored | refused | refused |
+| `.husky`, `.githooks`, `.npmrc`, `.yarnrc*`, `.vscode`, `.idea` | hidden | ignored | refused | refused |
 | Other dot files and folders, such as `.gitignore`, `.github`, `.env` | shown | watched | allowed | allowed |
 | A symlink | shown as a link | not followed | refused | refused |
 
-The `.git` and `node_modules` rule matches any case, and look-alike letters that fold to the same name. It also applies when a symlink inside the project points into `.git`, because a write into `.git/hooks` would run code.
+The hidden names match any case, look-alike letters that fold to the same name, and names with ignorable characters (zero-width joiners, direction marks, the byte-order mark), which HFS+ and exFAT drop from file names. They also apply when a symlink inside the project points into one of them.
+
+A file with more than one name (a hard link) is refused, since its other name may be outside the project. Every file is opened, and every save's temporary file created, refusing a symlink anywhere in its path, so a folder swapped for a symlink mid-operation fails instead of reaching outside.
+
+### What hiding does not stop
+
+Hiding `.git`, hook managers and package-manager config keeps a compromised renderer from planting the files that run by themselves. It does not make writing to a project harmless: `api/*.js`, `package.json` scripts and `.github/workflows` are ordinary project files, and the next `darkmown dev`, `npm install` or push runs what is in them. That is why M4 must start Run only from an action taken in main (a native menu item or a dialog main shows), never from a renderer call alone. Other secrets in ordinary files, such as `.env`, stay readable through the area like any project file.
 
 ## The watcher
 

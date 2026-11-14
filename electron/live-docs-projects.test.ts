@@ -352,11 +352,14 @@ describe("refusals", () => {
     const original = fs.readFileSync(target, "utf8");
     write(path.join(outside, "victim.txt"), original);
     // A filesystem that swaps the file for a symlink the moment the staged
-    // temp file is written: the race the rename-time recheck exists for.
+    // temp file is created: the race the rename-time recheck exists for.
     const racing = Object.create(fs);
-    racing.writeFileSync = (file: string, ...rest: unknown[]) => {
-      (fs.writeFileSync as (...args: unknown[]) => void)(file, ...rest);
-      if (String(file).startsWith(`${target}.markie-`)) { fs.rmSync(target); fs.symlinkSync(path.join(outside, "victim.txt"), target); }
+    racing.openSync = (file: fs.PathLike, flags?: fs.OpenMode, mode?: fs.Mode) => {
+      const fd = fs.openSync(file, flags ?? "r", mode);
+      if (String(file).startsWith(`${target}.markie-`) && typeof flags === "number" && (flags & fs.constants.O_CREAT)) {
+        fs.rmSync(target); fs.symlinkSync(path.join(outside, "victim.txt"), target);
+      }
+      return fd;
     };
     const projects = createLiveDocsProjects({ fs: racing, storePath: path.join(parent, "s.json"), watch: () => Object.assign(new EventEmitter(), { close() {} }) as never });
     const added = projects.add(root);
@@ -635,5 +638,88 @@ describe("main.js wiring", () => {
     expect(await ipc.read({ sender: { mainFrame: subFrame }, senderFrame: mainFrame }, { path: "site/pages/index.wd" })).toMatchObject({ ok: false, code: "forbidden" });
     expect(await ipc.read({ sender: webContents, senderFrame: { url: "https://example.com/" } }, { path: "site/pages/index.wd" })).toMatchObject({ ok: false, code: "forbidden" });
     expect(await ipc.read({ sender: webContents, senderFrame: mainFrame }, { path: "site/pages/index.wd" })).toMatchObject({ ok: true, file: { path: "site/pages/index.wd" } });
+  });
+});
+
+describe("the second review: names, hard links and swapped folders", () => {
+  const IGNORABLE = ["\u200c", "\u200d", "\u200e", "\u206a", "\ufeff"];
+
+  it("refuses .git and node_modules spelled with characters HFS+ and exFAT drop", () => {
+    const { projects } = openScratch();
+    for (const mark of IGNORABLE) {
+      for (const spelled of [`.g${mark}it/config`, `${mark}.git/config`, `node${mark}_modules/x/package.json`, `.git${mark}/hooks/pre-commit`]) {
+        expect(projects.read({ path: spelled }), JSON.stringify(spelled)).toMatchObject({ ok: false, code: "hidden" });
+        expect(projects.write({ path: spelled, text: "x", baseRevision: "0".repeat(64) }), JSON.stringify(spelled)).toMatchObject({ ok: false, code: "hidden" });
+      }
+    }
+  });
+
+  it("hides and refuses hook managers, package-manager config and editor task folders", () => {
+    const { projects, root } = openScratch();
+    for (const file of [".husky/pre-commit", ".githooks/pre-push", ".npmrc", ".yarnrc", ".yarnrc.yml", ".vscode/tasks.json", ".idea/workspace.xml", ".NPMRC"]) {
+      write(path.join(root, file), "x\n");
+      expect(projects.read({ path: file }), file).toMatchObject({ ok: false, code: "hidden" });
+      expect(projects.write({ path: file, text: "y", baseRevision: sha("x\n") }), file).toMatchObject({ ok: false, code: "hidden" });
+      expect(fs.readFileSync(path.join(root, file), "utf8")).toBe("x\n");
+    }
+    const tree = JSON.stringify(projects.tree());
+    for (const name of [".husky", ".githooks", ".npmrc", ".yarnrc", ".vscode", ".idea"]) expect(tree.includes(`"${name}`), name).toBe(false);
+    // An ordinary dot file stays editable.
+    expect(projects.read({ path: ".gitignore" })).toMatchObject({ ok: true });
+  });
+
+  it("refuses a hard link, which may be another name for a file outside the project", () => {
+    const { projects, root } = openScratch();
+    const outside = tempDir("markie-m3-outside-");
+    write(path.join(outside, "secret.txt"), "outside\n");
+    fs.linkSync(path.join(outside, "secret.txt"), path.join(root, "site/pages/linked.wd"));
+    expect(projects.read({ path: "site/pages/linked.wd" })).toMatchObject({ ok: false, code: "hard-link" });
+    expect(projects.write({ path: "site/pages/linked.wd", text: "pwned", baseRevision: sha("outside\n") })).toMatchObject({ ok: false, code: "hard-link" });
+    expect(fs.readFileSync(path.join(outside, "secret.txt"), "utf8")).toBe("outside\n");
+  });
+
+  // O_NOFOLLOW_ANY is macOS 11+; elsewhere the open's identity check is the wall.
+  it.skipIf(process.platform !== "darwin")("a folder swapped for a symlink as a file is opened does not reach outside (macOS)", () => {
+    const { root, parent } = scratchProject();
+    const outside = tempDir("markie-m3-outside-");
+    write(path.join(outside, "index.wd"), "OUTSIDE SECRET\n");
+    const pages = path.join(root, "site/pages");
+    const target = path.join(pages, "index.wd");
+    let swapped = false;
+    const racing = Object.create(fs);
+    racing.lstatSync = (file: fs.PathLike, options?: never) => {
+      // Swap just before the file itself is looked at: after the folder check.
+      if (!swapped && String(file) === target) { swapped = true; fs.renameSync(pages, `${pages}-real`); fs.symlinkSync(outside, pages); }
+      return fs.lstatSync(file, options);
+    };
+    const projects = createLiveDocsProjects({ fs: racing, storePath: path.join(parent, "s.json"), watch: () => Object.assign(new EventEmitter(), { close() {} }) as never });
+    const added = projects.add(root);
+    if (!added.ok) throw new Error("add failed");
+    projects.open({ id: added.project.id });
+    const result = projects.read({ path: "site/pages/index.wd" });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("OUTSIDE SECRET");
+  });
+
+  it.skipIf(process.platform !== "darwin")("a save's temporary file cannot land in a folder swapped in before it is created (macOS)", () => {
+    const { root, parent } = scratchProject();
+    const outside = tempDir("markie-m3-outside-");
+    const pages = path.join(root, "site/pages");
+    const target = path.join(pages, "index.wd");
+    const racing = Object.create(fs);
+    let swapped = false;
+    racing.openSync = (file: fs.PathLike, flags?: fs.OpenMode, mode?: fs.Mode) => {
+      if (!swapped && String(file).startsWith(`${target}.markie-`) && typeof flags === "number" && (flags & fs.constants.O_CREAT)) {
+        swapped = true; fs.renameSync(pages, `${pages}-real`); fs.symlinkSync(outside, pages);
+      }
+      return fs.openSync(file, flags ?? "r", mode);
+    };
+    const projects = createLiveDocsProjects({ fs: racing, storePath: path.join(parent, "s.json"), watch: () => Object.assign(new EventEmitter(), { close() {} }) as never });
+    const added = projects.add(root);
+    if (!added.ok) throw new Error("add failed");
+    projects.open({ id: added.project.id });
+    const file = read(projects, "site/pages/index.wd");
+    expect(projects.write({ path: "site/pages/index.wd", text: "pwned", baseRevision: file.revision }).ok).toBe(false);
+    expect(fs.readdirSync(outside)).toEqual([]);
   });
 });

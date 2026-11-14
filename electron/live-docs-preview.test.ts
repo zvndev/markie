@@ -59,6 +59,25 @@ describe("checkProjectFolder", () => {
     expect(checkProjectFolder("/", { home })).toMatchObject({ ok: false, code: "too-broad" });
   });
 
+  it("refuses the home folder under another spelling, and any folder that holds it", () => {
+    const parent = tempDir();
+    const home = path.join(parent, "Person");
+    fs.mkdirSync(path.join(home, "site", "pages"), { recursive: true });
+    fs.mkdirSync(path.join(parent, "site", "pages"), { recursive: true });
+    // A symlink is how another spelling gets past the native picker.
+    const alias = path.join(tempDir(), "alias-of-home");
+    fs.symlinkSync(home, alias);
+    expect(checkProjectFolder(alias, { home })).toMatchObject({ ok: false, code: "too-broad" });
+    expect(checkProjectFolder(parent, { home })).toMatchObject({ ok: false, code: "too-broad" });
+    // On a case-insensitive volume the capitalised path is the same folder.
+    const shouted = home.toUpperCase();
+    if (fs.existsSync(shouted)) expect(checkProjectFolder(shouted, { home })).toMatchObject({ ok: false, code: "too-broad" });
+    // A real project beside home is still fine.
+    const project = path.join(parent, "Project");
+    fs.mkdirSync(path.join(project, "site", "pages"), { recursive: true });
+    expect(checkProjectFolder(project, { home })).toMatchObject({ ok: true });
+  });
+
   it("accepts a folder with site/pages", () => {
     const dir = tempDir();
     fs.mkdirSync(path.join(dir, "site", "pages"), { recursive: true });

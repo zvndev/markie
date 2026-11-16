@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { openDatabase } from "./db.ts";
-import { ensureSharePeopleSchema, putRequest, removeRequest, senderState } from "./share-people-store.ts";
+import { RequestLimitError, ensureSharePeopleSchema, putRequest, removeRequest, senderState } from "./share-people-store.ts";
 
 /** Server-only proof callbacks, evaluated on the caller's transaction handle. */
 export interface ShareIdentities {
@@ -38,7 +38,8 @@ export function createPendingShareStore(db: Database.Database, options: { identi
   const placeShare = (docId: string, userId: string, role: Role, invitedBy: string) => {
     const { sender, accepted } = lands(docId, userId, invitedBy);
     if (accepted) db.prepare("INSERT INTO shares(doc_id,user_id,role,invited_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role=excluded.role").run(docId, userId, role, invitedBy, new Date().toISOString());
-    else putRequest(db, { kind: "doc", docId, recipientId: userId, senderId: sender, role, invitedBy }, true);
+    // Too many waiting on this person: refused, the whole transaction with it.
+    else if (!putRequest(db, { kind: "doc", docId, recipientId: userId, senderId: sender, role, invitedBy }, true)) throw new RequestLimitError();
   };
   const proof = () => options.identities === undefined ? identities : options.identities;
   const verifiedUserForEmail = (email: string): string | null => {

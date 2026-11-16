@@ -6,6 +6,12 @@ import { reportRouteFault } from "./little-friend.ts";
 export interface DocumentPlatformOptions {
   store: DocumentPlatformStore;
   resolveUser(request: Request): Promise<{ id: string } | null>;
+  /**
+   * The invitation budget Markdown shares spend (shares.ts invite limiter).
+   * Adding a member, a request or a role change alike, takes from it first,
+   * so a file cannot be used to send more requests than a document can.
+   */
+  takeInvite?(inviterId: string, recipient: string): { ok: true } | { ok: false; retryAfterSeconds: number };
 }
 
 /** Bounded streaming JSON read; a dishonest/missing Content-Length cannot bypass the cap. */
@@ -46,7 +52,7 @@ function downloadDisposition(name: string): string {
 }
 
 /** Mount at /api/document-platform; legacy Markdown routes remain untouched. */
-export function createDocumentPlatform({ store, resolveUser }: DocumentPlatformOptions): Hono {
+export function createDocumentPlatform({ store, resolveUser, takeInvite }: DocumentPlatformOptions): Hono {
   const app = new Hono();
   const wireLimit = Math.ceil(store.limits.maxDocumentBytes / 3) * 4 + 4096;
   app.use("*", async (c, next) => {
@@ -99,6 +105,15 @@ export function createDocumentPlatform({ store, resolveUser }: DocumentPlatformO
   app.get("/documents/:id/members", async (c) => c.json({ members: store.members(await user(c.req.raw), c.req.param("id")) }));
   app.post("/documents/:id/members", async (c) => {
     const userId = await user(c.req.raw), payload = await jsonBody(c.req.raw, 2048);
+    if (takeInvite) {
+      const raw = (payload ?? {}) as { email?: unknown; userId?: unknown };
+      const recipient = typeof raw.email === "string" ? raw.email : typeof raw.userId === "string" ? raw.userId : "";
+      const allowed = takeInvite(userId, recipient.slice(0, 320));
+      if (!allowed.ok) {
+        c.header("Retry-After", String(allowed.retryAfterSeconds));
+        return c.json({ error: "rate-limited", message: "Too many invitations right now. Try again later." }, 429);
+      }
+    }
     store.addMember(userId, c.req.param("id"), payload); return c.json({ ok: true });
   });
   app.delete("/documents/:id/members/:userId", async (c) => {

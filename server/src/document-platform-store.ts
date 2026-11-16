@@ -25,7 +25,7 @@ export interface PlatformSqliteDatabase {
   };
 }
 export class DocumentPlatformError extends Error {
-  code: string; status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 503; serverVersion?: number;
+  code: string; status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 503; serverVersion?: number;
   constructor(code: string, status: DocumentPlatformError["status"], message: string, serverVersion?: number) { super(message); this.code = code; this.status = status; this.serverVersion = serverVersion; }
 }
 export function platformFail(code: string, status: DocumentPlatformError["status"], message: string, serverVersion?: number): never { throw new DocumentPlatformError(code, status, message, serverVersion); }
@@ -301,7 +301,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
         // claim. Resolving an alias must not suppress the requested role edit.
         // Only for someone who accepted the owner; anyone else gets a request.
         if (senderState(db, member.id, row.owner_id) === "accepted") db.prepare("INSERT INTO dp_members(doc_id,user_id,role,created_at) VALUES(?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role = excluded.role").run(id, member.id, v.role as string, now());
-        else putRequest(db, { kind: "file", docId: id, recipientId: member.id, senderId: row.owner_id, role: v.role as "viewer" | "editor", invitedBy: row.owner_id }, true);
+        else if (!putRequest(db, { kind: "file", docId: id, recipientId: member.id, senderId: row.owner_id, role: v.role as "viewer" | "editor", invitedBy: row.owner_id }, true)) platformFail("limit-exceeded", 429, "This person already has many of your shares waiting. Wait until they answer.");
       });
     },
     removeMember(userId, id, memberId) { transaction(() => { access(userId, id, "owner"); if (!memberId || memberId.length > 128) platformFail("invalid-request", 400, "Invalid member identifier."); db.prepare("DELETE FROM dp_members WHERE doc_id = ? AND user_id = ?").run(id, memberId); removeRequest(db, "file", id, memberId); }); },

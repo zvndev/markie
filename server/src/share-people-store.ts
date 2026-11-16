@@ -27,8 +27,18 @@
 // reads `shares` or `dp_members` for a recipient, as defense in depth: a row
 // that somehow got there without an accept still grants nothing.
 //
-// Dependency-free on purpose (only a database handle comes in): shares.ts,
-// pending.ts and the document platform store all build on it.
+// Dependency-free on purpose (only a database handle comes in, plus the
+// dependency-free text guard): shares.ts, pending.ts and the document
+// platform store all build on it.
+
+import { plainEmailText } from "./invite-guard.ts";
+
+/** A share refused because the sender already has MAX_REQUESTS_PER_SENDER requests waiting on this person. */
+export class RequestLimitError extends Error {
+  constructor() {
+    super("This person already has many of your shares waiting. Wait until they answer.");
+  }
+}
 
 /** The structural subset of better-sqlite3 every caller's handle provides. */
 export interface PeopleDatabase {
@@ -70,13 +80,21 @@ export function docRequestedSql(doc: string): string {
 // it, a share from a sender the recipient has not accepted is a request, and
 // a re-run would accept every one that ever got into `shares`.
 //
-// MOVE: an earlier build of this change kept requests as rows in `shares` and
-// `dp_members`, hidden by the gate alone. A database that ran it may hold such
-// rows; they move into share_requests. On a database that had never seen the
-// rule the backfill has just accepted every pair, so there is nothing to move
-// and it is marked done in the same step.
+// MOVE, on every start, not once: a row in `shares` or `dp_members` for a
+// recipient who has not accepted the owner moves into share_requests. A
+// server rolled back to a build from before this rule writes shares straight
+// into `shares`; rolled forward again, those rows would otherwise be orphans
+// the recipient never sees as a request and the owner's list never shows.
+// It touches only unaccepted rows, and it is a read when there are none. The
+// newest role the owner asked for wins when it meets an existing request.
 export const BACKFILL_MIGRATION = "share-people-backfill-2026-11-15";
-export const MOVE_MIGRATION = "share-requests-move-2026-11-15";
+
+/** Requests one sender may have waiting on one recipient. More are refused, blocked or not. */
+export const MAX_REQUESTS_PER_SENDER = 20;
+/** The newest requests a listing returns; the total comes with it. */
+export const REQUESTS_LISTED = 50;
+const NAME_LIMIT = 120;
+const PERSON_LIMIT = 60;
 
 const tableExists = (db: PeopleDatabase, name: string) =>
   !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
@@ -127,13 +145,17 @@ export function ensureSharePeopleSchema(db: PeopleDatabase): void {
       ran_at TEXT NOT NULL
     );
   `);
-  if (ran(db, BACKFILL_MIGRATION) && ran(db, MOVE_MIGRATION)) return;
+  const markdown = tableExists(db, "shares") && tableExists(db, "docs");
+  const files = tableExists(db, "dp_members") && tableExists(db, "dp_documents");
+  const unacceptedShare = `s.user_id <> d.owner_id AND NOT ${acceptedSenderSql("s.user_id", "d.owner_id")}`;
+  const unacceptedMember = `m.user_id <> d.owner_id AND NOT ${acceptedSenderSql("m.user_id", "d.owner_id")}`;
+  const strays = () =>
+    (markdown && !!db.prepare(`SELECT 1 FROM shares s JOIN docs d ON d.id = s.doc_id WHERE ${unacceptedShare} LIMIT 1`).get()) ||
+    (files && !!db.prepare(`SELECT 1 FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id WHERE ${unacceptedMember} LIMIT 1`).get());
+  if (ran(db, BACKFILL_MIGRATION) && !strays()) return;
   inWriteTransaction(db, () => {
-    // Re-checked under the write lock: another handle may have run them.
+    // Re-checked under the write lock: another handle may have done it.
     const now = new Date().toISOString();
-    const mark = (name: string) => db.prepare("INSERT OR IGNORE INTO share_people_migrations (name, ran_at) VALUES (?, ?)").run(name, now);
-    const markdown = tableExists(db, "shares") && tableExists(db, "docs");
-    const files = tableExists(db, "dp_members") && tableExists(db, "dp_documents");
     if (!ran(db, BACKFILL_MIGRATION)) {
       if (markdown) {
         db.prepare(
@@ -151,34 +173,27 @@ export function ensureSharePeopleSchema(db: PeopleDatabase): void {
             WHERE m.user_id <> d.owner_id`
         ).run(now);
       }
-      mark(BACKFILL_MIGRATION);
-      mark(MOVE_MIGRATION);
-      return;
+      db.prepare("INSERT OR IGNORE INTO share_people_migrations (name, ran_at) VALUES (?, ?)").run(BACKFILL_MIGRATION, now);
     }
-    if (!ran(db, MOVE_MIGRATION)) {
-      if (markdown) {
-        const unaccepted = `s.user_id <> d.owner_id AND NOT ${acceptedSenderSql("s.user_id", "d.owner_id")}`;
-        db.prepare(
-          `INSERT OR IGNORE INTO share_requests (kind, doc_id, recipient_id, sender_id, role, invited_by, created_at, token)
-           SELECT 'doc', s.doc_id, s.user_id, d.owner_id, s.role, s.invited_by, s.created_at, s.token
-             FROM shares s JOIN docs d ON d.id = s.doc_id WHERE ${unaccepted}`
-        ).run();
-        db.prepare(
-          `DELETE FROM shares WHERE rowid IN (SELECT s.rowid FROM shares s JOIN docs d ON d.id = s.doc_id WHERE ${unaccepted})`
-        ).run();
-      }
-      if (files) {
-        const unaccepted = `m.user_id <> d.owner_id AND NOT ${acceptedSenderSql("m.user_id", "d.owner_id")}`;
-        db.prepare(
-          `INSERT OR IGNORE INTO share_requests (kind, doc_id, recipient_id, sender_id, role, invited_by, created_at, token)
-           SELECT 'file', m.doc_id, m.user_id, d.owner_id, m.role, d.owner_id, strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at / 1000.0, 'unixepoch'), NULL
-             FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id WHERE ${unaccepted}`
-        ).run();
-        db.prepare(
-          `DELETE FROM dp_members WHERE rowid IN (SELECT m.rowid FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id WHERE ${unaccepted})`
-        ).run();
-      }
-      mark(MOVE_MIGRATION);
+    const newestWins = `ON CONFLICT (kind, doc_id, recipient_id) DO UPDATE SET
+         role = CASE WHEN excluded.created_at >= share_requests.created_at THEN excluded.role ELSE share_requests.role END,
+         created_at = MAX(share_requests.created_at, excluded.created_at),
+         token = COALESCE(share_requests.token, excluded.token)`;
+    if (markdown) {
+      db.prepare(
+        `INSERT INTO share_requests (kind, doc_id, recipient_id, sender_id, role, invited_by, created_at, token)
+         SELECT 'doc', s.doc_id, s.user_id, d.owner_id, s.role, s.invited_by, s.created_at, s.token
+           FROM shares s JOIN docs d ON d.id = s.doc_id WHERE ${unacceptedShare} ${newestWins}`
+      ).run();
+      db.prepare(`DELETE FROM shares WHERE rowid IN (SELECT s.rowid FROM shares s JOIN docs d ON d.id = s.doc_id WHERE ${unacceptedShare})`).run();
+    }
+    if (files) {
+      db.prepare(
+        `INSERT INTO share_requests (kind, doc_id, recipient_id, sender_id, role, invited_by, created_at, token)
+         SELECT 'file', m.doc_id, m.user_id, d.owner_id, m.role, d.owner_id, strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at / 1000.0, 'unixepoch'), NULL
+           FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id WHERE ${unacceptedMember} ${newestWins}`
+      ).run();
+      db.prepare(`DELETE FROM dp_members WHERE rowid IN (SELECT m.rowid FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id WHERE ${unacceptedMember})`).run();
     }
   });
 }
@@ -207,20 +222,27 @@ export function clearSenderState(db: PeopleDatabase, recipientId: string, sender
 
 /**
  * Records a share from `senderId` to `recipientId` as a request. An existing
- * request keeps its role and token: like an invite claim, a repeat does not
- * override what is already there, except that an explicit owner share
- * (`ownerCommand`) sets the role it asked for.
+ * request keeps its role and token when an invite claim repeats it; an
+ * explicit owner share (`ownerCommand`) sets the role it asked for, the
+ * newest one winning. Returns false, storing nothing, when the sender already
+ * has MAX_REQUESTS_PER_SENDER other requests waiting on this recipient: the
+ * same answer whether or not the recipient blocked them.
  */
 export function putRequest(
   db: PeopleDatabase,
   request: { kind: RequestKind; docId: string; recipientId: string; senderId: string; role: Role; invitedBy: string; token?: string | null },
   ownerCommand: boolean
-): void {
+): boolean {
+  const exists = !!db
+    .prepare("SELECT 1 FROM share_requests WHERE kind = ? AND doc_id = ? AND recipient_id = ?")
+    .get(request.kind, request.docId, request.recipientId);
+  if (!exists && requestsWaitingFrom(db, request.recipientId, request.senderId) >= MAX_REQUESTS_PER_SENDER) return false;
   db.prepare(
     `INSERT INTO share_requests (kind, doc_id, recipient_id, sender_id, role, invited_by, created_at, token)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (kind, doc_id, recipient_id) DO UPDATE SET
        role = CASE WHEN ? THEN excluded.role ELSE share_requests.role END,
+       created_at = CASE WHEN ? THEN excluded.created_at ELSE share_requests.created_at END,
        token = COALESCE(share_requests.token, excluded.token)`
   ).run(
     request.kind,
@@ -231,8 +253,27 @@ export function putRequest(
     request.invitedBy,
     new Date().toISOString(),
     request.token ?? null,
+    ownerCommand ? 1 : 0,
     ownerCommand ? 1 : 0
   );
+  return true;
+}
+
+/** How many requests `senderId` has waiting on `recipientId`, hidden ones included. */
+export function requestsWaitingFrom(db: PeopleDatabase, recipientId: string, senderId: string): number {
+  return (db.prepare("SELECT COUNT(*) AS n FROM share_requests WHERE recipient_id = ? AND sender_id = ?").get(recipientId, senderId) as { n: number }).n;
+}
+
+/**
+ * Drops every stored request from `senderId` to `recipientId`, for unblock:
+ * what was sent during a block never reaches the recipient. Returns the
+ * Markdown document ids, so the caller can fence them like a decline.
+ */
+export function requestDocsFrom(db: PeopleDatabase, recipientId: string, senderId: string): { docs: string[]; files: string[] } {
+  const rows = db
+    .prepare("SELECT kind, doc_id FROM share_requests WHERE recipient_id = ? AND sender_id = ?")
+    .all(recipientId, senderId) as Array<{ kind: RequestKind; doc_id: string }>;
+  return { docs: rows.filter((r) => r.kind === "doc").map((r) => r.doc_id), files: rows.filter((r) => r.kind === "file").map((r) => r.doc_id) };
 }
 
 export function removeRequest(db: PeopleDatabase, kind: RequestKind, docId: string, recipientId: string): boolean {
@@ -269,13 +310,14 @@ export function landRequestsFrom(db: PeopleDatabase, recipientId: string, sender
   const files: string[] = [];
   for (const row of rows) {
     if (row.kind === "doc") {
+      // The request is the owner's newest word on this document: its role wins.
       db.prepare(
         `INSERT INTO shares (doc_id, user_id, role, invited_by, created_at, token) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (doc_id, user_id) DO UPDATE SET token = COALESCE(shares.token, excluded.token)`
+         ON CONFLICT (doc_id, user_id) DO UPDATE SET role = excluded.role, token = COALESCE(shares.token, excluded.token)`
       ).run(row.doc_id, recipientId, row.role, row.invited_by, new Date().toISOString(), row.token);
       docs.push(row.doc_id);
     } else if (tableExists(db, "dp_members")) {
-      db.prepare("INSERT INTO dp_members (doc_id, user_id, role, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (doc_id, user_id) DO NOTHING").run(
+      db.prepare("INSERT INTO dp_members (doc_id, user_id, role, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (doc_id, user_id) DO UPDATE SET role = excluded.role").run(
         row.doc_id,
         recipientId,
         row.role,
@@ -299,14 +341,14 @@ export interface ShareRequest {
   sender: { id: string; name: string | null; email: string };
 }
 
-// Requests this person can see: on live documents, from senders they have not
-// blocked. The sender's address is their account's primary address, which
-// signing in requires them to have proven.
-export function requestsFor(db: PeopleDatabase, recipientId: string): ShareRequest[] {
+// Requests this person can see: on live documents, from senders they have
+// neither blocked nor accepted. The sender's address is their account's
+// primary address, which signing in requires them to have proven. Names are
+// the sender's own typing, so they come back as bounded plain text with no
+// markup or links, the same treatment the request email gives them.
+function visibleRequestsSql(db: PeopleDatabase, where: string): string {
   const files = tableExists(db, "dp_documents");
-  const rows = db
-    .prepare(
-      `SELECT r.kind AS kind, r.doc_id AS doc_id, COALESCE(d.name, ${files ? "f.name" : "NULL"}) AS name, r.role AS role,
+  return `SELECT r.kind AS kind, r.doc_id AS doc_id, COALESCE(d.name, ${files ? "f.name" : "NULL"}) AS name, r.role AS role,
               r.created_at AS created_at, o.id AS sender_id, NULLIF(o.name, '') AS sender_name, o.email AS sender_email
          FROM share_requests r
          JOIN user o ON o.id = r.sender_id
@@ -315,28 +357,48 @@ export function requestsFor(db: PeopleDatabase, recipientId: string): ShareReque
         WHERE r.recipient_id = ? AND r.sender_id <> r.recipient_id
           AND NOT ${blockedSenderSql("r.recipient_id", "r.sender_id")}
           AND NOT ${acceptedSenderSql("r.recipient_id", "r.sender_id")}
-        ORDER BY r.created_at DESC`
-    )
-    .all(recipientId) as Array<{
-    kind: RequestKind;
-    doc_id: string;
-    name: string | null;
-    role: Role;
-    created_at: string;
-    sender_id: string;
-    sender_name: string | null;
-    sender_email: string;
-  }>;
-  return rows
-    .filter((r) => r.name !== null)
-    .map((r) => ({
-      docId: r.doc_id,
-      name: r.name as string,
-      kind: r.kind,
-      role: r.role,
-      createdAt: r.created_at,
-      sender: { id: r.sender_id, name: r.sender_name, email: r.sender_email },
-    }));
+          AND COALESCE(d.id, ${files ? "f.id" : "NULL"}) IS NOT NULL
+          ${where}`;
+}
+
+type RequestRow = {
+  kind: RequestKind;
+  doc_id: string;
+  name: string;
+  role: Role;
+  created_at: string;
+  sender_id: string;
+  sender_name: string | null;
+  sender_email: string;
+};
+
+const toRequest = (r: RequestRow): ShareRequest => ({
+  docId: r.doc_id,
+  name: plainEmailText(r.name, NAME_LIMIT) || "a document",
+  kind: r.kind,
+  role: r.role,
+  createdAt: r.created_at,
+  sender: { id: r.sender_id, name: r.sender_name ? plainEmailText(r.sender_name, PERSON_LIMIT) || null : null, email: r.sender_email },
+});
+
+/** The newest REQUESTS_LISTED requests, and how many there are in all. */
+export function requestsFor(db: PeopleDatabase, recipientId: string): { requests: ShareRequest[]; total: number } {
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM (${visibleRequestsSql(db, "")})`).get(recipientId) as { n: number }).n;
+  const rows = db
+    .prepare(`${visibleRequestsSql(db, "")} ORDER BY r.created_at DESC, r.doc_id LIMIT ?`)
+    .all(recipientId, REQUESTS_LISTED) as RequestRow[];
+  return { requests: rows.map(toRequest), total };
+}
+
+/** One visible request, by its document. */
+export function requestFor(db: PeopleDatabase, recipientId: string, docId: string): ShareRequest | null {
+  const row = db.prepare(`${visibleRequestsSql(db, "AND r.doc_id = ?")} LIMIT 1`).get(recipientId, docId) as RequestRow | undefined;
+  return row ? toRequest(row) : null;
+}
+
+/** Whether `senderId` has a request the recipient can see. */
+export function hasRequestFrom(db: PeopleDatabase, recipientId: string, senderId: string): boolean {
+  return !!db.prepare(`${visibleRequestsSql(db, "AND r.sender_id = ?")} LIMIT 1`).get(recipientId, senderId);
 }
 
 export interface SharePerson {

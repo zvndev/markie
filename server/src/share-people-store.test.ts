@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { BACKFILL_MIGRATION, MOVE_MIGRATION, acceptedSenderSql, ensureSharePeopleSchema, landRequestsFrom, putRequest, requestsFor } from "./share-people-store.ts";
+import { BACKFILL_MIGRATION, MAX_REQUESTS_PER_SENDER, REQUESTS_LISTED, acceptedSenderSql, ensureSharePeopleSchema, landRequestsFrom, putRequest, requestsFor, waitingOn } from "./share-people-store.ts";
 
 function legacyDatabase() {
   const db = new Database(":memory:");
@@ -43,7 +43,7 @@ test("everyone who shares with somebody today is accepted, once per pair, Markdo
     .prepare(`SELECT COUNT(*) AS n FROM shares s JOIN docs d ON d.id = s.doc_id WHERE ${acceptedSenderSql("s.user_id", "d.owner_id")}`)
     .get() as { n: number };
   assert.equal(readable.n, 3);
-  assert.deepEqual(requestsFor(db, "ben"), []);
+  assert.deepEqual(requestsFor(db, "ben"), { requests: [], total: 0 });
 });
 
 test("running it again changes nothing, and a share made after it is a request outside shares", () => {
@@ -57,7 +57,7 @@ test("running it again changes nothing, and a share made after it is a request o
   ensureSharePeopleSchema(db);
   ensureSharePeopleSchema(db);
   assert.deepEqual(accepted(db), ["ann<-dan", "cat<-ben"]);
-  assert.deepEqual(requestsFor(db, "dan").map((r) => [r.docId, r.sender.id]), [["d4", "cat"]]);
+  assert.deepEqual(requestsFor(db, "dan").requests.map((r) => [r.docId, r.sender.id]), [["d4", "cat"]]);
   assert.deepEqual(db.prepare("SELECT * FROM shares WHERE user_id = 'dan'").all(), [], "a request is no row in shares");
 });
 
@@ -75,12 +75,10 @@ test("accepting moves a request into shares, with its invite token", () => {
   assert.deepEqual(db.prepare("SELECT * FROM share_requests").all(), []);
 });
 
-test("rows an earlier build left in shares and dp_members as hidden requests move out, once", () => {
+test("rows written to shares or dp_members for someone who has not accepted move out on every start", () => {
   const db = legacyDatabase();
   ensureSharePeopleSchema(db);
-  // A database that ran the backfill under the earlier build, then got a
-  // share to someone who never accepted, stored in shares as that build did.
-  db.prepare("DELETE FROM share_people_migrations WHERE name = ?").run(MOVE_MIGRATION);
+  // An earlier build, or a rolled-back one, wrote shares straight in.
   db.prepare("INSERT INTO docs VALUES ('d4', 'cat', 'Four.md', NULL)").run();
   db.prepare("INSERT INTO shares VALUES ('d4', 'dan', 'editor', 'cat', '2026-11-16', 'tok')").run();
   db.prepare("INSERT INTO dp_documents VALUES ('f2', 'cat', 'Sheet.rtf')").run();
@@ -97,7 +95,62 @@ test("rows an earlier build left in shares and dp_members as hidden requests mov
   );
   // Accepted shares stay where they are.
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM shares").get() as { n: number }).n, 3);
-  assert.ok(db.prepare("SELECT 1 FROM share_people_migrations WHERE name = ?").get(MOVE_MIGRATION));
+});
+
+test("rolled back then forward: a share an old build wrote becomes a request again, and the newest role wins", () => {
+  const db = legacyDatabase();
+  ensureSharePeopleSchema(db);
+  db.prepare("INSERT INTO docs VALUES ('d4', 'cat', 'Four.md', NULL)").run();
+  // On this build: Cat asks Dan as a viewer.
+  putRequest(db, { kind: "doc", docId: "d4", recipientId: "dan", senderId: "cat", role: "viewer", invitedBy: "cat" }, true);
+  db.prepare("UPDATE share_requests SET created_at = '2026-11-15T00:00:00.000Z'").run();
+  // Rolled back: the old build knows nothing of requests and writes Cat's
+  // newer share, as an editor, straight into shares.
+  db.prepare("INSERT INTO shares VALUES ('d4', 'dan', 'editor', 'cat', '2026-11-17T00:00:00.000Z', NULL)").run();
+  // Rolled forward: the next start moves it back.
+  ensureSharePeopleSchema(db);
+  assert.deepEqual(db.prepare("SELECT * FROM shares WHERE user_id = 'dan'").all(), [], "no orphan left in shares");
+  assert.deepEqual(requestsFor(db, "dan").requests.map((r) => [r.docId, r.role]), [["d4", "editor"]], "Dan sees it, with the newest role");
+  assert.deepEqual(waitingOn(db, "doc", "d4").map((r) => [r.user_id, r.role]), [["dan", "editor"]], "Cat's list shows Dan waiting");
+  // Cat re-shares as a viewer: that newest word wins again, and accepting lands it.
+  putRequest(db, { kind: "doc", docId: "d4", recipientId: "dan", senderId: "cat", role: "viewer", invitedBy: "cat" }, true);
+  landRequestsFrom(db, "dan", "cat");
+  assert.deepEqual(db.prepare("SELECT role FROM shares WHERE doc_id = 'd4' AND user_id = 'dan'").all(), [{ role: "viewer" }]);
+});
+
+test("one sender may keep only so many requests waiting on one person, and listings are bounded", () => {
+  const db = legacyDatabase();
+  ensureSharePeopleSchema(db);
+  for (let i = 0; i < MAX_REQUESTS_PER_SENDER + 5; i += 1) {
+    db.prepare("INSERT INTO docs VALUES (?, 'cat', ?, NULL)").run(`x${i}`, `Doc ${i}.md`);
+    const stored = putRequest(db, { kind: "doc", docId: `x${i}`, recipientId: "dan", senderId: "cat", role: "viewer", invitedBy: "cat" }, true);
+    assert.equal(stored, i < MAX_REQUESTS_PER_SENDER, `request ${i}`);
+  }
+  // A repeat of one already waiting is still allowed (a role change).
+  assert.equal(putRequest(db, { kind: "doc", docId: "x0", recipientId: "dan", senderId: "cat", role: "editor", invitedBy: "cat" }, true), true);
+  // Other senders' requests add up, and the listing returns the newest few with the total.
+  for (let i = 0; i < REQUESTS_LISTED; i += 1) {
+    const sender = `s${i}`;
+    db.prepare("INSERT INTO user VALUES (?, ?, ?, 1)").run(sender, sender, `${sender}@x.test`);
+    db.prepare("INSERT INTO docs VALUES (?, ?, 'Theirs.md', NULL)").run(`y${i}`, sender);
+    putRequest(db, { kind: "doc", docId: `y${i}`, recipientId: "dan", senderId: sender, role: "viewer", invitedBy: sender }, true);
+  }
+  const listed = requestsFor(db, "dan");
+  assert.equal(listed.requests.length, REQUESTS_LISTED);
+  assert.equal(listed.total, MAX_REQUESTS_PER_SENDER + REQUESTS_LISTED);
+});
+
+test("request names come back as bounded plain text, links and markup gone", () => {
+  const db = legacyDatabase();
+  ensureSharePeopleSchema(db);
+  db.prepare("UPDATE user SET name = ? WHERE id = 'cat'").run("Prize desk <b>visit</b> evil.test/claim");
+  db.prepare("INSERT INTO docs VALUES ('z1', 'cat', ?, NULL)").run(`Claim at https://evil.test/win <img src=x> ${"long ".repeat(80)}`);
+  putRequest(db, { kind: "doc", docId: "z1", recipientId: "dan", senderId: "cat", role: "viewer", invitedBy: "cat" }, true);
+  const [request] = requestsFor(db, "dan").requests;
+  for (const text of [request.name, request.sender.name ?? ""]) {
+    assert.ok(!/https?:|evil\.test|<|>/.test(text), text);
+  }
+  assert.ok(Array.from(request.name).length <= 120);
 });
 
 test("a fresh database starts with no accepted people and the backfill marked done", () => {

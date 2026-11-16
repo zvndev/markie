@@ -45,7 +45,7 @@ import { downloadFilename } from "./doc-meta.ts";
 import { privateShell, webAppAvailable, webAppShell } from "./web-app.ts";
 import { docsHostConfig, onApiHost } from "./docs-host.ts";
 import { platformAccessLevel } from "./document-platform-store.ts";
-import { requestsFor } from "./share-people-store.ts";
+import { requestFor } from "./share-people-store.ts";
 
 const db = openDatabase();
 
@@ -164,7 +164,7 @@ export async function resolveViewer(
     if (canReadLevel(level)) return { kind: "reader", canEdit: canEditLevel(level), userId: user.id };
     const platform = platformAccessLevel(db, docId, user.id);
     if (platform) return { kind: "reader", canEdit: platform !== "viewer", userId: user.id };
-    const request = requestsFor(db, user.id).find((r) => r.docId === docId);
+    const request = requestFor(db, user.id, docId);
     if (request) {
       return { kind: "request", senderName: request.sender.name, senderEmail: request.sender.email, docName: request.name };
     }

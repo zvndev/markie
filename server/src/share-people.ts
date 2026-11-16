@@ -19,8 +19,11 @@ import {
   ensureSharePeopleSchema,
   landRequestsFrom,
   peopleFor,
+  hasRequestFrom,
   removeRequest,
   removeFileSharesFromSender,
+  requestDocsFrom,
+  requestFor,
   requestsFor,
   senderState,
   setSenderState,
@@ -64,14 +67,14 @@ function cutOff(recipientId: string, docIds: string[]): void {
 export const people = new Hono();
 
 // Requests waiting for the caller: who wants to share what. Names the sender
-// (name and their account's address) and the file name, nothing of the
-// content.
+// (name and their account's address) and the file name as plain text, nothing
+// of the content. The newest REQUESTS_LISTED, with the total as `count`.
 people.get("/requests", async (c) => {
   c.header("Cache-Control", "private, no-store");
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
-  const requests = requestsFor(db, user.id);
-  return c.json({ requests, count: requests.length });
+  const { requests, total } = requestsFor(db, user.id);
+  return c.json({ requests, count: total });
 });
 
 // Accepted people and blocked people.
@@ -90,7 +93,7 @@ people.post("/requests/:docId/decline", async (c) => {
   const docId = c.req.param("docId");
   if (!validId(docId)) return c.json(NOT_FOUND, 404);
   const declined = db.transaction(() => {
-    const request = requestsFor(db, user.id).find((r) => r.docId === docId);
+    const request = requestFor(db, user.id, docId);
     if (!request) return false;
     if (request.kind === "doc") pendingStore.revokeMember(docId, user.id);
     else removeRequest(db, "file", docId, user.id);
@@ -110,7 +113,7 @@ people.post("/:senderId/accept", async (c) => {
   const senderId = c.req.param("senderId");
   if (!validId(senderId) || senderId === user.id) return c.json(NOT_FOUND, 404);
   const landed = db.transaction(() => {
-    if (!requestsFor(db, user.id).some((r) => r.sender.id === senderId)) return null;
+    if (!hasRequestFrom(db, user.id, senderId)) return null;
     setSenderState(db, user.id, senderId, "accepted");
     const moved = landRequestsFrom(db, user.id, senderId);
     return [...moved.docs, ...moved.files];
@@ -135,7 +138,7 @@ people.post("/:senderId/block", async (c) => {
     if (state === "blocked") return [];
     let dropped: string[] = [];
     if (state === "accepted") dropped = dropSharesFrom(user.id, senderId);
-    else if (!requestsFor(db, user.id).some((r) => r.sender.id === senderId)) return null;
+    else if (!hasRequestFrom(db, user.id, senderId)) return null;
     setSenderState(db, user.id, senderId, "blocked");
     return dropped;
   }).immediate();
@@ -144,14 +147,22 @@ people.post("/:senderId/block", async (c) => {
   return c.json({ ok: true });
 });
 
-// Unblock: back to having said nothing. Anything they shared while blocked
-// shows up as a request again; nothing lands without an accept.
+// Unblock: back to having said nothing. Nothing sent during the block ever
+// reaches the caller: the requests kept for the sender's "waiting" view are
+// deleted now, fenced like a decline, so the sender sees an ordinary decline.
+// Later shares from them arrive as normal requests.
 people.post("/:senderId/unblock", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const senderId = c.req.param("senderId");
   if (!validId(senderId)) return c.json(NOT_FOUND, 404);
-  const cleared = db.transaction(() => clearSenderState(db, user.id, senderId, "blocked")).immediate();
+  const cleared = db.transaction(() => {
+    if (senderState(db, user.id, senderId) !== "blocked") return false;
+    const held = requestDocsFrom(db, user.id, senderId);
+    for (const docId of held.docs) pendingStore.revokeMember(docId, user.id);
+    for (const docId of held.files) removeRequest(db, "file", docId, user.id);
+    return clearSenderState(db, user.id, senderId, "blocked");
+  }).immediate();
   if (!cleared) return c.json(NOT_FOUND, 404);
   return c.json({ ok: true });
 });

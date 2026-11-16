@@ -33,6 +33,7 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { app } = await import("./index.ts");
 const { attachCollab } = await import("./collab.ts");
 const { resetInviteLimitsForTests } = await import("./shares.ts");
+const { MAX_REQUESTS_PER_SENDER } = await import("./share-people-store.ts");
 const Database = (await import("better-sqlite3")).default;
 const db = new Database(process.env.DB_PATH);
 
@@ -332,11 +333,19 @@ test("blocking is silent: the sender sees the same waiting state, later shares s
 
   const people = await call<{ blocked: Array<{ id: string }> }>("GET", "/api/people", dave.token);
   assert.deepEqual(people.data.blocked.map((p) => p.id), [owner.id]);
-  // Unblocking puts what they sent back as requests; nothing lands by itself.
+  // Unblocking never delivers what was sent during the block: those requests
+  // are deleted, which the owner sees as an ordinary decline.
   assert.equal((await call("POST", `/api/people/${owner.id}/unblock`, dave.token)).status, 200);
-  assert.deepEqual((await requestsOf(dave)).requests.map((r) => r.docId).sort(), [id, later].sort());
+  assert.equal((await requestsOf(dave)).count, 0);
+  assert.ok(!(await membersOf(owner, id)).some((m) => m.user_id === dave.id), "the owner sees a decline");
+  assert.ok(!(await membersOf(owner, later)).some((m) => m.user_id === dave.id));
   assert.equal((await call("GET", `/api/docs/${id}`, dave.token)).status, 404);
   assert.equal((await call("POST", `/api/people/${owner.id}/unblock`, dave.token)).status, 404, "not blocked any more");
+  // A share after the unblock arrives as a normal request.
+  mail.length = 0;
+  assert.equal(await share(owner, later, dave.email), "requested");
+  assert.equal(mail.filter((m) => m.to === dave.email).length, 1);
+  assert.deepEqual((await requestsOf(dave)).requests.map((r) => r.docId), [later]);
 });
 
 test("a server from before this rule would find nothing: no request or blocked share is a row in shares or dp_members", async () => {
@@ -498,4 +507,54 @@ test("a document-platform file shared by someone not accepted is a request too",
   assert.equal((await call("PUT", placement, hana.token, { areaId: area.id })).status, 200, "once accepted, she can");
   assert.equal((await call("DELETE", `/api/people/${owner.id}`, hana.token)).status, 200);
   assert.equal((await call("GET", `/api/document-platform/documents/${file}`, hana.token)).status, 404);
+});
+
+test("one owner can keep only so many requests waiting on one person, blocked or not, with the same answer", async () => {
+  resetInviteLimitsForTests();
+  const kim = await user("Kim");
+  const lee = await user("Lee");
+  const docsFor = async (prefix: string) => {
+    const ids: string[] = [];
+    for (let i = 0; i <= MAX_REQUESTS_PER_SENDER; i += 1) {
+      const id = `${prefix}-${i}-${stamp}`;
+      await putDoc(owner, id, `Cap ${i}.md`);
+      ids.push(id);
+    }
+    return ids;
+  };
+  // Lee blocks Owner after the first request; Kim never answers.
+  const leeDocs = await docsFor("people-cap-lee");
+  assert.equal(await share(owner, leeDocs[0], lee.email), "requested");
+  assert.equal((await call("POST", `/api/people/${owner.id}/block`, lee.token)).status, 200);
+  const kimDocs = await docsFor("people-cap-kim");
+  for (const [who, ids] of [[kim, kimDocs], [lee, leeDocs]] as const) {
+    for (const id of ids.slice(0, MAX_REQUESTS_PER_SENDER)) {
+      const res = await call("POST", `/api/docs/${id}/shares`, owner.token, { email: who.email, role: "viewer" });
+      assert.equal(res.status, 200, res.text);
+    }
+    const over = await call<{ error: string }>("POST", `/api/docs/${ids[MAX_REQUESTS_PER_SENDER]}/shares`, owner.token, { email: who.email, role: "viewer" });
+    assert.equal(over.status, 429, `${who.email}: ${over.text}`);
+    assert.match(over.data.error, /waiting/);
+  }
+  resetInviteLimitsForTests();
+});
+
+test("adding someone to a file spends the same invitation budget as sharing a document", async () => {
+  resetInviteLimitsForTests();
+  const mo = await user("Mo");
+  const bytes = Buffer.from(String.raw`{\rtf1\ansi budget\par}`, "utf8");
+  const created = await call<{ document: { id: string } }>("POST", "/api/document-platform/documents", owner.token, {
+    schemaVersion: 2, name: "Budget.rtf", format: "rtf", encoding: "base64", data: bytes.toString("base64"),
+    sha256: createHash("sha256").update(bytes).digest("hex"), baseVersion: 0,
+  });
+  const file = created.data.document.id;
+  let refused: { status: number; text: string } | null = null;
+  for (let i = 0; i < 40 && !refused; i += 1) {
+    const res = await call("POST", `/api/document-platform/documents/${file}/members`, owner.token, { email: mo.email, role: i % 2 ? "editor" : "viewer" });
+    if (res.status === 429) refused = res;
+    else assert.ok(res.status < 300, res.text);
+  }
+  assert.ok(refused, "the per-recipient daily budget refuses at some point");
+  assert.match(refused.text, /Too many invitations/);
+  resetInviteLimitsForTests();
 });

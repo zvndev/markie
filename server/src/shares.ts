@@ -22,6 +22,7 @@ import {
   acceptedSenderSql,
   docRequestedSql,
   ensureSharePeopleSchema,
+  RequestLimitError,
   removeDocRequests,
   senderState,
   waitingOn,
@@ -29,6 +30,15 @@ import {
 
 const db = openDatabase();
 const inviteLimiter = createInviteLimiter();
+/**
+ * The same per-inviter, per-recipient invitation budget, for the document
+ * platform's member route (index.ts), so adding someone to a file counts
+ * against it exactly as sharing a Markdown document does.
+ */
+export function takeInviteAllowance(inviterId: string, recipient: string) {
+  return inviteLimiter.take(inviterId, recipient);
+}
+
 /** Test seam: suites that invite more than a day's worth start each test clean. */
 export function resetInviteLimitsForTests(): void {
   inviteLimiter.reset();
@@ -431,7 +441,15 @@ shares.post("/:id/shares", async (c) => {
   const inviter = plainEmailText(user.name ?? "", 60) || user.email;
   const docName = plainEmailText(doc.name, 120) || "a document";
 
-  const recipient = pendingStore.shareWithEmail(docId, cleanEmail, role, user.id);
+  let recipient: ReturnType<typeof pendingStore.shareWithEmail>;
+  try {
+    recipient = pendingStore.shareWithEmail(docId, cleanEmail, role, user.id);
+  } catch (err) {
+    // The same refusal whether or not they blocked the owner: the cap counts
+    // hidden requests too.
+    if (err instanceof RequestLimitError) return c.json({ error: err.message }, 429);
+    throw err;
+  }
   if (recipient?.id === user.id) return c.json({ error: "That's you" }, 400);
 
   if (recipient && senderState(db, recipient.id, user.id) !== "accepted") {

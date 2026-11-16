@@ -199,10 +199,12 @@ export function ShareDialog({
     const failed: { email: string; error: string }[] = [];
     const invited: string[] = [];
     const shared: string[] = [];
+    const requested: string[] = [];
     for (const target of toSend) {
       const res = await sharesClient.add(docId, target, role);
       if (!res.ok) failed.push({ email: target, error: res.error ?? "Couldn't share the doc" });
       else if (res.status === "invited") invited.push(target);
+      else if (res.status === "requested") requested.push(target);
       else shared.push(target);
     }
     setBusy(false);
@@ -219,15 +221,22 @@ export function ShareDialog({
     }
     const lines: string[] = [];
     if (shared.length) lines.push(`Shared with ${listOf(shared)}.`);
+    if (requested.length) {
+      lines.push(
+        `Asked ${listOf(requested)}. It reaches ${
+          requested.length === 1 ? "them" : "each of them"
+        } once they accept you in Markie.`
+      );
+    }
     if (invited.length) {
       lines.push(
         `Invited ${listOf(invited)}. ${
           invited.length === 1 ? "They get" : "Each gets"
-        } an email, and it lands in their Library when they join.`
+        } an email, and it reaches them once they join and accept you.`
       );
     }
     if (lines.length) setFlash(lines.join(" "));
-    if (shared.length || invited.length) {
+    if (shared.length || invited.length || requested.length) {
       await load();
       onChanged();
     }
@@ -528,6 +537,7 @@ export function ShareDialog({
                     avatarName={m.name || m.email}
                     role={m.role === "editor" ? "editor" : "viewer"}
                     pending={m.pending}
+                    waiting={m.waiting}
                     busy={rowBusy === key}
                     onRoleChange={
                       canManage ? (next) => changeRole(key, m.email, next) : undefined
@@ -689,6 +699,7 @@ function MemberRow({
   avatarName,
   role,
   pending,
+  waiting,
   busy,
   onRoleChange,
   onRemove,
@@ -700,6 +711,8 @@ function MemberRow({
   // label rather than a choice.
   role: Role | "owner";
   pending?: boolean;
+  // Has an account, has not accepted the owner yet: nothing reached them.
+  waiting?: boolean;
   busy?: boolean;
   onRoleChange?: (next: Role) => void;
   onRemove?: () => void;
@@ -707,13 +720,13 @@ function MemberRow({
   const label = role === "owner" ? "Owner" : role === "editor" ? "Editor" : "Viewer";
   return (
     <div className="markie-share-row">
-      <Avatar name={avatarName} pending={pending} />
+      <Avatar name={avatarName} pending={pending || waiting} />
       <div className="min-w-0 flex-1">
         <div className="markie-share-name truncate">{name}</div>
         {/* An invited person has no access at all until they sign up. Saying
             "Viewer" alone reads as though they already have it. */}
         <div className="markie-share-sub truncate">
-          {pending ? "Invited, not joined yet" : email}
+          {pending ? "Invited, not joined yet" : waiting ? "Waiting for them to accept" : email}
         </div>
       </div>
       {role !== "owner" && onRoleChange ? (

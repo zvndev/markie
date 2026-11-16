@@ -89,6 +89,9 @@ historicalClaim("doc-stolen", "victim@corp.test", "thief");
 addUser("rightful", "rightful@corp.test", 1, BEFORE);
 addDoc("doc-claimed");
 addPending("doc-claimed", "rightful@corp.test", "editor", "owner");
+// Rightful already accepts Owner (share-people-store.ts), so the claim lands
+// as a share, the shape this audit reads.
+db.prepare("INSERT INTO share_people (recipient_id, sender_id, state, updated_at) VALUES ('rightful', 'owner', 'accepted', ?)").run(BEFORE);
 claimPendingInvites("rightful@corp.test", "rightful");
 
 // An invite nobody has claimed yet.

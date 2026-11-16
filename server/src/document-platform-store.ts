@@ -1,8 +1,10 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { CloudAreaError, type CloudAreasStore } from "./cloud-areas.ts";
-import { acceptedSenderSql, ensureSharePeopleSchema } from "./share-people-store.ts";
+import { acceptedSenderSql, ensureSharePeopleSchema, putRequest, removeDocRequests, removeRequest, senderState } from "./share-people-store.ts";
 
-// A dp_members row counts only once its member accepted the file's owner.
+// A member who has not accepted the file's owner gets a request in
+// share_requests, never a dp_members row (share-people-store.ts). The gate
+// below stays on every dp_members read as defense in depth.
 const MEMBER_ACCEPTED = acceptedSenderSql("m.user_id", "d.owner_id");
 
 /** Ordinary byte snapshots only. This is neither vault transport nor live CRDT merging. */
@@ -256,7 +258,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     remove(userId, id, baseVersion) {
       transaction(() => {
         const { row } = access(userId, id, "owner"); checkVersion(row, baseVersion);
-        db.prepare("DELETE FROM dp_links WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_members WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_history WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_documents WHERE id = ?").run(id);
+        db.prepare("DELETE FROM dp_links WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_members WHERE doc_id = ?").run(id); removeDocRequests(db, "file", id); db.prepare("DELETE FROM dp_history WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_documents WHERE id = ?").run(id);
       });
     },
     history(userId, id) {
@@ -272,9 +274,11 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     },
     members(userId, id) {
       access(userId, id, "owner");
-      // waiting: the member has not accepted the owner (or blocked them, which
-      // looks the same on purpose), so the file is not in their Markie yet.
-      return (db.prepare(`SELECT m.user_id,u.email,m.role,m.created_at,${MEMBER_ACCEPTED} AS accepted FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id JOIN "user" u ON u.id = m.user_id WHERE m.doc_id = ? ORDER BY m.created_at,m.user_id LIMIT ?`).all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: number; accepted: number }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: r.created_at, waiting: !r.accepted }));
+      // waiting: a request (share_requests) the member has not accepted, or
+      // has blocked, which looks the same on purpose. Not in their Markie yet.
+      const members = (db.prepare(`SELECT m.user_id,u.email,m.role,m.created_at FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id JOIN "user" u ON u.id = m.user_id WHERE m.doc_id = ? AND ${MEMBER_ACCEPTED} ORDER BY m.created_at,m.user_id LIMIT ?`).all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: number }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: r.created_at, waiting: false }));
+      const waiting = (db.prepare(`SELECT r.recipient_id AS user_id,u.email,r.role,r.created_at FROM share_requests r JOIN "user" u ON u.id = r.recipient_id WHERE r.kind = 'file' AND r.doc_id = ? ORDER BY r.created_at,r.recipient_id LIMIT ?`).all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: string }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: Date.parse(r.created_at), waiting: true }));
+      return [...members, ...waiting].slice(0, limits.maxMembersPerDocument);
     },
     addMember(userId, id, input) {
       transaction(() => {
@@ -291,14 +295,16 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
           : db.prepare(typeof v.userId === "string" ? 'SELECT id FROM "user" WHERE id = ? AND emailVerified = 1' : 'SELECT id FROM "user" WHERE lower(email) = lower(?) AND emailVerified = 1').get(reference)) as { id: string } | undefined;
         if (!member) platformFail("not-found", 404, "No verified existing account matches that reference.");
         if (member.id === row.owner_id) platformFail("invalid-request", 400, "The document owner's role cannot be changed.");
-        const count = db.prepare("SELECT COUNT(*) AS count FROM dp_members WHERE doc_id = ? AND user_id != ?").get(id, member.id) as { count: number };
+        const count = db.prepare("SELECT (SELECT COUNT(*) FROM dp_members WHERE doc_id = ? AND user_id != ?) + (SELECT COUNT(*) FROM share_requests WHERE kind = 'file' AND doc_id = ? AND recipient_id != ?) AS count").get(id, member.id, id, member.id) as { count: number };
         if (count.count >= limits.maxMembersPerDocument) platformFail("limit-exceeded", 413, "Document member limit reached.");
         // This is an explicit document-owner command, not a passive invitation
         // claim. Resolving an alias must not suppress the requested role edit.
-        db.prepare("INSERT INTO dp_members(doc_id,user_id,role,created_at) VALUES(?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role = excluded.role").run(id, member.id, v.role as string, now());
+        // Only for someone who accepted the owner; anyone else gets a request.
+        if (senderState(db, member.id, row.owner_id) === "accepted") db.prepare("INSERT INTO dp_members(doc_id,user_id,role,created_at) VALUES(?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role = excluded.role").run(id, member.id, v.role as string, now());
+        else putRequest(db, { kind: "file", docId: id, recipientId: member.id, senderId: row.owner_id, role: v.role as "viewer" | "editor", invitedBy: row.owner_id }, true);
       });
     },
-    removeMember(userId, id, memberId) { transaction(() => { access(userId, id, "owner"); if (!memberId || memberId.length > 128) platformFail("invalid-request", 400, "Invalid member identifier."); db.prepare("DELETE FROM dp_members WHERE doc_id = ? AND user_id = ?").run(id, memberId); }); },
+    removeMember(userId, id, memberId) { transaction(() => { access(userId, id, "owner"); if (!memberId || memberId.length > 128) platformFail("invalid-request", 400, "Invalid member identifier."); db.prepare("DELETE FROM dp_members WHERE doc_id = ? AND user_id = ?").run(id, memberId); removeRequest(db, "file", id, memberId); }); },
     createLink(userId, id, expiresInSeconds) {
       return transaction(() => {
         const { row } = access(userId, id, "owner");

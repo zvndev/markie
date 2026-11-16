@@ -523,6 +523,8 @@ test("the raw download enforces the same access as the page", async () => {
 test("the same token is returned on repeat, so a document has one link per person", async () => {
   const owner = await signUp("Owner", `dv.stable.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.stablebob.${stamp}@test.local`);
+  // A member's link lives on their share row, which exists once Bob accepts Owner.
+  acceptSender(bob.id, owner.id);
   const docId = `dv-stable-${stamp}`;
   await createDoc(owner.token, docId);
   const bobId = await shareWith(owner.token, docId, bob.email);

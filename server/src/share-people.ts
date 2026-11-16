@@ -17,7 +17,9 @@ import {
   clearSenderState,
   docsFromSender,
   ensureSharePeopleSchema,
+  landRequestsFrom,
   peopleFor,
+  removeRequest,
   removeFileSharesFromSender,
   requestsFor,
   senderState,
@@ -80,8 +82,8 @@ people.get("/", async (c) => {
   return c.json(peopleFor(db, user.id));
 });
 
-// Decline one request. The share row goes, fenced like an owner's own
-// removal; the sender can ask again later with a new share.
+// Decline one request. It goes, fenced like an owner's own removal for a
+// Markdown document; the sender can ask again later with a new share.
 people.post("/requests/:docId/decline", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
@@ -91,15 +93,16 @@ people.post("/requests/:docId/decline", async (c) => {
     const request = requestsFor(db, user.id).find((r) => r.docId === docId);
     if (!request) return false;
     if (request.kind === "doc") pendingStore.revokeMember(docId, user.id);
-    else db.prepare("DELETE FROM dp_members WHERE doc_id = ? AND user_id = ?").run(docId, user.id);
+    else removeRequest(db, "file", docId, user.id);
     return true;
   }).immediate();
   if (!declined) return c.json(NOT_FOUND, 404);
   return c.json({ ok: true });
 });
 
-// Accept a sender: every request from them becomes a real share at once, and
-// their later shares land directly. Only a sender with a request waiting can
+// Accept a sender: every request from them moves into real shares at once
+// (share_requests to shares and dp_members), and their later shares land
+// directly. Only a sender with a request waiting can
 // be accepted, so this route cannot be used to probe for accounts.
 people.post("/:senderId/accept", async (c) => {
   const user = await requireUser(c);
@@ -107,19 +110,21 @@ people.post("/:senderId/accept", async (c) => {
   const senderId = c.req.param("senderId");
   if (!validId(senderId) || senderId === user.id) return c.json(NOT_FOUND, 404);
   const landed = db.transaction(() => {
-    const mine = requestsFor(db, user.id).filter((r) => r.sender.id === senderId);
-    if (!mine.length) return null;
+    if (!requestsFor(db, user.id).some((r) => r.sender.id === senderId)) return null;
     setSenderState(db, user.id, senderId, "accepted");
-    return mine.map((r) => r.docId);
+    const moved = landRequestsFrom(db, user.id, senderId);
+    return [...moved.docs, ...moved.files];
   }).immediate();
   if (!landed) return c.json(NOT_FOUND, 404);
   return c.json({ ok: true, landed });
 });
 
 // Block a sender, whether their shares are still requests or already landed.
-// Requests stay where they are but never show again, and later shares from
-// them stay hidden too, so to the sender every one of them looks unanswered.
-// Shares that had landed leave at once, exactly as removing the person does.
+// Their requests leave the caller's view for good, and later shares from them
+// go nowhere the caller can see. The request rows stay in share_requests,
+// which grants nothing, only so the sender's own view still reads "waiting":
+// to them a block looks exactly like no answer. Shares that had landed leave
+// at once, exactly as removing the person does.
 people.post("/:senderId/block", async (c) => {
   const user = await requireUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);

@@ -18,7 +18,14 @@ import { brandEmailLogoUrl } from "./brand.ts";
 import { disconnectUser } from "./collab.ts";
 import { newLinkToken } from "./link-token.ts";
 import { createInviteLimiter, plainEmailText } from "./invite-guard.ts";
-import { acceptedSenderSql, ensureSharePeopleSchema, senderState } from "./share-people-store.ts";
+import {
+  acceptedSenderSql,
+  docRequestedSql,
+  ensureSharePeopleSchema,
+  removeDocRequests,
+  senderState,
+  waitingOn,
+} from "./share-people-store.ts";
 
 const db = openDatabase();
 const inviteLimiter = createInviteLimiter();
@@ -73,10 +80,12 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)");
 // its one-time backfill reads the shares that exist today.
 ensureSharePeopleSchema(db);
 
-// True when the share's recipient has accepted the document's owner. Every
-// query below that reads `shares` for a recipient carries it: a share from
-// someone the recipient has not accepted is a request, and a request reads,
-// lists, links and notifies nothing.
+// True when the share's recipient has accepted the document's owner. A share
+// from someone the recipient has not accepted is a request, kept in
+// share_requests and never in `shares` (share-people-store.ts), so this is
+// defense in depth: every query below that reads `shares` for a recipient
+// still carries it, and a row that got there without an accept grants
+// nothing.
 const ACCEPTED = acceptedSenderSql("s.user_id", "d.owner_id");
 
 // The link token for one member of one document, minted on first use. Kept on
@@ -222,7 +231,11 @@ export function sharedDocsFor(userId: string) {
 // holding the token, and a leaked token writing ![x](~/repo/.env) must not
 // make the desktop upload that file. origin_token_id never changes after
 // creation, so revoking the token does not make its text the owner's.
+//
+// A request counts too: it becomes a real share the moment its recipient
+// accepts, with no step by the owner, so the document is already out.
 export const AUDIENCE_SQL = `( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
+            OR ${docRequestedSql("d.id")}
             OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id)
             OR EXISTS (SELECT 1 FROM public_links l WHERE l.doc_id = d.id) )`;
 
@@ -262,11 +275,13 @@ export function docsSharedByMe(userId: string) {
   return db
     .prepare(
       `SELECT d.id, d.name, d.updated_at,
-              (SELECT COUNT(*) FROM shares s WHERE s.doc_id = d.id) AS member_count,
+              (SELECT COUNT(*) FROM shares s WHERE s.doc_id = d.id)
+                + (SELECT COUNT(*) FROM share_requests r WHERE r.kind = 'doc' AND r.doc_id = d.id) AS member_count,
               (SELECT COUNT(*) FROM pending_shares p WHERE p.doc_id = d.id) AS pending_count
        FROM docs d
        WHERE d.owner_id = ? AND d.deleted_at IS NULL
          AND ( EXISTS (SELECT 1 FROM shares s WHERE s.doc_id = d.id)
+            OR ${docRequestedSql("d.id")}
             OR EXISTS (SELECT 1 FROM pending_shares p WHERE p.doc_id = d.id) )
        ORDER BY d.updated_at DESC`
     )
@@ -296,6 +311,12 @@ export function shareContactsFor(userId: string, ownEmail?: string | null) {
            JOIN user u ON u.id = s.user_id
           WHERE d.owner_id = ? AND d.deleted_at IS NULL AND s.user_id <> ?
          UNION ALL
+         SELECT lower(u.email) AS email, NULLIF(u.name, '') AS name, r.created_at AS at
+           FROM share_requests r
+           JOIN docs d ON d.id = r.doc_id AND r.kind = 'doc'
+           JOIN user u ON u.id = r.recipient_id
+          WHERE d.owner_id = ? AND d.deleted_at IS NULL AND r.recipient_id <> ?
+         UNION ALL
          SELECT lower(p.email) AS email, NULL AS name, p.created_at AS at
            FROM pending_shares p
            JOIN docs d ON d.id = p.doc_id
@@ -312,7 +333,7 @@ export function shareContactsFor(userId: string, ownEmail?: string | null) {
        ORDER BY at DESC
        LIMIT ?`
     )
-    .all(userId, userId, userId, userId, userId, SHARE_CONTACTS_LIMIT + 1) as Array<{
+    .all(userId, userId, userId, userId, userId, userId, userId, SHARE_CONTACTS_LIMIT + 1) as Array<{
     email: string;
     name: string | null;
     at: string;
@@ -344,21 +365,22 @@ shares.get("/:id/shares", async (c) => {
   const docId = c.req.param("id");
   const level = accessLevel(docId, user.id);
   if (!canReadLevel(level)) return c.json({ error: "forbidden" }, 403);
-  // A member whose share is still a request (they have not accepted the
-  // owner yet, or never will) is the owner's to see, as waiting. Blocked and
-  // unanswered look the same here on purpose: the owner must not be able to
-  // tell that somebody blocked them. Other members see only real members.
+  // Somebody whose share is still a request (they have not accepted the
+  // owner yet, or never will) is the owner's to see, as waiting, read from
+  // share_requests. Blocked and unanswered look the same here on purpose:
+  // the owner must not be able to tell that somebody blocked them. Other
+  // members see only real members.
   const rows = db
     .prepare(
-      `SELECT s.user_id, s.role, s.created_at, u.email, u.name, ${ACCEPTED} AS accepted
+      `SELECT s.user_id, s.role, s.created_at, u.email, u.name
        FROM shares s JOIN user u ON u.id = s.user_id JOIN docs d ON d.id = s.doc_id
-       WHERE s.doc_id = ?`
+       WHERE s.doc_id = ? AND ${ACCEPTED}`
     )
-    .all(docId) as Array<Record<string, unknown> & { accepted: number }>;
+    .all(docId) as Array<Record<string, unknown>>;
   const owner = canManageLevel(level);
-  const members = rows
-    .filter((r) => owner || r.accepted)
-    .map(({ accepted, ...r }) => (owner ? { ...r, waiting: !accepted } : r));
+  const members = owner
+    ? [...rows.map((r) => ({ ...r, waiting: false })), ...waitingOn(db, "doc", docId).map((r) => ({ ...r, waiting: true }))]
+    : rows;
   // Pending invite emails are owner management state, not collaborator presence.
   const pending = canManageLevel(level)
     ? listPendingForDoc(docId).map((p) => ({
@@ -624,6 +646,8 @@ function addedHtml(
 
 // Every membership for a doc, dropped in one go when the owner deletes it, so
 // nobody keeps a seat at a row that no longer has content.
+// Requests on it go too.
 export function removeDocShares(docId: string): number {
+  removeDocRequests(db, "doc", docId);
   return db.prepare("DELETE FROM shares WHERE doc_id = ?").run(docId).changes;
 }

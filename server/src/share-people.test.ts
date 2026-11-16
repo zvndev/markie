@@ -339,6 +339,45 @@ test("blocking is silent: the sender sees the same waiting state, later shares s
   assert.equal((await call("POST", `/api/people/${owner.id}/unblock`, dave.token)).status, 404, "not blocked any more");
 });
 
+test("a server from before this rule would find nothing: no request or blocked share is a row in shares or dp_members", async () => {
+  // What an older build asks, word for word: its access check (shares.ts
+  // getShare before 2026-11-15), its Library listing, and the document
+  // platform's member read. A rollback must not hand any of this out.
+  const OLD_GET_SHARE = `SELECT s.role FROM shares s JOIN docs d ON d.id = s.doc_id
+                          WHERE s.doc_id = ? AND s.user_id = ? AND d.deleted_at IS NULL`;
+  const OLD_LIBRARY = `SELECT d.id FROM shares s JOIN docs d ON d.id = s.doc_id WHERE s.user_id = ? AND d.deleted_at IS NULL`;
+  const ivy = await user("Ivy");
+  const jack = await user("Jack");
+  const id = `people-old-query-${stamp}`;
+  await putDoc(owner, id);
+  const bytes = Buffer.from(String.raw`{\rtf1\ansi old-query\par}`, "utf8");
+  const created = await call<{ document: { id: string } }>("POST", "/api/document-platform/documents", owner.token, {
+    schemaVersion: 2, name: "Old.rtf", format: "rtf", encoding: "base64", data: bytes.toString("base64"),
+    sha256: createHash("sha256").update(bytes).digest("hex"), baseVersion: 0,
+  });
+  const file = created.data.document.id;
+  for (const who of [ivy, jack]) {
+    assert.equal(await share(owner, id, who.email), "requested");
+    assert.ok((await call("POST", `/api/document-platform/documents/${file}/members`, owner.token, { userId: who.id, role: "editor" })).status < 300);
+  }
+  // Jack blocks Owner; the sender shares again after the block.
+  assert.equal((await call("POST", `/api/people/${owner.id}/block`, jack.token)).status, 200);
+  assert.equal(await share(owner, id, jack.email, "viewer"), "requested");
+
+  for (const who of [ivy, jack]) {
+    assert.deepEqual(db.prepare("SELECT * FROM shares WHERE user_id = ?").all(who.id), [], `${who.email}: no shares row`);
+    assert.deepEqual(db.prepare("SELECT * FROM dp_members WHERE user_id = ?").all(who.id), [], `${who.email}: no dp_members row`);
+    assert.equal(db.prepare(OLD_GET_SHARE).get(id, who.id), undefined);
+    assert.deepEqual(db.prepare(OLD_LIBRARY).all(who.id), []);
+  }
+  // Ivy's request is waiting in its own table; accepting moves it.
+  assert.ok(db.prepare("SELECT 1 FROM share_requests WHERE recipient_id = ? AND doc_id = ?").get(ivy.id, id));
+  assert.equal((await call("POST", `/api/people/${owner.id}/accept`, ivy.token)).status, 200);
+  assert.equal(db.prepare(OLD_GET_SHARE).get(id, ivy.id) !== undefined, true, "accepted: now a real share");
+  assert.ok(db.prepare("SELECT 1 FROM dp_members WHERE user_id = ? AND doc_id = ?").get(ivy.id, file));
+  assert.deepEqual(db.prepare("SELECT COUNT(*) AS n FROM share_requests WHERE recipient_id = ?").get(ivy.id), { n: 0 }, "and leaves no request behind");
+});
+
 test("removing an accepted person takes everything they shared away at once, open sockets included", async () => {
   const id = `people-request-${stamp}`;
   const socket = await connect(id, bob.token);

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { BACKFILL_MIGRATION, acceptedSenderSql, ensureSharePeopleSchema, requestsFor } from "./share-people-store.ts";
+import { BACKFILL_MIGRATION, MOVE_MIGRATION, acceptedSenderSql, ensureSharePeopleSchema, landRequestsFrom, putRequest, requestsFor } from "./share-people-store.ts";
 
 function legacyDatabase() {
   const db = new Database(":memory:");
@@ -46,21 +46,58 @@ test("everyone who shares with somebody today is accepted, once per pair, Markdo
   assert.deepEqual(requestsFor(db, "ben"), []);
 });
 
-test("running it again changes nothing, and a share made after it stays a request", () => {
+test("running it again changes nothing, and a share made after it is a request outside shares", () => {
   const db = legacyDatabase();
   ensureSharePeopleSchema(db);
   // After the rule: Cat shares with Dan, and Dan has accepted nobody.
   db.prepare("INSERT INTO docs VALUES ('d4', 'cat', 'Four.md', NULL)").run();
-  db.prepare("INSERT INTO shares VALUES ('d4', 'dan', 'editor', 'cat', '2026-11-16', NULL)").run();
+  putRequest(db, { kind: "doc", docId: "d4", recipientId: "dan", senderId: "cat", role: "editor", invitedBy: "cat" }, true);
   // Ben removed Ann after the backfill; a re-run must not bring her back.
   db.prepare("DELETE FROM share_people WHERE recipient_id = 'ben' AND sender_id = 'ann'").run();
   ensureSharePeopleSchema(db);
   ensureSharePeopleSchema(db);
   assert.deepEqual(accepted(db), ["ann<-dan", "cat<-ben"]);
+  assert.deepEqual(requestsFor(db, "dan").map((r) => [r.docId, r.sender.id]), [["d4", "cat"]]);
+  assert.deepEqual(db.prepare("SELECT * FROM shares WHERE user_id = 'dan'").all(), [], "a request is no row in shares");
+});
+
+test("accepting moves a request into shares, with its invite token", () => {
+  const db = legacyDatabase();
+  ensureSharePeopleSchema(db);
+  db.prepare("INSERT INTO docs VALUES ('d4', 'cat', 'Four.md', NULL)").run();
+  db.prepare("INSERT INTO dp_documents VALUES ('f2', 'cat', 'Sheet.rtf')").run();
+  putRequest(db, { kind: "doc", docId: "d4", recipientId: "dan", senderId: "cat", role: "viewer", invitedBy: "cat", token: "invite-token" }, false);
+  putRequest(db, { kind: "file", docId: "f2", recipientId: "dan", senderId: "cat", role: "editor", invitedBy: "cat" }, true);
+  const moved = landRequestsFrom(db, "dan", "cat");
+  assert.deepEqual(moved, { docs: ["d4"], files: ["f2"] });
+  assert.deepEqual(db.prepare("SELECT doc_id, role, token FROM shares WHERE user_id = 'dan'").all(), [{ doc_id: "d4", role: "viewer", token: "invite-token" }]);
+  assert.deepEqual(db.prepare("SELECT doc_id, role FROM dp_members WHERE user_id = 'dan'").all(), [{ doc_id: "f2", role: "editor" }]);
+  assert.deepEqual(db.prepare("SELECT * FROM share_requests").all(), []);
+});
+
+test("rows an earlier build left in shares and dp_members as hidden requests move out, once", () => {
+  const db = legacyDatabase();
+  ensureSharePeopleSchema(db);
+  // A database that ran the backfill under the earlier build, then got a
+  // share to someone who never accepted, stored in shares as that build did.
+  db.prepare("DELETE FROM share_people_migrations WHERE name = ?").run(MOVE_MIGRATION);
+  db.prepare("INSERT INTO docs VALUES ('d4', 'cat', 'Four.md', NULL)").run();
+  db.prepare("INSERT INTO shares VALUES ('d4', 'dan', 'editor', 'cat', '2026-11-16', 'tok')").run();
+  db.prepare("INSERT INTO dp_documents VALUES ('f2', 'cat', 'Sheet.rtf')").run();
+  db.prepare("INSERT INTO dp_members VALUES ('f2', 'dan', 'viewer', 1794800000000)").run();
+  ensureSharePeopleSchema(db);
+  assert.deepEqual(db.prepare("SELECT * FROM shares WHERE user_id = 'dan'").all(), []);
+  assert.deepEqual(db.prepare("SELECT * FROM dp_members WHERE user_id = 'dan'").all(), []);
   assert.deepEqual(
-    requestsFor(db, "dan").map((r) => [r.docId, r.sender.id]),
-    [["d4", "cat"]]
+    db.prepare("SELECT kind, doc_id, sender_id, role, token FROM share_requests ORDER BY kind").all(),
+    [
+      { kind: "doc", doc_id: "d4", sender_id: "cat", role: "editor", token: "tok" },
+      { kind: "file", doc_id: "f2", sender_id: "cat", role: "viewer", token: null },
+    ]
   );
+  // Accepted shares stay where they are.
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM shares").get() as { n: number }).n, 3);
+  assert.ok(db.prepare("SELECT 1 FROM share_people_migrations WHERE name = ?").get(MOVE_MIGRATION));
 });
 
 test("a fresh database starts with no accepted people and the backfill marked done", () => {

@@ -43,13 +43,18 @@ export interface PublicLinkApi {
  * public link (server/src/public-links.ts). The sheet shows this instead.
  */
 export const LIVE_DOC_PRIVATE_LINE = "Live Docs are always private. Share with people instead.";
+/** A Live Doc that still has a public link, from before the rule or from a server that allows one. */
+export const LIVE_DOC_PUBLIC_LEFTOVER_LINE = "Anyone with its public link can still open this Live Doc. Live Docs should be private: turn the link off.";
 
 interface ShareSheetProps {
   title: string;
   people: SharePeopleApi;
-  /** Owner only, and only for a document that has a web page. Never for a Live Doc. */
+  /** Owner only, and only for a document that has a web page. */
   publicLink?: PublicLinkApi | null;
-  /** The document is a Live Doc: no public link, and one line that says so. */
+  /**
+   * The document is a Live Doc: never offered a public link. One line says so,
+   * and a link that exists anyway is shown with a way to turn it off.
+   */
   liveDoc?: boolean;
   canManage: boolean;
   /**
@@ -158,8 +163,8 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
       {notice ? <p className="m-share-notice" role="status">{notice}</p> : null}
       {error ? <p className="m-form-error" role="alert">{error}</p> : null}
 
-      {liveDoc && canManage ? <p className="m-group-footer" data-live-doc-private>{LIVE_DOC_PRIVATE_LINE}</p> : null}
-      {publicLink && canManage && !liveDoc ? <PublicLinkSection api={publicLink} title={title} onUnauthorized={onUnauthorized} onChanged={onChanged} /> : null}
+      {liveDoc && canManage && !publicLink ? <p className="m-group-footer" data-live-doc-private>{LIVE_DOC_PRIVATE_LINE}</p> : null}
+      {publicLink && canManage ? <PublicLinkSection api={publicLink} title={title} liveDoc={liveDoc} onUnauthorized={onUnauthorized} onChanged={onChanged} /> : null}
 
       <h3 className="m-group-heading">People with access</h3>
       <ul className="m-group m-share-people" aria-label="People with access">
@@ -217,7 +222,7 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
   );
 }
 
-function PublicLinkSection({ api, title, onUnauthorized, onChanged }: { api: PublicLinkApi; title: string; onUnauthorized: () => void; onChanged?: () => void }) {
+function PublicLinkSection({ api, title, liveDoc = false, onUnauthorized, onChanged }: { api: PublicLinkApi; title: string; liveDoc?: boolean; onUnauthorized: () => void; onChanged?: () => void }) {
   // undefined while asking; null when the document is private; "unknown"
   // when the answer never came, which is not the same as private.
   const [url, setUrl] = useState<string | null | undefined | "unknown">(undefined);
@@ -279,10 +284,21 @@ function PublicLinkSection({ api, title, onUnauthorized, onChanged }: { api: Pub
           </span>
           <span className="m-share-person-text">
             <span className="m-share-person-name">{url === undefined ? "Checking…" : url === "unknown" ? "Couldn't check" : isPublic ? "Public: anyone with the link" : "Private"}</span>
-            <span className="m-share-person-email">{url === "unknown" ? "It may be public or private." : isPublic ? "Anyone with the link can read it, no account needed." : "Only you and the people below can open it."}</span>
+            {liveDoc && url === null
+              ? <span className="m-share-person-email" data-live-doc-private>{LIVE_DOC_PRIVATE_LINE}</span>
+              : liveDoc && isPublic
+                ? <span className="m-share-person-email" data-live-doc-public-leftover>{LIVE_DOC_PUBLIC_LEFTOVER_LINE}</span>
+                : <span className="m-share-person-email">{url === "unknown" ? "It may be public or private." : isPublic ? "Anyone with the link can read it, no account needed." : "Only you and the people below can open it."}</span>}
           </span>
         </div>
-        {isPublic ? (
+        {liveDoc && isPublic ? (
+          // Never copied or sent again: the only action is to turn it off.
+          <div className="m-share-public-actions">
+            <button type="button" className="m-button m-button-small m-button-destructive" disabled={busy} onClick={() => {
+              void change(async () => { await api.revoke(); return null; });
+            }}>{busy ? "Turning off…" : "Turn off"}</button>
+          </div>
+        ) : isPublic ? (
           <>
             <p className="m-share-public-url m-selectable">{url}</p>
             <div className="m-share-public-actions">
@@ -298,7 +314,7 @@ function PublicLinkSection({ api, title, onUnauthorized, onChanged }: { api: Pub
           <div className="m-share-public-actions">
             <button type="button" className="m-button m-button-small m-button-secondary" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
           </div>
-        ) : url === null ? (
+        ) : url === null && !liveDoc ? (
           <div className="m-share-public-actions">
             <button type="button" className="m-button m-button-small m-button-secondary" disabled={busy} onClick={() => {
               if (!window.confirm("Make this document public? Anyone with the link will be able to read it without signing in.")) return;

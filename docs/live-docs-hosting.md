@@ -61,7 +61,8 @@ A Live Doc can never be public (product rule, 2026-11-15). There is no address t
 - The database enforces it too (`guardLiveDocsPrivate` in `public-links.ts`). A trigger refuses a `public_links` row for a darkmown document. Two more delete a document's link in the same statement that makes it darkmown, so a rename to `.wd`, a sync, an upload or an agent write cannot leave a Live Doc with a public link.
 - At start-up the server deletes any public link a darkmown document still holds from before the rule and logs how many it removed. Later starts find none.
 - Every `/s/<token>` route (the page, `?view=1`, `/raw`, `/links`, `/assets`, and `/api/public-links/<token>/editor`) answers a darkmown document with the same `404` as a token that never existed, even if a link row slipped past the guards.
-- The document platform (`/api/document-platform`) follows the same rule: no share link for a darkmown snapshot (`409 live-doc-private`), a save that turns a snapshot darkmown drops its links, a stray link serves `404`, and the store clears old ones when it starts.
+- The document platform (`/api/document-platform`) follows the same rule. A name ending in `.wd` is darkmown whatever format the client sends. A darkmown snapshot gets no share link (`409 live-doc-private`), a save that makes one darkmown drops its links, a stray link serves `404`, and the store clears old ones when it starts.
+- The clients still ask whether a `.wd` has a public link, because an older or self-hosted server may have made one. If it has, the desktop and web share dialog and the phone share sheet say so and offer Turn off. They never copy or send that link. `markie_cloud_public_link` reports it with a warning instead of `null`.
 - H2's public address, its stream pool, the publisher footer and the "link changed" revoke reason are deleted. The old `live_doc_public_addresses` table is dropped at start-up.
 
 ### Open tabs

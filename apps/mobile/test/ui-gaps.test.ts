@@ -167,7 +167,27 @@ describe("the share sheet for a Live Doc", () => {
     expect(LIVE_DOC_PRIVATE_LINE).toBe("Live Docs are always private. Share with people instead.");
     expect(page.querySelector("[data-live-doc-private]")?.textContent).toBe(LIVE_DOC_PRIVATE_LINE);
     expect(page.textContent).not.toContain("Make public");
-    expect(publicLink.get).not.toHaveBeenCalled();
+    expect(publicLink.get).toHaveBeenCalled();
+  });
+
+  it("shows a Live Doc's leftover public link with Turn off, never Copy or Send", async () => {
+    const { ShareSheet, LIVE_DOC_PUBLIC_LEFTOVER_LINE } = await import("../src/components/share-sheet");
+    const leftover = { get: vi.fn(async () => "https://markiedocs.com/s/old"), create: vi.fn(async () => "x"), revoke: vi.fn(async () => {}) };
+    const page = await mount(createElement(ShareSheet, {
+      title: "Team.wd", people, publicLink: leftover, liveDoc: true, canManage: true, me: { email: "o@example.com", name: "O" },
+      link: null, onClose: () => {}, onUnauthorized: () => {},
+    }));
+    expect(page.querySelector("[data-live-doc-public-leftover]")?.textContent).toBe(LIVE_DOC_PUBLIC_LEFTOVER_LINE);
+    const buttons = [...page.querySelectorAll("button")].map((button) => button.textContent);
+    expect(buttons).toContain("Turn off");
+    expect(buttons).not.toContain("Copy link");
+    expect(buttons).not.toContain("Send");
+    expect(page.textContent).not.toContain("https://markiedocs.com/s/old");
+    const off = [...page.querySelectorAll("button")].find((button) => button.textContent === "Turn off")!;
+    await act(async () => { off.click(); });
+    for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+    expect(leftover.revoke).toHaveBeenCalled();
+    expect(page.querySelector("[data-live-doc-private]")).not.toBeNull();
   });
 
   it("keeps the public link for a Markdown document", async () => {

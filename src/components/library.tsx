@@ -488,8 +488,8 @@ export function Library({
 
   // Nightly: a cloud .wd's own hosted address (server/src/live-docs.ts). It
   // opens, after signing in, for the owner and everyone the document is
-  // shared with, on any device. The owner also gets the public address while
-  // the document's public link is on.
+  // shared with, on any device. A Live Doc is never public, so there is no
+  // other address.
   const liveDocAddress = async (item: LibraryItem): Promise<LiveDocAddress | null> => {
     if (!item.cloudId) return null;
     const address = await sharesClientFor(item.server).liveDocAddress(item.cloudId).catch(() => null);

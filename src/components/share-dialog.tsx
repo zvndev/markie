@@ -10,7 +10,7 @@ import { docLinkOrigin } from "@/lib/cloud-origin";
 import { localAssetCount } from "@/lib/attach";
 import { colorForName, initials } from "@/lib/collab";
 import { shareMembersEmptyLine } from "@/lib/share-access-view";
-import { LIVE_DOC_PRIVATE_LINE, isLiveDocName, roleDescription } from "@/lib/general-access";
+import { LIVE_DOC_PRIVATE_LINE, LIVE_DOC_PUBLIC_LEFTOVER_LINE, isLiveDocName, roleDescription } from "@/lib/general-access";
 import { getElectronAPI } from "@/lib/electron";
 
 // Shaped after Google Docs' share dialog, because that is the one people
@@ -84,7 +84,9 @@ export function ShareDialog({
   // Which person's row is mid-change, so only that row shows it.
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   // A .wd is a Live Doc, and a Live Doc is never public: the server refuses
-  // its public link, so the dialog does not offer one.
+  // its public link, so the dialog does not offer one. It still asks whether
+  // one exists, because an older or self-hosted server may have made one, and
+  // the owner must see it and be able to turn it off.
   const isLiveDoc = isLiveDocName(fileName);
 
   const load = useCallback(() => {
@@ -95,14 +97,14 @@ export function ShareDialog({
     return Promise.all([
       accessRequest,
       sharesClient.list(docId),
-      accessRequest.then((a) => (a?.canManage && !isLiveDoc ? sharesClient.getPublicLink(docId) : null)),
+      accessRequest.then((a) => (a?.canManage ? sharesClient.getPublicLink(docId) : null)),
     ]).then(([nextAccess, list, url]) => {
       setAccess(nextAccess);
       setMembers(list ?? []);
       setPublicUrl(url);
       setLoaded(true);
     });
-  }, [docId, sharesClient, isLiveDoc]);
+  }, [docId, sharesClient]);
 
   useEffect(() => {
     load();
@@ -284,7 +286,8 @@ export function ShareDialog({
   // The link Copy hands out: the public page when anyone may open it, and
   // otherwise the document's own page, which opens for the people above.
   const privateUrl = `${docLinkOrigin(server ?? getServerURL())}/d/${encodeURIComponent(docId)}`;
-  const linkToCopy = publicUrl ?? privateUrl;
+  // A Live Doc's leftover public link is never handed out again.
+  const linkToCopy = isLiveDoc ? privateUrl : publicUrl ?? privateUrl;
 
   const copyLink = () => {
     navigator.clipboard.writeText(linkToCopy).then(
@@ -551,7 +554,25 @@ export function ShareDialog({
         {canManage && (
         <div className="markie-share-section" data-markie-general-access>
           <div className="markie-share-label">General access</div>
-          {isLiveDoc ? (
+          {isLiveDoc && generalIsPublic ? (
+          <div className="markie-share-general" data-markie-live-public-leftover>
+            <span className="markie-share-general-icon" data-public="true" aria-hidden="true">
+              <GlobeIcon />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div>Anyone with the link</div>
+              <div className="markie-share-sub" data-markie-access-line>{linkBusy ? "Updating…" : LIVE_DOC_PUBLIC_LEFTOVER_LINE}</div>
+            </div>
+            <button
+              type="button"
+              disabled={linkBusy}
+              onClick={() => void setGeneralAccess("restricted")}
+              className="markie-overlay-button markie-share-btn shrink-0"
+            >
+              Turn off
+            </button>
+          </div>
+          ) : isLiveDoc ? (
           <div className="markie-share-general" data-markie-live-private>
             <span className="markie-share-general-icon" data-public="false" aria-hidden="true">
               <LockIcon />

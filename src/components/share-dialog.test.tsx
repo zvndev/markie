@@ -295,9 +295,23 @@ describe("ShareDialog", () => {
         expect(await field()).toBeInTheDocument();
         unmount();
       }
-      expect(getPublicLink).not.toHaveBeenCalled();
       expect(createPublicLink).not.toHaveBeenCalled();
       expect(liveDocAddress).not.toHaveBeenCalled();
+    });
+
+    it("shows a Live Doc's leftover public link with a way to turn it off, and never copies it", async () => {
+      const user = userEvent.setup();
+      const writeText = stubClipboard();
+      getPublicLink.mockResolvedValue("https://markie.app/s/old");
+      renderDialog({ fileName: "team.wd" });
+      expect(await screen.findByText(/Anyone with its public link can still open this Live Doc\. Live Docs should be private/)).toBeInTheDocument();
+      expect(getPublicLink).toHaveBeenCalledWith("doc-1");
+      await user.click(screen.getByRole("button", { name: "Copy link" }));
+      expect(writeText).toHaveBeenCalledWith("https://api.markie.test/d/doc-1");
+      await user.click(screen.getByRole("button", { name: "Turn off" }));
+      expect(revokePublicLink).toHaveBeenCalledWith("doc-1");
+      expect(await screen.findByText("Live Docs are always private. Share with people instead.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Turn off" })).toBeNull();
     });
 
     it("keeps Anyone with the link for a Markdown document", async () => {

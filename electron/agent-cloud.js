@@ -147,6 +147,9 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
   // with live-doc-private (server/src/public-links.ts). Said before asking the
   // user, so nobody is asked to confirm something that cannot happen.
   const LIVE_DOC_PRIVATE = "Live Docs can't be public. Share it with people instead.";
+  // A link an older or self-hosted server gave a Live Doc is reported as it
+  // is, never hidden, with what to do about it.
+  const LIVE_DOC_PUBLIC_LEFTOVER = "This Live Doc still has a public link, and anyone holding it can open it. Live Docs should be private: tell the user, and turn it off with markie_cloud_revoke_public_link if they agree. Do not share this link.";
   const isLiveDoc = (doc) => /\.wd$/i.test(doc.name);
 
   async function cloudApi(row, method, suffix) {
@@ -163,11 +166,12 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
     requireUnlocked();
     const doc = resolveDoc(p);
     const row = linkedRow(doc);
+    const current = await cloudApi(row, "GET");
     if (isLiveDoc(doc)) {
+      if (current.url) return { ...describe(doc), publicLink: current.url, warning: LIVE_DOC_PUBLIC_LEFTOVER };
       if (create) throw new Error(LIVE_DOC_PRIVATE);
       return { ...describe(doc), publicLink: null };
     }
-    const current = await cloudApi(row, "GET");
     if (current.url || !create) return { ...describe(doc), publicLink: current.url || null };
     const answer = await confirm({ kind: "public", name: doc.name, path: doc.path });
     if (!answer.allowed) throw new Error("The user declined to make a public link.");

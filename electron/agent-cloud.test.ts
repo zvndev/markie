@@ -235,14 +235,29 @@ describe("agent cloud: public links", () => {
   });
 
   it("never makes a public link for a .wd, and never asks the user to confirm one", async () => {
-    const api = vi.fn(async () => ({ status: 200, data: { url: "https://markiedocs.com/s/wd1" } }));
+    const api = vi.fn(async (method: string) => (method === "GET" ? { status: 200, data: { url: null } } : { status: 200, data: { url: "https://markiedocs.com/s/wd1" } }));
     const t = setup({ api, perms: { cloudSync: "always" }, answers: [{ allowed: true, always: true }] });
     const p = t.file("Plan.wd", "<Counter />\n");
     t.rows.set(p, { cloud_doc_id: "doc-1", sync_state: "synced" });
     await expect(t.cloud.cloud_public_link({ path: p, create: true })).rejects.toThrow("Live Docs can't be public. Share it with people instead.");
     expect((await t.cloud.cloud_public_link({ path: p })).publicLink).toBeNull();
     expect(t.confirm).not.toHaveBeenCalled();
-    expect(api).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalledWith("POST", expect.anything());
+  });
+
+  it("reports a .wd's leftover public link as it is, with a warning, and can turn it off", async () => {
+    const api = vi.fn(async (method: string) => (method === "GET" ? { status: 200, data: { url: "https://old.example/s/wd" } } : { status: 200, data: { ok: true } }));
+    const t = setup({ api });
+    const p = t.file("Plan.wd", "<Counter />\n");
+    t.rows.set(p, { cloud_doc_id: "doc-1", sync_state: "synced" });
+    for (const create of [false, true]) {
+      const answer = await t.cloud.cloud_public_link({ path: p, create });
+      expect(answer.publicLink).toBe("https://old.example/s/wd");
+      expect(answer.warning).toMatch(/still has a public link.*Live Docs should be private/);
+    }
+    expect(t.confirm).not.toHaveBeenCalled();
+    expect((await t.cloud.cloud_revoke_public_link({ path: p })).publicLink).toBeNull();
+    expect(api).toHaveBeenCalledWith("DELETE", "/api/docs/doc-1/public-link");
   });
 
   it("explains the server's refusal of a Live Doc public link", async () => {

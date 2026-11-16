@@ -117,7 +117,7 @@ test("a stranger cannot get in through a first email-code sign-in either", async
   assert.equal(userExists(email), false);
 });
 
-test("an invited guest can sign up and finds the shared document", async () => {
+test("an invited guest can sign up, accepts the sender, and finds the shared document", async () => {
   const guest = `guest-${stamp}@example.org`;
   const doc = crypto.randomUUID();
   const put = await req(`/api/docs/${doc}`, { method: "PUT", headers: bearer(adminToken), body: JSON.stringify({ name: "plan.md", content: "# plan", hash: "h", baseVersion: 0 }) });
@@ -128,6 +128,14 @@ test("an invited guest can sign up and finds the shared document", async () => {
 
   assert.equal((await signUp(guest)).status, 200);
   const token = await signIn(guest);
+  // Signing up makes the invite a request: nothing lands until the guest
+  // accepts the admin who sent it (share-people.ts).
+  const before = (await (await req("/api/docs", { headers: bearer(token) })).json()) as { docs: { id: string }[] };
+  assert.equal(before.docs.some((d) => d.id === doc), false);
+  const requests = (await (await req("/api/people/requests", { headers: bearer(token) })).json()) as { requests: { docId: string; sender: { id: string; email: string } }[] };
+  const request = requests.requests.find((r) => r.docId === doc);
+  assert.equal(request?.sender.email, ADMIN);
+  assert.equal((await req(`/api/people/${request!.sender.id}/accept`, { method: "POST", headers: bearer(token) })).status, 200);
   const docs = (await (await req("/api/docs", { headers: bearer(token) })).json()) as { docs: { id: string; shared?: boolean }[] };
   assert.ok(docs.docs.some((d) => d.id === doc && d.shared));
 });

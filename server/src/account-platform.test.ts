@@ -139,6 +139,11 @@ test("a pending alias invitation is claimed through real verification routes wit
   assert.equal(identity.email, alias);
   assert.equal(db.prepare("SELECT 1 FROM pending_shares WHERE doc_id=? AND email=?").get(docId, alias), undefined);
   assert.deepEqual(db.prepare("SELECT user_id,role FROM shares WHERE doc_id=?").all(docId), [{ user_id: recipient.id, role: "viewer" }]);
+  // The claimed invite is a request until the recipient accepts its sender (share-people.ts).
+  assert.equal((await request(`/api/docs/${docId}`, recipient.token)).status, 404);
+  const requests = (await (await request("/api/people/requests", recipient.token)).json()) as { requests: { docId: string; sender: { id: string } }[] };
+  assert.equal(requests.requests.find((r) => r.docId === docId)?.sender.id, sender.id);
+  assert.equal((await request(`/api/people/${sender.id}/accept`, recipient.token, {})).status, 200);
   assert.equal((await request(`/api/docs/${docId}`, recipient.token)).status, 200);
   assert.equal((await request(`/api/docs/${docId}`, recipient.token, { name: "Denied edit", content: "not allowed", hash: "denied", baseVersion: 1 }, "PUT")).status, 403);
   assert.deepEqual(db.prepare('SELECT COUNT(*) AS n FROM "user"').get(), before);

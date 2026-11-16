@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "markie-asset-read-"));
 process.env.DB_PATH = join(dir, "t.db");
@@ -45,6 +45,8 @@ before(async () => {
   owner = await signUpVerified(app, { name: "Owner", email: "o@markie.test" });
   viewer = await signUpVerified(app, { name: "Viewer", email: "v@markie.test" });
   stranger = await signUpVerified(app, { name: "Stranger", email: "s@markie.test" });
+  // Accepted senders (share-people.ts): this suite is about what a member may do.
+  acceptSender(viewer.id, owner.id);
   docId = crypto.randomUUID();
   const content = "![](a.png)\n";
   await app.request(`/api/docs/${docId}`, { method: "PUT", headers: { ...H(owner.token), "Content-Type": "application/json" }, body: JSON.stringify({ name: "t.md", content, hash: sha(Buffer.from(content)), baseVersion: 0 }) });

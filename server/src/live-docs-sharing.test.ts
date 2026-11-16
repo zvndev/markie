@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-live-docs-h2-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://127.0.0.1:8787";
@@ -183,6 +183,8 @@ const stamp = Date.now();
 const owner = await signUpVerified(app, { name: "Olive Owner", email: `h2-owner-${stamp}@example.com` });
 const viewer = await signUpVerified(app, { name: "Vic Viewer", email: `h2-viewer-${stamp}@example.com` });
 const stranger = await signUpVerified(app, { name: "Stan Stranger", email: `h2-stranger-${stamp}@example.com` });
+// Vic accepted Olive (share-people.ts), so her shares land as documents.
+acceptSender(viewer.id, owner.id);
 const ownerCookie = await browserSignIn(owner.email);
 const viewerCookie = await browserSignIn(viewer.email);
 const strangerCookie = await browserSignIn(stranger.email);

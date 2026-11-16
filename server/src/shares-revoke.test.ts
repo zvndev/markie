@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-shares-revoke-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -55,9 +55,11 @@ async function call<T>(
 }
 
 async function signUp(name: string, email: string): Promise<string> {
-  const { token } = await signUpVerified(app, { name, email });
+  const { token, id } = await signUpVerified(app, { name, email });
+  ids.set(token, id);
   return token;
 }
+const ids = new Map<string, string>();
 
 const ownerEmail = `owner-${stamp}@markie.test`;
 const memberEmail = `member-${stamp}@markie.test`;
@@ -65,6 +67,9 @@ const invitedEmail = `invited-${stamp}@markie.test`;
 const owner = await signUp("Owner", ownerEmail);
 const member = await signUp("Member", memberEmail);
 const stranger = await signUp("Stranger", `stranger-${stamp}@markie.test`);
+// The member already accepts the owner's shares (share-people.ts): these
+// tests are about taking landed access away.
+acceptSender(ids.get(member)!, ids.get(owner)!);
 
 async function newDoc(): Promise<string> {
   const docId = randomUUID();

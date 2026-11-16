@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified, type TestUser } from "./test-users.ts";
+import { acceptSender, signUpVerified, type TestUser } from "./test-users.ts";
 import { createCloudAreasApi } from "./cloud-areas.ts";
 
 const directory = mkdtempSync(join(tmpdir(), "markie-area-legacy-"));
@@ -24,7 +24,7 @@ app.route("/api/docs", docs); app.route("/api/docs", shares);
 app.route("/api/account", createCloudAreasApi({ store: configureDocsCloudAreas(true)!, authenticate: async (req) => (await auth.api.getSession({ headers: req.headers }))?.user ?? null, canAccessDocument: (uid, kind, docId) => kind === "markdown" && canReadLevel(accessLevel(docId, uid)) }));
 configureDocsCloudAreas(false);
 let owner: TestUser, viewer: TestUser;
-before(async () => { owner = await signUpVerified(app, { name: "Area owner", email: "area-owner@example.test" }); viewer = await signUpVerified(app, { name: "Area viewer", email: "area-viewer@example.test" }); });
+before(async () => { owner = await signUpVerified(app, { name: "Area owner", email: "area-owner@example.test" }); viewer = await signUpVerified(app, { name: "Area viewer", email: "area-viewer@example.test" }); acceptSender(viewer.id, owner.id); });
 async function request(path: string, user: TestUser, method = "GET", body?: unknown) {
   return app.request(path, { method, headers: { Authorization: `Bearer ${user.token}`, Origin: "http://localhost:3000", "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }

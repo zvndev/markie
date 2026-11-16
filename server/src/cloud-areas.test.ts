@@ -13,6 +13,8 @@ function fixture(limits: Partial<PlatformLimits> = {}) {
   const db = new DatabaseSync(":memory:"), areas = createCloudAreas(db);
   db.exec('CREATE TABLE "user"(id TEXT PRIMARY KEY,email TEXT,emailVerified INTEGER); INSERT INTO "user" VALUES(\'owner\',\'owner@example.test\',1),(\'viewer\',\'viewer@example.test\',1),(\'stranger\',\'stranger@example.test\',1)');
   const store = createSqliteDocumentPlatformStore(db, { cloudAreas: areas, limits, verifiedUserForEmail: (email) => email === "alias@example.test" ? "viewer" : null });
+  // The viewer accepted the owner (share-people-store.ts), so the owner's files reach them once added.
+  db.prepare("INSERT INTO share_people(recipient_id,sender_id,state,updated_at) VALUES('viewer','owner','accepted','2026-01-01')").run();
   const authenticate = async (request: Request) => { const id = request.headers.get("x-user"); return id && ["owner", "viewer", "stranger"].includes(id) ? { id } : null; };
   const canAccessDocument = (uid: string, kind: CloudDocumentKind, id: string) => { if (kind !== "snapshot") return false; try { store.get(uid, id); return true; } catch { return false; } };
   const app = new Hono().route("/api/account", createCloudAreasApi({ store: areas, authenticate, canAccessDocument })).route("/api/document-platform", createDocumentPlatform({ store, resolveUser: authenticate }));

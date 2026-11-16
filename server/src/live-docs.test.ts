@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-live-docs-")), "t.db");
 // The app on 127.0.0.1 and Live Docs under live.localhost, so no app cookie
@@ -179,6 +179,8 @@ test("only the owner gets the address, and only for a .wd", async () => {
 
 test("a shared editor gets the private address and a pass, never the public one", async () => {
   const editor = await signUpVerified(app, { name: "Editor", email: `live-editor-${stamp}@example.com` });
+  // The editor accepted the owner (share-people.ts), so the share lands.
+  acceptSender(editor.id, owner.id);
   const editorCookie = await browserSignIn(editor.email);
   const shared = `live-shared-${stamp}`;
   await putDoc(owner.token, shared, "Shared.wd", COUNTER);

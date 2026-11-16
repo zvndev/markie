@@ -17,7 +17,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-collab-tickets-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -230,6 +230,10 @@ const owner = await signUp("Tia Owner", `tickets.owner.${stamp}@test.local`);
 const editor = await signUp("Ed Ticket", `tickets.editor.${stamp}@test.local`);
 const viewer = await signUp("Vi Ticket", `tickets.viewer.${stamp}@test.local`);
 const stranger = await signUp("Stan Ticket", `tickets.stranger.${stamp}@test.local`);
+// The owner's members have accepted the owner (share-people.ts); the
+// stranger has no share at all.
+acceptSender(editor.id, owner.id);
+acceptSender(viewer.id, owner.id);
 
 // ── the route ──
 
@@ -340,6 +344,7 @@ test("an expired ticket is refused", async () => {
 
 test("a ticket whose sign-in has ended is refused, though the person's share remains", async () => {
   const user = await signUp("Ended Ticket", `tickets.ended.${stamp}@test.local`);
+  acceptSender(user.id, owner.id);
   const docId = `tickets-ended-${stamp}`;
   await createDoc(owner.token, docId);
   await share(owner.token, docId, user.email, "editor");
@@ -373,6 +378,7 @@ test("removing a share hangs up a member who joined with a ticket", async () => 
 
 test("a ticket-opened socket is bound to its sign-in: deleting the session stops its writes", async () => {
   const user = await signUp("Bound Ticket", `tickets.bound.${stamp}@test.local`);
+  acceptSender(user.id, owner.id);
   const docId = `tickets-bound-${stamp}`;
   await createDoc(owner.token, docId);
   await share(owner.token, docId, user.email, "editor");

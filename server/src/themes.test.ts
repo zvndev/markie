@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-themes-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -53,8 +53,11 @@ async function call<T>(
   return { status: res.status, data: (await res.json().catch(() => null)) as T | null };
 }
 
+// Account ids by address, for acceptSender below.
+const ids = new Map<string, string>();
 async function signUp(name: string, email: string): Promise<string> {
-  const { token } = await signUpVerified(app, { name, email });
+  const { token, id } = await signUpVerified(app, { name, email });
+  ids.set(email, id);
   return token;
 }
 
@@ -63,6 +66,8 @@ const viewerEmail = `viewer-${stamp}@markie.test`;
 const owner = await signUp("Owner", ownerEmail);
 const viewer = await signUp("Viewer", viewerEmail);
 const stranger = await signUp("Stranger", `stranger-${stamp}@markie.test`);
+// The viewer accepted the owner (share-people.ts), so the owner's shares land.
+acceptSender(ids.get(viewerEmail)!, ids.get(ownerEmail)!);
 
 async function sharedDoc(): Promise<string> {
   const docId = randomUUID();

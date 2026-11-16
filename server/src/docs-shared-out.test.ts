@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "markie-shared-out-"));
 process.env.DB_PATH = join(dir, "t.db");
@@ -89,6 +89,8 @@ test("a public link makes it shared out, and revoking it makes it private again"
 
 test("a document shared with me is listed as shared, which is exposure enough", async () => {
   const id = await makeDoc(owner.token);
+  // It lands in the member's list once they accept Owner (share-people.ts).
+  acceptSender(member.id, owner.id);
   await json("POST", `/api/docs/${id}/shares`, owner.token, { email: "member@markie.test", role: "editor" });
   const row = await listed(member.token, id);
   assert.equal(row?.shared, true);

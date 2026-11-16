@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const dvDir = mkdtempSync(join(tmpdir(), "markie-doc-view-"));
 process.env.DB_PATH = join(dvDir, "t.db");
@@ -179,6 +179,8 @@ async function shareWith(ownerToken: string, docId: string, email: string, role:
 test("a member's link alone sends the browser to sign in and carries nothing of the document", async () => {
   const owner = await signUp("Owner", `dv.owner.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.bob.${stamp}@test.local`);
+  // Bob accepted Owner (share-people.ts): this test is about a real member.
+  acceptSender(bob.id, owner.id);
   const docId = `dv-member-${stamp}`;
   await createDoc(owner.token, docId);
   const bobId = await shareWith(owner.token, docId, bob.email);
@@ -211,6 +213,8 @@ test("a member's link alone sends the browser to sign in and carries nothing of 
 test("a member's link opens for that member's session, and stops the moment they are removed", async () => {
   const owner = await signUp("Owner", `dv.mown.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.mbob.${stamp}@test.local`);
+  // Bob accepted Owner (share-people.ts): this test is about a real member.
+  acceptSender(bob.id, owner.id);
   const docId = `dv-member-session-${stamp}`;
   await createDoc(owner.token, docId);
   const bobId = await shareWith(owner.token, docId, bob.email);
@@ -283,6 +287,8 @@ test("a member's link opened by another account that has no access gets a 403 na
 test("a token for one document does nothing for another, even one its owner may read", async () => {
   const owner = await signUp("Owner", `dv.cross.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.crossbob.${stamp}@test.local`);
+  // Bob accepted Owner (share-people.ts): this test is about a real member.
+  acceptSender(bob.id, owner.id);
   const first = `dv-first-${stamp}`;
   const second = `dv-second-${stamp}`;
   await createDoc(owner.token, first);
@@ -350,6 +356,21 @@ test("a verified account at the invited address claims the invite through the li
   // row verified directly, which runs no claim hook.
   const joined = await signUp("Claimer", invitee);
 
+  // The claim makes it a request, not a document (share-people.ts): the page
+  // names who wants to share what, and none of the content.
+  const requested = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, joined.token);
+  assert.equal(requested.status, 403);
+  // The request names the file on purpose (the invite already did); the
+  // text stays out.
+  assert.ok(!requested.body.includes(SECRET_LINE), "claimed invite, not yet accepted: must not carry the document body");
+  assert.ok(requested.body.includes(owner.email), "the request names the sender");
+  assert.ok(requested.body.includes("doc-view.md"), "and the file");
+  assertPrivate(requested, "request page");
+  const notYet = await page(`/d/${docId}/raw?k=${encodeURIComponent(token)}`, joined.token);
+  assert.equal(notYet.status, 403);
+  assertNothingOfTheDoc(notYet.body, "raw, request not yet accepted");
+
+  acceptSender(joined.id, owner.id);
   const opened = await page(`/d/${docId}?k=${encodeURIComponent(token)}`, joined.token);
   assert.equal(opened.status, 200);
   assert.ok(opened.body.includes(SECRET_LINE));
@@ -385,6 +406,14 @@ test("a verified account at the invited address claims on a bare /d/ visit, as a
   await createDoc(owner.token, docId);
   await inviteAndToken(owner.token, docId, invitee);
   const joined = await signUp("Claimer", invitee);
+
+  // The claim makes it a request; it reads once the account accepts Owner.
+  const requested = await page(`/d/${docId}`, joined.token);
+  assert.equal(requested.status, 403);
+  // The request names the file on purpose (the invite already did); the
+  // text stays out.
+  assert.ok(!requested.body.includes(SECRET_LINE), "bare claim, not yet accepted: must not carry the document body");
+  acceptSender(joined.id, owner.id);
 
   const opened = await page(`/d/${docId}`, joined.token);
   assert.equal(opened.status, 200);
@@ -464,6 +493,8 @@ test("the owner reads their own document from a signed-in browser, no token need
 test("the raw download enforces the same access as the page", async () => {
   const owner = await signUp("Owner", `dv.rawown.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.rawbob.${stamp}@test.local`);
+  // Bob accepted Owner (share-people.ts): this test is about a real member.
+  acceptSender(bob.id, owner.id);
   const stranger = await signUp("Stranger", `dv.rawstr.${stamp}@test.local`);
   const docId = `dv-raw-${stamp}`;
   await createDoc(owner.token, docId);
@@ -631,6 +662,8 @@ test("a linked asset renders through the doc's asset route, an unlinked ref does
 test("a reader's asset src never carries the link token, and the asset itself needs the session", async () => {
   const owner = await signUp("Owner", `dv.assetk.${stamp}@test.local`);
   const bob = await signUp("Bob", `dv.assetkbob.${stamp}@test.local`);
+  // Bob accepted Owner (share-people.ts): this test is about a real member.
+  acceptSender(bob.id, owner.id);
   const stranger = await signUp("Stranger", `dv.assetkstr.${stamp}@test.local`);
   const docId = `dv-asset-k-${stamp}`;
   const content = "![a](a.png)\n";
@@ -677,6 +710,8 @@ test("a reader's asset src never carries the link token, and the asset itself ne
 test("a document link on the shared page opens for a member who may read the target and is muted for one who may not", async () => {
   const owner = await signUp("Owner", `dl.owner.${stamp}@test.local`);
   const bob = await signUp("Bob", `dl.bob.${stamp}@test.local`);
+  // Bob accepted Owner (share-people.ts): this test is about a real member.
+  acceptSender(bob.id, owner.id);
   const sourceId = `dl-source-${stamp}`;
   const targetId = `dl-target-${stamp}`;
   await createDoc(owner.token, sourceId);
@@ -770,6 +805,8 @@ test("a browser signed in with an emailed code gets a session cookie that opens 
 test("web sign-in sends an already signed-in browser straight back to the document", async () => {
   const bob = await signUp("Bob", `dv.fwd.${stamp}@test.local`);
   const owner = await signUp("Owner", `dv.fwdown.${stamp}@test.local`);
+  // Bob accepted Owner (share-people.ts): this test is about a real member.
+  acceptSender(bob.id, owner.id);
   const docId = `dv-fwd-${stamp}`;
   await createDoc(owner.token, docId);
   const token = ensureShareToken(docId, await shareWith(owner.token, docId, bob.email));

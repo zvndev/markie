@@ -22,7 +22,7 @@ import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
-import { signUpVerified, type TestApp } from "./test-users.ts";
+import { acceptSender, signUpVerified, type TestApp } from "./test-users.ts";
 
 const SERVER_DIR = fileURLToPath(new URL("..", import.meta.url));
 const MESSAGE_SYNC = 0;
@@ -168,6 +168,8 @@ test("a live edit and the room's stored-copy record survive a SIGTERM restart; t
   const stamp = Date.now();
   const owner = await signUpVerified(first.app, { name: "Olga Owner", email: `restart.owner.${stamp}@test.local` });
   const bob = await signUpVerified(first.app, { name: "Bob Editor", email: `restart.bob.${stamp}@test.local` });
+  // Bob accepts Olga's shares (share-people.ts), so hers land as documents.
+  acceptSender(bob.id, owner.id);
 
   const docId = `restart-${stamp}`;
   const stored = "Hello\n";

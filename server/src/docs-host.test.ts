@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const DOCS = "https://private.markiedocs.test";
 const dir = mkdtempSync(join(tmpdir(), "markie-docs-host-"));
@@ -184,6 +184,8 @@ test("invite emails and public links name the docs host", async () => {
   });
   const owner = await signUpVerified(app, { name: "Owner", email: `dh.owner.${stamp}@test.local` });
   const bob = await signUpVerified(app, { name: "Bob", email: `dh.bob.${stamp}@test.local` });
+  // Bob accepted Owner (share-people.ts), so this is a member mail with its link.
+  acceptSender(bob.id, owner.id);
   const docId = `dh-${stamp}`;
   const content = "# Docs host\n";
   const hash = createHash("sha256").update(content, "utf8").digest("hex");

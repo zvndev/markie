@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "markie-doc-links-"));
 process.env.DB_PATH = join(dir, "t.db");
@@ -63,6 +63,8 @@ before(async () => {
   owner = await signUpVerified(app, { name: "Owner", email: "owner@links.test" });
   editor = await signUpVerified(app, { name: "Editor", email: EDITOR_EMAIL });
   stranger = await signUpVerified(app, { name: "Stranger", email: "stranger@links.test" });
+  // Accepted senders (share-people.ts): this suite is about what a member may do.
+  acceptSender(editor.id, owner.id);
 });
 
 test("the owner stores pointers and reads them back with targets they can read", async () => {
@@ -175,6 +177,7 @@ test("a public page never publishes another account's public link token", async 
   assert.equal(made.status, 200);
   const theirToken = String(made.data.url).split("/s/")[1];
   await share(stranger.token, theirs, "owner@links.test", "viewer");
+  acceptSender(owner.id, stranger.id);
 
   // The owner links to it from their own document, which they then publish.
   const mine = await makeDoc(owner.token);

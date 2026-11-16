@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "markie-share-contacts-"));
 process.env.DB_PATH = join(dir, "t.db");
@@ -60,7 +60,7 @@ async function jsonRequest<T>(
 
 async function signUp(name: string, email: string) {
   const user = await signUpVerified(app, { name, email });
-  return { token: user.token, email };
+  return { token: user.token, email, id: user.id };
 }
 
 async function createDoc(token: string, docId: string) {
@@ -114,6 +114,11 @@ test("lists people I shared with and owners who shared with me, newest first, ne
   const his = `sc-his-${stamp}`;
   await createDoc(alan.token, his);
   await share(alan.token, his, me.email);
+  // Alan counts as someone who shared with me only once I accept him
+  // (share-people.ts): until then his share is a request.
+  const unaccepted = await jsonRequest<Contacts>("GET", "/api/docs/share-contacts", me.token);
+  assert.ok(!unaccepted.data?.contacts.some((c) => c.email === alan.email));
+  acceptSender(me.id, alan.id);
 
   // The stranger shares with Grace: none of my business.
   const theirs = `sc-theirs-${stamp}`;

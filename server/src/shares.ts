@@ -18,6 +18,7 @@ import { brandEmailLogoUrl } from "./brand.ts";
 import { disconnectUser } from "./collab.ts";
 import { newLinkToken } from "./link-token.ts";
 import { createInviteLimiter, plainEmailText } from "./invite-guard.ts";
+import { acceptedSenderSql, ensureSharePeopleSchema, senderState } from "./share-people-store.ts";
 
 const db = openDatabase();
 const inviteLimiter = createInviteLimiter();
@@ -68,6 +69,15 @@ if (!shareColumns.some((c) => c.name === "token")) {
   db.exec("ALTER TABLE shares ADD COLUMN token TEXT");
 }
 db.exec("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)");
+// Accepted senders (share-people-store.ts). After the shares table, because
+// its one-time backfill reads the shares that exist today.
+ensureSharePeopleSchema(db);
+
+// True when the share's recipient has accepted the document's owner. Every
+// query below that reads `shares` for a recipient carries it: a share from
+// someone the recipient has not accepted is a request, and a request reads,
+// lists, links and notifies nothing.
+const ACCEPTED = acceptedSenderSql("s.user_id", "d.owner_id");
 
 // The link token for one member of one document, minted on first use. Kept on
 // the share row so that deleting the row deletes the link.
@@ -87,6 +97,10 @@ export function ensureShareToken(docId: string, userId: string): string {
 // may read the document: the caller re-derives that from accessLevel, so a
 // token that outlives someone's access resolves to a person who now fails the
 // check rather than to a document.
+//
+// A share that is still a request has no member behind its token at all: the
+// recipient has not accepted the sender, so nothing about the document is
+// theirs yet, its link included.
 export function memberForToken(
   token: string
 ): { docId: string; userId: string } | null {
@@ -94,7 +108,19 @@ export function memberForToken(
   const row = db
     .prepare("SELECT doc_id, user_id FROM shares WHERE token = ?")
     .get(token) as { doc_id: string; user_id: string } | undefined;
-  return row ? { docId: row.doc_id, userId: row.user_id } : pendingStore.memberForInviteToken(token);
+  const member = row ? { docId: row.doc_id, userId: row.user_id } : pendingStore.memberForInviteToken(token);
+  return member && isAcceptedShare(member.docId, member.userId) ? member : null;
+}
+
+// The share row exists and its recipient accepted the document's owner,
+// whether or not the document has since been deleted.
+function isAcceptedShare(docId: string, userId: string): boolean {
+  return !!db
+    .prepare(
+      `SELECT 1 FROM shares s JOIN docs d ON d.id = s.doc_id
+       WHERE s.doc_id = ? AND s.user_id = ? AND ${ACCEPTED}`
+    )
+    .get(docId, userId);
 }
 
 async function requireUser(c: { req: { raw: Request } }) {
@@ -110,7 +136,7 @@ export function getShare(docId: string, userId: string) {
       `SELECT s.role
        FROM shares s
        JOIN docs d ON d.id = s.doc_id
-       WHERE s.doc_id = ? AND s.user_id = ? AND d.deleted_at IS NULL`
+       WHERE s.doc_id = ? AND s.user_id = ? AND d.deleted_at IS NULL AND ${ACCEPTED}`
     )
     .get(docId, userId) as { role: "viewer" | "editor" } | undefined;
 }
@@ -169,7 +195,7 @@ export function sharedDocsFor(userId: string) {
        FROM shares s
        JOIN docs d ON d.id = s.doc_id
        LEFT JOIN user inviter ON inviter.id = s.invited_by
-       WHERE s.user_id = ? AND d.deleted_at IS NULL
+       WHERE s.user_id = ? AND d.deleted_at IS NULL AND ${ACCEPTED}
        ORDER BY d.updated_at DESC`
     )
     .all(userId) as Array<{
@@ -279,7 +305,7 @@ export function shareContactsFor(userId: string, ownEmail?: string | null) {
            FROM shares s
            JOIN docs d ON d.id = s.doc_id
            JOIN user o ON o.id = d.owner_id
-          WHERE s.user_id = ? AND d.deleted_at IS NULL AND d.owner_id <> ?
+          WHERE s.user_id = ? AND d.deleted_at IS NULL AND d.owner_id <> ? AND ${ACCEPTED}
        )
        WHERE email IS NOT NULL AND email <> ''
        GROUP BY email
@@ -318,13 +344,21 @@ shares.get("/:id/shares", async (c) => {
   const docId = c.req.param("id");
   const level = accessLevel(docId, user.id);
   if (!canReadLevel(level)) return c.json({ error: "forbidden" }, 403);
-  const members = db
+  // A member whose share is still a request (they have not accepted the
+  // owner yet, or never will) is the owner's to see, as waiting. Blocked and
+  // unanswered look the same here on purpose: the owner must not be able to
+  // tell that somebody blocked them. Other members see only real members.
+  const rows = db
     .prepare(
-      `SELECT s.user_id, s.role, s.created_at, u.email, u.name
-       FROM shares s JOIN user u ON u.id = s.user_id
+      `SELECT s.user_id, s.role, s.created_at, u.email, u.name, ${ACCEPTED} AS accepted
+       FROM shares s JOIN user u ON u.id = s.user_id JOIN docs d ON d.id = s.doc_id
        WHERE s.doc_id = ?`
     )
-    .all(docId) as Array<Record<string, unknown>>;
+    .all(docId) as Array<Record<string, unknown> & { accepted: number }>;
+  const owner = canManageLevel(level);
+  const members = rows
+    .filter((r) => owner || r.accepted)
+    .map(({ accepted, ...r }) => (owner ? { ...r, waiting: !accepted } : r));
   // Pending invite emails are owner management state, not collaborator presence.
   const pending = canManageLevel(level)
     ? listPendingForDoc(docId).map((p) => ({
@@ -378,8 +412,27 @@ shares.post("/:id/shares", async (c) => {
   const recipient = pendingStore.shareWithEmail(docId, cleanEmail, role, user.id);
   if (recipient?.id === user.id) return c.json({ error: "That's you" }, 400);
 
+  if (recipient && senderState(db, recipient.id, user.id) !== "accepted") {
+    // An account that has not accepted this owner gets a request, not a
+    // document: the share row exists, and nothing reads it until they accept
+    // (share-people-store.ts). The mail names the sender and the file, never
+    // the content, and carries no link to the document. Somebody who blocked
+    // the owner gets no mail at all, and the owner gets the same answer
+    // either way, so blocking cannot be told apart from silence.
+    if (senderState(db, recipient.id, user.id) !== "blocked") {
+      const from = user.email ? `${inviter} (${user.email})` : inviter;
+      await sendEmail({
+        to: recipient.email,
+        subject: `${inviter} wants to share “${docName}” with you`,
+        text: `${from} wants to share "${docName}" with you on Markie.\n\n${REQUEST_LINE}\n\nGet Markie: ${primaryDownloadCta(DOWNLOAD_SITE).href}`,
+        html: requestHtml(inviter, user.email ?? "", docName),
+      });
+    }
+    return c.json({ ok: true, status: "requested", userId: recipient.id, role });
+  }
+
   if (recipient) {
-    // Existing user → real member immediately.
+    // An account that accepted this owner → real member immediately.
     // Their own link to their own copy. Scoped to this person and this
     // document, and re-checked against their share row on every open, so
     // removing them from the document kills it.
@@ -405,11 +458,14 @@ shares.post("/:id/shares", async (c) => {
   const previewUrl = docLink(docId, inviteToken);
   // The invite opens only for an account holding the invited address, so the
   // mail says so instead of promising a read without one.
+  // When they make the account, the invite becomes a request like any other
+  // (pending.ts claim, then share-people-store.ts): it lands once they accept.
+  const from = user.email ? `${inviter} (${user.email})` : inviter;
   await sendEmail({
     to: cleanEmail,
-    subject: `📄 ${inviter} tossed you a doc`,
-    text: `${inviter} shared "${docName}" with you on Markie.\n\nOpen it here: ${previewUrl}\n\n${inviteSignInLine(cleanEmail)} Then "${docName}" will be waiting in your Library.\n\nThis link was sent to you alone. Don't forward it.`,
-    html: inviteHtml(inviter, docName, previewUrl, cleanEmail),
+    subject: `${inviter} wants to share “${docName}” with you`,
+    text: `${from} wants to share "${docName}" with you on Markie.\n\nStart here: ${previewUrl}\n\n${inviteSignInLine(cleanEmail)} ${REQUEST_LINE}\n\nThis link was sent to you alone. Don't forward it.`,
+    html: inviteHtml(inviter, user.email ?? "", docName, previewUrl, cleanEmail),
   });
   return c.json({ ok: true, status: "invited", email: cleanEmail, role });
 });
@@ -503,12 +559,28 @@ function memberSignInLine(email: string): string {
 }
 
 function inviteSignInLine(email: string): string {
-  return `To open it, create your Markie account with this email address, ${email}. If you already have an account with it, sign in.`;
+  return `First create your Markie account with this email address, ${email}. If you already have an account with it, sign in.`;
+}
+
+// What a request asks the recipient to do. Nothing arrives until they accept.
+const REQUEST_LINE =
+  "Nothing reaches your Markie until you accept them. Open Markie and look in Requests to accept or decline.";
+
+function requestHtml(inviter: string, inviterEmail: string, docName: string): string {
+  const download = primaryDownloadCta(DOWNLOAD_SITE);
+  return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#2C2C2C">
+  ${EMAIL_LOGO}
+  <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} wants to share a document with you</h2>
+  <p style="font-size:14px;line-height:1.5;color:#3f3f46">${escapeHtml(inviter)}${inviterEmail ? ` (${escapeHtml(inviterEmail)})` : ""} wants to share <strong>${escapeHtml(docName)}</strong> with you on Markie.</p>
+  <p style="font-size:14px;line-height:1.5;color:#3f3f46">${escapeHtml(REQUEST_LINE)}</p>
+  <p style="font-size:13px;line-height:1.7;color:#3f3f46">Don't have Markie yet? <a href="${escapeHtml(download.href)}" style="color:#2C2C2C;font-weight:600;text-decoration-color:#EC4431">${escapeHtml(download.label)}</a></p>
+</div>`;
 }
 
 // ── playful invite email bodies ──
 function inviteHtml(
   inviter: string,
+  inviterEmail: string,
   docName: string,
   previewUrl: string,
   email: string
@@ -516,14 +588,13 @@ function inviteHtml(
   const download = primaryDownloadCta(DOWNLOAD_SITE);
   return `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:460px;margin:0 auto;color:#2C2C2C">
   ${EMAIL_LOGO}
-  <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} tossed you a doc 📄</h2>
-  <p style="font-size:14px;line-height:1.5;color:#3f3f46">They shared <strong>${escapeHtml(docName)}</strong> with you on Markie.</p>
-  <p style="font-size:14px;line-height:1.5;color:#3f3f46">${escapeHtml(inviteSignInLine(email))}</p>
+  <h2 style="font-size:19px;margin:8px 0 4px">${escapeHtml(inviter)} wants to share a document with you</h2>
+  <p style="font-size:14px;line-height:1.5;color:#3f3f46">${escapeHtml(inviter)}${inviterEmail ? ` (${escapeHtml(inviterEmail)})` : ""} wants to share <strong>${escapeHtml(docName)}</strong> with you on Markie.</p>
+  <p style="font-size:14px;line-height:1.5;color:#3f3f46">${escapeHtml(inviteSignInLine(email))} ${escapeHtml(REQUEST_LINE)}</p>
   <p style="margin:20px 0">
-    <a href="${escapeHtml(previewUrl)}" style="background:#2C2C2C;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Open it →</a>
+    <a href="${escapeHtml(previewUrl)}" style="background:#2C2C2C;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;display:inline-block">Get started →</a>
   </p>
   <p style="font-size:13px;line-height:1.7;color:#3f3f46">Or get the app: <a href="${escapeHtml(download.href)}" style="color:#2C2C2C;font-weight:600;text-decoration-color:#EC4431">${escapeHtml(download.label)}</a></p>
-  <p style="font-size:13px;color:#3f3f46">Once you're in, <strong>${escapeHtml(docName)}</strong> will be waiting in your Library.</p>
   <p style="font-size:12px;line-height:1.6;color:#71717a">This link was sent to you alone and opens nothing else. Please don't forward it.</p>
 </div>`;
 }

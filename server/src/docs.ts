@@ -12,6 +12,7 @@ import {
   removeDocShares,
 } from "./shares.ts";
 import { claimPendingInvites, removeDocPending } from "./pending.ts";
+import { acceptedSenderSql } from "./share-people-store.ts";
 import { closeRoom, purgeDocUpdates } from "./collab.ts";
 import { purgeDocThreads } from "./comments.ts";
 import { guardLiveDocsPrivate, revokePublicLink } from "./public-links.ts";
@@ -319,6 +320,9 @@ docs.get("/recent", async (c) => {
          JOIN docs d ON d.id = s.doc_id
          LEFT JOIN user inviter ON inviter.id = s.invited_by
          WHERE s.user_id = ? AND d.owner_id <> ? AND d.deleted_at IS NULL AND (? IS NULL OR d.updated_at < ?)
+           -- A share from someone the caller has not accepted is a request,
+           -- not a document (share-people-store.ts).
+           AND ${acceptedSenderSql("s.user_id", "d.owner_id")}
        ) ORDER BY updated_at DESC, id ASC LIMIT ?`
     )
     .all(user.id, cursor, cursor, user.id, user.id, cursor, cursor, limit) as RecentRow[];

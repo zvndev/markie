@@ -1,5 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { CloudAreaError, type CloudAreasStore } from "./cloud-areas.ts";
+import { acceptedSenderSql, ensureSharePeopleSchema } from "./share-people-store.ts";
+
+// A dp_members row counts only once its member accepted the file's owner.
+const MEMBER_ACCEPTED = acceptedSenderSql("m.user_id", "d.owner_id");
 
 /** Ordinary byte snapshots only. This is neither vault transport nor live CRDT merging. */
 export type PlatformFormat = "markdown" | "darkmown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc" | "rtf" | "odt";
@@ -114,7 +118,7 @@ export interface DocumentPlatformStore {
   remove(userId: string, id: string, baseVersion: number): void;
   history(userId: string, id: string): PlatformMetadata[];
   historyVersion(userId: string, id: string, version: number): PlatformSnapshot;
-  members(userId: string, id: string): { userId: string; email: string; role: "editor" | "viewer"; createdAt: number }[];
+  members(userId: string, id: string): { userId: string; email: string; role: "editor" | "viewer"; createdAt: number; waiting: boolean }[];
   addMember(userId: string, id: string, input: unknown): void;
   removeMember(userId: string, id: string, memberId: string): void;
   createLink(userId: string, id: string, expiresInSeconds: number): { id: string; token: string; createdAt: number; expiresAt: number; path: string };
@@ -136,7 +140,7 @@ export function platformAccessLevel(db: PlatformSqliteDatabase, id: string, user
   if (!opaqueId(id) || !userId) return null;
   let row: { access_role?: unknown } | undefined;
   try {
-    row = db.prepare("SELECT CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)")
+    row = db.prepare(`SELECT CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? AND ${MEMBER_ACCEPTED} WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)`)
       .get(userId, userId, id, userId, userId) as { access_role?: unknown } | undefined;
   } catch (error) {
     if (error instanceof Error && /no such table/i.test(error.message)) return null;
@@ -174,6 +178,9 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     const removed = Number(db.prepare(`DELETE FROM dp_links WHERE doc_id IN (SELECT d.id FROM dp_documents d WHERE ${LIVE_DOC_SQL})`).run().changes);
     if (removed > 0) console.log(`Removed ${removed} share link${removed === 1 ? "" : "s"} from Live Docs: a Live Doc is never public.`);
   }
+  // A member's file reaches them only once they accept its owner, the same
+  // rule Markdown shares follow (share-people-store.ts).
+  ensureSharePeopleSchema(db);
   const transaction = <T>(operation: () => T): T => {
     db.exec("BEGIN IMMEDIATE");
     try { const result = operation(); db.exec("COMMIT"); return result; }
@@ -182,7 +189,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
   const access = (userId: string, id: string, required: PlatformRole = "viewer") => {
     if (!opaqueId(id)) platformFail("not-found", 404, "Document not found.");
     // Apply ACL inside the SELECT so unknown users never materialize private BLOBs.
-    const row = db.prepare("SELECT d.*,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)").get(userId, userId, id, userId, userId) as (DocumentRow & { access_role: PlatformRole }) | undefined;
+    const row = db.prepare(`SELECT d.*,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? AND ${MEMBER_ACCEPTED} WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)`).get(userId, userId, id, userId, userId) as (DocumentRow & { access_role: PlatformRole }) | undefined;
     if (!row) platformFail("not-found", 404, "Document not found.");
     const role = row.access_role;
     if (!["owner", "editor", "viewer"].includes(role)) platformFail("not-found", 404, "Document not found.");
@@ -209,7 +216,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
   return {
     limits,
     list(userId) {
-      const rows = db.prepare("SELECT d.id,d.name,d.format,d.version,d.sha256,d.created_at,d.updated_at,length(d.bytes) AS byte_length,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.owner_id = ? OR m.user_id = ? ORDER BY d.updated_at DESC,d.id ASC LIMIT ?").all(userId, userId, userId, userId, limits.maxListedDocuments + 1) as (Omit<DocumentRow, "bytes"> & { byte_length: number; role: PlatformRole })[];
+      const rows = db.prepare(`SELECT d.id,d.name,d.format,d.version,d.sha256,d.created_at,d.updated_at,length(d.bytes) AS byte_length,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? AND ${MEMBER_ACCEPTED} WHERE d.owner_id = ? OR m.user_id = ? ORDER BY d.updated_at DESC,d.id ASC LIMIT ?`).all(userId, userId, userId, userId, limits.maxListedDocuments + 1) as (Omit<DocumentRow, "bytes"> & { byte_length: number; role: PlatformRole })[];
       if (rows.length > limits.maxListedDocuments) platformFail("limit-exceeded", 413, "Too many accessible cloud documents to list.");
       return rows.map((row) => ({ schemaVersion: 2, id: row.id, name: row.name, format: row.format, version: row.version, sha256: row.sha256, createdAt: row.created_at, updatedAt: row.updated_at, byteLength: row.byte_length, role: row.role, ...placement(userId, row.id) }));
     },
@@ -265,7 +272,9 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     },
     members(userId, id) {
       access(userId, id, "owner");
-      return (db.prepare('SELECT m.user_id,u.email,m.role,m.created_at FROM dp_members m JOIN "user" u ON u.id = m.user_id WHERE m.doc_id = ? ORDER BY m.created_at,m.user_id LIMIT ?').all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: number }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: r.created_at }));
+      // waiting: the member has not accepted the owner (or blocked them, which
+      // looks the same on purpose), so the file is not in their Markie yet.
+      return (db.prepare(`SELECT m.user_id,u.email,m.role,m.created_at,${MEMBER_ACCEPTED} AS accepted FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id JOIN "user" u ON u.id = m.user_id WHERE m.doc_id = ? ORDER BY m.created_at,m.user_id LIMIT ?`).all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: number; accepted: number }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: r.created_at, waiting: !r.accepted }));
     },
     addMember(userId, id, input) {
       transaction(() => {

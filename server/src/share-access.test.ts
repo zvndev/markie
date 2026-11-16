@@ -39,6 +39,23 @@ db.prepare(
    VALUES (?, ?, ?, 'owner', '2026-01-01')`
 ).run("doc-deleted", "viewer", "viewer");
 
+// Both members accepted the owner (share-people-store.ts); a share from an
+// owner nobody accepted is a request and grants nothing.
+for (const member of ["editor", "viewer"]) {
+  db.prepare(
+    "INSERT INTO share_people (recipient_id, sender_id, state, updated_at) VALUES (?, 'owner', 'accepted', '2026-01-01')"
+  ).run(member);
+}
+db.prepare(
+  `INSERT INTO shares (doc_id, user_id, role, invited_by, created_at)
+   VALUES ('doc-active', 'requested', 'editor', 'owner', '2026-01-01')`
+).run();
+
+test("a share from an owner the recipient has not accepted grants nothing", () => {
+  assert.equal(accessLevel("doc-active", "requested"), null);
+  assert.equal(shareAccessSummary("doc-active", "requested").canRead, false);
+});
+
 test("accessLevel resolves owner, editor, viewer, and no-access users", () => {
   assert.equal(accessLevel("doc-active", "owner"), "owner");
   assert.equal(accessLevel("doc-active", "editor"), "editor");

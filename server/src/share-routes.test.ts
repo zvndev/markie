@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-share-routes-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -21,11 +21,13 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) {
 
 const { docs } = await import("./docs.ts");
 const { shares } = await import("./shares.ts");
+const { people } = await import("./share-people.ts");
 
 const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/docs", docs);
 app.route("/api/docs", shares);
+app.route("/api/people", people);
 
 const ORIGIN = { Origin: "http://localhost:3000" };
 const stamp = Date.now();
@@ -54,11 +56,11 @@ async function jsonRequest<T>(
   };
 }
 
-async function signUp(name: string, email: string): Promise<{ token: string; email: string }> {
+async function signUp(name: string, email: string): Promise<{ token: string; email: string; id: string }> {
   // signUpVerified asserts the signed-in account is the one that was asked for.
   const user = await signUpVerified(app, { name, email });
   assert.equal(user.email, email);
-  return { token: user.token, email };
+  return { token: user.token, email, id: user.id };
 }
 
 async function createDoc(token: string, docId: string) {
@@ -78,6 +80,9 @@ async function createDoc(token: string, docId: string) {
 test("authenticated share routes cover pending invites, member removal, and scoped public links", async () => {
   const owner = await signUp("Owner", `owner.${stamp}@test.local`);
   const bob = await signUp("Bob", `bob.${stamp}@test.local`);
+  // Bob already accepts Owner's shares (share-people.ts); the invite below is
+  // the case of somebody who has never accepted anyone.
+  acceptSender(bob.id, owner.id);
   const docId = `share-routes-${stamp}`;
   const pendingEmail = `pending.${stamp}@test.local`;
   await createDoc(owner.token, docId);
@@ -197,6 +202,18 @@ test("authenticated share routes cover pending invites, member removal, and scop
   assert.equal(reinvite.data?.status, "invited");
 
   const invited = await signUp("Pending", pendingEmail);
+  // Signing up turns the invite into a request, not a document: nothing of
+  // Owner's lands until the new account accepts Owner.
+  const beforeAccept = await jsonRequest<{ docs: Array<{ id: string }> }>("GET", "/api/docs", invited.token);
+  assert.equal(beforeAccept.data?.docs.some((d) => d.id === docId), false);
+  const requests = await jsonRequest<{ requests: Array<{ docId: string; sender: { id: string; email: string } }> }>(
+    "GET",
+    "/api/people/requests",
+    invited.token
+  );
+  const request = requests.data?.requests.find((r) => r.docId === docId);
+  assert.equal(request?.sender.email, owner.email);
+  assert.equal((await jsonRequest("POST", `/api/people/${request!.sender.id}/accept`, invited.token)).status, 200);
   const invitedDocs = await jsonRequest<{ docs: Array<{ id: string; shared?: boolean; role?: string }> }>(
     "GET",
     "/api/docs",

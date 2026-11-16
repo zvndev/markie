@@ -97,3 +97,21 @@ export async function signUpVerified(
     id: signInBody?.user?.id ?? signUpBody?.user?.id ?? "",
   };
 }
+
+// Stand in for "the recipient accepted this sender in Requests" (share-people.ts),
+// for suites about what an accepted member may do. Since 2026-11-15 a share
+// from someone the recipient has not accepted is only a request; the suites
+// that test that rule itself (share-people.test.ts) go through the real routes.
+// Written straight to the table so it can be called before or after the share.
+export function acceptSender(recipientId: string, senderId: string): void {
+  db().exec(`CREATE TABLE IF NOT EXISTS share_people (
+    recipient_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('accepted','blocked')),
+    updated_at TEXT NOT NULL, PRIMARY KEY (recipient_id, sender_id))`);
+  db()
+    .prepare(
+      `INSERT INTO share_people (recipient_id, sender_id, state, updated_at) VALUES (?, ?, 'accepted', ?)
+       ON CONFLICT (recipient_id, sender_id) DO UPDATE SET state = 'accepted'`
+    )
+    .run(recipientId, senderId, new Date().toISOString());
+}

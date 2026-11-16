@@ -23,6 +23,9 @@ process.env.BETTER_AUTH_URL = "http://localhost:8787";
 process.env.BETTER_AUTH_SECRET = "markie-share-people-test-secret-32-plus-chars";
 process.env.MARKIE_SITE_URL = "https://markie.test";
 process.env.MARKIE_NO_LISTEN = "1";
+// Turns on the account platform, whose cloud-area placements are one more
+// place a document id is checked against access.
+process.env.MARKIE_ACCOUNT_IDENTITIES = "1";
 
 const { auth } = await import("./auth.ts");
 const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
@@ -446,9 +449,14 @@ test("a document-platform file shared by someone not accepted is a request too",
   assert.equal(members.data.members.find((m) => m.userId === hana.id)?.waiting, true);
   const request = (await requestsOf(hana)).requests.find((r) => r.docId === file);
   assert.equal(request?.kind, "file");
+  // Nor can Hana file it into one of her own cloud areas.
+  const area = (await call<{ area: { id: string } }>("POST", "/api/account/cloud-areas", hana.token, { label: "Mine" })).data.area;
+  const placement = `/api/account/cloud-areas/placements/snapshot/${file}`;
+  assert.equal((await call("PUT", placement, hana.token, { areaId: area.id })).status, 404);
 
   assert.equal((await call("POST", `/api/people/${owner.id}/accept`, hana.token)).status, 200);
   assert.equal((await call("GET", `/api/document-platform/documents/${file}`, hana.token)).status, 200);
+  assert.equal((await call("PUT", placement, hana.token, { areaId: area.id })).status, 200, "once accepted, she can");
   assert.equal((await call("DELETE", `/api/people/${owner.id}`, hana.token)).status, 200);
   assert.equal((await call("GET", `/api/document-platform/documents/${file}`, hana.token)).status, 404);
 });

@@ -488,8 +488,8 @@ export function Library({
 
   // Nightly: a cloud .wd's own hosted address (server/src/live-docs.ts). It
   // opens, after signing in, for the owner and everyone the document is
-  // shared with, on any device. The owner also gets the public address while
-  // the document's public link is on.
+  // shared with, on any device. A Live Doc is never public, so there is no
+  // other address.
   const liveDocAddress = async (item: LibraryItem): Promise<LiveDocAddress | null> => {
     if (!item.cloudId) return null;
     const address = await sharesClientFor(item.server).liveDocAddress(item.cloudId).catch(() => null);
@@ -512,21 +512,6 @@ export function Library({
     await copyText(address.url, address.access === "private"
       ? "Live Doc address copied. It opens only for you, after you sign in."
       : "Live Doc address copied. It opens for you and everyone it's shared with, after they sign in.");
-  };
-
-  const copyPublicLiveDoc = async (item: LibraryItem) => {
-    const address = await liveDocAddress(item);
-    if (!address) return;
-    if (!address.publicUrl) {
-      flashError("This Live Doc isn't public. Turn on its public link in Share first.");
-      return;
-    }
-    const reach = address.network === null
-      ? " It may send requests to other sites."
-      : address.network.length > 0 ? ` It sends requests to ${address.network.map((origin) => origin.replace(/^https:\/\//, "")).join(", ")}, which learn its address and anything visitors type.` : "";
-    await copyText(address.publicUrl, address.publishedAs
-      ? `Public Live Doc address copied. Anyone with it can open the page, which names its publisher as ${address.publishedAs}.${reach}`
-      : `Public Live Doc address copied. Anyone with it can open the page, no sign-in needed.${reach}`);
   };
 
   const openLiveDoc = async (item: LibraryItem) => {
@@ -630,9 +615,6 @@ export function Library({
     if (rowSignedIn && item.cloudId && item.state !== "local-only"
       && libraryDocumentFormat(item.name) === "darkmown" && nightlyFeaturesEnabled()) {
       entries.push({ key: "copy-live-doc", label: "Copy Live Doc address", icon: MENU_ICONS.link, onSelect: () => void copyLiveDoc(item) });
-      if (!item.shared && item.owned !== false) {
-        entries.push({ key: "copy-public-live-doc", label: "Copy public Live Doc address", icon: MENU_ICONS.link, onSelect: () => void copyPublicLiveDoc(item) });
-      }
       entries.push({ key: "open-live-doc", label: "Open Live Doc", icon: MENU_ICONS.link, onSelect: () => void openLiveDoc(item) });
     }
     if (item.path) {

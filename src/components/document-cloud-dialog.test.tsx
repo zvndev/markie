@@ -63,6 +63,22 @@ describe("explicit ordinary cloud sharing", () => {
     expect(state.download).not.toHaveBeenCalled();
   });
 
+  it("offers the owner no anyone-with-the-link link for a Live Doc, and says it stays private", async () => {
+    const document = { ...await snapshot("counter.wd"), format: "darkmown" };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ document })));
+    render(<DocumentCloudDialog cloudDocumentId="cloud-id" onClose={vi.fn()} />);
+    expect(await screen.findByText("Live Docs are always private. Share with people instead.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Create 24-hour read-only link" })).toBeNull();
+  });
+
+  it("keeps the read-only link for the owner of an ordinary document", async () => {
+    const document = await snapshot("cloud.txt");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ document })));
+    render(<DocumentCloudDialog cloudDocumentId="cloud-id" onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Create 24-hour read-only link" })).toBeVisible();
+    expect(screen.queryByText("Live Docs are always private. Share with people instead.")).toBeNull();
+  });
+
   it("keeps viewer text read-only and refuses write shortcuts", async () => {
     const document = await snapshot("cloud.txt", "viewer"), request = vi.fn(async () => Response.json({ document })); vi.stubGlobal("fetch", request);
     render(<DocumentCloudDialog cloudDocumentId="cloud-id" onClose={vi.fn()} />);

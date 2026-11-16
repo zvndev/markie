@@ -68,6 +68,8 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       setState({ status: "ready", doc });
       if (target.kind === "doc") void api.docLinks(target.id).then((links) => { if (current === run.current) setRelated(links); });
       if (target.kind === "doc") void api.shares(target.id).then((list) => { if (current === run.current) setMembers(list); }, () => undefined);
+      // Asked for a Live Doc too: an older or self-hosted server may have given
+      // it a public link, and the owner must see it to turn it off.
       if (target.kind === "doc" && doc.role === "owner") void api.publicLink(target.id).then((url) => { if (current === run.current) setPublicUrl(url); }, () => undefined);
     } catch (error) {
       if (current !== run.current) return;
@@ -163,6 +165,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           title={doc.name}
           people={docsPeople(api, target.id)}
           publicLink={owner ? docsPublicLink(api, target.id) : null}
+          liveDoc={isLiveDoc(doc)}
           canManage={owner}
           owner={owner ? null : sharedBy}
           me={me}
@@ -177,6 +180,11 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       ) : null}
     </Screen>
   );
+}
+
+/** A Live Doc: Darkmown, by format or by its .wd name. Never public. */
+function isLiveDoc(doc: CloudDoc): boolean {
+  return doc.format === "darkmown" || /\.wd$/i.test(doc.name.trim());
 }
 
 // The nav bar names the document and its own first heading usually does too,

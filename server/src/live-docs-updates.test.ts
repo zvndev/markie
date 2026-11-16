@@ -54,16 +54,37 @@ async function putDoc(token: string, id: string, name: string, content: string, 
   const res = await ask(APP_HOST, `/api/docs/${id}`, { method: "PUT", bearer: token, body: { name, content, hash: sha(content), baseVersion } });
   assert.equal(res.status, 200, `PUT ${name}: ${await res.clone().text()}`);
 }
-async function makePublic(token: string, docId: string) {
-  assert.equal((await ask(APP_HOST, `/api/docs/${docId}/public-link`, { method: "POST", bearer: token })).status, 200);
-}
-interface Address { url: string; access: string; publicUrl?: string; network: string[] }
+interface Address { url: string; access: string; network: string[] }
 async function addressFor(docId: string, token: string): Promise<Address> {
   const res = await ask(APP_HOST, `/api/docs/${docId}/live-doc`, { bearer: token });
   assert.equal(res.status, 200, await res.clone().text());
   return (await res.json()) as Address;
 }
 const labelOf = (url: string) => /^http:\/\/([a-z2-7]{16})\./.exec(url)![1]!;
+const COOKIE = "__Host-markie-live";
+const STATE_COOKIE = "__Host-markie-live-state";
+
+async function browserSignIn(email: string): Promise<string> {
+  const res = await ask(APP_HOST, "/api/auth/sign-in/email", { method: "POST", headers: { origin: "http://localhost:3000" }, body: { email, password: "password-123" } });
+  assert.equal(res.status, 200);
+  const session = res.headers.getSetCookie().map((line) => line.split(";")[0]).find((value) => value.startsWith("better-auth.session_token="));
+  assert.ok(session);
+  return session;
+}
+
+/** The pass flow a browser takes; the Live Doc cookie it ends with. A Live Doc has no public address. */
+async function openPrivate(label: string, appCookie: string): Promise<string> {
+  const start = await ask(liveHost(label), "/");
+  assert.equal(start.status, 302);
+  const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
+  const stateCookie = start.headers.getSetCookie().find((line) => line.startsWith(`${STATE_COOKIE}-${state.slice(0, 16)}=`))!.split(";")[0];
+  const pass = await ask(APP_HOST, `/live-docs/pass/${label}?state=${state}`, { cookie: appCookie });
+  assert.equal(pass.status, 302, "a pass");
+  const redeem = new URL(pass.headers.get("location")!);
+  const redeemed = await ask(liveHost(label), `${redeem.pathname}${redeem.search}`, { cookie: stateCookie });
+  assert.equal(redeemed.status, 303);
+  return redeemed.headers.getSetCookie().find((value) => value.startsWith(`${COOKIE}=`) && !value.startsWith(`${COOKIE}=;`))!.split(";")[0];
+}
 const connectSrc = (csp: string | null) => (csp ?? "").split("; ").find((directive) => directive.startsWith("connect-src "))!.split(" ").slice(1);
 
 interface Tab { res: Response; next(timeoutMs?: number): Promise<{ event: string; data: string } | "closed" | "timeout">; close(): Promise<void> }
@@ -109,6 +130,13 @@ async function openTab(response: Response | Promise<Response>): Promise<Tab> {
 
 const stamp = Date.now();
 const owner = await signUpVerified(app, { name: "Una Updater", email: `h3-owner-${stamp}@example.com` });
+const ownerSession = await browserSignIn(owner.email);
+/** The owner's own way into a Live Doc: its address, label and a Live Doc cookie. */
+async function openOwn(docId: string): Promise<{ address: Address; label: string; cookie: string }> {
+  const address = await addressFor(docId, owner.token);
+  const label = labelOf(address.url);
+  return { address, label, cookie: await openPrivate(label, ownerSession) };
+}
 const ROSTER = ':fetch roster from "https://api.example.com/roster"\n\n# Team\n\n@loop roster into person\n- { person.name }\n@endloop\n';
 
 // ── the network list ─────────────────────────────────────────────────────────
@@ -116,10 +144,9 @@ const ROSTER = ':fetch roster from "https://api.example.com/roster"\n\n# Team\n\
 test("a page reaches exactly the https origins its :fetch names, and the address says which", async () => {
   const id = `h3-net-${stamp}`;
   await putDoc(owner.token, id, "Roster.wd", ROSTER.replace("# Team", ':fetch scores from "https://stats.example.org/v1/{ team }/scores"\n\n# Team'));
-  await makePublic(owner.token, id);
-  const address = await addressFor(id, owner.token);
+  const { address, label, cookie } = await openOwn(id);
   assert.deepEqual(address.network, ["https://api.example.com", "https://stats.example.org"]);
-  const page = await ask(liveHost(labelOf(address.publicUrl!)), "/");
+  const page = await ask(liveHost(label), "/", { cookie });
   assert.equal(page.status, 200);
   assert.deepEqual(connectSrc(page.headers.get("content-security-policy")), ["'self'", "https://api.example.com", "https://stats.example.org"]);
   const html = await page.text();
@@ -130,10 +157,9 @@ test("a page reaches exactly the https origins its :fetch names, and the address
 test("a page with no :fetch can reach nothing but its own host", async () => {
   const id = `h3-quiet-${stamp}`;
   await putDoc(owner.token, id, "Quiet.wd", ":state n = 1\n\n# Quiet { n }\n");
-  await makePublic(owner.token, id);
-  const address = await addressFor(id, owner.token);
+  const { address, label, cookie } = await openOwn(id);
   assert.deepEqual(address.network, []);
-  const page = await ask(liveHost(labelOf(address.publicUrl!)), "/");
+  const page = await ask(liveHost(label), "/", { cookie });
   assert.deepEqual(connectSrc(page.headers.get("content-security-policy")), ["'self'"]);
 });
 
@@ -141,10 +167,9 @@ test("a :fetch to an address that may not be hosted is dropped, and opens nothin
   const id = `h3-bad-${stamp}`;
   const sources = ["http://api.example.com/x", "https://192.168.1.10/x", "https://localhost/x", "https://printer.local/x", "/api/x", "{ base }/x"];
   await putDoc(owner.token, id, "Bad.wd", `${sources.map((url, index) => `:fetch f${index} from "${url}"`).join("\n")}\n\n# Bad\n`);
-  await makePublic(owner.token, id);
-  const address = await addressFor(id, owner.token);
+  const { address, label, cookie } = await openOwn(id);
   assert.deepEqual(address.network, []);
-  const page = await ask(liveHost(labelOf(address.publicUrl!)), "/");
+  const page = await ask(liveHost(label), "/", { cookie });
   assert.equal(page.status, 200);
   assert.deepEqual(connectSrc(page.headers.get("content-security-policy")), ["'self'"], "the browser blocks every unlisted address");
   // The runtime's own code names the attribute; what must be gone is the marker element.
@@ -155,9 +180,8 @@ test("a :fetch to Markie's own hosts, or to too many places, is refused", async 
   const fast = createLiveDocs({ config: liveDocsConfig()!, appOrigin: APP_ORIGIN, siteUrl: "https://markie.test", appHosts: ["https://api.markie-example.com"] });
   const id = `h3-self-${stamp}`;
   await putDoc(owner.token, id, "Self.wd", ':fetch me from "https://api.markie-example.com/api/me"\n\n# Self\n');
-  await makePublic(owner.token, id);
-  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
-  const [url, init] = requestFor(liveHost(label), "/");
+  const { label, cookie } = await openOwn(id);
+  const [url, init] = requestFor(liveHost(label), "/", { cookie });
   const res = await fast.dispatch(new Request(url, init))!;
   assert.equal(res.status, 422);
   assert.match(await res.text(), /part of Markie/);
@@ -165,10 +189,9 @@ test("a :fetch to Markie's own hosts, or to too many places, is refused", async 
   const many = `h3-many-${stamp}`;
   const fetches = Array.from({ length: LIVE_DOC_NETWORK_LIMIT + 1 }, (_, index) => `:fetch f${index} from "https://host${index}.example.com/x"`).join("\n");
   await putDoc(owner.token, many, "Many.wd", `${fetches}\n\n# Many\n`);
-  await makePublic(owner.token, many);
-  const manyAddress = await addressFor(many, owner.token);
-  assert.deepEqual(manyAddress.network, [], "a page that cannot be hosted reports no network");
-  const page = await ask(liveHost(labelOf(manyAddress.publicUrl!)), "/");
+  const manyOpen = await openOwn(many);
+  assert.deepEqual(manyOpen.address.network, [], "a page that cannot be hosted reports no network");
+  const page = await ask(liveHost(manyOpen.label), "/", { cookie: manyOpen.cookie });
   assert.equal(page.status, 422);
   assert.match(await page.text(), new RegExp(`at most ${LIVE_DOC_NETWORK_LIMIT} addresses`));
 });
@@ -178,13 +201,12 @@ test("a :fetch to Markie's own hosts, or to too many places, is refused", async 
 test("an open page hears about an edit at once, and once per version", async () => {
   const id = `h3-live-${stamp}`;
   await putDoc(owner.token, id, "Live.wd", "# One\n");
-  await makePublic(owner.token, id);
-  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
-  const page = await ask(liveHost(label), "/");
+  const { label, cookie } = await openOwn(id);
+  const page = await ask(liveHost(label), "/", { cookie });
   const html = await page.text();
   const shown = /<meta name="markie-live-version" content="(\d+)">/.exec(html);
   assert.ok(shown, "the page says which version it shows");
-  const tab = await openTab(ask(liveHost(label), `/__markie/live?v=${shown[1]}`));
+  const tab = await openTab(ask(liveHost(label), `/__markie/live?v=${shown[1]}`, { cookie }));
   assert.deepEqual(await tab.next(), { event: "ready", data: "{}" });
   assert.equal(await tab.next(300), "timeout", "nothing to report while nothing changed");
 
@@ -192,24 +214,23 @@ test("an open page hears about an edit at once, and once per version", async () 
   // The write itself re-checks open pages; no waiting for the 5-second timer.
   assert.deepEqual(await tab.next(500), { event: "updated", data: "{}" });
   assert.equal(await tab.next(300), "timeout", "one event per version");
-  assert.match(await (await ask(liveHost(label), "/")).text(), /<h1>Two<\/h1>/, "the reload gets the new version");
+  assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<h1>Two<\/h1>/, "the reload gets the new version");
   await tab.close();
 });
 
 test("a page that loaded just before an edit still hears about it", async () => {
   const id = `h3-race-${stamp}`;
   await putDoc(owner.token, id, "Race.wd", "# Before\n");
-  await makePublic(owner.token, id);
-  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
-  const shown = /<meta name="markie-live-version" content="(\d+)">/.exec(await (await ask(liveHost(label), "/")).text())![1]!;
+  const { label, cookie } = await openOwn(id);
+  const shown = /<meta name="markie-live-version" content="(\d+)">/.exec(await (await ask(liveHost(label), "/", { cookie })).text())![1]!;
   // The edit lands between the page load and its stream.
   await putDoc(owner.token, id, "Race.wd", "# After\n", Number(shown));
-  const tab = await openTab(ask(liveHost(label), `/__markie/live?v=${shown}`));
+  const tab = await openTab(ask(liveHost(label), `/__markie/live?v=${shown}`, { cookie }));
   assert.deepEqual(await tab.next(), { event: "ready", data: "{}" });
   assert.deepEqual(await tab.next(500), { event: "updated", data: "{}" });
   await tab.close();
   // A stream that does not say what it shows starts from the current version.
-  const fresh = await openTab(ask(liveHost(label), "/__markie/live"));
+  const fresh = await openTab(ask(liveHost(label), "/__markie/live", { cookie }));
   assert.deepEqual(await fresh.next(), { event: "ready", data: "{}" });
   assert.equal(await fresh.next(300), "timeout");
   await fresh.close();
@@ -218,14 +239,16 @@ test("a page that loaded just before an edit still hears about it", async () => 
 test("a stream still closes a tab when access ends after an update", async () => {
   const id = `h3-then-${stamp}`;
   await putDoc(owner.token, id, "Then.wd", "# A\n");
-  await makePublic(owner.token, id);
-  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
-  const tab = await openTab(ask(liveHost(label), "/__markie/live"));
+  const reader = await signUpVerified(app, { name: "Rita Reader", email: `h3-reader-${stamp}@example.com` });
+  assert.equal((await ask(APP_HOST, `/api/docs/${id}/shares`, { method: "POST", bearer: owner.token, body: { email: reader.email, role: "viewer" } })).status, 200);
+  const label = labelOf((await addressFor(id, owner.token)).url);
+  const cookie = await openPrivate(label, await browserSignIn(reader.email));
+  const tab = await openTab(ask(liveHost(label), "/__markie/live", { cookie }));
   assert.deepEqual(await tab.next(), { event: "ready", data: "{}" });
   await putDoc(owner.token, id, "Then.wd", "# B\n", 1);
   assert.deepEqual(await tab.next(500), { event: "updated", data: "{}" });
-  assert.equal((await ask(APP_HOST, `/api/docs/${id}/public-link`, { method: "DELETE", bearer: owner.token })).status, 200);
-  assert.deepEqual(await tab.next(500), { event: "revoked", data: JSON.stringify({ reason: "link" }) });
+  assert.equal((await ask(APP_HOST, `/api/docs/${id}/shares/${encodeURIComponent(reader.id)}`, { method: "DELETE", bearer: owner.token })).status, 200);
+  assert.deepEqual(await tab.next(500), { event: "revoked", data: JSON.stringify({ reason: "access" }) });
 });
 
 test("the page script handles updates, and only reloads an untouched page", async () => {
@@ -242,9 +265,8 @@ test("a burst of saves sends an open page at most two notices: one at once, one 
   const { LIVE_DOC_UPDATE_INTERVAL_MS } = await import("./live-docs-channels.ts");
   const id = `h3-burst-${stamp}`;
   await putDoc(owner.token, id, "Burst.wd", "# Burst\n");
-  await makePublic(owner.token, id);
-  const label = labelOf((await addressFor(id, owner.token)).publicUrl!);
-  const tab = await openTab(ask(liveHost(label), "/__markie/live"));
+  const { label, cookie } = await openOwn(id);
+  const tab = await openTab(ask(liveHost(label), "/__markie/live", { cookie }));
   assert.deepEqual(await tab.next(), { event: "ready", data: "{}" });
   for (let version = 1; version <= 10; version++) await putDoc(owner.token, id, "Burst.wd", "# Burst\n", version);
   const events: string[] = [];
@@ -258,7 +280,7 @@ test("a burst of saves sends an open page at most two notices: one at once, one 
   assert.ok(events.length >= 1 && events.length <= 2, `got ${events.join(", ")}`);
   assert.ok(events.every((event) => event === "updated"));
   // And the page then shows the last version.
-  assert.match(await (await ask(liveHost(label), "/")).text(), /<meta name="markie-live-version" content="11">/);
+  assert.match(await (await ask(liveHost(label), "/", { cookie })).text(), /<meta name="markie-live-version" content="11">/);
 });
 
 test("the address says the network is unknown when the compile could not finish", async () => {

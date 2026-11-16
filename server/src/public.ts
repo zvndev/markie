@@ -3,7 +3,6 @@
 import { Hono } from "hono";
 import { openDatabase } from "./db.ts";
 import { resolvePublicToken } from "./public-links.ts";
-import { liveDocTakenDown } from "./live-docs-store.ts";
 import { docLinksFor, publicPageLinkFor } from "./doc-links.ts";
 import { assetRefsFor, assetVersion, serveAsset } from "./assets.ts";
 import {
@@ -111,10 +110,11 @@ function docForToken(
       "SELECT name, content, format FROM docs WHERE id = ? AND deleted_at IS NULL"
     )
     .get(link.doc_id) as { name: string; content: string; format: string } | undefined;
-  // A Live Doc Markie took down (scripts/live-doc-takedown.ts) serves nothing
-  // from its public link: not the page, not its source, not its assets.
-  // Restoring it brings the same link back.
-  if (doc?.format === "darkmown" && liveDocTakenDown(link.doc_id)) return null;
+  // A Live Doc is never public (public-links.ts), so a link that still points
+  // at one serves nothing: not the page, not its source, not its assets, not
+  // its links. The same answer as a token that never existed. The database
+  // already refuses such a link; this holds even if one slipped through.
+  if (doc?.format === "darkmown") return null;
   return doc ? { doc_id: link.doc_id, ...doc } : null;
 }
 

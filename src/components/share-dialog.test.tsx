@@ -283,74 +283,42 @@ describe("ShareDialog", () => {
       expect(screen.queryByRole("button", { name: "Publish it" })).toBeNull();
     });
 
-    it("asks first, naming the sites, before a Live Doc that fetches data goes public (nightly)", async () => {
-      localStorage.setItem("markie.nightly", "1");
-      liveDocAddress.mockResolvedValue({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: ["https://api.example.com", "https://stats.example.org"] });
-      const user = userEvent.setup();
-      renderDialog({ fileName: "team.wd" });
-      await waitFor(() => expect(liveDocAddress).toHaveBeenCalledWith("doc-1"));
-
-      await user.selectOptions(await screen.findByLabelText("General access"), "link");
-      expect(createPublicLink).not.toHaveBeenCalled();
-      const ask = await screen.findByRole("alertdialog", { name: "Make this Live Doc public" });
-      expect(ask).toHaveTextContent("api.example.com, stats.example.org");
-      await user.click(within(ask).getByRole("button", { name: "Cancel" }));
-      expect(createPublicLink).not.toHaveBeenCalled();
-      expect(screen.queryByRole("alertdialog")).toBeNull();
-
-      await user.selectOptions(screen.getByLabelText("General access"), "link");
-      await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Make public" }));
-      expect(createPublicLink).toHaveBeenCalledWith("doc-1");
-      expect(await screen.findByText(/This Live Doc sends requests to api\.example\.com, stats\.example\.org, which learn its address/)).toBeInTheDocument();
-    });
-
-    it("asks when it cannot yet tell what a Live Doc reaches: still loading, unknown, or failed", async () => {
-      localStorage.setItem("markie.nightly", "1");
-      const user = userEvent.setup();
-      // Made when asked for, so the failed answer is never an unhandled rejection.
-      const answers = [
-        () => new Promise(() => {}),
-        () => Promise.resolve({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: null }),
-        () => Promise.reject(new Error("offline")),
-      ];
-      for (const answer of answers) {
-        liveDocAddress.mockImplementationOnce(answer);
+    it("never offers a public link for a Live Doc, and says so in one line", async () => {
+      for (const nightly of [false, true]) {
+        if (nightly) localStorage.setItem("markie.nightly", "1");
         const { unmount } = renderDialog({ fileName: "team.wd" });
-        await user.selectOptions(await screen.findByLabelText("General access"), "link");
-        const ask = await screen.findByRole("alertdialog", { name: "Make this Live Doc public" });
-        expect(ask).toHaveTextContent(/couldn.t check which/);
-        expect(createPublicLink).not.toHaveBeenCalled();
+        expect(await screen.findByText("Live Docs are always private. Share with people instead.")).toBeInTheDocument();
+        expect(screen.queryByLabelText("General access")).toBeNull();
+        expect(screen.queryByText("Anyone with the link")).toBeNull();
+        expect(screen.queryByRole("alertdialog")).toBeNull();
+        // People can still be added.
+        expect(await field()).toBeInTheDocument();
         unmount();
       }
-    });
-
-    it("publishes at once when the server has no Live Doc for it", async () => {
-      localStorage.setItem("markie.nightly", "1");
-      liveDocAddress.mockResolvedValue(null);
-      const user = userEvent.setup();
-      renderDialog({ fileName: "team.wd" });
-      await waitFor(() => expect(liveDocAddress).toHaveBeenCalled());
-      await user.selectOptions(await screen.findByLabelText("General access"), "link");
-      expect(createPublicLink).toHaveBeenCalledWith("doc-1");
-      expect(screen.queryByRole("alertdialog")).toBeNull();
-    });
-
-    it("publishes a Live Doc that fetches nothing in one step, and never asks outside nightly", async () => {
-      liveDocAddress.mockResolvedValue({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: ["https://api.example.com"] });
-      const user = userEvent.setup();
-      const { unmount } = renderDialog({ fileName: "team.wd" });
-      await user.selectOptions(await screen.findByLabelText("General access"), "link");
-      expect(createPublicLink).toHaveBeenCalledTimes(1);
+      expect(createPublicLink).not.toHaveBeenCalled();
       expect(liveDocAddress).not.toHaveBeenCalled();
-      unmount();
+    });
 
-      localStorage.setItem("markie.nightly", "1");
-      liveDocAddress.mockResolvedValue({ url: "https://abcdefghijklmnop.markie.live/", access: "private", publicUrl: null, publishedAs: null, network: [] });
-      renderDialog({ fileName: "quiet.wd" });
-      await waitFor(() => expect(liveDocAddress).toHaveBeenCalled());
-      await user.selectOptions(await screen.findByLabelText("General access"), "link");
-      expect(createPublicLink).toHaveBeenCalledTimes(2);
-      expect(screen.queryByRole("alertdialog")).toBeNull();
+    it("shows a Live Doc's leftover public link with a way to turn it off, and never copies it", async () => {
+      const user = userEvent.setup();
+      const writeText = stubClipboard();
+      getPublicLink.mockResolvedValue("https://markie.app/s/old");
+      renderDialog({ fileName: "team.wd" });
+      expect(await screen.findByText(/Anyone with its public link can still open this Live Doc\. Live Docs should be private/)).toBeInTheDocument();
+      expect(getPublicLink).toHaveBeenCalledWith("doc-1");
+      await user.click(screen.getByRole("button", { name: "Copy link" }));
+      expect(writeText).toHaveBeenCalledWith("https://api.markie.test/d/doc-1");
+      await user.click(screen.getByRole("button", { name: "Turn off" }));
+      expect(revokePublicLink).toHaveBeenCalledWith("doc-1");
+      expect(await screen.findByText("Live Docs are always private. Share with people instead.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Turn off" })).toBeNull();
+    });
+
+    it("keeps Anyone with the link for a Markdown document", async () => {
+      renderDialog({ fileName: "notes.md" });
+      expect(await screen.findByLabelText("General access")).toHaveValue("restricted");
+      expect(screen.queryByText("Live Docs are always private. Share with people instead.")).toBeNull();
+      await waitFor(() => expect(getPublicLink).toHaveBeenCalledWith("doc-1"));
     });
 
     it("reports a failed publish instead of pretending it worked", async () => {

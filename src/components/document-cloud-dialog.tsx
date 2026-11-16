@@ -10,6 +10,7 @@ import { exportDocx, openDocx } from "@/lib/office/docx";
 import { exportRichDocument, openRichDocument } from "@/lib/office/rich-document";
 import { CloudAreaPicker } from "./cloud-area-picker";
 import { AccountIdentitiesClient } from "@/lib/account-identities";
+import { LIVE_DOC_PRIVATE_LINE, isLiveDocName } from "@/lib/general-access";
 
 interface CloudDialogProps { file?: CloudFile; cloudDocumentId?: string; onClose: (message: string | null) => void; onCloseGuard?: (guard: (() => boolean) | null) => void }
 const BUTTON = "px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-40";
@@ -199,7 +200,8 @@ export function DocumentCloudDialog({ file, cloudDocumentId, onClose, onCloseGua
           {editing ? <><CloudDocumentEditor key={editEpoch} value={editing} readOnly={busy || cloud.role === "viewer"} onChange={(value) => { if (busy || cloud.role === "viewer" || !identityMatches()) return; setEditing(value); setCloudDirty(true); }} /><p className="text-xs text-muted">{cloudDirty ? "Cloud edits are not saved yet." : "No unsaved cloud edits."}</p></> : null}
           {cloud.role === "owner" ? <fieldset className="space-y-2"><legend className="text-sm font-medium">Verified account access</legend><label className="block text-sm">Email<input type="email" className="w-full mt-1 p-2 rounded-md border border-border bg-background" value={email} onChange={(event) => setEmail(event.target.value)} /></label><div className="flex gap-2">{(["viewer", "editor"] as const).map((value) => <button key={value} type="button" className={BUTTON} aria-pressed={role === value} onClick={() => setRole(value)}>{value === "viewer" ? "Can view" : "Can save versions"}</button>)}<button type="button" className={BUTTON} disabled={busy || !email.trim()} onClick={invite}>Add access</button></div></fieldset> : null}
           {members.map((member) => <div key={member.userId} className="flex justify-between gap-2 text-sm"><span>{member.email ?? member.userId} · {member.role}</span><button type="button" className={BUTTON} disabled={busy} onClick={() => void run(async (client) => { await client.call(`/documents/${cloud.id}/members/${member.userId}`, "DELETE"); setMembers((current) => current.filter((item) => item.userId !== member.userId)); setNotice("Future access revoked. Existing downloaded copies cannot be recalled."); })}>Revoke access</button></div>)}
-          {cloud.role === "owner" ? <button type="button" className={BUTTON} disabled={busy} onClick={createLink}>Create 24-hour read-only link</button> : null}
+          {cloud.role === "owner" && (cloud.format === "darkmown" || isLiveDocName(cloud.name)) ? <p className="text-sm text-muted" data-markie-live-private>{LIVE_DOC_PRIVATE_LINE}</p>
+            : cloud.role === "owner" ? <button type="button" className={BUTTON} disabled={busy} onClick={createLink}>Create 24-hour read-only link</button> : null}
           {link ? <div className="space-y-2"><label className="block text-sm">Read-only download link<input className="w-full mt-1 p-2 rounded-md border border-border bg-background text-xs" value={link} readOnly /></label><button type="button" className={BUTTON} onClick={() => {
             if (!navigator.clipboard?.writeText) { setError("Clipboard access is unavailable. Select and copy the link above."); return; }
             void navigator.clipboard.writeText(link).then(() => setNotice("Link copied.")).catch(() => setError("Clipboard access failed. Select and copy the link above."));

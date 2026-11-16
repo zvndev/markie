@@ -1,6 +1,6 @@
 # Hosting Live Docs
 
-Every cloud document with format `darkmown` (a `.wd`) gets its own address, `<label>.<LIVE_DOCS_DOMAIN>`. It opens through a one-time pass for its owner and everyone it is shared with. While its public link is on, it also has a public address that opens for anyone. This page covers turning it on, running it locally, who can open what, and putting it on `markie.live` in production.
+Every cloud document with format `darkmown` (a `.wd`) gets its own address, `<label>.<LIVE_DOCS_DOMAIN>`. It opens through a one-time pass for its owner and everyone it is shared with. A Live Doc is never public. This page covers turning it on, running it locally, who can open what, and putting it on `markie.live` in production.
 
 The design is `markie-darkmown-sites-design-2026-11-01.md` (Circular ENG-7835). The code is `server/src/live-docs*.ts`.
 
@@ -50,21 +50,29 @@ Access follows the document's Share settings. Nothing new is stored about who ma
 |---|---|---|
 | Private | The owner | The private address, through the pass |
 | Shared | The owner and every member, viewer or editor | The private address, through the pass. A pending invite opens nothing until a verified account claims it |
-| Public | Anyone, signed in or not | A second address, `<public label>.<domain>`, with no cookie and no pass. The private address still needs the pass |
 
-- The public address exists only while the document's public link is on. It is bound to the hash of that link's token, so rotating the link (which removing a member does) or turning it off kills the address in the same moment.
-- The document's public link, `/s/<token>`, forwards to the public address when the document is a Live Doc. Every other document keeps its usual page.
-- Only the owner is shown the public address, the same as the public link. `GET /api/docs/:id/live-doc` gives a member `{ url, access: "shared" }` and the owner `{ url, access, publicUrl? }`.
-- A public page names its publisher in a footer: the owner's display name, never an email address. A name that is just the email's local part shows as "a Markie account" instead. The owner's copy of the public address says which name the page shows.
+`GET /api/docs/:id/live-doc` gives anyone it opens for `{ url, access, network }`, where `access` is `private` or `shared`.
+
+### Never public
+
+A Live Doc can never be public (product rule, 2026-11-15). There is no address that opens without a Markie sign-in. Ordinary Markdown documents keep their public links exactly as before.
+
+- `POST /api/docs/:id/public-link` for a darkmown document answers `409` with `{ "error": "live-doc-private", "message": "Live Docs can't be public. Share it with people instead." }`. The desktop, web and phone share screens, and the Markie MCP's `markie_cloud_public_link`, all go through it, and none of them offers a public link for a `.wd`.
+- The database enforces it too (`guardLiveDocsPrivate` in `public-links.ts`). A trigger refuses a `public_links` row for a darkmown document. Two more delete a document's link in the same statement that makes it darkmown, so a rename to `.wd`, a sync, an upload or an agent write cannot leave a Live Doc with a public link.
+- At start-up the server deletes any public link a darkmown document still holds from before the rule and logs how many it removed. Later starts find none.
+- Every `/s/<token>` route (the page, `?view=1`, `/raw`, `/links`, `/assets`, and `/api/public-links/<token>/editor`) answers a darkmown document with the same `404` as a token that never existed, even if a link row slipped past the guards.
+- The document platform (`/api/document-platform`) follows the same rule. A name ending in `.wd` is darkmown whatever format the client sends. A darkmown snapshot gets no share link (`409 live-doc-private`), a save that makes one darkmown drops its links, a stray link serves `404`, and the store clears old ones when it starts.
+- The clients still ask whether a `.wd` has a public link, because an older or self-hosted server may have made one. If it has, the desktop and web share dialog and the phone share sheet say so and offer Turn off. They never copy or send that link. `markie_cloud_public_link` reports it with a warning instead of `null`.
+- H2's public address, its stream pool, the publisher footer and the "link changed" revoke reason are deleted. The old `live_doc_public_addresses` table is dropped at start-up.
 
 ### Open tabs
 
 Every hosted page keeps one server-sent event stream open to its own host, `/__markie/live`. It carries no content: `ready`, a comment every 15 seconds, and `revoked` when access ends.
 
-- The stream re-reads access every 5 seconds. Removing a member, rotating or turning off the public link, and deleting the document also re-check every open stream of that document at once.
-- On `revoked`, the page empties itself and clears its address's storage, and says why: access ended, the public link changed, or the Live Doc is gone.
+- The stream re-reads access every 5 seconds. Removing a member and deleting the document also re-check every open stream of that document at once.
+- On `revoked`, the page empties itself and clears its address's storage, and says why: access ended, or the Live Doc is gone.
 - A refusal is a `200` with `revoked`, never an error status, so the page can tell "you lost access" from "the server is restarting". Anything else that drops the stream is retried with backoff, and never blanks the page.
-- Limits: members and public visitors draw from separate pools of 1,000 streams each, so strangers cannot use up the streams members need. One person holds at most 24, one client on public pages at most 24 (an IPv6 /64 is one client), and one owner's public pages at most 200 together. Past any limit, the stream answers `429` and the page retries.
+- Limits: one process holds at most 1,000 streams, and one person at most 24. Past either limit, the stream answers `429` and the page retries.
 - Access checks never read a document's text. They read a covering index (`idx_docs_access`), so a check costs the same for a 40 MB document as for a short one. The page reads the text only when it is within the 200,000-character limit.
 - A stream ends after 30 minutes and the page reconnects, so none lives forever.
 
@@ -73,7 +81,7 @@ Every hosted page keeps one server-sent event stream open to its own host, `/__m
 An open page learns of every new version of its document within seconds. Every write goes through `upsertDocRow` (docs.ts), which tells that document's open streams once its transaction commits. The first write after a quiet spell goes out at once; writes during a burst fold into one notice at most every 5 seconds, carrying the newest version, with no access re-checks (a write never changes who may read). The 5-second timer covers anything else.
 
 - The page tells its stream which version it shows (`<meta name="markie-live-version">`, sent as `?v=`), so a save between the page load and the stream is still reported.
-- On `updated`, an untouched page reloads itself after a random delay of up to 1.5 seconds, so a public page with many readers does not reload all at once, and at most once every 30 seconds per tab. A page someone has typed in or clicked, or one that reloaded less than 30 seconds ago, shows an "Updated" bar with a button instead.
+- On `updated`, an untouched page reloads itself after a random delay of up to 1.5 seconds, so a page with many readers does not reload all at once, and at most once every 30 seconds per tab. A page someone has typed in or clicked, or one that reloaded less than 30 seconds ago, shows an "Updated" bar with a button instead.
 - The stream carries no content, only that the document changed. The reload goes through the same access check as any load, and a version compiles once however many pages reload.
 
 ### What a page can reach
@@ -83,8 +91,8 @@ A Live Doc reaches the network only through Darkmown's `:fetch`, and only at the
 - Each address must be `https://`, with its host (and port) ending at a `/`, `?`, `#` or the end of the address before any `{ state }` interpolation, so no interpolation can extend the host and the origin is fixed when the page compiles. The server holds the compile child's list to the same rule. IP addresses, single-label and private names (`localhost`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like), credentials and relative paths are dropped, and the page says something was disabled.
 - The page's `connect-src` is `'self'` plus exactly those origins. A page with no `:fetch` can reach nothing but its own host, and the browser blocks any address not on the list.
 - A page may name at most 20 origins, and none may be Markie's own (the app, its aliases, the site, the docs host, the live domain). Either refuses the page with a plain notice.
-- Every listed site sees the page's own address (the `Origin` header carries it whatever the referrer policy), so it can open a public page too, and a `:fetch` can carry what a reader typed. A form has no action of its own, but a `:fetch` with `body=` or an interpolated field sends that state on each change.
-- `GET /api/docs/:id/live-doc` returns the list as `network`, or `null` when it cannot tell right now (a busy or failed compile). The Share dialog (nightly) asks before a Live Doc goes public unless the server confirmed its page reaches nothing, names the sites and what they receive, and shows them while it is public. The confirm is advice to the owner; the CSP is what enforces the list.
+- Every listed site sees the page's own address (the `Origin` header carries it whatever the referrer policy), though the address opens nothing without a Markie sign-in, and a `:fetch` can carry what a reader typed. A form has no action of its own, but a `:fetch` with `body=` or an interpolated field sends that state on each change.
+- `GET /api/docs/:id/live-doc` returns the list as `network`, or `null` when it cannot tell right now (a busy or failed compile). The CSP is what enforces the list.
 - `:every` actions and form actions stay disabled on hosted pages.
 
 ### Taking one down
@@ -97,7 +105,7 @@ node --experimental-strip-types scripts/live-doc-takedown.ts --restore <address-
 node --experimental-strip-types scripts/live-doc-takedown.ts --list
 ```
 
-Its addresses then answer "taken down" with a `410`, its public link serves nothing (not the page, its source or its assets), its passes and cookies are deleted, and its open tabs close within 5 seconds. Restoring brings back the same addresses. A takedown follows the document, so the same text uploaded as a new document needs its own.
+Its address then answers "taken down" with a `410`, its passes and cookies are deleted, and its open tabs close within 5 seconds. Restoring brings back the same address. A takedown follows the document, so the same text uploaded as a new document needs its own.
 
 ## How a request is routed
 
@@ -106,7 +114,7 @@ Its addresses then answer "taken down" with a `410`, its public link serves noth
 | `<label>.<domain>`, 16 base32 characters | `/` the page, `/__markie/pass` the redeem, `/__markie/live` the page's stream. Everything else is 404 |
 | `<domain>` itself | `/` redirects to `MARKIE_SITE_URL`. No cookie. Everything else is 404 |
 | Any other name under `<domain>` | 404 |
-| Any other host | The app, as before. `/live-docs/pass/<label>` and `/api/docs/:id/live-doc` live here, and `/s/<token>` forwards a public Live Doc |
+| Any other host | The app, as before. `/live-docs/pass/<label>` and `/api/docs/:id/live-doc` live here. `/s/<token>` for a Live Doc is a `404` |
 
 - The live domain is answered before every app middleware, so no app route, CORS grant or app cookie can come back from a Live Doc host. WebSocket upgrades never pass through that middleware, so the upgrade listener refuses every one whose `Host` or `X-Forwarded-Host` names the live domain.
 - A pass works only in the browser that asked for it. Before sending a browser for a pass, the live host sets a 10-minute `__Host-markie-live-state-<16 hex>` nonce cookie, one per flow, and the app host binds the pass to the nonce's hash, carried as `?state=` through the web sign-in. Redeem requires the matching cookie, so a copied pass URL opens nothing, and two tabs opening at once both get in.

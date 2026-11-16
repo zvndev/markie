@@ -234,26 +234,23 @@ describe("agent cloud: public links", () => {
     expect(api).toHaveBeenCalledWith("POST", "/api/docs/doc-1/public-link");
   });
 
-  it("asks for a .wd public link every time, even with 'always allow' on", async () => {
-    let live: string | null = null;
-    const api = vi.fn(async (method: string) => {
-      if (method === "GET") return { status: 200, data: { url: live } };
-      if (method === "POST") { live = "https://markiedocs.com/s/wd1"; return { status: 200, data: { url: live } }; }
-      live = null;
-      return { status: 200, data: { ok: true } };
-    });
-    const t = setup({ api, perms: { cloudSync: "always" }, answers: [{ allowed: true, always: true }, { allowed: true }] });
+  it("never makes a public link for a .wd, and never asks the user to confirm one", async () => {
+    const api = vi.fn(async () => ({ status: 200, data: { url: "https://markiedocs.com/s/wd1" } }));
+    const t = setup({ api, perms: { cloudSync: "always" }, answers: [{ allowed: true, always: true }] });
     const p = t.file("Plan.wd", "<Counter />\n");
     t.rows.set(p, { cloud_doc_id: "doc-1", sync_state: "synced" });
-    expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/wd1");
-    await t.cloud.cloud_revoke_public_link({ path: p });
-    expect((await t.cloud.cloud_public_link({ path: p, create: true })).publicLink).toBe("https://markiedocs.com/s/wd1");
-    expect(t.confirm).toHaveBeenCalledTimes(2);
-    expect(t.confirm).toHaveBeenNthCalledWith(1, { kind: "public", name: "Plan.wd", path: p });
-    expect(t.confirm).toHaveBeenNthCalledWith(2, { kind: "public", name: "Plan.wd", path: p });
-    // The first answer said "always", and that never carried over to a sync permission change.
-    expect(t.permissions.get().cloudSync).toBe("always");
-    expect(t.permissions.set).not.toHaveBeenCalled();
+    await expect(t.cloud.cloud_public_link({ path: p, create: true })).rejects.toThrow("Live Docs can't be public. Share it with people instead.");
+    expect((await t.cloud.cloud_public_link({ path: p })).publicLink).toBeNull();
+    expect(t.confirm).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it("explains the server's refusal of a Live Doc public link", async () => {
+    const api = vi.fn(async (method: string) => (method === "GET" ? { status: 200, data: { url: null } } : { status: 409, data: { error: "live-doc-private", message: "x" } }));
+    const t = setup({ api, answers: [{ allowed: true }] });
+    const p = t.file("a.md");
+    t.rows.set(p, { cloud_doc_id: "doc-1", sync_state: "synced" });
+    await expect(t.cloud.cloud_public_link({ path: p, create: true })).rejects.toThrow("Live Docs can't be public");
   });
 
   it("needs the file in Cloud first, and revokes without asking", async () => {

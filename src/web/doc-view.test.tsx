@@ -81,6 +81,15 @@ describe("the read view", () => {
     expect(document.querySelector("[data-web-sign-in-to-edit]")).toBeNull();
   });
 
+  it("shows a public link to a Live Doc as gone, without reading anything", async () => {
+    document.head.innerHTML = '<meta name="markie-doc-name" content="Team.wd"><meta name="markie-doc-format" content="darkmown">';
+    const fetcher = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => new Response("# source", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<DocView route={{ kind: "public", token: TOKEN }} apiOrigin={API} user={null} onEdit={() => {}} />);
+    await waitFor(() => expect(document.querySelector('[data-web-view-notice="gone"]')).toBeTruthy());
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("puts the bar away and brings it back, remembering the choice", async () => {
     loadDoc.mockResolvedValue(doc("owner"));
     render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);

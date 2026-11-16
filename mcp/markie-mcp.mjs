@@ -252,7 +252,7 @@ const TOOLS = [
   {
     name: "markie_cloud_public_link",
     description:
-      "Get, or with create true make, a public link for a file already in Markie Cloud. Anyone holding a public link can read and download the document without an account. Only set create when the user explicitly asked for a public link in this conversation; a private link is what they get otherwise. Markie asks the user to confirm every public link it makes.",
+      "Get, or with create true make, a public link for a file already in Markie Cloud. Anyone holding a public link can read and download the document without an account. Only set create when the user explicitly asked for a public link in this conversation; a private link is what they get otherwise. Markie asks the user to confirm every public link it makes. A Darkmown (.wd) file is a Live Doc and can never have a public link: share it with people instead.",
     inputSchema: {
       type: "object",
       properties: {

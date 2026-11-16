@@ -27,6 +27,16 @@ export function generalAccessFor(publicUrl: string | null): GeneralAccess {
   return publicUrl ? "link" : "restricted";
 }
 
+// A Live Doc (a .wd, format darkmown) is never public. The server refuses
+// its public link (server/src/public-links.ts), so no screen offers one, and
+// this is the one line every screen shows instead.
+export const LIVE_DOC_PRIVATE_LINE = "Live Docs are always private. Share with people instead.";
+
+/** Whether a document is a Live Doc, by the same rule the server uses: its name ends in .wd. */
+export function isLiveDocName(name: string): boolean {
+  return /\.wd$/i.test(name.trim());
+}
+
 export function generalAccessLabel(general: GeneralAccess): string {
   return general === "link" ? "Anyone with the link" : "Restricted";
 }

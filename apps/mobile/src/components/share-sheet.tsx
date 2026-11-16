@@ -38,11 +38,19 @@ export interface PublicLinkApi {
   revoke(): Promise<void>;
 }
 
+/**
+ * A Live Doc (a .wd, format darkmown) is never public: the server refuses its
+ * public link (server/src/public-links.ts). The sheet shows this instead.
+ */
+export const LIVE_DOC_PRIVATE_LINE = "Live Docs are always private. Share with people instead.";
+
 interface ShareSheetProps {
   title: string;
   people: SharePeopleApi;
-  /** Owner only, and only for a document that has a web page. */
+  /** Owner only, and only for a document that has a web page. Never for a Live Doc. */
   publicLink?: PublicLinkApi | null;
+  /** The document is a Live Doc: no public link, and one line that says so. */
+  liveDoc?: boolean;
   canManage: boolean;
   /**
    * For someone who doesn't own it: who does, as the list names them (Shared
@@ -59,7 +67,7 @@ interface ShareSheetProps {
   onChanged?: () => void;
 }
 
-export function ShareSheet({ title, people, publicLink = null, canManage, owner = null, me, link, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
+export function ShareSheet({ title, people, publicLink = null, liveDoc = false, canManage, owner = null, me, link, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
   const [list, setList] = useState<SharePerson[] | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<ShareRole>("viewer");
@@ -150,7 +158,8 @@ export function ShareSheet({ title, people, publicLink = null, canManage, owner 
       {notice ? <p className="m-share-notice" role="status">{notice}</p> : null}
       {error ? <p className="m-form-error" role="alert">{error}</p> : null}
 
-      {publicLink && canManage ? <PublicLinkSection api={publicLink} title={title} onUnauthorized={onUnauthorized} onChanged={onChanged} /> : null}
+      {liveDoc && canManage ? <p className="m-group-footer" data-live-doc-private>{LIVE_DOC_PRIVATE_LINE}</p> : null}
+      {publicLink && canManage && !liveDoc ? <PublicLinkSection api={publicLink} title={title} onUnauthorized={onUnauthorized} onChanged={onChanged} /> : null}
 
       <h3 className="m-group-heading">People with access</h3>
       <ul className="m-group m-share-people" aria-label="People with access">

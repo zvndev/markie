@@ -95,6 +95,9 @@ async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | 
 
 async function loadPublic(token: string, apiOrigin: string, user: WebSessionUser | null, fetcher: typeof fetch = fetch): Promise<ViewState> {
   const { name, format } = publicDocMeta(document);
+  // A Live Doc is never public, and the server serves none from a public
+  // link. A page that still names one shows the same "gone" as a dead link.
+  if (format === "darkmown") return { state: "gone" };
   let response: Response;
   try {
     // No credentials: the link alone is what reads a public document.

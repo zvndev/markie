@@ -6,6 +6,7 @@
 // read-only download that expires in a day.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { getServerURL } from "@/lib/auth-client";
+import { LIVE_DOC_PRIVATE_LINE, isLiveDocName } from "@/lib/general-access";
 import { platformClient } from "./cloud";
 import type { CloudRole } from "./cloud";
 
@@ -74,7 +75,7 @@ export function PlatformShareDialog({ docId, name, role, onClose }: { docId: str
           })}>Remove</button>
         </li>)}
       </ul>
-      <div className="space-y-2 border-t border-border pt-3">
+      {isLiveDocName(name) ? <p className="border-t border-border pt-3 text-[12px] text-muted" data-markie-live-private>{LIVE_DOC_PRIVATE_LINE}</p> : <div className="space-y-2 border-t border-border pt-3">
         <p className="text-[12px] text-muted">A link lets anyone who has it download a read-only copy for 24 hours.</p>
         {link ? <>
           <input readOnly aria-label="Download link" value={link.url} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[11.5px]" />
@@ -91,7 +92,7 @@ export function PlatformShareDialog({ docId, name, role, onClose }: { docId: str
           if (!value?.token || !/^[A-Za-z0-9_-]{20,128}$/.test(value.token)) throw new Error("The server didn't return a usable link.");
           setLink({ url: `${getServerURL()}/api/document-platform/links/${value.token}/download`, id: value.id ?? null });
         })}>Create a 24-hour download link</button>}
-      </div>
+      </div>}
     </>}
     {busy ? <p role="status" className="text-[12px] text-muted">Working…</p> : notice ? <p role="status" className="text-[12px] text-muted">{notice}</p> : null}
     {error ? <p role="alert" className="text-[12px] text-[var(--status-red)]">{error}</p> : null}

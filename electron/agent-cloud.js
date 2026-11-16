@@ -143,11 +143,18 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
     return describe(doc);
   }
 
+  // A Live Doc (a .wd) is never public: the server refuses its public link
+  // with live-doc-private (server/src/public-links.ts). Said before asking the
+  // user, so nobody is asked to confirm something that cannot happen.
+  const LIVE_DOC_PRIVATE = "Live Docs can't be public. Share it with people instead.";
+  const isLiveDoc = (doc) => /\.wd$/i.test(doc.name);
+
   async function cloudApi(row, method, suffix) {
     const origin = sync.originOfRow(row);
     const res = await sync.withOrigin(origin, () => sync.api(method, `/api/docs/${encodeURIComponent(row.cloud_doc_id)}/public-link${suffix || ""}`));
     if (res.status === 401) throw new Error("Sign in to Markie Cloud in the Markie app first.");
     if (res.status === 403) throw new Error("Only the owner of this document can see or change its public link.");
+    if (res.status === 409 && res.data && res.data.error === "live-doc-private") throw new Error(LIVE_DOC_PRIVATE);
     if (res.status < 200 || res.status >= 300) throw new Error(res.status === 0 ? "Markie Cloud could not be reached." : `Markie Cloud refused (${res.status}).`);
     return res.data || {};
   }
@@ -156,6 +163,10 @@ function createAgentCloud({ registry, sync, home, unlocked, confirm, permissions
     requireUnlocked();
     const doc = resolveDoc(p);
     const row = linkedRow(doc);
+    if (isLiveDoc(doc)) {
+      if (create) throw new Error(LIVE_DOC_PRIVATE);
+      return { ...describe(doc), publicLink: null };
+    }
     const current = await cloudApi(row, "GET");
     if (current.url || !create) return { ...describe(doc), publicLink: current.url || null };
     const answer = await confirm({ kind: "public", name: doc.name, path: doc.path });

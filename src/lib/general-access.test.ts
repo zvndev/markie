@@ -3,11 +3,26 @@ import {
   generalAccessFor,
   generalAccessLabel,
   generalAccessLine,
+  isLiveDocName,
+  LIVE_DOC_PRIVATE_LINE,
   memberStatusLine,
   publishWarning,
   revokeWarning,
   roleDescription,
 } from "./general-access";
+
+describe("Live Docs", () => {
+  it("are told apart by their .wd name, the server's rule", () => {
+    expect(isLiveDocName("Team.wd")).toBe(true);
+    expect(isLiveDocName("TEAM.WD")).toBe(true);
+    expect(isLiveDocName("notes.md")).toBe(false);
+    expect(isLiveDocName("notes.wd.md")).toBe(false);
+  });
+
+  it("are always private, in one short line", () => {
+    expect(LIVE_DOC_PRIVATE_LINE).toBe("Live Docs are always private. Share with people instead.");
+  });
+});
 
 describe("what the world can do", () => {
   it("is restricted until a public link exists", () => {

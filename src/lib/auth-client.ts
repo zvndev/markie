@@ -596,13 +596,14 @@ export interface SharedByMeDoc {
 // primary server here, any other through src/lib/server-sessions.ts.
 export type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; data: T | null }>;
 
-/** A Live Doc's addresses, as the server hands them out (server/src/live-docs.ts). */
+/**
+ * A Live Doc's address, as the server hands it out (server/src/live-docs.ts).
+ * A Live Doc is never public, so there is only the one address, which opens
+ * after a Markie sign-in for the owner and the people it is shared with.
+ */
 export interface LiveDocAddress {
   url: string;
-  access: "private" | "shared" | "public";
-  publicUrl: string | null;
-  /** The publisher name the public page shows, for the owner. null when not public. */
-  publishedAs: string | null;
+  access: "private" | "shared";
   /**
    * The https origins the page's `:fetch` reaches: empty when it reaches
    * nothing, null when the server could not tell right now (a busy or failed
@@ -713,29 +714,25 @@ export function makeSharesClient(request: ApiRequest) {
       return res.ok;
     },
 
-    // A cloud .wd's hosted Live Doc addresses (server/src/live-docs.ts). The
-    // private address goes to everyone it opens for, the owner and its
-    // members; the public one, while the public link is on, to the owner
-    // only. null when the server has no Live Docs, the document is not a Live
+    // A cloud .wd's hosted Live Doc address (server/src/live-docs.ts), for
+    // everyone it opens for: the owner and its members. null when the server has no Live Docs, the document is not a Live
     // Doc, or the caller cannot open it: the server answers all three with a
     // 404 and the Library says it has no address. Anything that is not a web
     // address is no address.
     liveDocAddress: async (docId: string): Promise<LiveDocAddress | null> => {
-      const res = await request<{ url?: unknown; access?: unknown; publicUrl?: unknown; publishedAs?: unknown; network?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
+      const res = await request<{ url?: unknown; access?: unknown; network?: unknown }>(`/api/docs/${encodeURIComponent(docId)}/live-doc`);
       if (!res.ok || !res.data) return null;
       const url = liveDocUrl(res.data.url);
       if (!url) return null;
-      const access = res.data.access === "shared" || res.data.access === "public" ? res.data.access : "private";
-      const publicUrl = liveDocUrl(res.data.publicUrl);
-      const publishedAs = publicUrl && typeof res.data.publishedAs === "string" ? res.data.publishedAs.slice(0, 80) : null;
-      // Shown to the person before they publish, so only exact https origins.
+      const access = res.data.access === "shared" ? "shared" : "private";
+      // Shown to the person, so only exact https origins.
       // A server from before H3 sends no list and hosts no :fetch, so a
       // missing list is an empty one; an explicit null is "not known".
       const raw = res.data.network;
       const network = raw === null ? null
         : Array.isArray(raw) ? raw.filter((origin): origin is string => typeof origin === "string" && /^https:\/\/[a-z0-9.-]{1,253}(?::\d{1,5})?$/.test(origin)).slice(0, 50)
         : [];
-      return { url, access, publicUrl, publishedAs, network };
+      return { url, access, network };
     },
 
     // A pass for the live-editing socket, so the session token stays out of

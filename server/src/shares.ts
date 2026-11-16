@@ -419,14 +419,17 @@ shares.post("/:id/shares", async (c) => {
     // the content, and carries no link to the document. Somebody who blocked
     // the owner gets no mail at all, and the owner gets the same answer
     // either way, so blocking cannot be told apart from silence.
+    // The mail is not awaited, so the answer takes as long whether or not
+    // one was sent: waiting on the provider only for unblocked recipients
+    // would let the owner time a block.
     if (senderState(db, recipient.id, user.id) !== "blocked") {
       const from = user.email ? `${inviter} (${user.email})` : inviter;
-      await sendEmail({
+      void sendEmail({
         to: recipient.email,
         subject: `${inviter} wants to share “${docName}” with you`,
         text: `${from} wants to share "${docName}" with you on Markie.\n\n${REQUEST_LINE}\n\nGet Markie: ${primaryDownloadCta(DOWNLOAD_SITE).href}`,
         html: requestHtml(inviter, user.email ?? "", docName),
-      });
+      }).catch((err) => console.error("request mail failed:", err instanceof Error ? err.message : err));
     }
     return c.json({ ok: true, status: "requested", userId: recipient.id, role });
   }

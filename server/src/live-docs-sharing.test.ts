@@ -14,7 +14,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getMigrations } from "better-auth/db/migration";
@@ -527,23 +527,31 @@ test("one person cannot hold more than their share of open streams, and closing 
 // ── review findings ──────────────────────────────────────────────────────────
 
 test("access checks never read the document's text, however large it is", async () => {
+  // What it means, without a wall clock: every statement on the access path
+  // (liveDocMeta, which every page load and stream re-check runs, and
+  // shares.ts isOwner) answers from the covering index alone, so SQLite never
+  // opens the row or walks the text's overflow pages, whatever its size.
+  const sources = ["live-docs-store.ts", "shares.ts"].map((name) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8")).join("\n");
+  const statements = [...sources.matchAll(/"(SELECT [^"]*FROM docs INDEXED BY idx_docs_access[^"]*)"/g)].map((match) => match[1]!);
+  assert.ok(statements.length >= 2, `found the access statements: ${statements.join(" | ")}`);
+  for (const sql of statements) {
+    const plan = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...Array.from(sql.matchAll(/\?/g), () => "x")) as Array<{ detail: string }>).map((row) => row.detail).join("; ");
+    assert.match(plan, /USING COVERING INDEX idx_docs_access/, `${sql}\n  planned as: ${plan}`);
+  }
+
+  // And the behaviour on a 40 MB document: the page is refused by size, and
+  // ten open tabs connect and are re-checked.
   const id = `h2-heavy-${stamp}`;
   await putDoc(owner.token, id, "Heavy.wd", COUNTER);
   const label = labelOf((await addressFor(id, owner.token)).url);
   const cookie = await openPrivate(label, ownerCookie);
-  // 40 MB, written straight to the database: past every size the page will read.
   db.prepare("UPDATE docs SET content = ? WHERE id = ?").run(`# Heavy\n\n${"x".repeat(40 * 1024 * 1024)}`, id);
-  let started = performance.now();
   const page = await ask(liveHost(label), "/", { cookie });
-  const pageMs = performance.now() - started;
   assert.equal(page.status, 422);
   assert.match(await page.text(), /200,000 characters/);
   const tabs = await Promise.all(Array.from({ length: 10 }, () => tabOn(label, { cookie })));
   for (const tab of tabs) await expectReady(tab);
-  started = performance.now();
   recheckLiveDocChannels(id);
-  const checkMs = performance.now() - started;
+  assert.deepEqual(await Promise.all(tabs.map((tab) => tab.next(200))), tabs.map(() => "timeout"), "the owner keeps every tab");
   for (const tab of tabs) await tab.close();
-  assert.ok(pageMs < 50, `the refused page held the event loop ${pageMs.toFixed(0)} ms`);
-  assert.ok(checkMs < 20, `ten tabs' re-check held the event loop ${checkMs.toFixed(0)} ms`);
 });

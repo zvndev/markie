@@ -26,6 +26,14 @@ export function platformFail(code: string, status: DocumentPlatformError["status
 // Byte snapshots are format-agnostic beyond this allowlist; keep in step
 // with src/lib/document-cloud.ts FORMATS.
 const FORMATS: readonly string[] = ["markdown", "darkmown", "text", "csv", "json", "yaml", "xml", "docx", "doc", "rtf", "odt"];
+// A Live Doc (a .wd, format darkmown) is never public. The name decides, as
+// it does for the docs store (doc-meta.ts formatForName): a client cannot
+// label Tally.wd "markdown" and get it a public link. LIVE_DOC_SQL is the same
+// test over a dp_documents row aliased d, which also catches rows stored
+// before the name decided.
+const isLiveDocName = (name: string) => /.\.wd$/i.test(name);
+const LIVE_DOC_SQL = "(d.format = 'darkmown' OR lower(d.name) LIKE '_%.wd')";
+const LIVE_DOC_PRIVATE_MESSAGE = "Live Docs can't be public. Share it with people instead.";
 const hash = (value: Uint8Array | string) => createHash("sha256").update(value).digest("hex");
 const opaqueId = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 export function platformObject(value: unknown, keys: string[]): Record<string, unknown> {
@@ -92,7 +100,9 @@ function decodeInput(value: unknown, limits: PlatformLimits, areasEnabled = fals
   if (bytes.toString("base64") !== v.data) platformFail("invalid-request", 400, "Document base64 encoding is not canonical.");
   if (hash(bytes) !== v.sha256) platformFail("digest-mismatch", 400, "Document bytes do not match their SHA-256 digest.");
   rejectVault(bytes, v.name);
-  return { name: v.name, format: v.format as PlatformFormat, bytes, sha256: v.sha256, baseVersion: v.baseVersion, areaId: v.areaId as string | undefined };
+  // A .wd is darkmown whatever format the client sent.
+  const format = isLiveDocName(v.name) ? "darkmown" : v.format as PlatformFormat;
+  return { name: v.name, format, bytes, sha256: v.sha256, baseVersion: v.baseVersion, areaId: v.areaId as string | undefined };
 }
 interface DocumentRow { id: string; owner_id: string; name: string; format: PlatformFormat; version: number; bytes: Uint8Array; sha256: string; created_at: number; updated_at: number }
 export interface DocumentPlatformStore {
@@ -161,7 +171,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
   // public-links.ts: an anyone-with-the-token link for one is refused, and any
   // made before the rule are deleted. Idempotent; later starts find none.
   {
-    const removed = Number(db.prepare("DELETE FROM dp_links WHERE doc_id IN (SELECT id FROM dp_documents WHERE format = 'darkmown')").run().changes);
+    const removed = Number(db.prepare(`DELETE FROM dp_links WHERE doc_id IN (SELECT d.id FROM dp_documents d WHERE ${LIVE_DOC_SQL})`).run().changes);
     if (removed > 0) console.log(`Removed ${removed} share link${removed === 1 ? "" : "s"} from Live Docs: a Live Doc is never public.`);
   }
   const transaction = <T>(operation: () => T): T => {
@@ -283,7 +293,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     createLink(userId, id, expiresInSeconds) {
       return transaction(() => {
         const { row } = access(userId, id, "owner");
-        if (row.format === "darkmown") platformFail("live-doc-private", 409, "Live Docs can't be public. Share it with people instead.");
+        if (row.format === "darkmown" || isLiveDocName(row.name)) platformFail("live-doc-private", 409, LIVE_DOC_PRIVATE_MESSAGE);
         if (!Number.isSafeInteger(expiresInSeconds) || expiresInSeconds < 60 || expiresInSeconds > 30 * 86400) platformFail("invalid-request", 400, "Share links must expire between one minute and 30 days.");
         const time = now();
         // Reclaim expired/revoked token rows so repeated revoke/create cannot grow storage forever.
@@ -301,7 +311,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     publicSnapshot(token) {
       if (!/^[a-zA-Z0-9_-]{43}$/.test(token)) platformFail("not-found", 404, "Share link not found.");
       // A Live Doc's link (none should exist) answers like an unknown token.
-      const row = db.prepare("SELECT d.* FROM dp_links l JOIN dp_documents d ON d.id = l.doc_id WHERE l.token_hash = ? AND l.revoked_at IS NULL AND l.expires_at > ? AND d.format != 'darkmown'").get(hash(token), now()) as DocumentRow | undefined;
+      const row = db.prepare(`SELECT d.* FROM dp_links l JOIN dp_documents d ON d.id = l.doc_id WHERE l.token_hash = ? AND l.revoked_at IS NULL AND l.expires_at > ? AND NOT ${LIVE_DOC_SQL}`).get(hash(token), now()) as DocumentRow | undefined;
       if (!row) platformFail("not-found", 404, "Share link not found.");
       return snapshot(row, "viewer");
     },

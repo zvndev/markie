@@ -22,6 +22,7 @@ const {
   rotatePublicLink,
   guardLiveDocsPrivate,
   isLiveDocFormat,
+  isLiveDocRefusal,
   LIVE_DOC_PRIVATE,
 } = await import("./public-links.ts");
 
@@ -81,6 +82,26 @@ test("a Live Doc never gets a public link, and becoming one drops the link it ha
     db.prepare("UPDATE docs SET format = 'darkmown' WHERE id = ?").run("md1");
     assert.equal(resolvePublicToken(token!), null, "the format change took the link in the same statement");
     assert.equal(rotatePublicLink("md1"), null, "and there is nothing to rotate back into existence");
+  } finally {
+    db.close();
+  }
+});
+
+test("the database's refusal reads as the same live-doc-private answer, not a crash", async () => {
+  const Database = (await import("better-sqlite3")).default;
+  const db = new Database(process.env.DB_PATH!);
+  try {
+    guardLiveDocsPrivate(db);
+    db.prepare("INSERT INTO docs (id, format) VALUES (?, ?)").run("live-raw", "darkmown");
+    let caught: unknown = null;
+    try {
+      db.prepare("INSERT INTO public_links (doc_id, token, created_by, created_at) VALUES (?, ?, ?, ?)").run("live-raw", "raw-token", "owner1", "");
+    } catch (error) {
+      caught = error;
+    }
+    assert.equal(isLiveDocRefusal(caught), true, "the trigger's error is recognised");
+    assert.equal(isLiveDocRefusal(new Error("UNIQUE constraint failed: public_links.token")), false);
+    assert.equal(isLiveDocRefusal("live-doc-private"), false, "only a real error counts");
   } finally {
     db.close();
   }

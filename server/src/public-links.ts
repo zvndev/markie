@@ -50,11 +50,23 @@ export function createOrGetPublicLink(docId: string, userId: string): string | n
     .get(docId) as { token: string } | undefined;
   if (existing) return existing.token;
   const token = newToken();
-  db.prepare(
-    `INSERT INTO public_links (doc_id, token, created_by, created_at)
-     VALUES (?, ?, ?, ?)`
-  ).run(docId, token, userId, new Date().toISOString());
+  try {
+    db.prepare(
+      `INSERT INTO public_links (doc_id, token, created_by, created_at)
+       VALUES (?, ?, ?, ?)`
+    ).run(docId, token, userId, new Date().toISOString());
+  } catch (error) {
+    // The database's own guard (guardLiveDocsPrivate): the document became a
+    // Live Doc between the check above and this insert. The same refusal.
+    if (isLiveDocRefusal(error)) return null;
+    throw error;
+  }
   return token;
+}
+
+/** Whether an error is the public_links_never_live_doc trigger refusing a row. */
+export function isLiveDocRefusal(error: unknown): boolean {
+  return error instanceof Error && /\blive-doc-private\b/.test(error.message);
 }
 
 export function getPublicLinkToken(docId: string): string | null {

@@ -220,3 +220,29 @@ test("starting the store clears share links a Darkmown snapshot kept from before
   createSqliteDocumentPlatformStore(f.db, { now: () => f.clock.value });
   assert.equal((await f.request(`/links/${kept.token}`, null)).status, 200, "other documents keep their links");
 });
+
+test("a .wd name is always darkmown, whatever format the client sends, so it never gets a link", async (t) => {
+  const f = fixture(); t.after(() => f.db.close());
+  const tally = await created(f, payload("::state n = 0\n", 0, { name: "Tally.wd", format: "markdown" }));
+  assert.equal((tally as unknown as { format: string }).format, "darkmown");
+  const refused = await f.request(`/documents/${tally.id}/links`, "owner", "POST", { expiresInSeconds: 60 });
+  assert.equal(refused.status, 409);
+  assert.equal((await refused.json()).error, "live-doc-private");
+
+  // Renaming a text document to .wd while calling it text also makes it darkmown and drops its link.
+  const doc = await created(f);
+  const link = (await (await f.request(`/documents/${doc.id}/links`, "owner", "POST", { expiresInSeconds: 600 })).json()).link;
+  const saved = await f.request(`/documents/${doc.id}`, "owner", "PUT", payload("::state n = 0\n", 1, { name: "Tally.wd", format: "text" }));
+  assert.equal((await saved.json()).document.format, "darkmown");
+  assert.equal((await f.request(`/links/${link.token}/download`, null)).status, 404);
+
+  // A row stored before the name decided (a .wd labelled markdown) is caught by its name too.
+  const legacy = await created(f);
+  f.db.prepare("UPDATE dp_documents SET name = 'Old.wd', format = 'markdown' WHERE id = ?").run(legacy.id);
+  assert.equal((await f.request(`/documents/${legacy.id}/links`, "owner", "POST", { expiresInSeconds: 60 })).status, 409);
+  const token = "b".repeat(43);
+  f.db.prepare("INSERT INTO dp_links(id,doc_id,token_hash,created_at,expires_at,revoked_at) VALUES(?,?,?,?,?,NULL)").run("legacy-name", legacy.id, createHash("sha256").update(token).digest("hex"), f.clock.value, f.clock.value + 600_000);
+  assert.equal((await f.request(`/links/${token}`, null)).status, 404);
+  createSqliteDocumentPlatformStore(f.db, { now: () => f.clock.value });
+  assert.equal((f.db.prepare("SELECT COUNT(*) AS count FROM dp_links WHERE doc_id = ?").get(legacy.id) as { count: number }).count, 0);
+});

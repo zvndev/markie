@@ -342,11 +342,14 @@ export function createApiClient(options: ApiClientOptions) {
      * (server/src/share-people.ts). Nothing in them reaches the account until
      * it does.
      */
-    async shareRequests(): Promise<ShareRequest[]> {
+    async shareRequests(): Promise<{ requests: ShareRequest[]; count: number }> {
       const { data } = await json("GET", "/api/people/requests");
-      const list = (data as { requests?: unknown } | null)?.requests;
-      if (!Array.isArray(list)) throw new ApiError(502, "The server's answer wasn't readable.");
-      return list.slice(0, 500).map(parseShareRequest).filter((request): request is ShareRequest => request !== null);
+      const raw = (data ?? {}) as { requests?: unknown; count?: unknown };
+      if (!Array.isArray(raw.requests)) throw new ApiError(502, "The server's answer wasn't readable.");
+      const requests = raw.requests.slice(0, 500).map(parseShareRequest).filter((request): request is ShareRequest => request !== null);
+      // The server lists the newest few; count is how many wait in all.
+      const count = typeof raw.count === "number" && Number.isSafeInteger(raw.count) && raw.count >= 0 ? Math.max(raw.count, requests.length) : requests.length;
+      return { requests, count };
     },
 
     /** Accept a sender: everything they shared lands, and so does what they share later. */

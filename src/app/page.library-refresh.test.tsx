@@ -10,7 +10,7 @@ vi.mock("@/lib/auth-client", () => ({
   authClient: { me: async () => authState.user },
   sharesClient: { access: async () => null, list: async () => null, sharedByMe: async () => [] },
   // Requests and accepted people (share-people.tsx): none, in this suite.
-  peopleClient: { requests: async () => [], people: async () => ({ accepted: [], blocked: [] }) },
+  peopleClient: { requests: async () => ({ requests: [], count: 0 }), people: async () => ({ accepted: [], blocked: [] }) },
   collabWsBase: () => "ws://localhost",
   getAuthToken: () => authState.user ? "confirmed-session" : null,
   getServerURL: () => "https://account.example.test",

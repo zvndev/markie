@@ -10,7 +10,7 @@ const liveDocAddress = vi.fn<(docId: string) => Promise<LiveDocAddressAnswer>>(a
 vi.mock("@/lib/auth-client", () => ({
   sharesClient: { sharedByMe: async () => [], liveDocAddress: (docId: string) => liveDocAddress(docId) },
   // Requests and accepted people (share-people.tsx): none, in this suite.
-  peopleClient: { requests: async () => [], people: async () => ({ accepted: [], blocked: [] }) },
+  peopleClient: { requests: async () => ({ requests: [], count: 0 }), people: async () => ({ accepted: [], blocked: [] }) },
   getAuthToken: () => "confirmed-session", getServerURL: () => "https://account.example.test", getConfirmedAuthIdentity: () => ({ userId: "user-a", serverURL: "https://account.example.test" }),
 }));
 vi.mock("@/lib/auth-store", () => ({ authStore: { getSnapshot: () => ({ status: "in", user: { id: "user-a" } }), subscribe: () => () => {} } }));

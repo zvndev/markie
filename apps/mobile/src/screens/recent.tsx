@@ -65,7 +65,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
     try {
       // Word, RTF and OpenDocument files live in the document platform, which
       // answers with everything at once; the Markdown list pages.
-      void api.shareRequests().then((requests) => { if (run === generation.current) setRequestCount(requests.length); }, () => undefined);
+      void api.shareRequests().then((listed) => { if (run === generation.current) setRequestCount(listed.count); }, () => undefined);
       const [page, platform] = await Promise.all([api.recent({ limit: PAGE_SIZE }), api.platformRecent()]);
       if (run !== generation.current) return;
       const next = withPlatform(mergeRecent([], page), platform);

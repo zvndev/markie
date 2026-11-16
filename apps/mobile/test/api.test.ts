@@ -227,7 +227,7 @@ describe("api client: requests to share (server/src/share-people.ts)", () => {
   it("lists requests, dropping any entry it can't read", async () => {
     const { transport, calls } = fake(() => ({ json: { requests: [request, { ...request, docId: "../x" }, { docId: "d2" }, null], count: 4 } }));
     const api = createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN });
-    expect(await api.shareRequests()).toEqual([{ docId: "doc-1", name: "Plan.md", kind: "doc", sender: { id: "olive", name: "Olive", email: "olive@markie.test" } }]);
+    expect(await api.shareRequests()).toEqual({ requests: [{ docId: "doc-1", name: "Plan.md", kind: "doc", sender: { id: "olive", name: "Olive", email: "olive@markie.test" } }], count: 4 });
     expect(calls[0]).toMatchObject({ method: "GET", url: `${ORIGIN}/api/people/requests` });
     expect(calls[0].headers?.authorization).toBe(`Bearer ${TOKEN}`);
   });

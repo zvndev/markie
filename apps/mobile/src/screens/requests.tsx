@@ -19,6 +19,7 @@ const who = (sender: ShareRequest["sender"]) => sender.name || sender.email;
 
 export function RequestsScreen({ api, onBack, onChanged, onUnauthorized }: RequestsProps) {
   const [requests, setRequests] = useState<ShareRequest[] | null>(null);
+  const [count, setCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -30,7 +31,9 @@ export function RequestsScreen({ api, onBack, onChanged, onUnauthorized }: Reque
 
   const load = useCallback(async () => {
     try {
-      setRequests(await api.shareRequests());
+      const listed = await api.shareRequests();
+      setRequests(listed.requests);
+      setCount(listed.count);
     } catch (failure) {
       failed(failure, "Couldn't load your requests.");
     }
@@ -97,6 +100,9 @@ export function RequestsScreen({ api, onBack, onChanged, onUnauthorized }: Reque
             </li>
           ))}
         </ul>
+      ) : null}
+      {requests && count > requests.length ? (
+        <p className="m-group-footer">Showing the newest {requests.length} of {count}. Answer these to see the rest.</p>
       ) : null}
     </Screen>
   );

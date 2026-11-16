@@ -794,9 +794,12 @@ export function makePeopleClient(request: ApiRequest) {
   const post = (path: string) => request<{ ok?: boolean }>(path, { method: "POST", body: "{}" });
   return {
     // null when the request failed, so a blip never reads as "no requests".
-    requests: async (): Promise<ShareRequest[] | null> => {
-      const res = await request<{ requests: ShareRequest[] }>("/api/people/requests");
-      return res.ok ? res.data?.requests ?? [] : null;
+    // The server lists the newest few; `count` is how many wait in all.
+    requests: async (): Promise<{ requests: ShareRequest[]; count: number } | null> => {
+      const res = await request<{ requests: ShareRequest[]; count?: number }>("/api/people/requests");
+      if (!res.ok) return null;
+      const requests = res.data?.requests ?? [];
+      return { requests, count: typeof res.data?.count === "number" ? res.data.count : requests.length };
     },
     people: async (): Promise<{ accepted: SharePerson[]; blocked: SharePerson[] } | null> => {
       const res = await request<{ accepted: SharePerson[]; blocked: SharePerson[] }>("/api/people");

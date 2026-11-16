@@ -23,7 +23,7 @@ const person = (o: Partial<SharePerson> = {}): SharePerson => ({
 
 function fakeClient(o: Partial<PeopleClient> = {}): PeopleClient {
   return {
-    requests: vi.fn(async () => []),
+    requests: vi.fn(async () => ({ requests: [], count: 0 })),
     people: vi.fn(async () => ({ accepted: [], blocked: [] })),
     accept: vi.fn(async () => true),
     decline: vi.fn(async () => true),
@@ -43,7 +43,7 @@ describe("Requests", () => {
   });
 
   it("names the sender, their address and the file, with a count", async () => {
-    const client = fakeClient({ requests: vi.fn(async () => [request(), request({ docId: "doc-2", name: "Notes.wd" })]) });
+    const client = fakeClient({ requests: vi.fn(async () => ({ requests: [request(), request({ docId: "doc-2", name: "Notes.wd" })], count: 2 })) });
     render(<ShareRequestsPanel accountKey="me" client={client} />);
     const panel = await screen.findByRole("region", { name: "Requests" });
     expect(within(panel).getByLabelText("2 waiting")).toHaveTextContent("2");
@@ -53,7 +53,7 @@ describe("Requests", () => {
   });
 
   it("accepting the sender asks for the library again and clears what landed", async () => {
-    const requests = vi.fn<PeopleClient["requests"]>().mockResolvedValueOnce([request()]).mockResolvedValue([]);
+    const requests = vi.fn<PeopleClient["requests"]>().mockResolvedValueOnce({ requests: [request()], count: 1 }).mockResolvedValue({ requests: [], count: 0 });
     const client = fakeClient({ requests });
     const onChanged = vi.fn();
     render(<ShareRequestsPanel accountKey="me" client={client} onChanged={onChanged} />);
@@ -65,7 +65,7 @@ describe("Requests", () => {
   });
 
   it("declines one request by its document, and blocks by sender", async () => {
-    const client = fakeClient({ requests: vi.fn(async () => [request()]) });
+    const client = fakeClient({ requests: vi.fn(async () => ({ requests: [request()], count: 1 })) });
     render(<ShareRequestsPanel accountKey="me" client={client} />);
     await userEvent.click(await screen.findByRole("button", { name: "Decline" }));
     expect(client.decline).toHaveBeenCalledWith("doc-1");
@@ -74,11 +74,20 @@ describe("Requests", () => {
   });
 
   it("says so when an answer fails, and keeps the request", async () => {
-    const client = fakeClient({ requests: vi.fn(async () => [request()]), accept: vi.fn(async () => false) });
+    const client = fakeClient({ requests: vi.fn(async () => ({ requests: [request()], count: 1 })), accept: vi.fn(async () => false) });
     render(<ShareRequestsPanel accountKey="me" client={client} />);
     await userEvent.click(await screen.findByRole("button", { name: "Accept" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't accept");
     expect(screen.getByText("Plan.md")).toBeInTheDocument();
+  });
+});
+
+describe("Requests beyond the first page", () => {
+  it("counts every request waiting and says only the newest are shown", async () => {
+    const client = fakeClient({ requests: vi.fn(async () => ({ requests: [request()], count: 73 })) });
+    render(<ShareRequestsPanel accountKey="me" client={client} />);
+    expect(await screen.findByLabelText("73 waiting")).toHaveTextContent("73");
+    expect(screen.getByText(/Showing the newest 1 of 73/)).toBeInTheDocument();
   });
 });
 

@@ -28,16 +28,16 @@ export function ShareRequestsPanel({
   onChanged?: () => void;
   client?: PeopleClient;
 }) {
-  const [state, setState] = useState<{ key: string | null; requests: ShareRequest[] }>({ key: null, requests: [] });
+  const [state, setState] = useState<{ key: string | null; requests: ShareRequest[]; count: number }>({ key: null, requests: [], count: 0 });
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!accountKey) return;
-    const requests = await client.requests();
+    const listed = await client.requests();
     // A failed request keeps what is on screen rather than calling it empty.
-    if (requests) setState({ key: accountKey, requests });
+    if (listed) setState({ key: accountKey, requests: listed.requests, count: Math.max(listed.count, listed.requests.length) });
   }, [accountKey, client]);
 
   useEffect(() => {
@@ -45,6 +45,7 @@ export function ShareRequestsPanel({
   }, [load]);
 
   const requests = state.key === accountKey ? state.requests : [];
+  const count = state.key === accountKey ? state.count : 0;
   if (!accountKey || requests.length === 0) {
     return notice ? (
       <div className="mb-2 px-2 text-[11px] text-muted" role="status">
@@ -76,10 +77,10 @@ export function ShareRequestsPanel({
         </h3>
         <span
           data-share-requests-count
-          aria-label={`${requests.length} waiting`}
+          aria-label={`${count} waiting`}
           className="markie-cloud-chip-count rounded-full border border-border px-1.5 text-[10px] text-foreground"
         >
-          {requests.length}
+          {count}
         </span>
       </div>
       <p className="mb-2 text-[10.5px] text-muted">
@@ -148,6 +149,11 @@ export function ShareRequestsPanel({
           </li>
         ))}
       </ul>
+      {count > requests.length ? (
+        <p className="mt-1.5 text-[10.5px] text-muted">
+          Showing the newest {requests.length} of {count}. Answer these to see the rest.
+        </p>
+      ) : null}
       {error ? (
         <div className="mt-1.5 text-[11px] text-[var(--status-red)]" role="alert">
           {error}

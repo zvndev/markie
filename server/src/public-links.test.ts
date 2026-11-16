@@ -6,12 +6,23 @@ import { join } from "node:path";
 
 // Point the module's db at a throwaway file BEFORE importing it.
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-pl-")), "t.db");
+// The docs table belongs to docs.ts; these tests need only the two columns
+// public-links.ts reads from it.
+{
+  const Database = (await import("better-sqlite3")).default;
+  const setup = new Database(process.env.DB_PATH);
+  setup.exec("CREATE TABLE docs (id TEXT PRIMARY KEY, format TEXT NOT NULL DEFAULT 'markdown')");
+  setup.close();
+}
 const {
   createOrGetPublicLink,
   getPublicLinkToken,
   resolvePublicToken,
   revokePublicLink,
   rotatePublicLink,
+  guardLiveDocsPrivate,
+  isLiveDocFormat,
+  LIVE_DOC_PRIVATE,
 } = await import("./public-links.ts");
 
 test("createOrGetPublicLink is stable per doc", () => {
@@ -50,4 +61,27 @@ test("rotatePublicLink swaps the token and never creates a link", () => {
 
   assert.equal(rotatePublicLink("doc-without-link"), null);
   assert.equal(getPublicLinkToken("doc-without-link"), null);
+});
+
+test("a Live Doc never gets a public link, and becoming one drops the link it had", async () => {
+  const Database = (await import("better-sqlite3")).default;
+  const db = new Database(process.env.DB_PATH!);
+  try {
+    db.prepare("INSERT INTO docs (id, format) VALUES (?, ?)").run("live1", "darkmown");
+    db.prepare("INSERT INTO docs (id, format) VALUES (?, ?)").run("md1", "markdown");
+    assert.equal(isLiveDocFormat("live1"), true);
+    assert.equal(isLiveDocFormat("md1"), false);
+    assert.equal(createOrGetPublicLink("live1", "owner1"), null);
+    assert.equal(getPublicLinkToken("live1"), null);
+    assert.equal(LIVE_DOC_PRIVATE.error, "live-doc-private");
+
+    const token = createOrGetPublicLink("md1", "owner1");
+    assert.ok(token);
+    assert.equal(guardLiveDocsPrivate(db), 0);
+    db.prepare("UPDATE docs SET format = 'darkmown' WHERE id = ?").run("md1");
+    assert.equal(resolvePublicToken(token!), null, "the format change took the link in the same statement");
+    assert.equal(rotatePublicLink("md1"), null, "and there is nothing to rotate back into existence");
+  } finally {
+    db.close();
+  }
 });

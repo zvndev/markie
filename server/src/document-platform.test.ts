@@ -188,3 +188,35 @@ test("success and authorization/conflict failures are private no-store responses
   assert.deepEqual(responses.map((r) => r.status), [200, 401, 404, 409]);
   for (const response of responses) { assert.equal(response.headers.get("cache-control"), "private, no-store"); assert.equal(response.headers.get("x-content-type-options"), "nosniff"); assert.equal(response.headers.get("referrer-policy"), "no-referrer"); }
 });
+
+test("a Darkmown (Live Doc) snapshot never gets an anyone-with-the-link share link", async (t) => {
+  const f = fixture(); t.after(() => f.db.close());
+  const live = await created(f, payload("# wd", 0, { name: "counter.wd", format: "darkmown" }));
+  const refused = await f.request(`/documents/${live.id}/links`, "owner", "POST", { expiresInSeconds: 60 });
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), { error: "live-doc-private", message: "Live Docs can't be public. Share it with people instead." });
+  assert.equal((f.db.prepare("SELECT COUNT(*) AS count FROM dp_links").get() as { count: number }).count, 0);
+
+  // A text document with a link that becomes Darkmown loses the link in the same save.
+  const doc = await created(f);
+  const link = (await (await f.request(`/documents/${doc.id}/links`, "owner", "POST", { expiresInSeconds: 600 })).json()).link;
+  assert.equal((await f.request(`/links/${link.token}`, null)).status, 200);
+  assert.equal((await f.request(`/documents/${doc.id}`, "owner", "PUT", payload("# wd", 1, { name: "note.wd", format: "darkmown" }))).status, 200);
+  assert.equal((await f.request(`/links/${link.token}`, null)).status, 404);
+  assert.equal((await f.request(`/links/${link.token}/download`, null)).status, 404);
+  assert.equal((f.db.prepare("SELECT COUNT(*) AS count FROM dp_links WHERE doc_id = ?").get(doc.id) as { count: number }).count, 0);
+});
+
+test("starting the store clears share links a Darkmown snapshot kept from before, and a stray one serves nothing", async (t) => {
+  const f = fixture(); t.after(() => f.db.close());
+  const live = await created(f, payload("# wd", 0, { name: "counter.wd", format: "darkmown" }));
+  const text = await created(f);
+  const kept = (await (await f.request(`/documents/${text.id}/links`, "owner", "POST", { expiresInSeconds: 600 })).json()).link;
+  const token = "a".repeat(43);
+  f.db.prepare("INSERT INTO dp_links(id,doc_id,token_hash,created_at,expires_at,revoked_at) VALUES(?,?,?,?,?,NULL)").run("legacy", live.id, createHash("sha256").update(token).digest("hex"), f.clock.value, f.clock.value + 600_000);
+  assert.equal((await f.request(`/links/${token}`, null)).status, 404, "a stray link to a Live Doc answers like an unknown token");
+  createSqliteDocumentPlatformStore(f.db, { now: () => f.clock.value });
+  assert.equal((f.db.prepare("SELECT COUNT(*) AS count FROM dp_links WHERE doc_id = ?").get(live.id) as { count: number }).count, 0);
+  createSqliteDocumentPlatformStore(f.db, { now: () => f.clock.value });
+  assert.equal((await f.request(`/links/${kept.token}`, null)).status, 200, "other documents keep their links");
+});

@@ -8,7 +8,7 @@
 //
 // <address-or-doc-id> is a full Live Doc address (https://<label>.<domain>/),
 // a bare label, or a document id. A taken-down Live Doc is hosted at no level:
-// its private and public addresses answer "taken down", its open tabs close
+// its address answers "taken down", its open tabs close
 // within the server's recheck interval, and its passes and cookies are gone.
 // The document itself is untouched; its owner still has it in Markie.
 //
@@ -29,8 +29,7 @@ function docIdFor(input: string): string | null {
     // not a URL: a label or a document id
   }
   if (LABEL.test(value)) {
-    const row = (db.prepare("SELECT doc_id FROM live_doc_addresses WHERE label = ?").get(value)
-      ?? db.prepare("SELECT doc_id FROM live_doc_public_addresses WHERE label = ?").get(value)) as { doc_id: string } | undefined;
+    const row = db.prepare("SELECT doc_id FROM live_doc_addresses WHERE label = ?").get(value) as { doc_id: string } | undefined;
     if (row) return row.doc_id;
   }
   const doc = db.prepare("SELECT id FROM docs WHERE id = ?").get(value) as { id: string } | undefined;

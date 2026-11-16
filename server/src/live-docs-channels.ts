@@ -2,8 +2,8 @@
 //
 // Every Live Doc page keeps one server-sent event stream open to its own host
 // (live-docs.ts, LIVE_DOC_CHANNEL_PATH). Each stream re-checks access on a
-// timer, and the routes that take access away (removing a member, rotating or
-// revoking the public link, deleting the document) also call
+// timer, and the routes that take access away (removing a member, deleting
+// the document) also call
 // recheckLiveDocChannels, so a removed person's tab goes blank in the same
 // moment rather than at the next tick.
 //

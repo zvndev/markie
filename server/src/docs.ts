@@ -14,7 +14,7 @@ import {
 import { claimPendingInvites, removeDocPending } from "./pending.ts";
 import { closeRoom, purgeDocUpdates } from "./collab.ts";
 import { purgeDocThreads } from "./comments.ts";
-import { revokePublicLink } from "./public-links.ts";
+import { guardLiveDocsPrivate, revokePublicLink } from "./public-links.ts";
 import { serveAsset, unlinkDocAssets } from "./assets.ts";
 import { removeDocLinks } from "./doc-links.ts";
 import { removeLiveDoc } from "./live-docs-store.ts";
@@ -99,6 +99,15 @@ db.exec(`
   // re-check access from every open tab (live-docs-store.ts liveDocMeta,
   // shares.ts isOwner), so that walk must not happen.
   db.exec("CREATE INDEX IF NOT EXISTS idx_docs_access ON docs(id, deleted_at, format, owner_id, name)");
+}
+
+// A Live Doc is never public (public-links.ts): the database refuses a public
+// link for a darkmown document and drops one the moment a document becomes
+// darkmown, on every write path below (upsertDocRow). This also deletes any
+// link a Live Doc was given before the rule, once; later starts find none.
+{
+  const removed = guardLiveDocsPrivate(db);
+  if (removed > 0) console.log(`Removed ${removed} public link${removed === 1 ? "" : "s"} from Live Docs: a Live Doc is never public.`);
 }
 
 // How many snapshots of one document the server keeps, newest first, the

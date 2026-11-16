@@ -882,8 +882,8 @@ test("/d/:id shows a Darkmown document as escaped source, never as running scrip
   assert.equal(stranger.status, 403, "the private rule is unchanged");
 });
 
-test("/s/:token/raw downloads a Darkmown document as the .wd it is, and markdown as .md", async () => {
-  for (const [name, expected] of [["Tally.wd", "Tally.wd"], ["Notes.md", "Notes.md"], ["Plain.txt", "Plain.txt.md"]]) {
+test("/s/:token/raw downloads markdown as .md; a Darkmown document gets no public link at all", async () => {
+  for (const [name, expected] of [["Notes.md", "Notes.md"], ["Plain.txt", "Plain.txt.md"]]) {
     const id = await appDoc(alice, name, "::state n = 0\n");
     const published = await call("POST", `/api/docs/${id}/public-link`, { token: alice.token, body: {} });
     assert.equal(published.status, 200);
@@ -893,6 +893,11 @@ test("/s/:token/raw downloads a Darkmown document as the .wd it is, and markdown
     assert.match(raw.headers.get("content-disposition") ?? "", new RegExp(`filename="${expected.replace(".", "\\.")}"`), name);
     assert.equal(await raw.text(), "::state n = 0\n");
   }
+  // A Live Doc is never public (public-links.ts).
+  const live = await appDoc(alice, "Tally.wd", "::state n = 0\n");
+  const refused = await call("POST", `/api/docs/${live}/public-link`, { token: alice.token, body: {} });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.data.error, "live-doc-private");
 });
 
 // ---- links ------------------------------------------------------------------

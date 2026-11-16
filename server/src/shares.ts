@@ -5,6 +5,7 @@ import { sendEmail } from "./email.ts";
 import { createPendingShareStore } from "./pending.ts";
 export { configureShareIdentities } from "./pending.ts";
 import {
+  LIVE_DOC_PRIVATE,
   createOrGetPublicLink,
   getPublicLinkToken,
   revokePublicLink,
@@ -434,7 +435,7 @@ shares.delete("/:id/shares/:idOrEmail", async (c) => {
   // Removing the row is not enough on its own: a live collaboration socket
   // outlives it, so hang up on the socket too.
   if (result.removedMember && result.memberId) disconnectUser(docId, result.memberId);
-  // The same for an open Live Doc tab, and for public tabs on the old link.
+  // The same for an open Live Doc tab.
   recheckLiveDocChannels(docId);
   if (!result.removedMember && !result.removedPending) {
     return c.json({ error: "not found" }, 404);
@@ -464,6 +465,8 @@ shares.post("/:id/public-link", async (c) => {
   const docId = c.req.param("id");
   if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   const token = createOrGetPublicLink(docId, user.id);
+  // A Live Doc is never public (public-links.ts).
+  if (!token) return c.json(LIVE_DOC_PRIVATE, 409);
   return c.json({ url: publicUrl(token) });
 });
 
@@ -474,8 +477,6 @@ shares.delete("/:id/public-link", async (c) => {
   const docId = c.req.param("id");
   if (!canManageLevel(accessLevel(docId, user.id))) return c.json({ error: "forbidden" }, 403);
   revokePublicLink(docId);
-  // Close every open tab of the Live Doc's public address now.
-  recheckLiveDocChannels(docId);
   return c.json({ ok: true });
 });
 

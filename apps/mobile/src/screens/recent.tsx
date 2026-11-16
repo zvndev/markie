@@ -28,6 +28,8 @@ interface RecentProps {
   onOpen: (doc: RecentDoc) => void;
   onSettings: () => void;
   onNew: () => void;
+  /** Opens Requests: shares waiting for this account to accept their sender. */
+  onRequests?: () => void;
   onUnauthorized: () => void;
   /** Bumped by the app when it returns to the foreground. */
   refreshKey: number;
@@ -38,7 +40,7 @@ type LoadState = { status: "loading" } | { status: "ready" } | { status: "error"
 // The last list this launch saw, so coming back from a document is instant.
 let cached: { origin: string; docs: RecentDoc[]; cursor: string | null } | null = null;
 
-export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, refreshKey }: RecentProps) {
+export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUnauthorized, refreshKey }: RecentProps) {
   const warm = cached?.origin === api.origin ? cached : null;
   const [docs, setDocs] = useState<RecentDoc[]>(warm?.docs ?? []);
   const [cursor, setCursor] = useState<string | null>(warm?.cursor ?? null);
@@ -49,6 +51,9 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
   const [loadingMore, setLoadingMore] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const generation = useRef(0);
+  // How many shares wait for this account to accept their sender. A server
+  // from before requests answers 404, which is simply none.
+  const [requestCount, setRequestCount] = useState(0);
 
   const handleError = useCallback((error: unknown) => {
     if (error instanceof ApiError && error.status === 401) { onUnauthorized(); return; }
@@ -60,6 +65,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
     try {
       // Word, RTF and OpenDocument files live in the document platform, which
       // answers with everything at once; the Markdown list pages.
+      void api.shareRequests().then((requests) => { if (run === generation.current) setRequestCount(requests.length); }, () => undefined);
       const [page, platform] = await Promise.all([api.recent({ limit: PAGE_SIZE }), api.platformRecent()]);
       if (run !== generation.current) return;
       const next = withPlatform(mergeRecent([], page), platform);
@@ -163,6 +169,14 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onUnauthorized, r
       onRefresh={load}
       onNearEnd={cursor ? () => void loadMore() : undefined}
     >
+      {requestCount > 0 && onRequests ? (
+        <button type="button" className="m-requests-entry" onClick={onRequests}>
+          <PeopleIcon size={20} />
+          <span className="m-requests-entry-text">{requestCount === 1 ? "1 person wants to share with you" : `${requestCount} requests to share with you`}</span>
+          <span className="m-requests-badge" aria-label={`${requestCount} waiting`}>{requestCount}</span>
+          <ChevronRight size={18} />
+        </button>
+      ) : null}
       {state.status === "loading" && docs.length === 0 ? <ListSkeleton /> : null}
       {state.status === "error" && docs.length === 0 ? (
         <div className="m-empty" role="alert">

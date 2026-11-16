@@ -102,8 +102,8 @@ describe("sharing", () => {
       return { json: { ok: true } };
     });
     expect(await api.shares("doc-1")).toEqual([
-      { userId: "u2", email: "ana@example.com", name: "Ana", role: "editor", pending: false },
-      { userId: null, email: "sam@example.com", name: null, role: "viewer", pending: true },
+      { userId: "u2", email: "ana@example.com", name: "Ana", role: "editor", pending: false, waiting: false },
+      { userId: null, email: "sam@example.com", name: null, role: "viewer", pending: true, waiting: false },
     ]);
     expect(await api.addShare("doc-1", " Sam@Example.com ", "viewer")).toBe("invited");
     expect(calls[1]).toMatchObject({ method: "POST", url: `${ORIGIN}/api/docs/doc-1/shares`, body: { email: "sam@example.com", role: "viewer" } });

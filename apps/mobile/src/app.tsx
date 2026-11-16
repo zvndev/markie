@@ -30,10 +30,12 @@ import { NewDocChooser, NewDocScreen } from "./screens/new-doc";
 import { OfficeScreen } from "./screens/office";
 import type { NewDocType } from "./lib/docs";
 import { IncomingScreen } from "./screens/incoming";
+import { RequestsScreen } from "./screens/requests";
 
 type Route =
   | { key: string; kind: "recent" }
   | { key: string; kind: "settings" }
+  | { key: string; kind: "requests" }
   | { key: string; kind: "doc"; target: LinkTarget; name?: string; reloadKey?: number; sharedBy?: string | null }
   | { key: string; kind: "new"; type: NewDocType }
   | { key: string; kind: "office"; id: string; name?: string; startEditing?: boolean }
@@ -339,9 +341,16 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
               : openTarget({ kind: "doc", id: doc.id, origin: api.origin }, { name: doc.name, sharedBy: doc.sharedBy })}
             onSettings={() => setRoutes((stack) => (stack[stack.length - 1].kind === "settings" ? stack : [...stack, { key: nextKey("settings"), kind: "settings" }]))}
             onNew={() => setChooser(true)}
+            onRequests={() => setRoutes((stack) => (stack[stack.length - 1].kind === "requests" ? stack : [...stack, { key: nextKey("requests"), kind: "requests" }]))}
             onUnauthorized={onUnauthorized}
           />
         ),
+      };
+    }
+    if (route.kind === "requests") {
+      return {
+        key: route.key,
+        node: <RequestsScreen api={api} onBack={pop} onChanged={() => setRefreshKey((value) => value + 1)} onUnauthorized={onUnauthorized} />,
       };
     }
     if (route.kind === "settings") {

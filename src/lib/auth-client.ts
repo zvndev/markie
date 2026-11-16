@@ -567,6 +567,10 @@ export interface ShareMember {
   name: string | null;
   // true when this is an invited-but-not-yet-joined email
   pending?: boolean;
+  // Owner's view only: true when this person has an account but has not
+  // accepted the owner yet, so the document is a request in their Markie,
+  // not a document (server/src/share-people-store.ts).
+  waiting?: boolean;
 }
 
 export interface ShareAccess {
@@ -664,8 +668,8 @@ export function makeSharesClient(request: ApiRequest) {
       docId: string,
       email: string,
       role: "viewer" | "editor"
-    ): Promise<{ ok: boolean; status?: "member" | "invited"; error?: string }> => {
-      const res = await request<{ ok?: boolean; status?: "member" | "invited"; error?: string }>(
+    ): Promise<{ ok: boolean; status?: "member" | "invited" | "requested"; error?: string }> => {
+      const res = await request<{ ok?: boolean; status?: "member" | "invited" | "requested"; error?: string }>(
         `/api/docs/${encodeURIComponent(docId)}/shares`,
         { method: "POST", body: JSON.stringify({ email, role }) }
       );
@@ -766,7 +770,55 @@ export function makeSharesClient(request: ApiRequest) {
 
 export type SharesClient = ReturnType<typeof makeSharesClient>;
 
+// ── people: the recipient's side of sharing (server/src/share-people.ts) ──
+
+/** Someone wants to share a document with this account and has not been accepted yet. */
+export interface ShareRequest {
+  docId: string;
+  name: string;
+  kind: "doc" | "file";
+  role: "viewer" | "editor";
+  createdAt: string;
+  sender: { id: string; name: string | null; email: string };
+}
+
+/** A person whose shares land (accepted) or are hidden (blocked). */
+export interface SharePerson {
+  id: string;
+  name: string | null;
+  email: string;
+  since: string;
+}
+
+export function makePeopleClient(request: ApiRequest) {
+  const post = (path: string) => request<{ ok?: boolean }>(path, { method: "POST", body: "{}" });
+  return {
+    // null when the request failed, so a blip never reads as "no requests".
+    // The server lists the newest few; `count` is how many wait in all.
+    requests: async (): Promise<{ requests: ShareRequest[]; count: number } | null> => {
+      const res = await request<{ requests: ShareRequest[]; count?: number }>("/api/people/requests");
+      if (!res.ok) return null;
+      const requests = res.data?.requests ?? [];
+      return { requests, count: typeof res.data?.count === "number" ? res.data.count : requests.length };
+    },
+    people: async (): Promise<{ accepted: SharePerson[]; blocked: SharePerson[] } | null> => {
+      const res = await request<{ accepted: SharePerson[]; blocked: SharePerson[] }>("/api/people");
+      return res.ok && res.data ? { accepted: res.data.accepted ?? [], blocked: res.data.blocked ?? [] } : null;
+    },
+    accept: async (senderId: string) => (await post(`/api/people/${encodeURIComponent(senderId)}/accept`)).ok,
+    decline: async (docId: string) => (await post(`/api/people/requests/${encodeURIComponent(docId)}/decline`)).ok,
+    block: async (senderId: string) => (await post(`/api/people/${encodeURIComponent(senderId)}/block`)).ok,
+    unblock: async (senderId: string) => (await post(`/api/people/${encodeURIComponent(senderId)}/unblock`)).ok,
+    remove: async (senderId: string) =>
+      (await request<{ ok?: boolean }>(`/api/people/${encodeURIComponent(senderId)}`, { method: "DELETE" })).ok,
+  };
+}
+
+export type PeopleClient = ReturnType<typeof makePeopleClient>;
+
 export const sharesClient: SharesClient = makeSharesClient(api);
+
+export const peopleClient: PeopleClient = makePeopleClient(api);
 
 const SYNC_KEY = "markie.sync.v1";
 

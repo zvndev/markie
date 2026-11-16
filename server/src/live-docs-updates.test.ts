@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-live-docs-h3-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://127.0.0.1:8787";
@@ -240,6 +240,8 @@ test("a stream still closes a tab when access ends after an update", async () =>
   const id = `h3-then-${stamp}`;
   await putDoc(owner.token, id, "Then.wd", "# A\n");
   const reader = await signUpVerified(app, { name: "Rita Reader", email: `h3-reader-${stamp}@example.com` });
+  // Rita accepted Una (share-people.ts), so the share lands.
+  acceptSender(reader.id, owner.id);
   assert.equal((await ask(APP_HOST, `/api/docs/${id}/shares`, { method: "POST", bearer: owner.token, body: { email: reader.email, role: "viewer" } })).status, 200);
   const label = labelOf((await addressFor(id, owner.token)).url);
   const cookie = await openPrivate(label, await browserSignIn(reader.email));

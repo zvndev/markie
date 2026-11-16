@@ -2408,3 +2408,94 @@ input {
   gap: 14px;
   padding-top: 6px;
 }
+
+/* Requests (screens/requests.tsx) and their entry at the top of Recent.
+   Theme tokens only, so light and dark read the same. */
+.m-requests-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 2 * var(--m-gutter));
+  min-height: 48px;
+  margin: 8px var(--m-gutter) 4px;
+  padding: 10px 14px;
+  border: 1px solid var(--m-separator);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 15px;
+  text-align: left;
+}
+
+.m-requests-entry:active {
+  background: var(--m-row-hover);
+}
+
+.m-requests-entry-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-requests-badge {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.m-requests-intro {
+  margin-top: 4px;
+}
+
+.m-requests-list {
+  margin: 12px var(--m-gutter) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-request {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.m-request + .m-request::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 0.5px;
+  background: var(--m-separator);
+}
+
+.m-request-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.m-request-title {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.m-request-email {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.m-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

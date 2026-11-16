@@ -50,6 +50,7 @@ import {
 import { pushCloudThemes } from "@/lib/theme-sync";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
 import { LinkedIdentities } from "./linked-identities";
+import { SharePeopleSettings } from "./share-people";
 import { DefaultAppsSection } from "./default-apps-section";
 import { SelectChevron } from "./select-chevron";
 
@@ -155,6 +156,7 @@ export function Settings({ onClose, initialSection = "account" }: SettingsProps)
                     }}
                   />
                 </label>
+                <SharePeopleSettings key={user.id} accountId={user.id} />
                 <LinkedIdentities accountId={user.id} />
               </div>
             ) : (

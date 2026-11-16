@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-comments-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -54,8 +54,11 @@ async function call<T>(
   return { status: res.status, data: (await res.json().catch(() => null)) as T | null };
 }
 
+// Account ids by address, for acceptSender below.
+const ids = new Map<string, string>();
 async function signUp(name: string, email: string): Promise<string> {
-  const { token } = await signUpVerified(app, { name, email });
+  const { token, id } = await signUpVerified(app, { name, email });
+  ids.set(email, id);
   return token;
 }
 
@@ -91,6 +94,10 @@ const owner = await signUp("Owner", ownerEmail);
 const editor = await signUp("Editor", editorEmail);
 const viewer = await signUp("Viewer", viewerEmail);
 const stranger = await signUp("Stranger", `stranger-${stamp}@markie.test`);
+// The owner's members have accepted the owner (share-people.ts), so the
+// owner's shares land as documents; the stranger has no share at all.
+acceptSender(ids.get(editorEmail)!, ids.get(ownerEmail)!);
+acceptSender(ids.get(viewerEmail)!, ids.get(ownerEmail)!);
 
 async function fixture(): Promise<Fixture> {
   const docId = randomUUID();

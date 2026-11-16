@@ -20,7 +20,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-collab-schema-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -184,6 +184,8 @@ function storeRoom(docId: string, build: (doc: Y.Doc) => void) {
 
 const owner = await signUp("Sam Schema", `schema.owner.${stamp}@test.local`);
 const oldPeer = await signUp("Olly Old", `schema.old.${stamp}@test.local`);
+// Olly accepts Sam's shares (share-people.ts), so they land as documents.
+acceptSender(oldPeer.id, owner.id);
 
 test("a ticket request that says nothing is a build from before the gate", () => {
   assert.equal(schema.clientSchemaFrom({}), 1);

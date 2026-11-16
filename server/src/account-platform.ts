@@ -9,6 +9,7 @@ import { createGoogleIdentityLinks } from "./google-identity-links.ts";
 import { createCloudAreasApi, type CloudAreasStore } from "./cloud-areas.ts";
 import { configureShareIdentities, claimPendingInvitesForUser } from "./pending.ts";
 import { accessLevel, canReadLevel } from "./shares.ts";
+import { platformAccessLevel } from "./document-platform-store.ts";
 import { sendEmail } from "./email.ts";
 import { disconnectSessions } from "./collab.ts";
 
@@ -73,7 +74,9 @@ export function createAccountPlatform(db: Database.Database, areas: CloudAreasSt
     authenticate: async (request) => { const who = await authenticate(request); return who ? { id: who.userId } : null; },
     canAccessDocument: (uid, kind, id) => kind === "markdown"
       ? canReadLevel(accessLevel(id, uid)) && !!db.prepare("SELECT 1 FROM docs WHERE id=? AND deleted_at IS NULL").get(id)
-      : !!db.prepare("SELECT 1 FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id=d.id AND m.user_id=? WHERE d.id=? AND (d.owner_id=? OR m.user_id=?)").get(uid, id, uid, uid),
+      // The platform store's own ACL, so a member who has not accepted the
+      // file's owner (share-people-store.ts) cannot place it either.
+      : platformAccessLevel(db, id, uid) !== null,
   }));
   if (google) app.route("/", google.app);
   app.delete("/identities/google-provider/:id", bodyLimit({ maxSize: 1024, onError: (c) => c.json({ error: "invalid-request" }, 413) }), async (c) => {

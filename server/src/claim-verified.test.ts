@@ -92,14 +92,28 @@ function userIdFor(email: string): string | undefined {
   return row?.id;
 }
 
+// What a claim gave this address's account: a share, or (since 2026-11-15,
+// share-people-store.ts) a request, since the owner is somebody the new
+// account has not accepted yet. Either one is the claim this suite is about.
 function sharesFor(email: string) {
   return db
     .prepare(
       `SELECT s.doc_id, s.role FROM shares s
        JOIN user u ON u.id = s.user_id
-       WHERE u.email = ?`
+       WHERE u.email = ?
+       UNION ALL
+       SELECT r.doc_id, r.role FROM share_requests r
+       JOIN user u ON u.id = r.recipient_id
+       WHERE u.email = ? AND r.kind = 'doc'`
     )
-    .all(email.toLowerCase()) as Array<{ doc_id: string; role: string }>;
+    .all(email.toLowerCase(), email.toLowerCase()) as Array<{ doc_id: string; role: string }>;
+}
+
+// Only real shares: what the account can read.
+function landedFor(email: string) {
+  return db
+    .prepare("SELECT s.doc_id FROM shares s JOIN user u ON u.id = s.user_id WHERE u.email = ?")
+    .all(email.toLowerCase()) as Array<{ doc_id: string }>;
 }
 
 function pendingFor(email: string) {
@@ -264,6 +278,7 @@ test("proving the address with the emailed code delivers the share", async () =>
     [docId],
     "the proven owner of the address receives the document"
   );
+  assert.deepEqual(landedFor(victim), [], "as a request: nothing is readable until they accept the owner");
   assert.equal(pendingFor(victim).length, 0, "the invite is consumed exactly once");
 });
 

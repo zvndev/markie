@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "markie-assets-"));
 process.env.DB_PATH = join(dir, "t.db");
@@ -62,6 +62,8 @@ before(async () => {
   owner = await signUpVerified(app, { name: "Owner", email: "owner@markie.test" });
   editor = await signUpVerified(app, { name: "Editor", email: "editor@markie.test" });
   stranger = await signUpVerified(app, { name: "Stranger", email: "stranger@markie.test" });
+  // Accepted senders (share-people.ts): this suite is about what a member may do.
+  acceptSender(editor.id, owner.id);
 });
 
 test("missing answers from the caller's own scope", async () => {

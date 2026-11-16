@@ -35,16 +35,20 @@ export function platformPeople(api: ApiClient, docId: string): SharePeopleApi {
       const result = await api.platform().call(base);
       const members = Array.isArray(result.members) ? result.members : [];
       return members.slice(0, 200).flatMap((value): SharePerson[] => {
-        const raw = (value ?? {}) as { userId?: unknown; email?: unknown; role?: unknown };
+        const raw = (value ?? {}) as { userId?: unknown; email?: unknown; role?: unknown; waiting?: unknown };
         if (typeof raw.userId !== "string" || !MEMBER_ID.test(raw.userId)) return [];
         if (raw.role !== "viewer" && raw.role !== "editor") return [];
         const email = typeof raw.email === "string" ? raw.email.slice(0, 320) : raw.userId;
-        return [{ userId: raw.userId, email, name: null, role: raw.role, pending: false }];
+        return [{ userId: raw.userId, email, name: null, role: raw.role, pending: false, waiting: raw.waiting === true }];
       });
     },
     async add(email: string, role: ShareRole) {
-      await api.platform().call(base, "POST", { email: email.trim().toLowerCase(), role });
-      return "member";
+      const address = email.trim().toLowerCase();
+      await api.platform().call(base, "POST", { email: address, role });
+      // The platform's answer does not say whether the file reached them: it
+      // does only once they accept the owner (server/src/share-people-store.ts).
+      const added = (await this.list()).find((person) => person.email.toLowerCase() === address);
+      return added?.waiting ? "requested" : "member";
     },
     async setRole(person, role) {
       if (!person.userId) return;

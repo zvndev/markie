@@ -33,7 +33,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Th
 
 export function PlatformShareDialog({ docId, name, role, onClose }: { docId: string; name: string; role: CloudRole; onClose: () => void }) {
   const owner = role === "owner";
-  const [members, setMembers] = useState<{ userId: string; email?: string; role: string }[]>([]);
+  const [members, setMembers] = useState<{ userId: string; email?: string; role: string; waiting?: boolean }[]>([]);
   const [email, setEmail] = useState("");
   const [memberRole, setMemberRole] = useState<"viewer" | "editor">("viewer");
   const [link, setLink] = useState<{ url: string; id: string | null } | null>(null);
@@ -68,7 +68,7 @@ export function PlatformShareDialog({ docId, name, role, onClose }: { docId: str
       </div>
       <ul aria-label="People with access" className="space-y-1">
         {members.length === 0 ? <li className="text-[12px] text-muted">Only you have access.</li> : members.map((member) => <li key={member.userId} className="flex items-center justify-between gap-2 text-[12.5px]">
-          <span className="truncate">{member.email ?? member.userId} · {member.role === "editor" ? "can edit" : "can view"}</span>
+          <span className="truncate">{member.email ?? member.userId} · {member.waiting ? "Waiting for them to accept" : member.role === "editor" ? "can edit" : "can view"}</span>
           <button type="button" className={BUTTON} disabled={busy} onClick={() => void run(async () => {
             await platformClient().call(`/documents/${docId}/members/${member.userId}`, "DELETE");
             setNotice("Access removed. Copies already downloaded can't be recalled."); await load();

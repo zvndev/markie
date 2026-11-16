@@ -134,9 +134,23 @@ async function main() {
   const D = `doc-${stamp}`;
   let r = await call(alice, "PUT", `/api/docs/${D}`, { name: NAME, content, hash: hash(content), baseVersion: 0 });
   if (r.status !== 200) throw new Error(`create: ${r.status} ${r.text}`);
-  for (const [who, role] of [["carol", "viewer"], ["dave", "editor"]]) {
+  // A share from someone the recipient has not accepted is only a request
+  // (server/src/share-people.ts): it reads nothing until they accept Alice.
+  // So each shares, is shown to get nothing, accepts, and Alice shares again,
+  // which is the share that mints the emailed link the checks below use.
+  const aliceIdHandle = db();
+  const aliceId = aliceIdHandle.prepare('SELECT id FROM "user" WHERE email = ?').get(email("alice"))?.id;
+  aliceIdHandle.close();
+  const requestsRefused = [];
+  for (const [who, role, token] of [["carol", "viewer", carol], ["dave", "editor", dave]]) {
     r = await call(alice, "POST", `/api/docs/${D}/shares`, { email: email(who), role });
     if (r.status >= 300) throw new Error(`share ${who}: ${r.status} ${r.text}`);
+    const before = await call(token, "GET", `/api/docs/${D}`);
+    requestsRefused.push([who, before]);
+    r = await call(token, "POST", `/api/people/${encodeURIComponent(aliceId)}/accept`, {});
+    if (r.status >= 300) throw new Error(`accept as ${who}: ${r.status} ${r.text}`);
+    r = await call(alice, "POST", `/api/docs/${D}/shares`, { email: email(who), role });
+    if (r.status >= 300) throw new Error(`share ${who} again: ${r.status} ${r.text}`);
   }
   r = await call(alice, "POST", `/api/docs/${D}/threads`, { anchor: { quote: SECRET }, body: `comment about ${SECRET}` });
   const threadOk = r.status < 300;
@@ -145,6 +159,11 @@ async function main() {
   // A refusal: the status says no, and nothing of the document came back.
   const refused = (res) => res.status >= 300 && !res.text.includes(SECRET) && !res.text.includes(NAME);
   const show = (res) => `HTTP ${res.status}${res.text.includes(SECRET) ? " CONTAINS THE SECRET" : ""}${res.text.includes(NAME) ? " CONTAINS THE NAME" : ""}: ${res.text.slice(0, 120).replace(/\s+/g, " ")}`;
+
+  section("A share before the recipient accepts the sender");
+  for (const [who, res] of requestsRefused) {
+    check(`${who}, not yet accepting Alice, cannot read the shared document`, res.status === 404 && !res.text.includes(SECRET), show(res));
+  }
 
   const readRoutes = [
     ["GET", `/api/docs/${D}`],

@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-live-docs-h2-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://127.0.0.1:8787";
@@ -183,6 +183,8 @@ const stamp = Date.now();
 const owner = await signUpVerified(app, { name: "Olive Owner", email: `h2-owner-${stamp}@example.com` });
 const viewer = await signUpVerified(app, { name: "Vic Viewer", email: `h2-viewer-${stamp}@example.com` });
 const stranger = await signUpVerified(app, { name: "Stan Stranger", email: `h2-stranger-${stamp}@example.com` });
+// Vic accepted Olive (share-people.ts), so her shares land as documents.
+acceptSender(viewer.id, owner.id);
 const ownerCookie = await browserSignIn(owner.email);
 const viewerCookie = await browserSignIn(viewer.email);
 const strangerCookie = await browserSignIn(stranger.email);
@@ -554,4 +556,41 @@ test("access checks never read the document's text, however large it is", async 
   recheckLiveDocChannels(id);
   assert.deepEqual(await Promise.all(tabs.map((tab) => tab.next(200))), tabs.map(() => "timeout"), "the owner keeps every tab");
   for (const tab of tabs) await tab.close();
+});
+
+// ── accepting people (share-people.ts) ───────────────────────────────────────
+
+test("a share from someone not yet accepted opens no Live Doc, and accepting them opens it", async () => {
+  const newcomer = await signUpVerified(app, { name: "Nell Newcomer", email: `h2-newcomer-${stamp}@example.com` });
+  const cookie = await browserSignIn(newcomer.email);
+  const id = `h2-request-${stamp}`;
+  await putDoc(owner.token, id, "Request.wd", COUNTER);
+  await share(id, newcomer.email, "viewer");
+  const label = labelOf((await addressFor(id, owner.token)).url);
+
+  assert.equal((await ask(APP_HOST, `/api/docs/${id}/live-doc`, { bearer: newcomer.token })).status, 404);
+  assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie })).status, 404, "a request issues no pass");
+
+  const accepted = await ask(APP_HOST, `/api/people/${owner.id}/accept`, { method: "POST", bearer: newcomer.token });
+  assert.equal(accepted.status, 200);
+  assert.equal((await ask(APP_HOST, `/api/docs/${id}/live-doc`, { bearer: newcomer.token })).status, 200);
+  assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie })).status, 302);
+});
+
+test("removing the person who shared closes their open Live Doc tab at once", async () => {
+  const reader = await signUpVerified(app, { name: "Rae Reader", email: `h2-reader-${stamp}@example.com` });
+  acceptSender(reader.id, owner.id);
+  const readerCookie = await browserSignIn(reader.email);
+  const id = `h2-remove-person-${stamp}`;
+  await putDoc(owner.token, id, "RemovePerson.wd", COUNTER);
+  await share(id, reader.email, "viewer");
+  const label = labelOf((await addressFor(id, owner.token)).url);
+  const cookie = await openPrivate(label, readerCookie);
+  const tab = await tabOn(label, { cookie });
+  await expectReady(tab);
+
+  const removed = await ask(APP_HOST, `/api/people/${owner.id}`, { method: "DELETE", bearer: reader.token });
+  assert.equal(removed.status, 200);
+  await expectRevoked(tab, "access", 500);
+  assert.equal((await ask(APP_HOST, `/live-docs/pass/${label}`, { cookie: readerCookie })).status, 404);
 });

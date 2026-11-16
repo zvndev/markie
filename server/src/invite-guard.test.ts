@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import Database from "better-sqlite3";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 import { INVITE_LIMITS, createInviteLimiter, mailboxKey, plainEmailText } from "./invite-guard.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-invite-guard-")), "t.db");
@@ -168,12 +168,16 @@ test("the invite email carries no link or markup from the document name or the i
   const owner = await signUpVerified(app, { name: "Prize desk <b>visit</b> evil.test/claim", email: `namer.${Date.now()}@guard.test` });
   const doc = await makeDoc(owner.token, "Claim at https://evil.test/win [here](https://evil.test) notes.md");
   const member = await fresh("member"); // before the capture: signing up mails a code
+  acceptSender(member.id, owner.id);
+  const requested = await fresh("requested"); // has an account, has not accepted the owner
   sent.length = 0;
   // An address with no account (the invite template)...
   assert.equal((await call("POST", `/api/docs/${doc}/shares`, owner.token, { email: `stranger.${Date.now()}@far.test`, role: "viewer" })).status, 200);
-  // ...and an existing account, which takes the other template.
+  // ...an account that accepted the owner, which takes the "shared" template...
   assert.equal((await call("POST", `/api/docs/${doc}/shares`, owner.token, { email: member.email, role: "editor" })).status, 200);
-  assert.equal(sent.length, 2);
+  // ...and an account that has not, which takes the request template.
+  assert.equal((await call("POST", `/api/docs/${doc}/shares`, owner.token, { email: requested.email, role: "editor" })).status, 200);
+  assert.equal(sent.length, 3);
   for (const mail of sent) {
     for (const part of [mail.subject, mail.text, mail.html ?? ""]) {
       assert.ok(!part.includes("evil.test"), `no attacker host in: ${part.slice(0, 120)}`);
@@ -181,9 +185,14 @@ test("the invite email carries no link or markup from the document name or the i
     }
     assert.match(mail.subject, /Prize desk visit/);
     assert.match(mail.text, /Claim at here notes\.md/);
-    // Markie's own links are still there.
-    assert.match(mail.text, /https:\/\/markie\.test\/d\//);
   }
+  const [toInvitee, toMember, toRequested] = sent;
+  // Markie's own links are still there...
+  for (const mail of [toInvitee, toMember]) assert.match(mail.text, /https:\/\/markie\.test\/d\//);
+  // ...except in a request, which links to no document at all.
+  assert.deepEqual(toRequested.to, [requested.email]);
+  for (const part of [toRequested.text, toRequested.html ?? ""]) assert.doesNotMatch(part, /\/d\/|\?k=|markie:\/\/doc/);
+  assert.match(toRequested.text, /Requests/);
 });
 
 test("an inviter whose name is nothing but a link is named by their verified address", async () => {
@@ -203,6 +212,7 @@ test("an inviter whose name is nothing but a link is named by their verified add
 test("share mail says which account opens the link, and never that no account is needed", async () => {
   const owner = await fresh("copyowner");
   const member = await fresh("copymember");
+  acceptSender(member.id, owner.id);
   const doc = await makeDoc(owner.token);
   const stranger = `newcomer.${Date.now()}@far.test`;
   sent.length = 0;

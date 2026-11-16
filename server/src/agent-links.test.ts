@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified, type TestUser } from "./test-users.ts";
+import { acceptSender, signUpVerified, type TestUser } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-agent-links-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -731,6 +731,8 @@ test("a deleted document's id coming back starts a new origin, with no token", a
 
 test("an editor's origin on someone else's document is ignored", async () => {
   const bobsDoc = await appDoc(bob, "BobsPlan.md", "bob v1");
+  // Alice accepted Bob (share-people.ts), so his share lands and she may edit.
+  acceptSender(alice.id, bob.id);
   assert.equal((await call("POST", `/api/docs/${bobsDoc}/shares`, { token: bob.token, body: { email: "alice@markie.test", role: "editor" } })).status, 200);
   const push = await call("PUT", `/api/docs/${bobsDoc}`, {
     token: alice.token,
@@ -804,6 +806,8 @@ test("60 writes an hour per token, then 429 with Retry-After; reads and other to
 
 test("recent lists owned and shared documents newest first, with origin, role and link", async () => {
   const dave = await signUpVerified(app, { name: "Dave", email: "dave@markie.test" });
+  // Dave accepted Bob (share-people.ts), so Bob's share is on his list.
+  acceptSender(dave.id, bob.id);
   const daveAgent = await mintToken(dave, "Dave's agent");
   const ownApp = await appDoc(dave, "Own.md", "own");
   const ownAgent = await agentCreate(daveAgent.token, { name: "Agent.wd", content: "w", agent: "Claude Code" });

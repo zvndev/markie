@@ -217,6 +217,9 @@ test("the storage quota refuses growth past it on doc sync, uploads and snapshot
   const share = await req(`/api/docs/${doc}/shares`, { method: "POST", headers: bearer(owner.token), body: JSON.stringify({ email: editor.email, role: "editor" }) });
   restore();
   assert.equal(share.status, 200, await share.clone().text());
+  // The editor accepts the owner (share-people.ts), so the share lands.
+  const accepted = await req(`/api/people/${owner.id}/accept`, { method: "POST", headers: bearer(editor.token) });
+  assert.equal(accepted.status, 200, await accepted.clone().text());
   const editorPush = await putDoc(editor.token, doc, "e".repeat(7000), 2);
   assert.equal(editorPush.status, 413);
   assert.equal(((await editorPush.json()) as { usedBytes: number }).usedBytes, 5000);

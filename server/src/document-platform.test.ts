@@ -13,6 +13,8 @@ function fixture(limits: Partial<PlatformLimits> = {}) {
   db.exec('CREATE TABLE "user"(id TEXT PRIMARY KEY,email TEXT NOT NULL,emailVerified INTEGER NOT NULL)');
   for (const id of ["owner", "editor", "viewer", "stranger", "unverified"]) db.prepare('INSERT INTO "user"(id,email,emailVerified) VALUES(?,?,?)').run(id, `${id}@example.test`, id === "unverified" ? 0 : 1);
   const store = createSqliteDocumentPlatformStore(db, { limits, now: () => clock.value });
+  // Editor and viewer accepted the owner (share-people-store.ts); the stranger never did.
+  for (const id of ["editor", "viewer"]) db.prepare("INSERT INTO share_people(recipient_id,sender_id,state,updated_at) VALUES(?,'owner','accepted','2026-01-01')").run(id);
   const router = createDocumentPlatform({ store, resolveUser: async (req) => { const id = req.headers.get("x-test-user"); return ["owner", "editor", "viewer", "stranger"].includes(id ?? "") ? { id: id! } : null; } });
   const app = new Hono().route("/api/document-platform", router);
   const request = (path: string, user: string | null = "owner", method = "GET", body?: unknown) => app.request(`/api/document-platform${path}`, { method, headers: { ...(user ? { "x-test-user": user } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });

@@ -7,6 +7,7 @@ import { PanelNotice } from "@/components/panel-notice";
 import { DEFAULT_LIBRARY_DOCUMENT_QUERY, libraryDocumentFormat, queryLibraryDocuments, type LibraryDocumentQuery } from "@/lib/library-document-query";
 import { CloudAreaPicker, useCloudAreaScope } from "./cloud-area-picker";
 import type { CloudAreas } from "@/lib/account-identities";
+import { ShareRequestsPanel } from "./share-people";
 import "./cloud-view.css";
 
 // Everything the cloud holds for this account, as one list.
@@ -48,6 +49,9 @@ interface CloudViewProps {
   cloudError: string | null;
   // Bump to refetch "shared by me" (membership changed, signed in or out).
   refreshKey: number;
+  // After accepting or blocking someone in Requests: documents just landed or
+  // left, so the caller refetches the library.
+  onPeopleChanged?: () => void;
 }
 
 // How a document reached this account. Each one is read off data the page
@@ -200,6 +204,7 @@ export function CloudView({
   onOpenPath,
   cloudError,
   refreshKey,
+  onPeopleChanged,
 }: CloudViewProps) {
   // The toggles that are on. None means every source, the same as All.
   const [sources, setSources] = useState<CloudSource[]>(rememberedSources);
@@ -391,6 +396,13 @@ export function CloudView({
       ) : null}
 
       <div className={alongsideSnapshots ? "" : "flex-1 overflow-y-auto"}>
+        {/* Shares from people this account has not accepted wait here, and
+            appear nowhere else (server/src/share-people.ts). */}
+        {signedIn && !booting ? (
+          <div className={workspace ? "" : "px-1.5 pt-1.5"}>
+            <ShareRequestsPanel key={`${sessionKey ?? ""}:${refreshKey}`} accountKey={sessionKey || null} onChanged={onPeopleChanged} />
+          </div>
+        ) : null}
         {booting ? (
           <CloudSkeleton label="Loading your cloud documents" />
         ) : !signedIn ? (

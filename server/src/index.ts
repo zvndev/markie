@@ -5,7 +5,8 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth.ts";
 import { docs, configureDocsCloudAreas } from "./docs.ts";
-import { shares } from "./shares.ts";
+import { shares, takeInviteAllowance } from "./shares.ts";
+import { people } from "./share-people.ts";
 import { comments } from "./comments.ts";
 import { themes } from "./themes.ts";
 import { assetsApi, sweepOrphans } from "./assets.ts";
@@ -441,8 +442,11 @@ app.route("/api/document-platform", createDocumentPlatform({
     storageQuota: (ownerId, growthBytes) => quotaRefusal(quotaDatabase, ownerId, growthBytes),
   }),
   resolveUser: async (request) => (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
+  takeInvite: takeInviteAllowance,
 }));
 app.route("/api/docs", shares);
+// The recipient's side of sharing: requests, accepted people, blocked people.
+app.route("/api/people", people);
 app.route("/api/docs", comments);
 // The pass a live-editing socket opens with, instead of the session token.
 app.route("/api/docs", collabTickets);

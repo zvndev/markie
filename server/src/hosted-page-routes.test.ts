@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "markie-hosted-routes-"));
 const webDist = join(dir, "web-dist");
@@ -115,6 +115,8 @@ const appHrefs = (body: string) =>
 const owner = await signUpVerified(app, { name: "Owner", email: `hr.owner.${stamp}@test.local` });
 const viewer = await signUpVerified(app, { name: "Viewer", email: `hr.viewer.${stamp}@test.local` });
 const stranger = await signUpVerified(app, { name: "Stranger", email: `hr.stranger.${stamp}@test.local` });
+// The viewer accepted Owner (share-people.ts), so the share below lands.
+acceptSender(viewer.id, owner.id);
 const docId = `hr-doc-${stamp}`;
 await makeDoc(owner.token, docId);
 const viewerShare = await share(owner.token, docId, viewer.email, "viewer");
@@ -302,6 +304,9 @@ const office = await (async () => {
 })();
 const officeEditor = await signUpVerified(app, { name: "Office editor", email: `hr.office-editor.${stamp}@test.local` });
 const officeViewer = await signUpVerified(app, { name: "Office viewer", email: `hr.office-viewer.${stamp}@test.local` });
+// Both accepted Owner, so their memberships land (share-people-store.ts).
+acceptSender(officeEditor.id, owner.id);
+acceptSender(officeViewer.id, owner.id);
 for (const [member, role] of [[officeEditor, "editor"], [officeViewer, "viewer"]] as const) {
   const added = await json("POST", `/api/document-platform/documents/${office}/members`, owner.token, { userId: member.id, role });
   assert.ok(added.status === 200 || added.status === 201 || added.status === 204, `add ${role}: ${added.status} ${JSON.stringify(added.data)}`);

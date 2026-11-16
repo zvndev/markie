@@ -15,12 +15,14 @@ export interface SharePerson {
   name: string | null;
   role: ShareRole;
   pending: boolean;
+  /** Has an account, has not accepted the owner yet: nothing reached them. */
+  waiting?: boolean;
 }
 
 /** The calls the sheet makes, for whichever store the document lives in. */
 export interface SharePeopleApi {
   list(): Promise<SharePerson[]>;
-  add(email: string, role: ShareRole): Promise<"member" | "invited">;
+  add(email: string, role: ShareRole): Promise<"member" | "invited" | "requested">;
   setRole(person: SharePerson, role: ShareRole): Promise<void>;
   remove(person: SharePerson): Promise<void>;
   /** Whether an unknown address gets an invitation email (Markdown) or is refused (the document platform). */
@@ -119,8 +121,10 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
       const result = await people.add(address, role);
       setEmail("");
       return result === "invited"
-        ? `Invitation sent to ${address}. They can open it once they sign in with that address.`
-        : `${address} can ${role === "editor" ? "edit" : "view"} this document now.`;
+        ? `Invitation sent to ${address}. It reaches them once they sign up with that address and accept you.`
+        : result === "requested"
+          ? `Asked ${address}. It reaches them once they accept you in Markie.`
+          : `${address} can ${role === "editor" ? "edit" : "view"} this document now.`;
     });
   };
 
@@ -195,7 +199,7 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
               <Avatar name={label} />
               <span className="m-share-person-text">
                 <span className="m-share-person-name">{label}{isMe ? " (you)" : ""}</span>
-                <span className="m-share-person-email">{person.pending ? `Invited · ${person.email}` : person.name ? person.email : ""}</span>
+                <span className="m-share-person-email">{person.pending ? `Invited · ${person.email}` : person.waiting ? `Waiting for them to accept · ${person.email}` : person.name ? person.email : ""}</span>
               </span>
               {canManage ? (
                 <span className="m-share-person-actions">

@@ -916,6 +916,7 @@ export function Library({
                 onOpenPath={onOpenPath}
                 cloudError={cloudError}
                 refreshKey={refreshKey}
+                onPeopleChanged={() => void refresh()}
               />
               {renderCloudDocuments?.(query, "workspace")}
             </div>
@@ -945,6 +946,7 @@ export function Library({
             onOpenPath={onOpenPath}
             cloudError={cloudError}
             refreshKey={refreshKey}
+            onPeopleChanged={() => void refresh()}
           />
           {renderCloudDocuments?.(query, "panel")}
           </CloudAreaProvider>

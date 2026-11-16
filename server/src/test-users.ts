@@ -12,6 +12,7 @@
 // does.
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
+import { ensureSharePeopleSchema, landRequestsFrom, setSenderState } from "./share-people-store.ts";
 
 // Hono's app, narrowed to what this file uses. Typed structurally so the
 // helper does not drag the server's route wiring into every suite.
@@ -96,4 +97,20 @@ export async function signUpVerified(
     email: signInBody?.user?.email ?? opts.email,
     id: signInBody?.user?.id ?? signUpBody?.user?.id ?? "",
   };
+}
+
+// Stand in for "the recipient accepted this sender in Requests" (share-people.ts),
+// for suites about what an accepted member may do. Since 2026-11-15 a share
+// from someone the recipient has not accepted is only a request, kept in
+// share_requests; the suites that test that rule itself (share-people.test.ts)
+// go through the real routes. Like the real accept, this moves any request
+// already waiting into a real share, so it can be called before or after the
+// share.
+export function acceptSender(recipientId: string, senderId: string): void {
+  const handle = db();
+  ensureSharePeopleSchema(handle);
+  handle.transaction(() => {
+    setSenderState(handle, recipientId, senderId, "accepted");
+    landRequestsFrom(handle, recipientId, senderId);
+  })();
 }

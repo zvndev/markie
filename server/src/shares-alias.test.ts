@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-share-alias-routes-")), "test.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -20,6 +20,9 @@ const { addPending, claimPendingInvitesForUser } = await import("./pending.ts");
 const app = new Hono(); app.on(["GET", "POST"], "/api/auth/*", context => auth.handler(context.req.raw)); app.route("/api/docs", docs); app.route("/api/docs", shares);
 const owner = await signUpVerified(app, { name: "Owner", email: "owner@alias-routes.test" });
 const member = await signUpVerified(app, { name: "Member", email: "member@alias-routes.test" });
+// The member already accepts the owner's shares (share-people.ts), so these
+// suites are about alias resolution and fencing, not requests.
+acceptSender(member.id, owner.id);
 const active = new Map<string, string>();
 configureShareIdentities({
   verifiedUserForEmail(email, db) { return active.get(email) ?? (db.prepare('SELECT id FROM "user" WHERE lower(email)=? AND emailVerified=1').get(email) as { id: string } | undefined)?.id ?? null; },

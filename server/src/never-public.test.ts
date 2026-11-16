@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 const neverPublicDir = mkdtempSync(join(tmpdir(), "markie-never-public-"));
 process.env.DB_PATH = join(neverPublicDir, "t.db");
@@ -75,8 +75,8 @@ async function jsonRequest<T>(
 }
 
 async function signUp(name: string, email: string) {
-  const { token } = await signUpVerified(app, { name, email });
-  return { token, email };
+  const { token, id } = await signUpVerified(app, { name, email });
+  return { token, email, id };
 }
 
 async function push(token: string, docId: string, body: string, baseVersion: number) {
@@ -164,6 +164,14 @@ test("sharing with a person who has an account does not publish the document", a
   const docId = `share-${stamp}`;
   await push(owner.token, docId, "# Shared\n", 0);
 
+  // A request (Bob has not accepted Owner yet) publishes nothing either.
+  const requested = await jsonRequest<{ status: string }>("POST", `/api/docs/${docId}/shares`, owner.token, { email: bob.email, role: "viewer" });
+  assert.equal(requested.data?.status, "requested");
+  assertNotPublic(docId, "a share that is still a request");
+
+  // Bob accepts Owner (share-people.ts); from then on the share is real.
+  acceptSender(bob.id, owner.id);
+
   for (const role of ["viewer", "editor"]) {
     const invite = await jsonRequest<{ status: string }>(
       "POST",
@@ -206,6 +214,7 @@ test("inviting someone without an account does not publish the document", async 
 test("only the owner can publish, and only by asking", async () => {
   const owner = await signUp("Owner", `pub-owner.${stamp}@test.local`);
   const editor = await signUp("Editor", `pub-editor.${stamp}@test.local`);
+  acceptSender(editor.id, owner.id);
   const docId = `publish-${stamp}`;
   await push(owner.token, docId, "# Publishable\n", 0);
   await jsonRequest("POST", `/api/docs/${docId}/shares`, owner.token, {

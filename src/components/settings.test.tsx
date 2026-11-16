@@ -23,6 +23,8 @@ vi.mock("@/lib/auth-client", () => ({
     googleSignInURL: () => googleSignInURL(),
   },
   getServerURL: () => "https://api.test",
+  // Requests and accepted people (share-people.tsx): none, in this suite.
+  peopleClient: { requests: async () => ({ requests: [], count: 0 }), people: async () => ({ accepted: [], blocked: [] }) },
   getSyncEnabled: () => true,
   setSyncEnabled: (...a: unknown[]) => setSyncEnabled(...a),
 }));

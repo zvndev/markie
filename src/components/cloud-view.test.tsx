@@ -7,6 +7,8 @@ import type { SharedByMeDoc } from "@/lib/auth-client";
 const sharedByMe = vi.fn();
 vi.mock("@/lib/auth-client", () => ({
   sharesClient: { sharedByMe: () => sharedByMe() },
+  // Requests and accepted people (share-people.tsx): none, in this suite.
+  peopleClient: { requests: async () => ({ requests: [], count: 0 }), people: async () => ({ accepted: [], blocked: [] }) },
 }));
 
 import { CloudView } from "./cloud-view";

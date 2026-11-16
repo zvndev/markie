@@ -327,13 +327,47 @@ export function createApiClient(options: ApiClientOptions) {
      * a member now, anyone else gets an invitation. The same call with another
      * role changes a member's role.
      */
-    async addShare(id: string, email: string, role: ShareRole): Promise<"member" | "invited"> {
+    async addShare(id: string, email: string, role: ShareRole): Promise<"member" | "invited" | "requested"> {
       if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");
       const clean = email.trim().toLowerCase();
       if (!EMAIL.test(clean) || clean.length > 320) throw new ApiError(400, "Enter an email address.");
       if (role !== "viewer" && role !== "editor") throw new ApiError(400, "Choose viewer or editor.");
       const { data } = await json("POST", `/api/docs/${encodeURIComponent(id)}/shares`, { body: { email: clean, role } });
-      return (data as { status?: unknown } | null)?.status === "invited" ? "invited" : "member";
+      const status = (data as { status?: unknown } | null)?.status;
+      return status === "invited" ? "invited" : status === "requested" ? "requested" : "member";
+    },
+
+    /**
+     * Shares waiting for this account to accept their sender
+     * (server/src/share-people.ts). Nothing in them reaches the account until
+     * it does.
+     */
+    async shareRequests(): Promise<{ requests: ShareRequest[]; count: number }> {
+      const { data } = await json("GET", "/api/people/requests");
+      const raw = (data ?? {}) as { requests?: unknown; count?: unknown };
+      if (!Array.isArray(raw.requests)) throw new ApiError(502, "The server's answer wasn't readable.");
+      const requests = raw.requests.slice(0, 500).map(parseShareRequest).filter((request): request is ShareRequest => request !== null);
+      // The server lists the newest few; count is how many wait in all.
+      const count = typeof raw.count === "number" && Number.isSafeInteger(raw.count) && raw.count >= 0 ? Math.max(raw.count, requests.length) : requests.length;
+      return { requests, count };
+    },
+
+    /** Accept a sender: everything they shared lands, and so does what they share later. */
+    async acceptSender(senderId: string): Promise<void> {
+      if (!THREAD_ID.test(senderId)) throw new ApiError(404, "That request is gone.");
+      await json("POST", `/api/people/${encodeURIComponent(senderId)}/accept`, { body: {} });
+    },
+
+    /** Decline one request. The sender can ask again later. */
+    async declineRequest(docId: string): Promise<void> {
+      if (!THREAD_ID.test(docId)) throw new ApiError(404, "That request is gone.");
+      await json("POST", `/api/people/requests/${encodeURIComponent(docId)}/decline`, { body: {} });
+    },
+
+    /** Block a sender: their requests, now and later, stay hidden. They are not told. */
+    async blockSender(senderId: string): Promise<void> {
+      if (!THREAD_ID.test(senderId)) throw new ApiError(404, "That request is gone.");
+      await json("POST", `/api/people/${encodeURIComponent(senderId)}/block`, { body: {} });
     },
 
     /** Takes someone off a document: a member by id, an invitation by email. */
@@ -478,6 +512,16 @@ export interface ShareMember {
   name: string | null;
   role: ShareRole;
   pending: boolean;
+  /** Has an account but has not accepted the owner yet, so nothing reached them. Owner's view only. */
+  waiting: boolean;
+}
+
+/** Someone wants to share a document with this account. */
+export interface ShareRequest {
+  docId: string;
+  name: string;
+  kind: "doc" | "file";
+  sender: { id: string; name: string | null; email: string };
 }
 
 export interface ThreadComment {
@@ -548,7 +592,19 @@ function parseShareMember(value: unknown): ShareMember | null {
   const email = plainString(raw.email, 320);
   if (!email || (raw.role !== "viewer" && raw.role !== "editor")) return null;
   const userId = typeof raw.user_id === "string" && THREAD_ID.test(raw.user_id) ? raw.user_id : null;
-  return { userId, email, name: plainString(raw.name, 256), role: raw.role, pending: raw.pending === true || userId === null };
+  return { userId, email, name: plainString(raw.name, 256), role: raw.role, pending: raw.pending === true || userId === null, waiting: raw.waiting === true };
+}
+
+function parseShareRequest(value: unknown): ShareRequest | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const sender = (raw.sender ?? {}) as Record<string, unknown>;
+  const docId = typeof raw.docId === "string" && THREAD_ID.test(raw.docId) ? raw.docId : null;
+  const senderId = typeof sender.id === "string" && THREAD_ID.test(sender.id) ? sender.id : null;
+  const email = plainString(sender.email, 320);
+  const name = plainString(raw.name, 256);
+  if (!docId || !senderId || !email || !name) return null;
+  return { docId, name, kind: raw.kind === "file" ? "file" : "doc", sender: { id: senderId, name: plainString(sender.name, 256), email } };
 }
 
 function parseThread(value: unknown): CommentThread | null {

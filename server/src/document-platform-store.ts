@@ -1,5 +1,11 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { CloudAreaError, type CloudAreasStore } from "./cloud-areas.ts";
+import { acceptedSenderSql, ensureSharePeopleSchema, putRequest, removeDocRequests, removeRequest, senderState } from "./share-people-store.ts";
+
+// A member who has not accepted the file's owner gets a request in
+// share_requests, never a dp_members row (share-people-store.ts). The gate
+// below stays on every dp_members read as defense in depth.
+const MEMBER_ACCEPTED = acceptedSenderSql("m.user_id", "d.owner_id");
 
 /** Ordinary byte snapshots only. This is neither vault transport nor live CRDT merging. */
 export type PlatformFormat = "markdown" | "darkmown" | "text" | "csv" | "json" | "yaml" | "xml" | "docx" | "doc" | "rtf" | "odt";
@@ -19,7 +25,7 @@ export interface PlatformSqliteDatabase {
   };
 }
 export class DocumentPlatformError extends Error {
-  code: string; status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 503; serverVersion?: number;
+  code: string; status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 503; serverVersion?: number;
   constructor(code: string, status: DocumentPlatformError["status"], message: string, serverVersion?: number) { super(message); this.code = code; this.status = status; this.serverVersion = serverVersion; }
 }
 export function platformFail(code: string, status: DocumentPlatformError["status"], message: string, serverVersion?: number): never { throw new DocumentPlatformError(code, status, message, serverVersion); }
@@ -114,7 +120,7 @@ export interface DocumentPlatformStore {
   remove(userId: string, id: string, baseVersion: number): void;
   history(userId: string, id: string): PlatformMetadata[];
   historyVersion(userId: string, id: string, version: number): PlatformSnapshot;
-  members(userId: string, id: string): { userId: string; email: string; role: "editor" | "viewer"; createdAt: number }[];
+  members(userId: string, id: string): { userId: string; email: string; role: "editor" | "viewer"; createdAt: number; waiting: boolean }[];
   addMember(userId: string, id: string, input: unknown): void;
   removeMember(userId: string, id: string, memberId: string): void;
   createLink(userId: string, id: string, expiresInSeconds: number): { id: string; token: string; createdAt: number; expiresAt: number; path: string };
@@ -136,7 +142,7 @@ export function platformAccessLevel(db: PlatformSqliteDatabase, id: string, user
   if (!opaqueId(id) || !userId) return null;
   let row: { access_role?: unknown } | undefined;
   try {
-    row = db.prepare("SELECT CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)")
+    row = db.prepare(`SELECT CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? AND ${MEMBER_ACCEPTED} WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)`)
       .get(userId, userId, id, userId, userId) as { access_role?: unknown } | undefined;
   } catch (error) {
     if (error instanceof Error && /no such table/i.test(error.message)) return null;
@@ -174,6 +180,9 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     const removed = Number(db.prepare(`DELETE FROM dp_links WHERE doc_id IN (SELECT d.id FROM dp_documents d WHERE ${LIVE_DOC_SQL})`).run().changes);
     if (removed > 0) console.log(`Removed ${removed} share link${removed === 1 ? "" : "s"} from Live Docs: a Live Doc is never public.`);
   }
+  // A member's file reaches them only once they accept its owner, the same
+  // rule Markdown shares follow (share-people-store.ts).
+  ensureSharePeopleSchema(db);
   const transaction = <T>(operation: () => T): T => {
     db.exec("BEGIN IMMEDIATE");
     try { const result = operation(); db.exec("COMMIT"); return result; }
@@ -182,7 +191,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
   const access = (userId: string, id: string, required: PlatformRole = "viewer") => {
     if (!opaqueId(id)) platformFail("not-found", 404, "Document not found.");
     // Apply ACL inside the SELECT so unknown users never materialize private BLOBs.
-    const row = db.prepare("SELECT d.*,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)").get(userId, userId, id, userId, userId) as (DocumentRow & { access_role: PlatformRole }) | undefined;
+    const row = db.prepare(`SELECT d.*,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS access_role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? AND ${MEMBER_ACCEPTED} WHERE d.id = ? AND (d.owner_id = ? OR m.user_id = ?)`).get(userId, userId, id, userId, userId) as (DocumentRow & { access_role: PlatformRole }) | undefined;
     if (!row) platformFail("not-found", 404, "Document not found.");
     const role = row.access_role;
     if (!["owner", "editor", "viewer"].includes(role)) platformFail("not-found", 404, "Document not found.");
@@ -209,7 +218,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
   return {
     limits,
     list(userId) {
-      const rows = db.prepare("SELECT d.id,d.name,d.format,d.version,d.sha256,d.created_at,d.updated_at,length(d.bytes) AS byte_length,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? WHERE d.owner_id = ? OR m.user_id = ? ORDER BY d.updated_at DESC,d.id ASC LIMIT ?").all(userId, userId, userId, userId, limits.maxListedDocuments + 1) as (Omit<DocumentRow, "bytes"> & { byte_length: number; role: PlatformRole })[];
+      const rows = db.prepare(`SELECT d.id,d.name,d.format,d.version,d.sha256,d.created_at,d.updated_at,length(d.bytes) AS byte_length,CASE WHEN d.owner_id = ? THEN 'owner' ELSE m.role END AS role FROM dp_documents d LEFT JOIN dp_members m ON m.doc_id = d.id AND m.user_id = ? AND ${MEMBER_ACCEPTED} WHERE d.owner_id = ? OR m.user_id = ? ORDER BY d.updated_at DESC,d.id ASC LIMIT ?`).all(userId, userId, userId, userId, limits.maxListedDocuments + 1) as (Omit<DocumentRow, "bytes"> & { byte_length: number; role: PlatformRole })[];
       if (rows.length > limits.maxListedDocuments) platformFail("limit-exceeded", 413, "Too many accessible cloud documents to list.");
       return rows.map((row) => ({ schemaVersion: 2, id: row.id, name: row.name, format: row.format, version: row.version, sha256: row.sha256, createdAt: row.created_at, updatedAt: row.updated_at, byteLength: row.byte_length, role: row.role, ...placement(userId, row.id) }));
     },
@@ -249,7 +258,7 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     remove(userId, id, baseVersion) {
       transaction(() => {
         const { row } = access(userId, id, "owner"); checkVersion(row, baseVersion);
-        db.prepare("DELETE FROM dp_links WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_members WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_history WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_documents WHERE id = ?").run(id);
+        db.prepare("DELETE FROM dp_links WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_members WHERE doc_id = ?").run(id); removeDocRequests(db, "file", id); db.prepare("DELETE FROM dp_history WHERE doc_id = ?").run(id); db.prepare("DELETE FROM dp_documents WHERE id = ?").run(id);
       });
     },
     history(userId, id) {
@@ -265,7 +274,11 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
     },
     members(userId, id) {
       access(userId, id, "owner");
-      return (db.prepare('SELECT m.user_id,u.email,m.role,m.created_at FROM dp_members m JOIN "user" u ON u.id = m.user_id WHERE m.doc_id = ? ORDER BY m.created_at,m.user_id LIMIT ?').all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: number }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: r.created_at }));
+      // waiting: a request (share_requests) the member has not accepted, or
+      // has blocked, which looks the same on purpose. Not in their Markie yet.
+      const members = (db.prepare(`SELECT m.user_id,u.email,m.role,m.created_at FROM dp_members m JOIN dp_documents d ON d.id = m.doc_id JOIN "user" u ON u.id = m.user_id WHERE m.doc_id = ? AND ${MEMBER_ACCEPTED} ORDER BY m.created_at,m.user_id LIMIT ?`).all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: number }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: r.created_at, waiting: false }));
+      const waiting = (db.prepare(`SELECT r.recipient_id AS user_id,u.email,r.role,r.created_at FROM share_requests r JOIN "user" u ON u.id = r.recipient_id WHERE r.kind = 'file' AND r.doc_id = ? ORDER BY r.created_at,r.recipient_id LIMIT ?`).all(id, limits.maxMembersPerDocument) as { user_id: string; email: string; role: "editor" | "viewer"; created_at: string }[]).map((r) => ({ userId: r.user_id, email: r.email, role: r.role, createdAt: Date.parse(r.created_at), waiting: true }));
+      return [...members, ...waiting].slice(0, limits.maxMembersPerDocument);
     },
     addMember(userId, id, input) {
       transaction(() => {
@@ -282,14 +295,16 @@ export function createSqliteDocumentPlatformStore(db: PlatformSqliteDatabase, op
           : db.prepare(typeof v.userId === "string" ? 'SELECT id FROM "user" WHERE id = ? AND emailVerified = 1' : 'SELECT id FROM "user" WHERE lower(email) = lower(?) AND emailVerified = 1').get(reference)) as { id: string } | undefined;
         if (!member) platformFail("not-found", 404, "No verified existing account matches that reference.");
         if (member.id === row.owner_id) platformFail("invalid-request", 400, "The document owner's role cannot be changed.");
-        const count = db.prepare("SELECT COUNT(*) AS count FROM dp_members WHERE doc_id = ? AND user_id != ?").get(id, member.id) as { count: number };
+        const count = db.prepare("SELECT (SELECT COUNT(*) FROM dp_members WHERE doc_id = ? AND user_id != ?) + (SELECT COUNT(*) FROM share_requests WHERE kind = 'file' AND doc_id = ? AND recipient_id != ?) AS count").get(id, member.id, id, member.id) as { count: number };
         if (count.count >= limits.maxMembersPerDocument) platformFail("limit-exceeded", 413, "Document member limit reached.");
         // This is an explicit document-owner command, not a passive invitation
         // claim. Resolving an alias must not suppress the requested role edit.
-        db.prepare("INSERT INTO dp_members(doc_id,user_id,role,created_at) VALUES(?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role = excluded.role").run(id, member.id, v.role as string, now());
+        // Only for someone who accepted the owner; anyone else gets a request.
+        if (senderState(db, member.id, row.owner_id) === "accepted") db.prepare("INSERT INTO dp_members(doc_id,user_id,role,created_at) VALUES(?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role = excluded.role").run(id, member.id, v.role as string, now());
+        else if (!putRequest(db, { kind: "file", docId: id, recipientId: member.id, senderId: row.owner_id, role: v.role as "viewer" | "editor", invitedBy: row.owner_id }, true)) platformFail("limit-exceeded", 429, "This person already has many of your shares waiting. Wait until they answer.");
       });
     },
-    removeMember(userId, id, memberId) { transaction(() => { access(userId, id, "owner"); if (!memberId || memberId.length > 128) platformFail("invalid-request", 400, "Invalid member identifier."); db.prepare("DELETE FROM dp_members WHERE doc_id = ? AND user_id = ?").run(id, memberId); }); },
+    removeMember(userId, id, memberId) { transaction(() => { access(userId, id, "owner"); if (!memberId || memberId.length > 128) platformFail("invalid-request", 400, "Invalid member identifier."); db.prepare("DELETE FROM dp_members WHERE doc_id = ? AND user_id = ?").run(id, memberId); removeRequest(db, "file", id, memberId); }); },
     createLink(userId, id, expiresInSeconds) {
       return transaction(() => {
         const { row } = access(userId, id, "owner");

@@ -45,6 +45,7 @@ import { downloadFilename } from "./doc-meta.ts";
 import { privateShell, webAppAvailable, webAppShell } from "./web-app.ts";
 import { docsHostConfig, onApiHost } from "./docs-host.ts";
 import { platformAccessLevel } from "./document-platform-store.ts";
+import { requestFor } from "./share-people-store.ts";
 
 const db = openDatabase();
 
@@ -119,6 +120,12 @@ export type DocAccess =
    * the email.
    */
   | { kind: "wrong-account"; signedInAs: string; invitedEmail: string | null }
+  /**
+   * Signed in as the person this document was shared with, but they have not
+   * accepted its owner yet, so it is a request and reads nothing. The page
+   * names the sender and the file, which the request already shows them.
+   */
+  | { kind: "request"; senderName: string | null; senderEmail: string; docName: string }
   /** Nobody signed in, holding a current member's link to this document. */
   | { kind: "member-link" }
   /** Nobody signed in, holding this document's open invite. */
@@ -157,6 +164,10 @@ export async function resolveViewer(
     if (canReadLevel(level)) return { kind: "reader", canEdit: canEditLevel(level), userId: user.id };
     const platform = platformAccessLevel(db, docId, user.id);
     if (platform) return { kind: "reader", canEdit: platform !== "viewer", userId: user.id };
+    const request = requestFor(db, user.id, docId);
+    if (request) {
+      return { kind: "request", senderName: request.sender.name, senderEmail: request.sender.email, docName: request.name };
+    }
     return { kind: "wrong-account", signedInAs: user.email ?? "", invitedEmail: invite?.email ?? null };
   }
 
@@ -193,8 +204,9 @@ function invitePage(docId: string, doc: DocRow, email: string): string {
     title: "Sign in to read this",
     heading: "Sign in to open this document",
     lines: [
-      [sharedBy ? `${sharedBy} shared "${doc.name}" with ` : `"${doc.name}" was shared with `, { strong: email }, "."],
-      ["To open it, sign in with that address, or make your Markie account with it. We'll email you a code to prove it's yours."],
+      [sharedBy ? `${sharedBy} wants to share "${doc.name}" with ` : `Someone wants to share "${doc.name}" with `, { strong: email }, "."],
+      ["Sign in with that address, or make your Markie account with it. We'll email you a code to prove it's yours."],
+      ["Then accept them in Markie's Requests to open it. Nothing they share reaches you until you do."],
     ],
     action: href ? { href, label: "Sign in or create your account" } : null,
   });
@@ -215,6 +227,21 @@ function wrongAccountPage(docId: string, signedInAs: string, invitedEmail: strin
         : ["If it was shared with a different address, sign in with that one."],
     ],
     action: href ? { href, label: "Sign in with a different account" } : null,
+  });
+}
+
+// The recipient of a share they have not accepted yet. Says who and what, and
+// where to accept; the content stays out until they do.
+function requestPage(access: Extract<DocAccess, { kind: "request" }>): string {
+  const who = access.senderName ? `${access.senderName} (${access.senderEmail})` : access.senderEmail;
+  return renderSignInNotice({
+    title: "Waiting for you to accept",
+    heading: "Accept this person to open it",
+    lines: [
+      [`${who} wants to share "${access.docName}" with you.`],
+      ["Nothing they share reaches your Markie until you accept them. Open Markie and look in Requests to accept or decline."],
+    ],
+    action: null,
   });
 }
 
@@ -256,6 +283,7 @@ docView.get("/d/:id", async (c) => {
   if (access.kind === "wrong-account") {
     return c.html(wrongAccountPage(docId, access.signedInAs, access.invitedEmail), 403);
   }
+  if (access.kind === "request") return c.html(requestPage(access), 403);
   // Nobody signed in that this request carries. Through the docs host's proxy
   // that is every request, since the session cookie is on this server's own
   // origin. With the web app here, the read view decides: it asks this origin
@@ -350,7 +378,7 @@ docView.get("/d/:id/assets", async (c) => {
   const docId = c.req.param("id");
   const access = await resolveViewer(docId, c.req.query("k") ?? null, c.req.raw.headers);
   if (access.kind === "member-link" || access.kind === "invite") return c.text(SIGN_IN_FIRST, 401);
-  if (access.kind === "wrong-account") return c.text("Not found", 403);
+  if (access.kind === "wrong-account" || access.kind === "request") return c.text("Not found", 403);
   if (access.kind !== "reader") return c.text("Not found", 404);
   if (!loadDoc(docId)) return c.text("Not found", 404);
   // A served asset carries its own private, hour-long caching (assets.ts),

@@ -19,6 +19,9 @@ function fixture() {
     verifiedUserForEmail(email, connection) { assert.equal(connection, db); return active.get(email) ?? null; },
     activeEmailsForUser(id, connection) { assert.equal(connection, db); return [...active].filter(([, owner]) => owner === id).map(([email]) => email); },
   } });
+  // Member accepted Owner (share-people-store.ts), so these shares land; the
+  // request path has its own tests below.
+  db.prepare("INSERT INTO share_people(recipient_id,sender_id,state,updated_at) VALUES('member','owner','accepted','2026-01-01')").run();
   const member = () => db.prepare("SELECT role,token FROM shares WHERE doc_id='doc' AND user_id='member'").get() as { role: string; token: string } | undefined;
   const row = (email = 'alias@example.test') => db.prepare("SELECT * FROM pending_shares WHERE doc_id='doc' AND email=?").get(email) as Record<string, string | number>;
   const replay = (snapshot: Record<string, string | number>) => db.prepare("INSERT INTO pending_shares(doc_id,email,role,invited_by,token,created_at,decision_revision) VALUES(@doc_id,@email,@role,@invited_by,@token,@created_at,@decision_revision)").run(snapshot);
@@ -131,4 +134,22 @@ test("revoking a canonical recipient acknowledges and removes their verified-ali
   const f = fixture(); f.store.addPending('doc', 'alias@example.test', 'editor', 'owner');
   assert.equal(f.store.revokeMember('doc', 'member'), true); assert.equal(f.store.listPendingForDoc('doc').length, 0);
   assert.equal(f.store.claimPendingInvitesForUser('member'), 0); assert.equal(f.member(), undefined);
+});
+
+test("a claim or share for someone who has not accepted the owner is a request, never a shares row, and stays fenced", () => {
+  const f = fixture();
+  f.db.prepare("DELETE FROM share_people").run();
+  const requests = () => f.db.prepare("SELECT kind,doc_id,recipient_id,sender_id,role,token FROM share_requests").all();
+  const token = f.store.addPending('doc', 'alias@example.test', 'editor', 'owner'); const old = f.row();
+  f.store.claimPendingInvitesForUser('member');
+  assert.equal(f.member(), undefined);
+  assert.deepEqual(requests(), [{ kind: 'doc', doc_id: 'doc', recipient_id: 'member', sender_id: 'owner', role: 'editor', token }]);
+  // The owner withdraws it: the request goes, and replaying the old invite brings nothing back.
+  assert.equal(f.store.revokeMember('doc', 'member'), true); assert.deepEqual(requests(), []);
+  f.replay(old); f.store.claimPendingInvitesForUser('member'); assert.deepEqual(requests(), []); assert.equal(f.member(), undefined);
+  // An explicit share is a request too, and a second one sets the role asked for.
+  f.store.shareWithEmail('doc', 'main@example.test', 'viewer', 'owner');
+  f.store.shareWithEmail('doc', 'main@example.test', 'editor', 'owner');
+  assert.deepEqual(requests(), [{ kind: 'doc', doc_id: 'doc', recipient_id: 'member', sender_id: 'owner', role: 'editor', token: null }]);
+  assert.equal(f.member(), undefined);
 });

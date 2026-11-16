@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-comments-notify-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -59,6 +59,9 @@ const stamp = Date.now();
 const owner = await signUpVerified(app, { name: "Owner", email: `owner-${stamp}@markie.test` });
 const editor = await signUpVerified(app, { name: "Editor", email: `editor-${stamp}@markie.test` });
 const viewer = await signUpVerified(app, { name: "Viewer", email: `viewer-${stamp}@markie.test` });
+// Both members accepted the owner (share-people.ts), so the owner's shares land.
+acceptSender(editor.id, owner.id);
+acceptSender(viewer.id, owner.id);
 
 async function sharedDoc(): Promise<string> {
   const docId = randomUUID();

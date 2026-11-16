@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { openDatabase } from "./db.ts";
+import { RequestLimitError, ensureSharePeopleSchema, putRequest, removeRequest, senderState } from "./share-people-store.ts";
 
 /** Server-only proof callbacks, evaluated on the caller's transaction handle. */
 export interface ShareIdentities {
@@ -24,6 +25,22 @@ export function createPendingShareStore(db: Database.Database, options: { identi
     "CREATE INDEX IF NOT EXISTS idx_share_invite_member ON share_invite_tokens(doc_id,user_id);"
   );
   if (!(db.prepare("PRAGMA table_info(pending_shares)").all() as { name: string }[]).some(column => column.name === "decision_revision")) db.exec("ALTER TABLE pending_shares ADD COLUMN decision_revision INTEGER NOT NULL DEFAULT 0");
+  // Requests and accepted senders (share-people-store.ts). A share reaches
+  // `shares` only for a recipient who accepted the document's owner; anyone
+  // else gets a row in share_requests, which no access check reads.
+  ensureSharePeopleSchema(db);
+  const ownerOf = (docId: string, fallback: string) => (db.prepare("SELECT owner_id FROM docs WHERE id=?").get(docId) as { owner_id: string } | undefined)?.owner_id ?? fallback;
+  const lands = (docId: string, userId: string, fallbackSender: string) => {
+    const sender = ownerOf(docId, fallbackSender);
+    return { sender, accepted: senderState(db, userId, sender) === "accepted" };
+  };
+  // An owner's explicit share: a member's role changes, a request is made or updated.
+  const placeShare = (docId: string, userId: string, role: Role, invitedBy: string) => {
+    const { sender, accepted } = lands(docId, userId, invitedBy);
+    if (accepted) db.prepare("INSERT INTO shares(doc_id,user_id,role,invited_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role=excluded.role").run(docId, userId, role, invitedBy, new Date().toISOString());
+    // Too many waiting on this person: refused, the whole transaction with it.
+    else if (!putRequest(db, { kind: "doc", docId, recipientId: userId, senderId: sender, role, invitedBy }, true)) throw new RequestLimitError();
+  };
   const proof = () => options.identities === undefined ? identities : options.identities;
   const verifiedUserForEmail = (email: string): string | null => {
     const e = norm(email), resolver = proof();
@@ -71,7 +88,10 @@ export function createPendingShareStore(db: Database.Database, options: { identi
       if (doc && doc.owner_id !== userId && eligible.length) {
         const chosen = eligible[0];
         // Address verification is not an owner command: existing access wins.
-        db.prepare("INSERT INTO shares(doc_id,user_id,role,invited_by,created_at,token) VALUES(?,?,?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET token=COALESCE(shares.token,excluded.token)").run(docId, userId, chosen.role, chosen.invited_by, new Date().toISOString(), chosen.token);
+        // It lands only for someone who accepted the owner; otherwise the
+        // invite becomes a request, carrying its token for when they accept.
+        if (senderState(db, userId, doc.owner_id) === "accepted") db.prepare("INSERT INTO shares(doc_id,user_id,role,invited_by,created_at,token) VALUES(?,?,?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET token=COALESCE(shares.token,excluded.token)").run(docId, userId, chosen.role, chosen.invited_by, new Date().toISOString(), chosen.token);
+        else putRequest(db, { kind: "doc", docId, recipientId: userId, senderId: doc.owner_id, role: chosen.role, invitedBy: chosen.invited_by, token: chosen.token }, false);
         retainTokens(docId, userId, eligible.map(row => row.token));
       }
       for (const row of rows) db.prepare("DELETE FROM pending_shares WHERE doc_id=? AND email=?").run(docId, row.email);
@@ -102,7 +122,7 @@ export function createPendingShareStore(db: Database.Database, options: { identi
     grantMember(docId: string, userId: string, role: Role, invitedBy: string): void {
       db.transaction(() => {
         const { tokens } = fenceMember(docId, userId);
-        db.prepare("INSERT INTO shares(doc_id,user_id,role,invited_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role=excluded.role").run(docId, userId, role, invitedBy, new Date().toISOString());
+        placeShare(docId, userId, role, invitedBy);
         retainTokens(docId, userId, tokens);
       }).immediate();
     },
@@ -112,7 +132,7 @@ export function createPendingShareStore(db: Database.Database, options: { identi
         const recipient = userId ? db.prepare('SELECT id,email,name FROM "user" WHERE id=? AND emailVerified=1').get(userId) as { id: string; email: string; name: string } | undefined : undefined;
         if (!recipient || recipient.id === invitedBy) return recipient ?? null;
         const { tokens } = fenceMember(docId, recipient.id);
-        db.prepare("INSERT INTO shares(doc_id,user_id,role,invited_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(doc_id,user_id) DO UPDATE SET role=excluded.role").run(docId, recipient.id, role, invitedBy, new Date().toISOString());
+        placeShare(docId, recipient.id, role, invitedBy);
         retainTokens(docId, recipient.id, tokens);
         return recipient;
       }).immediate();
@@ -120,7 +140,8 @@ export function createPendingShareStore(db: Database.Database, options: { identi
     revokeMember(docId: string, userId: string): boolean {
       return db.transaction(() => {
         const { pendingRemoved } = fenceMember(docId, userId); db.prepare("DELETE FROM share_invite_tokens WHERE doc_id=? AND user_id=?").run(docId, userId);
-        return db.prepare("DELETE FROM shares WHERE doc_id=? AND user_id=?").run(docId, userId).changes > 0 || pendingRemoved > 0;
+        const requestRemoved = removeRequest(db, "doc", docId, userId);
+        return db.prepare("DELETE FROM shares WHERE doc_id=? AND user_id=?").run(docId, userId).changes > 0 || pendingRemoved > 0 || requestRemoved;
       }).immediate();
     },
     claimPendingInvites: (email: string, userId: string) => claim(userId, email),

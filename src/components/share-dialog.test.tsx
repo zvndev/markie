@@ -133,6 +133,14 @@ describe("ShareDialog", () => {
     expect(screen.getByText("Invited, not joined yet")).toBeInTheDocument();
   });
 
+  it("marks somebody who has not accepted the owner yet as waiting, not as having access", async () => {
+    list.mockResolvedValue([member({ waiting: true })]);
+    renderDialog();
+    expect(await screen.findByText("Grace Hopper")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for them to accept")).toBeInTheDocument();
+    expect(screen.queryByText("grace@markie.app")).toBeNull();
+  });
+
   describe("adding people", () => {
     it("suggests people shared with before, by name or email", async () => {
       const user = userEvent.setup();
@@ -207,6 +215,17 @@ describe("ShareDialog", () => {
       expect(await screen.findByText(/Invited new@markie.app/)).toBeInTheDocument();
       expect(onChanged).toHaveBeenCalled();
       expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    });
+
+    it("says a share to somebody who has not accepted the owner yet waits for them", async () => {
+      const user = userEvent.setup();
+      add.mockResolvedValue({ ok: true, status: "requested" });
+      const { onChanged } = renderDialog();
+      await user.type(await field(), "bob@markie.app{Enter}");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      expect(await screen.findByText(/Asked bob@markie\.app\. It reaches them once they accept you in Markie\./)).toBeInTheDocument();
+      expect(screen.queryByText(/Shared with/)).toBeNull();
+      expect(onChanged).toHaveBeenCalled();
     });
 
     it("sends an address still in the field without pressing Enter first", async () => {

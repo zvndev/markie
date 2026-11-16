@@ -19,7 +19,7 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { getMigrations } from "better-auth/db/migration";
-import { signUpVerified } from "./test-users.ts";
+import { acceptSender, signUpVerified } from "./test-users.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "markie-collab-access-")), "t.db");
 process.env.BETTER_AUTH_URL = "http://localhost:8787";
@@ -273,6 +273,10 @@ const owner = await signUp("Olga Owner", `collab.owner.${stamp}@test.local`);
 const editor = await signUp("Eddie Editor", `collab.editor.${stamp}@test.local`);
 const viewer = await signUp("Vic Viewer", `collab.viewer.${stamp}@test.local`);
 const stranger = await signUp("Sam Stranger", `collab.stranger.${stamp}@test.local`);
+// Members of the owner's documents have accepted the owner (share-people.ts);
+// the stranger has no share at all.
+acceptSender(editor.id, owner.id);
+acceptSender(viewer.id, owner.id);
 
 test("a user with no access cannot join the room", async () => {
   const docId = `collab-stranger-${stamp}`;
@@ -644,6 +648,7 @@ async function sessionId(token: string): Promise<string> {
 
 test("revoking an alias session disconnects only that session, retaining the primary session and document grant", async () => {
   const user = await signUp("Session member", `session.member.${stamp}@test.local`), docId = `session-specific-${stamp}`;
+  acceptSender(user.id, owner.id);
   await createDoc(owner.token, docId, ""); await share(owner.token, docId, user.email, "editor");
   const signedIn = await jsonRequest<{ token: string }>("POST", "/api/auth/sign-in/email", undefined, { email: user.email, password: "password-123" });
   assert.equal(signedIn.status, 200); const aliasToken = signedIn.headers.get("set-auth-token") ?? signedIn.data!.token;
@@ -660,6 +665,7 @@ test("revoking an alias session disconnects only that session, retaining the pri
 
 test("a deleted session cannot write through its old socket even while its document ACL remains", async () => {
   const user = await signUp("Deleted session", `session.deleted.${stamp}@test.local`), docId = `session-deleted-write-${stamp}`;
+  acceptSender(user.id, owner.id);
   await createDoc(owner.token, docId, ""); await share(owner.token, docId, user.email, "editor");
   const peer = await connect(docId, user.token), ownerPeer = await connect(docId, owner.token);
   db.prepare('DELETE FROM "session" WHERE id=?').run(await sessionId(user.token));
@@ -670,6 +676,7 @@ test("a deleted session cannot write through its old socket even while its docum
 
 test("session expiry blocks fanout immediately without waiting for the document ACL cache", async () => {
   const user = await signUp("Expired session", `session.expired.${stamp}@test.local`), docId = `session-expired-read-${stamp}`;
+  acceptSender(user.id, owner.id);
   await createDoc(owner.token, docId, ""); await share(owner.token, docId, user.email, "viewer");
   const ownerPeer = await connect(docId, owner.token), peer = await connect(docId, user.token);
   ownerPeer.write("before-session-expiry "); await waitFor("first update before expiry", () => peer.text().includes("before-session-expiry"));

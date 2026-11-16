@@ -220,3 +220,38 @@ describe("api client: a document's own pictures", () => {
     expect(never.calls).toHaveLength(0);
   });
 });
+
+describe("api client: requests to share (server/src/share-people.ts)", () => {
+  const request = { docId: "doc-1", name: "Plan.md", kind: "doc", role: "editor", createdAt: "2026-11-15T10:00:00.000Z", sender: { id: "olive", name: "Olive", email: "olive@markie.test" } };
+
+  it("lists requests, dropping any entry it can't read", async () => {
+    const { transport, calls } = fake(() => ({ json: { requests: [request, { ...request, docId: "../x" }, { docId: "d2" }, null], count: 4 } }));
+    const api = createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN });
+    expect(await api.shareRequests()).toEqual({ requests: [{ docId: "doc-1", name: "Plan.md", kind: "doc", sender: { id: "olive", name: "Olive", email: "olive@markie.test" } }], count: 4 });
+    expect(calls[0]).toMatchObject({ method: "GET", url: `${ORIGIN}/api/people/requests` });
+    expect(calls[0].headers?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("accepts and blocks by sender, declines by document", async () => {
+    const { transport, calls } = fake(() => ({ json: { ok: true } }));
+    const api = createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN });
+    await api.acceptSender("olive");
+    await api.declineRequest("doc-1");
+    await api.blockSender("olive");
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `POST ${ORIGIN}/api/people/olive/accept`,
+      `POST ${ORIGIN}/api/people/requests/doc-1/decline`,
+      `POST ${ORIGIN}/api/people/olive/block`,
+    ]);
+    await expect(api.acceptSender("../../admin")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("says when a share became a request, and marks a member who has not accepted yet", async () => {
+    const { transport } = fake((req) => req.method === "POST"
+      ? { json: { ok: true, status: "requested" } }
+      : { json: { shares: [{ user_id: "bob", email: "bob@markie.test", name: "Bob", role: "editor", waiting: true }] } });
+    const api = createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN });
+    expect(await api.addShare("doc-1", "bob@markie.test", "editor")).toBe("requested");
+    expect((await api.shares("doc-1"))[0]).toMatchObject({ userId: "bob", pending: false, waiting: true });
+  });
+});

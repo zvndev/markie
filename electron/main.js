@@ -2056,15 +2056,17 @@ const serverView = (s) => ({
   version: s.version ?? null,
 });
 // Markie Cloud says for itself whether it offers Apple (servers.js
-// refreshDefault). Asked once at startup; the first list waits a moment for
-// that answer so a sign-in screen opened straight away is not missing Apple,
-// and never longer, so an offline start is not held up.
-void serverStore.refreshDefault();
+// refreshDefault). Asked at startup and again, in the background, whenever
+// the answer is stale. Only the first list waits, a moment at most, for the
+// startup answer, so a sign-in screen opened straight away is not missing
+// Apple and an offline start is not held up.
+const firstDefaultCheck = serverStore.refreshDefault();
 const DEFAULT_INFO_WAIT_MS = 1500;
 handle("servers-list", async () => {
+  void serverStore.refreshDefault();
   let timer;
   await Promise.race([
-    serverStore.refreshDefault(),
+    firstDefaultCheck,
     new Promise((resolve) => {
       timer = setTimeout(resolve, DEFAULT_INFO_WAIT_MS);
       timer.unref?.();

@@ -417,10 +417,34 @@ describe("the trusted server list", () => {
     expect(fetchImpl.mock.calls[0][0]).toBe(`${DEFAULT_SERVER}/api/server-info`);
     // Apple comes from the answer; Google, email and sign-up keep the defaults every build has used.
     expect(store.get(DEFAULT_SERVER)?.signIn).toEqual({ email: true, google: true, signup: "open", apple: true });
-    // Asked once: later lists read what it said.
-    time += PROBE_TTL_MS * 2;
+    // Within PROBE_TTL_MS later lists read what it said.
+    time += PROBE_TTL_MS - 1;
     expect(await store.refreshDefault()).toBe(true);
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("follows Markie Cloud turning Apple off, and keeps the last answer through an outage", async () => {
+    let time = 1_000_000, apple = true, up = true;
+    const fetchImpl = vi.fn(async () => {
+      if (!up) throw new Error("offline");
+      return new Response(JSON.stringify({ ...INFO, name: "Markie Cloud", origin: DEFAULT_SERVER, signIn: { email: true, google: true, ...(apple ? { apple: true } : {}) } }), { status: 200 });
+    }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+    const store = createServerStore({ file, fetchImpl, now: () => time });
+    await store.refreshDefault();
+    expect(store.get(DEFAULT_SERVER)?.signIn.apple).toBe(true);
+    // Cloud turns Apple off. A running app sees it once its answer is stale.
+    apple = false;
+    time += PROBE_TTL_MS;
+    expect(await store.refreshDefault()).toBe(true);
+    expect(store.get(DEFAULT_SERVER)?.signIn).toEqual({ email: true, google: true, signup: "open" });
+    // And on again, then an outage: the last answer stands.
+    apple = true; time += PROBE_TTL_MS;
+    await store.refreshDefault();
+    expect(store.get(DEFAULT_SERVER)?.signIn.apple).toBe(true);
+    up = false; time += PROBE_TTL_MS;
+    expect(await store.refreshDefault()).toBe(true);
+    expect(store.get(DEFAULT_SERVER)?.signIn.apple).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
   it("an unreachable Markie Cloud leaves Apple off and is asked again only after a while", async () => {

@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
-import { auth } from "./auth.ts";
+import { appleConfigured, auth } from "./auth.ts";
 import { docs, configureDocsCloudAreas } from "./docs.ts";
 import { shares, takeInviteAllowance } from "./shares.ts";
 import { people } from "./share-people.ts";
@@ -258,7 +258,9 @@ app.get(SERVER_INFO_PATH, (c) => {
     version: SERVER_VERSION,
     name: DEPLOYMENT.name,
     origin: DEPLOYMENT.origin,
-    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured, signup: SIGNUP },
+    // apple appears only when it is on, so a server without Apple's keys
+    // answers exactly what it did before Apple existed.
+    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured, ...(appleConfigured ? { apple: true } : {}), signup: SIGNUP },
   });
 });
 
@@ -328,11 +330,11 @@ app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   return accountPlatform?.google ? accountPlatform.google.runAuthRequest(c.req.raw, run) : run();
 });
 
-// Desktop Google sign-in must run entirely in the browser, or better-auth's
-// OAuth `state` cookie (set when the flow starts) won't be present on the
-// callback. The app opens this GET in the browser; we start the social flow
-// server-side, forward better-auth's Set-Cookie (the state) to the browser,
-// and redirect it to Google's consent screen.
+// Desktop Google and Apple sign-in must run entirely in the browser, or
+// better-auth's OAuth `state` cookie (set when the flow starts) won't be
+// present on the callback. The app opens this GET in the browser; we start the
+// social flow server-side, forward better-auth's Set-Cookie (the state) to the
+// browser, and redirect it to the provider's consent screen.
 const AUTH_BASE =
   process.env.BETTER_AUTH_URL ?? "http://localhost:8787";
 // Who this server is, on the deep link that hands its token to the app.
@@ -342,38 +344,50 @@ const AUTH_ISSUER = desktopAuthIssuer(AUTH_BASE);
 // web app (web-signin.ts). Always on this server's own origin, where the
 // session cookie belongs; the web app on the docs host calls this origin
 // directly, so Google and the emailed code both work for it.
-app.route("/", createWebSignIn({ authBase: AUTH_BASE, google: googleConfigured }));
+app.route("/", createWebSignIn({ authBase: AUTH_BASE, google: googleConfigured, apple: appleConfigured }));
 
 // The web app at /app, when this image carries its build (web-app.ts).
 app.route("/", createWebApp({ apiOrigin: DEPLOYMENT.origin }));
 
-app.get("/auth/google-start", async (c) => {
+// Old builds open /auth/google-start, so its answer stays exactly what it was.
+// Apple's start is the same flow with the provider named on the bridge, so a
+// refusal there can say Apple rather than Google.
+async function startDesktopSignIn(c: Context, provider: "google" | "apple"): Promise<Response> {
+  const label = provider === "apple" ? "Apple" : "Google";
   try {
     const state = desktopAuthState(c.req.query("state"));
-    const bridge = state
-      ? `${AUTH_BASE}/auth/desktop-bridge?state=${encodeURIComponent(state)}`
+    const query = [
+      ...(state ? [`state=${encodeURIComponent(state)}`] : []),
+      ...(provider === "google" ? [] : [`provider=${provider}`]),
+    ].join("&");
+    const bridge = query
+      ? `${AUTH_BASE}/auth/desktop-bridge?${query}`
       : `${AUTH_BASE}/auth/desktop-bridge`;
     const res = await auth.api.signInSocial({
       body: {
-        provider: "google",
+        provider,
         callbackURL: bridge,
         errorCallbackURL: bridge,
       },
       asResponse: true,
     });
     const { url } = (await res.clone().json()) as { url?: string };
-    if (!url) return c.text("Could not start Google sign-in.", 500);
+    if (!url) return c.text(`Could not start ${label} sign-in.`, 500);
     const headers = new Headers({ location: url });
     for (const ck of res.headers.getSetCookie()) headers.append("set-cookie", ck);
     return new Response(null, { status: 302, headers });
   } catch (err) {
-    console.error("google-start error:", err);
-    reportFault(err, "/auth/google-start");
-    return c.text("Could not start Google sign-in.", 500);
+    console.error(`${provider}-start error:`, err);
+    reportFault(err, `/auth/${provider}-start`);
+    return c.text(`Could not start ${label} sign-in.`, 500);
   }
-});
+}
+app.get("/auth/google-start", (c) => startDesktopSignIn(c, "google"));
+// Only with Apple configured. Without it the route does not exist, the same
+// as every other trace of Apple.
+if (appleConfigured) app.get("/auth/apple-start", (c) => startDesktopSignIn(c, "apple"));
 
-// Desktop OAuth bridge: Google redirects the *browser* here after sign-in
+// Desktop OAuth bridge: Google or Apple redirects the *browser* here after sign-in
 // (the session cookie is now set on this origin). We hand the session token
 // back to the desktop app via a markie:// deep link, since the app can't read
 // the browser's cookie.
@@ -411,13 +425,15 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
         signupRefusalMessage(error)
       );
     }
-    // With linked sign-ins on, Google is never attached to an existing
-    // account just because the addresses match (accountLinking in auth.ts).
-    // Retrying cannot work, so say how to get there.
+    // With linked sign-ins on, Google or Apple is never attached to an
+    // existing account just because the addresses match (accountLinking in
+    // auth.ts). Retrying cannot work, so say how to get there. Only
+    // /auth/apple-start names its provider; anything else is Google's.
     if (error === "account_not_linked") {
+      const provider = c.req.query("provider") === "apple" ? "Apple" : "Google";
       return page(
-        "Google isn't linked to this account yet",
-        "This email already has a Markie account. Sign in with an email code, then link Google in Settings, Account, Manage linked sign-ins."
+        `${provider} isn't linked to this account yet`,
+        `This email already has a Markie account. Sign in with an email code, then link ${provider} in Settings, Account, Manage linked sign-ins.`
       );
     }
     return page("Sign-in didn't complete", "Head back to Markie and try again.");

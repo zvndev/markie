@@ -12,9 +12,17 @@ import { accountContext, accountIdentitiesEnabled, assertNewAccountEmail } from 
 import { assertSignupAllowed } from "./signup.ts";
 import { revokeAgentTokensForUser } from "./agent-token-store.ts";
 import { clientIpHeader } from "./runtime-config.ts";
+import { APPLE_ISSUER, appleConfigFromEnv, createAppleClientSecret } from "./apple-sign-in.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
+
+// Sign in with Apple, on only when APPLE_CLIENT_ID, APPLE_TEAM_ID,
+// APPLE_KEY_ID and APPLE_PRIVATE_KEY are all set (apple-sign-in.ts).
+const appleConfig = appleConfigFromEnv(process.env);
+/** The signed client secret Apple's token endpoint gets, or null with Apple off. */
+export const appleClientSecret = appleConfig ? createAppleClientSecret(appleConfig) : null;
+export const appleConfigured = !!appleClientSecret;
 
 const authDatabase = openDatabase();
 
@@ -91,6 +99,12 @@ export const auth = betterAuth({
   trustedOrigins: [
     ...applicationOrigins(),
     "markie://", // desktop deep-link auth bridge target
+    // Apple answers its consent screen with a form POST from its own origin
+    // to /api/auth/callback/apple (response_mode=form_post), which
+    // better-auth's origin check refuses unless the origin is trusted. It
+    // then turns that POST into a GET so the Lax state cookie arrives.
+    // Trusted for auth only: it is not an application origin and gets no CORS.
+    ...(appleConfigured ? [APPLE_ISSUER] : []),
   ],
   // Which request header carries the real client address, so rate limits are
   // per client and not one shared bucket. Only a header the edge in front of
@@ -251,12 +265,25 @@ export const auth = betterAuth({
       },
     },
   },
-  socialProviders: googleConfigured
+  socialProviders: googleConfigured || appleConfig
     ? {
-        google: {
-          clientId: process.env.GOOGLE_CLIENT_ID!,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-        },
+        ...(googleConfigured ? {
+          google: {
+            clientId: process.env.GOOGLE_CLIENT_ID!,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+          },
+        } : {}),
+        ...(appleConfig && appleClientSecret ? {
+          apple: {
+            clientId: appleConfig.clientId,
+            // A getter, not a value. better-auth builds the provider from
+            // this very object and reads options.clientSecret each time it
+            // calls Apple's token endpoint, so every exchange gets a secret
+            // that is less than a day old (apple-sign-in.test.ts drives the
+            // real provider to prove it).
+            get clientSecret() { return appleClientSecret.current(); },
+          },
+        } : {}),
       }
     : undefined,
   plugins: [

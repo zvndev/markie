@@ -327,3 +327,14 @@ test("the desktop bridge explains a Google sign-in that matches an existing acco
   assert.equal(page.status, 401);
   assert.match(await page.text(), /link Google in Settings/);
 });
+
+test("with no Apple keys configured, nothing about Apple is offered or trusted", async () => {
+  const info = await (await request("/api/server-info")).json() as { signIn: Record<string, unknown> };
+  assert.equal("apple" in info.signIn, false);
+  assert.equal((await app.request("/auth/apple-start?state=0123456789abcdef")).status, 404);
+  assert.equal((await app.request("/auth/web-apple?next=%2Fapp")).status, 404);
+  const page = await (await app.request("/auth/web-signin?next=%2Fapp")).text();
+  assert.match(page, /Continue with Google/); assert.doesNotMatch(page, /Apple/);
+  const fromApple = await app.request("/api/auth/callback/apple", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://appleid.apple.com", cookie: "unrelated=1" }, body: "code=x&state=y" });
+  assert.equal(fromApple.status, 403);
+});

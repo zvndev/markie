@@ -6,8 +6,9 @@
 // that does the job, on this server's own origin so the session cookie is
 // there when the browser comes back to /d/<id>:
 //
-//   GET /auth/web-signin?next=/d/<id>   the page: Google, or an emailed code
+//   GET /auth/web-signin?next=/d/<id>   the page: Google, Apple, or an emailed code
 //   GET /auth/web-google?next=/d/<id>   starts Google with the callback on next
+//   GET /auth/web-apple?next=/d/<id>    starts Apple the same way, when configured
 //
 // The emailed code uses better-auth's primary-email OTP routes, which set the
 // session cookie themselves. A linked (non-primary) address is refused there
@@ -18,7 +19,7 @@
 // /app/d/<id>) on this origin, or the pass route a hosted Live Doc sends a
 // signed-out visitor to (live-docs.ts). Anything else becomes "/",
 // so neither route can be used to bounce a browser somewhere else.
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { auth } from "./auth.ts";
 import { reportRouteFault } from "./little-friend.ts";
 import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
@@ -65,6 +66,7 @@ const PAGE_STYLE = `<style>
     a.btn, button { display:block; width:100%; padding:11px 14px; border-radius:10px; font:600 15px system-ui,sans-serif;
       border:1px solid var(--line); background:var(--field); color:var(--fg); text-decoration:none; cursor:pointer; }
     a.btn.primary, button.primary { background:var(--accent); color:var(--accent-text); border-color:var(--accent); }
+    a.btn.second { margin-top:10px; }
     input { width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--line); background:var(--field); color:var(--fg); font-size:16px; margin-bottom:10px; }
     .or { margin:16px 0; font-size:12px; color:var(--muted); }
     .err { color:#dc2626; font-size:13px; min-height:18px; margin-top:10px; }
@@ -105,8 +107,17 @@ export function renderSignInNotice({ title, heading, lines, action }: {
 </body></html>`;
 }
 
-export function renderWebSignInPage({ next, google, failed }: { next: string; google: boolean; failed: boolean }): string {
+// The same refusal the desktop bridge explains (index.ts): with linked
+// sign-ins on, Google or Apple never joins an existing account just because
+// the addresses match. Linking happens in the desktop app.
+const NOT_LINKED = "This email already has a Markie account. Sign in with an email code, then link this sign-in in the Markie app under Settings, Account, Manage linked sign-ins.";
+
+export function renderWebSignInPage({ next, google, apple = false, failed, notLinked = false }: {
+  next: string; google: boolean; apple?: boolean; failed: boolean; notLinked?: boolean;
+}): string {
   const googleHref = `/auth/web-google?next=${encodeURIComponent(next)}`;
+  const appleHref = `/auth/web-apple?next=${encodeURIComponent(next)}`;
+  const provider = google || apple;
   return `<!doctype html>
 <html lang="en"><head>
   <meta charset="utf-8">
@@ -120,17 +131,21 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
     <div class="m">${brandLogoSvg(160)}</div>
     <h1>Sign in to Markie</h1>
     <p>${next.startsWith("/app") ? "Sign in to open your documents." : "Use the account this document belongs to."}</p>
-    ${google ? `<a class="btn primary" href="${esc(googleHref)}">Continue with Google</a><div class="or">or get a code by email</div>` : ""}
+    ${[
+      google ? `<a class="btn primary" href="${esc(googleHref)}">Continue with Google</a>` : "",
+      apple ? `<a class="btn${google ? " second" : " primary"}" href="${esc(appleHref)}">Continue with Apple</a>` : "",
+      provider ? `<div class="or">or get a code by email</div>` : "",
+    ].join("")}
     <form id="send">
       <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required aria-label="Email">
-      <button type="submit"${google ? "" : ' class="primary"'}>Email me a code</button>
+      <button type="submit"${provider ? "" : ' class="primary"'}>Email me a code</button>
     </form>
     <form id="verify" hidden>
       <p id="sent"></p>
       <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code" required aria-label="Code">
       <button type="submit" class="primary">Sign in</button>
     </form>
-    <div class="err" id="err" role="alert">${failed ? "Sign-in didn't complete. Try again." : ""}</div>
+    <div class="err" id="err" role="alert">${notLinked ? esc(NOT_LINKED) : failed ? "Sign-in didn't complete. Try again." : ""}</div>
   </main>
   <script>
     (function () {
@@ -153,7 +168,11 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
         post("/api/auth/sign-in/email-otp", { email: email.value.trim(), otp: code.value.trim() }).then(function (r) {
           if (r.ok) { location.replace(next); return; }
           err.textContent = r.status === 403
-            ? ${JSON.stringify(google ? "Use the main email on your account, or sign in with Google." : "Use the main email on your account.")}
+            ? ${JSON.stringify(
+              google && apple ? "Use the main email on your account, or sign in with Google or Apple."
+                : google ? "Use the main email on your account, or sign in with Google."
+                  : apple ? "Use the main email on your account, or sign in with Apple."
+                    : "Use the main email on your account.")}
             : r.status === 429
               ? "Too many tries. Wait a minute, then try the code again."
               : "That code isn't right, or it expired.";
@@ -167,16 +186,19 @@ export function renderWebSignInPage({ next, google, failed }: { next: string; go
 /**
  * Always served on this server's own origin. A web app page in `next` is
  * reached on this origin first and sent on to the docs host from there
- * (index.ts), so Google's callback and the emailed code both set the session
- * cookie here, where the app asks for it.
+ * (index.ts), so Google's or Apple's callback and the emailed code all set
+ * the session cookie here, where the app asks for it.
  */
-export function createWebSignIn({ authBase, google }: { authBase: string; google: boolean }) {
+export function createWebSignIn({ authBase, google, apple = false }: { authBase: string; google: boolean; apple?: boolean }) {
   const app = new Hono();
   app.get("/auth/web-signin", async (c) => {
     c.header("Cache-Control", "private, no-store");
     c.header("Referrer-Policy", "no-referrer");
     const next = safeNext(c.req.query("next"));
     const failed = c.req.query("error") !== undefined;
+    // better-auth adds its own error after the "error=1" this page put on the
+    // way out, so the reason is any of them, not the first.
+    const notLinked = (c.req.queries("error") ?? []).includes("account_not_linked");
     // An emailed link lands on the website's origin, which never carries this
     // server's session cookie, so /d/ sends every such reader here. One who is
     // already signed in on this origin goes straight back to the document
@@ -186,30 +208,33 @@ export function createWebSignIn({ authBase, google }: { authBase: string; google
       const session = await auth.api.getSession({ headers: c.req.raw.headers }).catch(() => null);
       if (session?.user?.id) return c.redirect(next, 302);
     }
-    return c.html(renderWebSignInPage({ next, google, failed }));
+    return c.html(renderWebSignInPage({ next, google, apple, failed, notLinked }));
   });
-  app.get("/auth/web-google", async (c) => {
-    if (!google) return c.redirect("/auth/web-signin", 302);
+  const start = (provider: "google" | "apple", label: string) => async (c: Context) => {
     const next = safeNext(c.req.query("next"));
     try {
       const res = await auth.api.signInSocial({
         body: {
-          provider: "google",
+          provider,
           callbackURL: `${authBase}${next}`,
           errorCallbackURL: `${authBase}/auth/web-signin?next=${encodeURIComponent(next)}&error=1`,
         },
         asResponse: true,
       });
       const { url } = (await res.clone().json()) as { url?: string };
-      if (!url) return c.text("Could not start Google sign-in.", 500);
+      if (!url) return c.text(`Could not start ${label} sign-in.`, 500);
       const headers = new Headers({ location: url, "cache-control": "no-store" });
       for (const ck of res.headers.getSetCookie()) headers.append("set-cookie", ck);
       return new Response(null, { status: 302, headers });
     } catch (err) {
-      console.error("web-google error:", err);
+      console.error(`web-${provider} error:`, err);
       reportRouteFault(err, c);
-      return c.text("Could not start Google sign-in.", 500);
+      return c.text(`Could not start ${label} sign-in.`, 500);
     }
-  });
+  };
+  const startGoogle = start("google", "Google");
+  app.get("/auth/web-google", (c) => (google ? startGoogle(c) : c.redirect("/auth/web-signin", 302)));
+  // Without Apple configured there is no route, as with /auth/apple-start.
+  if (apple) app.get("/auth/web-apple", start("apple", "Apple"));
   return app;
 }

@@ -24,6 +24,7 @@ import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
 import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
+import { withoutAppleUserEmail } from "./apple-sign-in.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { canonicalHostRedirect } from "./canonical-host.ts";
 import { closeAllDatabases, openDatabase } from "./db.ts";
@@ -46,7 +47,7 @@ import { API_VERSION, SERVER_VERSION, deployment } from "./deployment.ts";
 import { emailSignInAvailable } from "./email.ts";
 import { quotaRefusal, storageQuotaBytes, storageUsedBytes } from "./quota.ts";
 import {
-  SIGNUP_CLOSED, SIGNUP_INVITE_REQUIRED, adminEmail, adminUserId, allowEmail, allowlist, disallowEmail,
+  PROVIDER_EMAIL_UNVERIFIED, SIGNUP_CLOSED, SIGNUP_INVITE_REQUIRED, adminEmail, adminUserId, allowEmail, allowlist, disallowEmail,
   signupMode, signupRefusalMessage,
 } from "./signup.ts";
 
@@ -327,10 +328,13 @@ if (accountPlatform) {
   }
 }
 app.on(["GET", "POST"], "/api/auth/*", async (c) => {
-  const denied = await guardAccountAuthRequest(c.req.raw);
+  // Apple's real email never reaches the GET redirect better-auth builds
+  // from its form POST (apple-sign-in.ts).
+  const request = await withoutAppleUserEmail(c.req.raw);
+  const denied = await guardAccountAuthRequest(request);
   if (denied) return denied;
-  const run = () => auth.handler(c.req.raw);
-  return accountPlatform ? accountPlatform.runAuthRequest(c.req.raw, run) : run();
+  const run = () => auth.handler(request);
+  return accountPlatform ? accountPlatform.runAuthRequest(request, run) : run();
 });
 
 // Desktop Google and Apple sign-in must run entirely in the browser, or
@@ -428,12 +432,19 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
         signupRefusalMessage(error)
       );
     }
+    // Only /auth/apple-start names its provider; anything else is Google's.
+    const provider = c.req.query("provider") === "apple" ? "Apple" : "Google";
+    // A new account needs an address the provider verified (signup.ts).
+    if (error === PROVIDER_EMAIL_UNVERIFIED) {
+      return page(
+        `${provider} hasn't verified this email`,
+        `Markie makes an account from ${provider} only when ${provider} has verified the email. Verify it with ${provider}, or sign in with an email code.`
+      );
+    }
     // With linked sign-ins on, Google or Apple is never attached to an
     // existing account just because the addresses match (accountLinking in
-    // auth.ts). Retrying cannot work, so say how to get there. Only
-    // /auth/apple-start names its provider; anything else is Google's.
+    // auth.ts). Retrying cannot work, so say how to get there.
     if (error === "account_not_linked") {
-      const provider = c.req.query("provider") === "apple" ? "Apple" : "Google";
       return page(
         `${provider} isn't linked to this account yet`,
         `This email already has a Markie account. Sign in with an email code, then link ${provider} in Settings, Account, Manage linked sign-ins.`

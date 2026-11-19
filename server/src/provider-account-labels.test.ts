@@ -15,8 +15,8 @@ test("the address is read from the ID token's email claim, as the provider gives
 
 function setup() {
   const db = new Database(":memory:");
-  const labels = createProviderAccountLabels(db);
   db.exec("CREATE TABLE account(id TEXT PRIMARY KEY,userId TEXT,providerId TEXT)");
+  const labels = createProviderAccountLabels(db);
   db.exec("INSERT INTO account VALUES('g1','u1','google'),('a1','u1','apple'),('old','u1','google'),('c1','u1','credential')");
   return { db, labels };
 }
@@ -41,8 +41,10 @@ test("a Google or Apple row is labeled once at creation, and only while its row 
     // A label whose account row moved to another user, or is gone, is never shown.
     db.prepare("UPDATE account SET userId='u2' WHERE id='g1'").run();
     assert.deepEqual(labels.label([{ id: "g1", providerId: "google" }]), [{ id: "g1", providerId: "google" }]);
-    labels.remove("a1");
+    // Deleting the account row, by any path, deletes its label.
+    db.prepare("DELETE FROM account WHERE id='a1'").run();
     assert.equal(db.prepare("SELECT 1 FROM account_provider_labels WHERE account_id='a1'").get(), undefined);
+    assert.ok(db.prepare("SELECT 1 FROM account_provider_labels WHERE account_id='g1'").get(), "other labels stay");
   } finally { db.close(); }
 });
 
@@ -53,4 +55,17 @@ test("recording is display only: a failure is logged and never reaches sign-in",
   try { assert.doesNotThrow(() => labels.record({ id: "g1", userId: "u1", providerId: "google", idToken: token({ email: "x@example.org" }) })); }
   finally { console.error = error; }
   assert.equal(logged, 1);
+});
+
+test("installing again on a database that already has the table and trigger changes nothing", () => {
+  const { db, labels } = setup();
+  try {
+    labels.record({ id: "g1", userId: "u1", providerId: "google", idToken: token({ email: "kept@gmail.example" }) });
+    const schema = () => db.prepare("SELECT name,sql FROM sqlite_master WHERE name LIKE 'account_provider_labels%' ORDER BY name").all();
+    const before = schema();
+    assert.equal(before.length, 2);
+    createProviderAccountLabels(db);
+    assert.deepEqual(schema(), before);
+    assert.deepEqual(labels.label([{ id: "g1", providerId: "google" }]), [{ id: "g1", providerId: "google", email: "kept@gmail.example" }]);
+  } finally { db.close(); }
 });

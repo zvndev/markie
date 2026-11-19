@@ -22,6 +22,7 @@
 import { Hono, type Context } from "hono";
 import { auth } from "./auth.ts";
 import { reportRouteFault } from "./little-friend.ts";
+import { PROVIDER_EMAIL_UNVERIFIED } from "./signup.ts";
 import { BRAND_HEAD, brandLogoSvg } from "./brand.ts";
 
 const NEXT = /^(?:\/d\/[A-Za-z0-9_-]{1,128}|\/live-docs\/pass\/[a-z2-7]{16}(?:\?state=[a-f0-9]{64})?)$/;
@@ -111,9 +112,11 @@ export function renderSignInNotice({ title, heading, lines, action }: {
 // sign-ins on, Google or Apple never joins an existing account just because
 // the addresses match. Linking happens in the desktop app.
 const NOT_LINKED = "This email already has a Markie account. Sign in with an email code, then link this sign-in in the Markie app under Settings, Account, Manage linked sign-ins.";
+// A new account needs an address the provider verified (signup.ts).
+const UNVERIFIED = "That Google or Apple account's email isn't verified. Verify it with the provider, or sign in with an email code.";
 
-export function renderWebSignInPage({ next, google, apple = false, failed, notLinked = false }: {
-  next: string; google: boolean; apple?: boolean; failed: boolean; notLinked?: boolean;
+export function renderWebSignInPage({ next, google, apple = false, failed, notLinked = false, unverified = false }: {
+  next: string; google: boolean; apple?: boolean; failed: boolean; notLinked?: boolean; unverified?: boolean;
 }): string {
   const googleHref = `/auth/web-google?next=${encodeURIComponent(next)}`;
   const appleHref = `/auth/web-apple?next=${encodeURIComponent(next)}`;
@@ -145,7 +148,7 @@ export function renderWebSignInPage({ next, google, apple = false, failed, notLi
       <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code" required aria-label="Code">
       <button type="submit" class="primary">Sign in</button>
     </form>
-    <div class="err" id="err" role="alert">${notLinked ? esc(NOT_LINKED) : failed ? "Sign-in didn't complete. Try again." : ""}</div>
+    <div class="err" id="err" role="alert">${notLinked ? esc(NOT_LINKED) : unverified ? esc(UNVERIFIED) : failed ? "Sign-in didn't complete. Try again." : ""}</div>
   </main>
   <script>
     (function () {
@@ -198,7 +201,8 @@ export function createWebSignIn({ authBase, google, apple = false }: { authBase:
     const failed = c.req.query("error") !== undefined;
     // better-auth adds its own error after the "error=1" this page put on the
     // way out, so the reason is any of them, not the first.
-    const notLinked = (c.req.queries("error") ?? []).includes("account_not_linked");
+    const errors = c.req.queries("error") ?? [];
+    const notLinked = errors.includes("account_not_linked"), unverified = errors.includes(PROVIDER_EMAIL_UNVERIFIED);
     // An emailed link lands on the website's origin, which never carries this
     // server's session cookie, so /d/ sends every such reader here. One who is
     // already signed in on this origin goes straight back to the document
@@ -208,7 +212,7 @@ export function createWebSignIn({ authBase, google, apple = false }: { authBase:
       const session = await auth.api.getSession({ headers: c.req.raw.headers }).catch(() => null);
       if (session?.user?.id) return c.redirect(next, 302);
     }
-    return c.html(renderWebSignInPage({ next, google, apple, failed, notLinked }));
+    return c.html(renderWebSignInPage({ next, google, apple, failed, notLinked, unverified }));
   });
   const start = (provider: "google" | "apple", label: string) => async (c: Context) => {
     const next = safeNext(c.req.query("next"));

@@ -92,3 +92,42 @@ export function createAppleClientSecret(config: AppleSignInConfig, { now = () =>
   };
 }
 export type AppleClientSecret = ReturnType<typeof createAppleClientSecret>;
+
+const APPLE_CALLBACK = /\/callback\/apple\/?$/;
+const MAX_CALLBACK_BODY = 64 * 1024;
+
+/**
+ * Apple's form POST to /api/auth/callback/apple carries a `user` field on
+ * first consent: the person's name, and their real email even when they chose
+ * Hide My Email. better-auth answers the POST with a redirect to the same
+ * callback as a GET, copying every field into the query string, where proxy
+ * and access logs keep it. Only the name is read from that field (the email
+ * comes from the ID token Apple's token endpoint returns), so everything else
+ * is dropped before better-auth sees the body. Any other request comes back
+ * untouched.
+ */
+export async function withoutAppleUserEmail(request: Request): Promise<Request> {
+  if (request.method !== "POST" || !APPLE_CALLBACK.test(new URL(request.url).pathname)) return request;
+  if (!/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) return request;
+  // Apple's form is a few kilobytes. A larger body is not Apple's, and is
+  // left for better-auth to refuse rather than buffered here.
+  const reader = request.clone().body?.getReader();
+  if (!reader) return request;
+  const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) {
+      const part = await reader.read(); if (part.done) break;
+      size += part.value.length; if (size > MAX_CALLBACK_BODY) return request;
+      chunks.push(part.value);
+    }
+  } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+  const form = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+  if (!form.has("user")) return request;
+  let name: unknown;
+  try { name = (JSON.parse(form.get("user") ?? "") as { name?: unknown } | null)?.name; } catch { name = undefined; }
+  form.delete("user");
+  if (name && typeof name === "object" && !Array.isArray(name)) form.set("user", JSON.stringify({ name }));
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  return new Request(request.url, { method: "POST", headers, body: form.toString() });
+}

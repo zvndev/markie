@@ -9,7 +9,7 @@ import { resolveAuthSecret } from "./auth-secret.ts";
 import { otpEmail } from "./otp-email.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { accountContext, accountIdentitiesEnabled, allProviderLinks, assertNewAccountEmail, providerLinks } from "./account-context.ts";
-import { assertSignupAllowed } from "./signup.ts";
+import { assertProviderEmailVerified, assertSignupAllowed } from "./signup.ts";
 import { revokeAgentTokensForUser } from "./agent-token-store.ts";
 import { clientIpHeader } from "./runtime-config.ts";
 import { APPLE_ISSUER, appleConfigFromEnv, createAppleClientSecret } from "./apple-sign-in.ts";
@@ -185,8 +185,11 @@ export const auth = betterAuth({
         // MARKIE_SIGNUP (signup.ts). Every way an account comes into being
         // passes through here: email sign-up, a first email-code sign-in and
         // a first Google or Apple sign-in, so this is the one place it is decided.
-        before: async (user) => {
+        before: async (user, context) => {
           assertSignupAllowed(authDatabase, user.email ?? "");
+          // A Google or Apple sign-up must arrive with an address its
+          // provider verified (signup.ts PROVIDER_EMAIL_UNVERIFIED).
+          assertProviderEmailVerified(user, context?.path);
           if (user.email) assertNewAccountEmail(user.email);
           const links = allProviderLinks();
           if (links.length) {

@@ -48,6 +48,8 @@ Check these with two Apple IDs and two Google accounts on one test account:
 3. Unlink one Apple ID. The other three rows must stay.
 4. Sign in with Apple using an Apple ID whose email already has a separate Markie account. It must be refused with a message to sign in by email code and link Apple in Settings. No accounts merge.
 
+A new account is made from Google or Apple only when the provider has verified the email. Otherwise the sign-in is refused with a message to verify the email with the provider or sign in with an email code. Email-code and password sign-ups are not affected.
+
 Unlinking a Google or Apple provider requires a new primary-email confirmation and signs out **all** sessions of that account, including this device. The confirmation is scoped to that provider: a code confirmed for unlinking Google cannot unlink Apple. Existing upstream sessions do not identify their original provider, so revoking them all is deliberate. The primary email/password or primary email-code sign-in remains available. Removing a verified secondary email instead revokes sessions created through that email and their collaboration connections, while retaining primary sessions and existing document grants.
 
 ## Organize cloud files

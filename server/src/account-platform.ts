@@ -110,7 +110,7 @@ export function createAccountPlatform(db: Database.Database, areas: CloudAreasSt
           store.consumeStepUp(who, body.proofId as string, `${provider}-remove`);
           const removed = db.prepare("DELETE FROM account WHERE id=? AND userId=? AND providerId=?").run(c.req.param("id"), who.userId, provider);
           if (!removed.changes) throw new Error("Provider not found");
-          labels.remove(c.req.param("id"));
+          // Its address label goes with it (provider-account-labels.ts trigger).
           // Upstream sessions do not retain provider provenance. Revoke all
           // rather than leave an unlinked provider's session usable.
           const ids = (db.prepare("SELECT id FROM session WHERE userId=?").all(who.userId) as { id: string }[]).map((row) => row.id);

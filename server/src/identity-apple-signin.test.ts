@@ -438,3 +438,89 @@ test("better-auth's real Apple account INSERT is fenced when the initiating sess
     assert.ok(db.prepare("SELECT 1 FROM account_apple_link_writes WHERE account_id=?").get(assignedId), "the failed marker is kept, so a delayed write cannot become an unmarked sign-up");
   } finally { resume(); hooks.before = original; }
 });
+
+// ── Review fixes ────────────────────────────────────────────────────────────
+
+test("a Google or Apple sign-up whose provider has not verified the email makes no account, and says why", async () => {
+  const appleEmail = "apple-unverified@example.org";
+  const landed = await desktopAppleSignIn({ sub: "001234.apple-unverified.0050", email: appleEmail, email_verified: "false" });
+  assert.equal(landed.pathname, "/auth/desktop-bridge");
+  assert.equal(landed.searchParams.get("error"), "provider_email_unverified");
+  assert.equal(users(appleEmail), 0);
+  assert.deepEqual(appleRows("001234.apple-unverified.0050"), []);
+  const page = await (await req(`${landed.pathname}${landed.search}`, {}, ORIGIN)).text();
+  assert.match(page, /Apple hasn&#39;t verified this email|Apple hasn't verified this email/);
+  assert.match(page, /Verify it with Apple, or sign in with an email code\./);
+  // Google, the same.
+  const googleEmail = "google-unverified@example.org";
+  googleClaims = { sub: "google-unverified", email: googleEmail, email_verified: false };
+  const start = await req("/auth/google-start?state=0123456789abcdef0123456789abcdef");
+  const consent = new URL(start.headers.get("location")!);
+  const callback = await req(`/api/auth/callback/google?code=c&state=${encodeURIComponent(consent.searchParams.get("state")!)}`, { headers: { Cookie: cookiesOf(start) } }, ORIGIN);
+  const googleLanded = new URL(callback.headers.get("location")!, ORIGIN);
+  assert.equal(googleLanded.searchParams.get("error"), "provider_email_unverified");
+  assert.equal(users(googleEmail), 0);
+  assert.match(await (await req(`${googleLanded.pathname}${googleLanded.search}`, {}, ORIGIN)).text(), /Verify it with Google, or sign in with an email code\./);
+  // On the web the sign-in page says it.
+  const web = await req("/auth/web-apple?next=%2Fapp", {}, ORIGIN);
+  const webLanded = await appleCallback(new URL(web.headers.get("location")!), cookiesOf(web), { sub: "001234.apple-unverified.0051", email: "apple-unverified-web@example.org", email_verified: false });
+  assert.equal(webLanded.pathname, "/auth/web-signin");
+  assert.match(await (await req(`${webLanded.pathname}${webLanded.search}`, {}, ORIGIN)).text(), /That Google or Apple account&#39;s email isn&#39;t verified\. Verify it with the provider, or sign in with an email code\./);
+  assert.equal(users("apple-unverified-web@example.org"), 0);
+});
+
+test("email-code and password sign-ups, which prove the address their own way, still make accounts", async () => {
+  const password = await req("/api/auth/sign-up/email", { method: "POST", headers: json, body: JSON.stringify({ name: "Password first", email: "pw-unaffected@example.org", password: "password-123" }) });
+  assert.equal(password.status, 200);
+  assert.equal(users("pw-unaffected@example.org"), 1);
+  const sent = await req("/api/auth/email-otp/send-verification-otp", { method: "POST", headers: json, body: JSON.stringify({ email: "otp-unaffected@example.org", type: "sign-in" }) });
+  assert.equal(sent.status, 200);
+  const signedIn = await req("/api/auth/sign-in/email-otp", { method: "POST", headers: json, body: JSON.stringify({ email: "otp-unaffected@example.org", otp: codes.at(-1) }) });
+  assert.equal(signedIn.status, 200, await signedIn.clone().text());
+  assert.equal(users("otp-unaffected@example.org"), 1);
+});
+
+test("Apple's real email in its form POST never reaches the redirect better-auth builds, and the name still arrives", async () => {
+  const start = await req("/auth/apple-start?state=0123456789abcdef0123456789abcdef");
+  const consent = new URL(start.headers.get("location")!);
+  const relay = "m3n4b5v6c7@privaterelay.appleid.com";
+  appleClaims = { sub: "001234.apple-private.0060", email: relay, email_verified: "true", is_private_email: "true" };
+  const form = new URLSearchParams({ code: "c", state: consent.searchParams.get("state")!, user: JSON.stringify({ name: { firstName: "Priya", lastName: "Private" }, email: "priya.real@icloud.example" }) });
+  const posted = await req("/api/auth/callback/apple", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: form.toString() }, APPLE);
+  assert.equal(posted.status, 302);
+  const redirect = posted.headers.get("location")!;
+  assert.doesNotMatch(decodeURIComponent(redirect), /priya\.real|icloud\.example|"email"/);
+  assert.deepEqual(JSON.parse(new URL(redirect).searchParams.get("user")!), { name: { firstName: "Priya", lastName: "Private" } });
+  const get = new URL(redirect);
+  const callback = await req(`${get.pathname}${get.search}`, { headers: { Cookie: cookiesOf(start) } }, ORIGIN);
+  assert.equal(callback.status, 302);
+  assert.deepEqual(db.prepare('SELECT name,email FROM "user" WHERE email = ?').get(relay), { name: "Priya Private", email: relay });
+  // A user field that is not Apple's JSON is dropped, not passed along.
+  const junk = new URLSearchParams({ code: "c", state: "s", user: "priya.real@icloud.example" });
+  const junkPost = await req("/api/auth/callback/apple", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: junk.toString() }, APPLE);
+  assert.equal(new URL(junkPost.headers.get("location")!).searchParams.has("user"), false);
+});
+
+test("when a mailbox owner reclaims an unproven account, better-auth's removal of its provider rows takes their labels too", async () => {
+  const email = "reclaimed-labels@example.org";
+  assert.equal((await req("/api/auth/sign-up/email", { method: "POST", headers: json, body: JSON.stringify({ name: "Squatter", email, password: "password-123" }) })).status, 200);
+  const { id: uid } = db.prepare('SELECT id FROM "user" WHERE email = ?').get(email) as { id: string };
+  // A provider row on the unproven account, made through the real hooks.
+  const { accountContext } = await import("./account-context.ts");
+  const google = accountContext()?.google; assert.ok(google);
+  const context = await auth.$context;
+  let rowId = "";
+  await google.runAuthRequest(new Request(`${ORIGIN}/api/auth/callback/google?state=fixture-reclaim`), async () => {
+    google.noteCreatedUser(uid);
+    const idToken = `${b64url({ alg: "RS256" })}.${b64url({ email: "squatter@gmail.example" })}.sig`;
+    rowId = (await context.internalAdapter.createAccount({ userId: uid, providerId: "google", accountId: "google-reclaim-sub", idToken }))!.id;
+    return new Response();
+  });
+  assert.ok(db.prepare("SELECT 1 FROM account_provider_labels WHERE account_id=?").get(rowId));
+  // The real owner signs in with the code mailed to the address.
+  assert.equal((await req("/api/auth/email-otp/send-verification-otp", { method: "POST", headers: json, body: JSON.stringify({ email, type: "sign-in" }) })).status, 200);
+  const reclaimed = await req("/api/auth/sign-in/email-otp", { method: "POST", headers: json, body: JSON.stringify({ email, otp: codes.at(-1) }) });
+  assert.equal(reclaimed.status, 200, await reclaimed.clone().text());
+  assert.equal(db.prepare("SELECT 1 FROM account WHERE id=?").get(rowId), undefined, "better-auth removed the unproven provider row");
+  assert.equal(db.prepare("SELECT 1 FROM account_provider_labels WHERE account_id=?").get(rowId), undefined);
+});

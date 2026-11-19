@@ -36,6 +36,15 @@ export function createProviderAccountLabels(db: Database.Database) {
     account_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, provider_id TEXT NOT NULL,
     email TEXT NOT NULL, created_at INTEGER NOT NULL
   )`);
+  // A label goes with its account row, however the row is removed: an unlink
+  // here, or better-auth's own cleanup when a mailbox owner reclaims an
+  // unproven account (revokeUnprovenAccountAccess deletes its provider rows).
+  // The account table comes from better-auth's migration, which a deployment
+  // runs before the server starts.
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account'").get()) {
+    db.exec(`CREATE TRIGGER IF NOT EXISTS account_provider_labels_follow_account AFTER DELETE ON account
+    BEGIN DELETE FROM account_provider_labels WHERE account_id=OLD.id; END;`);
+  }
   // Only a label whose account row still exists, for the same user and
   // provider, is ever shown. Prepared on first use: better-auth's migration
   // may create the account table after this module is installed.
@@ -63,10 +72,6 @@ export function createProviderAccountLabels(db: Database.Database) {
         const found = find(row.id, row.providerId);
         return found ? { ...row, email: found.email } : row;
       });
-    },
-    /** Same connection and transaction as the provider row's removal. */
-    remove(accountId: string): void {
-      db.prepare("DELETE FROM account_provider_labels WHERE account_id=?").run(accountId);
     },
   };
 }

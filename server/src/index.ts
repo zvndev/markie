@@ -318,16 +318,19 @@ if (!DEPLOYMENT.official) {
 
 if (accountPlatform) {
   app.route("/api/account", accountPlatform.app);
-  if (accountPlatform.google) {
-    app.get("/account/link-google", () => accountPlatform.google!.browserPage());
-    app.get("/account/google-link/complete", (c) => accountPlatform.google!.complete(c.req.raw));
+  // The browser half of linking (provider-identity-links.ts): /account/link-google
+  // and /account/google-link/complete, and the same two for Apple.
+  for (const links of [accountPlatform.google, accountPlatform.apple]) {
+    if (!links) continue;
+    app.get(`/account/link-${links.provider}`, () => links.browserPage());
+    app.get(`/account/${links.provider}-link/complete`, (c) => links.complete(c.req.raw));
   }
 }
 app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const denied = await guardAccountAuthRequest(c.req.raw);
   if (denied) return denied;
   const run = () => auth.handler(c.req.raw);
-  return accountPlatform?.google ? accountPlatform.google.runAuthRequest(c.req.raw, run) : run();
+  return accountPlatform ? accountPlatform.runAuthRequest(c.req.raw, run) : run();
 });
 
 // Desktop Google and Apple sign-in must run entirely in the browser, or

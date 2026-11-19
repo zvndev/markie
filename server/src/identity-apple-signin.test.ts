@@ -30,7 +30,7 @@ Object.assign(process.env, {
   DB_PATH: join(dir, "t.db"),
   BETTER_AUTH_URL: ORIGIN,
   BETTER_AUTH_SECRET: "markie-identity-apple-test-secret-32-plus",
-  MARKIE_MAIL_LOG: "1",
+  RESEND_API_KEY: "synthetic-mail-key-not-a-credential",
   GOOGLE_CLIENT_ID: "google-client-id",
   GOOGLE_CLIENT_SECRET: "google-client-secret",
   APPLE_CLIENT_ID: CLIENT_ID,
@@ -45,7 +45,9 @@ console.log = () => {};
 
 // What the next code exchange answers with, and every client secret Apple was sent.
 let appleClaims: Record<string, unknown> = {};
+let googleClaims: Record<string, unknown> = {};
 const secretsSent: string[] = [];
+const codes: string[] = [];
 const b64url = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -58,7 +60,18 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     const idToken = `${b64url({ alg: "RS256", kid: "apple-test" })}.${b64url({ iss: APPLE, aud: CLIENT_ID, iat: now, exp: now + 600, ...appleClaims })}.signature`;
     return Response.json({ access_token: "apple-access", refresh_token: "apple-refresh", id_token: idToken, token_type: "Bearer", expires_in: 3600 });
   }
+  if (url === "https://oauth2.googleapis.com/token") {
+    const now = Math.floor(Date.now() / 1000);
+    const idToken = `${b64url({ alg: "RS256", typ: "JWT" })}.${b64url({ iss: "https://accounts.google.com", aud: "google-client-id", email_verified: true, iat: now, exp: now + 3600, ...googleClaims })}.signature`;
+    return Response.json({ access_token: "ya29.test", id_token: idToken, token_type: "Bearer", expires_in: 3600, scope: "openid email profile" });
+  }
   if (url.startsWith(APPLE) || url.includes("google")) throw new Error(`No network in tests: ${url}`);
+  // Step-up codes go out through Resend; the code is read from the request.
+  if (url === "https://api.resend.com/emails") {
+    const sent = JSON.parse(String(init?.body)) as { text: string };
+    codes.push(sent.text.match(/\b\d{6}\b/)?.[0] ?? "");
+    return Response.json({ id: "synthetic-message" });
+  }
   return originalFetch(input, init);
 }) as typeof fetch;
 
@@ -227,4 +240,201 @@ test("every Apple code exchange sends a client secret signed with the configured
   const claims = secretClaims(refreshed).payload;
   assert.ok(claims.iat >= Math.floor(later / 1000) - 120 && claims.iat <= Math.floor(later / 1000), "issued at the later time");
   assert.ok(claims.exp > Math.floor(later / 1000) + 6 * 86_400);
+});
+
+// ── Linking Apple and Google from Settings ──────────────────────────────────
+
+const json = { "Content-Type": "application/json" };
+async function emailAccount(email: string) {
+  assert.equal((await req("/api/auth/sign-up/email", { method: "POST", headers: json, body: JSON.stringify({ name: "Linker", email, password: "password-123" }) })).status, 200);
+  markVerified(email);
+  return signInByPassword(email);
+}
+async function signInByPassword(email: string) {
+  const signed = await req("/api/auth/sign-in/email", { method: "POST", headers: json, body: JSON.stringify({ email, password: "password-123" }) });
+  const token = signed.headers.get("set-auth-token")!; assert.ok(token);
+  const authed = { ...json, Authorization: `Bearer ${token}` };
+  const uid = ((await (await req("/api/me", { headers: authed })).json()) as { user: { id: string } }).user.id;
+  return { token, authed, uid };
+}
+async function proof(authed: Record<string, string>, scope: string) {
+  const start = await req("/api/account/identities/step-up/start", { method: "POST", headers: authed, body: JSON.stringify({ scope }) });
+  assert.equal(start.status, 200, await start.clone().text());
+  const { challengeId } = await start.json() as { challengeId: string };
+  const verified = await req("/api/account/identities/step-up/verify", { method: "POST", headers: authed, body: JSON.stringify({ challengeId, code: codes.at(-1) }) });
+  assert.equal(verified.status, 200);
+  return ((await verified.json()) as { proofId: string }).proofId;
+}
+async function providers(authed: Record<string, string>) {
+  return (await (await req("/api/account/identities", { headers: authed })).json()) as { providers: { id: string; providerId: string; email?: string }[]; googleAvailable: boolean; appleAvailable: boolean };
+}
+/** Settings, Manage linked sign-ins, Link Google or Apple sign-in, all the way through the browser. */
+async function link(provider: "google" | "apple", authed: Record<string, string>, claims: Record<string, unknown>) {
+  const started = await req(`/api/account/identities/${provider}/start`, { method: "POST", headers: authed, body: JSON.stringify({ proofId: await proof(authed, `${provider}-link`) }) });
+  assert.equal(started.status, 200, await started.clone().text());
+  const { intentId, browserUrl } = await started.json() as { intentId: string; browserUrl: string };
+  const handoff = new URL(browserUrl);
+  assert.equal(`${handoff.origin}${handoff.pathname}`, `${ORIGIN}/account/link-${provider}`);
+  const page = await req(handoff.pathname, {}, ORIGIN);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), new RegExp(`<title>Link ${provider === "apple" ? "Apple" : "Google"} to Markie</title>`));
+  const browser = await req(`/api/account/identities/${provider}/browser-start`, { method: "POST", headers: json, body: JSON.stringify({ intentId, secret: handoff.hash.slice(1).split(".")[1] }) }, ORIGIN);
+  assert.equal(browser.status, 200, await browser.clone().text());
+  const consent = new URL(((await browser.json()) as { url: string }).url);
+  const cookies = cookiesOf(browser);
+  let landed: URL;
+  if (provider === "apple") landed = await appleCallback(consent, cookies, claims);
+  else {
+    assert.equal(consent.origin, "https://accounts.google.com");
+    googleClaims = claims;
+    const callback = await req(`/api/auth/callback/google?code=link&state=${encodeURIComponent(consent.searchParams.get("state")!)}`, { headers: { Cookie: cookies } }, ORIGIN);
+    assert.equal(callback.status, 302, await callback.clone().text());
+    landed = new URL(callback.headers.get("location")!, ORIGIN);
+  }
+  assert.equal(landed.pathname, `/account/${provider}-link/complete`, landed.href);
+  const complete = await req(`${landed.pathname}${landed.search}`, { headers: { Cookie: cookies } }, ORIGIN);
+  assert.equal(complete.status, 200, await complete.clone().text());
+  assert.match(await complete.text(), new RegExp(`${provider === "apple" ? "Apple" : "Google"} account linked`));
+  const status = await (await req(`/api/account/identities/${provider}/${intentId}`, { headers: authed })).json() as { status: string };
+  assert.equal(status.status, "complete");
+}
+
+test("capabilities and the identity listing advertise Apple linking beside Google's", async () => {
+  const caps = await (await req("/api/account/capabilities")).json() as Record<string, unknown>;
+  assert.equal(caps.googleLinking, true);
+  assert.equal(caps.appleLinking, true);
+  const owner = await emailAccount("apple-caps@example.org");
+  const listed = await providers(owner.authed);
+  assert.equal(listed.googleAvailable, true);
+  assert.equal(listed.appleAvailable, true);
+});
+
+test("an email account links an Apple ID in Settings, then that Apple ID signs in to the same account", async () => {
+  const email = "apple-link-owner@example.org", sub = "001234.apple-link.0010", appleEmail = "link-owner@icloud.example";
+  const owner = await emailAccount(email);
+  await link("apple", owner.authed, { sub, email: appleEmail, email_verified: "true" });
+  assert.deepEqual(appleRows(sub), [{ userId: owner.uid }]);
+  const listed = await providers(owner.authed);
+  assert.deepEqual(listed.providers.filter((row) => row.providerId === "apple").map(({ providerId, email }) => ({ providerId, email })), [{ providerId: "apple", email: appleEmail }]);
+  // Signed out on this browser, back in with Apple: the same account, no new one.
+  const again = await desktopAppleSignIn({ sub, email: appleEmail, email_verified: "true" });
+  assert.equal(again.searchParams.get("error"), null, again.href);
+  const bridge = await req(`${again.pathname}${again.search}`, { headers: { Cookie: lastCallbackCookies } }, ORIGIN);
+  const deepLink = new URL(JSON.parse(/location\.href=("[^"]+")/.exec(await bridge.text())![1]));
+  const me = await (await req("/api/me", { headers: { Authorization: `Bearer ${deepLink.searchParams.get("token")}` } })).json() as { user: { id: string } };
+  assert.equal(me.user.id, owner.uid);
+  assert.equal(users(appleEmail), 0);
+});
+
+// Five codes a minute may go to one address (account-identities.ts), so each
+// test here asks for five at most.
+test("two Apple IDs and two Google accounts sit on one account, each with its address, and an Apple ID unlinks like Google", async () => {
+  const email = "four-sign-ins@example.org";
+  let owner = await emailAccount(email);
+  await link("apple", owner.authed, { sub: "001234.four.apple-a", email: "four.a@icloud.example", email_verified: "true" });
+  await link("apple", owner.authed, { sub: "001234.four.apple-b", email: "q8w7e6r5t4@privaterelay.appleid.com", email_verified: "true", is_private_email: "true" });
+  await link("google", owner.authed, { sub: "google-four-a", email: "four.a@gmail.example" });
+  await link("google", owner.authed, { sub: "google-four-b", email: "four.b@work.example" });
+  const listed = (await providers(owner.authed)).providers.filter((row) => row.providerId !== "credential");
+  assert.deepEqual(listed.map(({ providerId, email }) => `${providerId}:${email}`).sort(), [
+    "apple:four.a@icloud.example", "apple:q8w7e6r5t4@privaterelay.appleid.com", "google:four.a@gmail.example", "google:four.b@work.example",
+  ]);
+  // The address is a label only: it is not an extra verified email on the account.
+  const identities = (await (await req("/api/account/identities", { headers: owner.authed })).json() as { identities: { email: string }[] }).identities;
+  assert.deepEqual(identities.map((row) => row.email), [email]);
+  const relay = listed.find((row) => row.email?.includes("privaterelay"))!;
+  // Unlinking an Apple ID signs out every session of the account, like Google.
+  const removed = await req(`/api/account/identities/apple-provider/${relay.id}`, { method: "DELETE", headers: owner.authed, body: JSON.stringify({ proofId: await proof(owner.authed, "apple-remove") }) });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(await removed.json(), { ok: true, signedOut: true });
+  assert.deepEqual(db.prepare("SELECT id FROM session WHERE userId=?").all(owner.uid), []);
+  assert.equal(db.prepare("SELECT 1 FROM account_provider_labels WHERE account_id=?").get(relay.id), undefined);
+  owner = await signInByPassword(email);
+  const after = (await providers(owner.authed)).providers.filter((row) => row.providerId !== "credential");
+  assert.deepEqual(after.map(({ providerId, email }) => `${providerId}:${email}`).sort(), ["apple:four.a@icloud.example", "google:four.a@gmail.example", "google:four.b@work.example"]);
+  // The removed Apple ID is a stranger now: its next sign-in makes a new account of its own.
+  const stranger = await desktopAppleSignIn({ sub: "001234.four.apple-b", email: "q8w7e6r5t4@privaterelay.appleid.com", email_verified: "true" });
+  assert.equal(stranger.searchParams.get("error"), null);
+  assert.notEqual(appleRows("001234.four.apple-b")[0].userId, owner.uid);
+});
+
+test("each provider's unlink needs that provider's removal proof and removes only that provider's rows", async () => {
+  const owner = await emailAccount("apple-scopes@example.org");
+  await link("apple", owner.authed, { sub: "001234.scopes.apple", email: "scopes@icloud.example", email_verified: "true" });
+  await link("google", owner.authed, { sub: "google-scopes", email: "scopes@gmail.example" });
+  const listed = (await providers(owner.authed)).providers;
+  const appleRow = listed.find((row) => row.providerId === "apple")!, googleRow = listed.find((row) => row.providerId === "google")!;
+  const remove = async (provider: string, id: string, scope: string) => (await req(`/api/account/identities/${provider}-provider/${id}`, { method: "DELETE", headers: owner.authed, body: JSON.stringify({ proofId: await proof(owner.authed, scope) }) })).status;
+  assert.equal(await remove("apple", appleRow.id, "google-remove"), 400);
+  assert.equal(await remove("google", googleRow.id, "apple-remove"), 400);
+  assert.equal(await remove("google", appleRow.id, "google-remove"), 400, "the Google route never removes an Apple row");
+  assert.equal((await providers(owner.authed)).providers.length, listed.length, "nothing removed, nobody signed out");
+});
+
+test("an Apple or Google sign-up records its address, and rows from before keep no label", async () => {
+  const sub = "001234.apple-label.0020", email = "apple-label@example.org";
+  await desktopAppleSignIn({ sub, email, email_verified: "true" });
+  const [{ userId }] = appleRows(sub);
+  const label = db.prepare("SELECT user_id,provider_id,email FROM account_provider_labels l JOIN account a ON a.id=l.account_id WHERE a.accountId=?").get(sub);
+  assert.deepEqual(label, { user_id: userId, provider_id: "apple", email });
+  // An older row: linked before addresses were recorded.
+  const old = "old-google-row-0001";
+  db.prepare("INSERT INTO account(id,accountId,providerId,userId,createdAt,updatedAt) VALUES(?,?,?,?,?,?)").run(old, "google-old-sub", "google", userId, new Date().toISOString(), new Date().toISOString());
+  const session = await auth.$context.then((context) => context.internalAdapter.createSession(userId));
+  const listed = await providers({ ...json, Authorization: `Bearer ${session.token}` });
+  assert.deepEqual(listed.providers.find((row) => row.id === old), { id: old, providerId: "google" });
+  assert.equal(listed.providers.find((row) => row.providerId === "apple")?.email, email);
+});
+
+test("an Apple link whose initiating session was revoked before Apple answered creates nothing", async () => {
+  const owner = await emailAccount("apple-revoked-link@example.org");
+  const started = await req("/api/account/identities/apple/start", { method: "POST", headers: owner.authed, body: JSON.stringify({ proofId: await proof(owner.authed, "apple-link") }) });
+  const { intentId, browserUrl } = await started.json() as { intentId: string; browserUrl: string };
+  const browser = await req("/api/account/identities/apple/browser-start", { method: "POST", headers: json, body: JSON.stringify({ intentId, secret: new URL(browserUrl).hash.slice(1).split(".")[1] }) }, ORIGIN);
+  const consent = new URL(((await browser.json()) as { url: string }).url);
+  db.prepare("DELETE FROM session WHERE userId=?").run(owner.uid);
+  appleClaims = { sub: "001234.apple-revoked.0030", email: "revoked@icloud.example", email_verified: "true" };
+  // Refused at Apple's form POST, before better-auth reads the state.
+  const posted = await req("/api/auth/callback/apple", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ code: "c", state: consent.searchParams.get("state")! }).toString() }, APPLE);
+  assert.equal(posted.status, 400);
+  assert.deepEqual(await posted.json(), { error: "invalid-apple-link" });
+  const get = await req(`/api/auth/callback/apple?code=c&state=${encodeURIComponent(consent.searchParams.get("state")!)}`, { headers: { Cookie: cookiesOf(browser) } }, ORIGIN);
+  assert.equal(get.status, 400);
+  assert.deepEqual(appleRows("001234.apple-revoked.0030"), []);
+  assert.equal(users("revoked@icloud.example"), 0);
+});
+
+test("better-auth's real Apple account INSERT is fenced when the initiating session goes away after the hook authorized it", async () => {
+  const owner = await emailAccount("apple-adapter-race@example.org");
+  const { accountContext } = await import("./account-context.ts");
+  const apple = accountContext()?.apple; assert.ok(apple);
+  const started = await req("/api/account/identities/apple/start", { method: "POST", headers: owner.authed, body: JSON.stringify({ proofId: await proof(owner.authed, "apple-link") }) });
+  const { intentId, browserUrl } = await started.json() as { intentId: string; browserUrl: string };
+  const browser = await req("/api/account/identities/apple/browser-start", { method: "POST", headers: json, body: JSON.stringify({ intentId, secret: new URL(browserUrl).hash.slice(1).split(".")[1] }) }, ORIGIN);
+  const state = new URL(((await browser.json()) as { url: string }).url).searchParams.get("state")!;
+  const context = await auth.$context, subject = "001234.apple-race.0040";
+  const hooks = auth.options.databaseHooks!.account!.create!, original = hooks.before!;
+  let reached!: () => void, resume!: () => void, assignedId = "";
+  const authorized = new Promise<void>((resolve) => { reached = resolve; }), paused = new Promise<void>((resolve) => { resume = resolve; });
+  hooks.before = async (...args: Parameters<typeof original>) => {
+    const result = await original(...args);
+    if (args[0].providerId === "apple" && args[0].accountId === subject) {
+      assert.ok(result && typeof result === "object" && "data" in result && result.data?.id);
+      assignedId = result.data.id; reached(); await paused;
+    }
+    return result;
+  };
+  try {
+    const creation = apple.runAuthRequest(new Request(`${ORIGIN}/api/auth/callback/apple?state=${encodeURIComponent(state)}`), async () => {
+      await context.internalAdapter.createAccount({ userId: owner.uid, providerId: "apple", accountId: subject });
+      return Response.json({ ok: true });
+    });
+    const rejected = assert.rejects(creation);
+    await authorized;
+    assert.ok(db.prepare("SELECT 1 FROM account_apple_link_writes WHERE account_id=?").get(assignedId));
+    db.prepare("DELETE FROM session WHERE userId=?").run(owner.uid);
+    resume(); await rejected;
+    assert.deepEqual(appleRows(subject), []);
+    assert.ok(db.prepare("SELECT 1 FROM account_apple_link_writes WHERE account_id=?").get(assignedId), "the failed marker is kept, so a delayed write cannot become an unmarked sign-up");
+  } finally { resume(); hooks.before = original; }
 });

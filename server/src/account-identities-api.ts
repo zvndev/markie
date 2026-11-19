@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
-import { IdentityError, type IdentityActor, type IdentityDelivery, type IdentityScope, type IdentityStore } from "./account-identities.ts";
+import { IDENTITY_SCOPES, IdentityError, type IdentityActor, type IdentityDelivery, type IdentityScope, type IdentityStore } from "./account-identities.ts";
 import { reportRouteFault } from "./little-friend.ts";
 
 export interface IdentityApiOptions {
@@ -74,7 +74,7 @@ export function createAccountIdentitiesApi(options: IdentityApiOptions): Hono {
   app.post("/identities/step-up/start", async (c) => {
     const who = await actor(c.req.raw), body = await payload(c.req.raw, ["scope"]);
     const scope = body.scope === undefined ? "email-add" : field(body, "scope");
-    if (!["email-add", "email-remove", "google-link", "google-remove"].includes(scope)) throw new IdentityError("invalid-request", 400);
+    if (!(IDENTITY_SCOPES as readonly string[]).includes(scope)) throw new IdentityError("invalid-request", 400);
     return c.json(await deliver(store.startStepUp(who, scope as IdentityScope), "step-up"));
   });
   app.post("/identities/step-up/verify", async (c) => {

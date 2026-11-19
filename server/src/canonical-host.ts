@@ -10,8 +10,8 @@
 // Only the official deployment has another name (deployment.ts apiAliases);
 // a self-hosted server never redirects.
 
-// The pages a person's browser opens on the API host: desktop Google
-// sign-in and its bridge, and linking a Google account. /api/* is the API,
+// The pages a person's browser opens on the API host: desktop Google or
+// Apple sign-in and its bridge, and linking a Google or Apple account. /api/* is the API,
 // including /api/auth/*, and is served wherever it is asked. /s, /d and
 // /download reach this server through markiedocs.com's proxy and must stay.
 const BROWSER_PAGE = /^\/(?:auth|account)(?:\/|$)/;

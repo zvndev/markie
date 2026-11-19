@@ -2,10 +2,12 @@ import type Database from "better-sqlite3";
 import { APIError } from "better-auth/api";
 import { normalizeIdentityEmail, resolveVerifiedUserForEmail } from "./account-identities.ts";
 import type { createGoogleIdentityLinks } from "./google-identity-links.ts";
+import type { ProviderIdentityLinks } from "./provider-identity-links.ts";
+import type { ProviderAccountLabels } from "./provider-account-labels.ts";
 
 export const accountIdentitiesEnabled = process.env.MARKIE_ACCOUNT_IDENTITIES === "1";
 type GoogleLinks = ReturnType<typeof createGoogleIdentityLinks>;
-let context: { db: Database.Database; google?: GoogleLinks } | undefined;
+let context: { db: Database.Database; google?: GoogleLinks; apple?: ProviderIdentityLinks; labels?: ProviderAccountLabels } | undefined;
 
 /** Installed once by the server composition root; importing auth never migrates identity tables. */
 export function configureAccountContext(value: typeof context): void {
@@ -20,6 +22,14 @@ export function configureAccountContext(value: typeof context): void {
   context = value;
 }
 export function accountContext() { return context; }
+/** The guarded linking for this provider's account rows, when it is installed. */
+export function providerLinks(providerId: unknown): ProviderIdentityLinks | undefined {
+  return providerId === "google" ? context?.google : providerId === "apple" ? context?.apple : undefined;
+}
+/** Every installed provider's linking, for hooks that must hear about every auth request. */
+export function allProviderLinks(): ProviderIdentityLinks[] {
+  return [context?.google, context?.apple].filter((links): links is ProviderIdentityLinks => !!links);
+}
 export function assertNewAccountEmail(email: string): void {
   if (context && resolveVerifiedUserForEmail(context.db, email)) {
     throw new APIError("CONFLICT", { message: "Use the existing verified account sign-in flow." });

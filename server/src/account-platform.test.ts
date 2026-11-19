@@ -337,4 +337,11 @@ test("with no Apple keys configured, nothing about Apple is offered or trusted",
   assert.match(page, /Continue with Google/); assert.doesNotMatch(page, /Apple/);
   const fromApple = await app.request("/api/auth/callback/apple", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://appleid.apple.com", cookie: "unrelated=1" }, body: "code=x&state=y" });
   assert.equal(fromApple.status, 403);
+  const caps = await (await request("/api/account/capabilities")).json();
+  assert.equal(caps.googleLinking, true); assert.equal(caps.appleLinking, false);
+  const owner = await signUpVerified(app, { name: "No Apple here", email: "no-apple@example.test" });
+  const listed = await (await request("/api/account/identities", owner.token)).json();
+  assert.equal(listed.googleAvailable, true); assert.equal(listed.appleAvailable, false);
+  assert.equal((await request("/api/account/identities/apple/start", owner.token, { proofId: "x".repeat(43) })).status, 404);
+  assert.equal((await app.request("/account/link-apple")).status, 404);
 });

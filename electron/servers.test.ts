@@ -394,4 +394,47 @@ describe("the trusted server list", () => {
     fs.writeFileSync(file, "{not json");
     expect(createServerStore({ file }).origins()).toEqual([DEFAULT_SERVER]);
   });
+
+  it("keeps Apple for a server that offers it, and nothing about Apple for one that does not", async () => {
+    const store = createServerStore({ file, fetchImpl: answer(200, { ...INFO, signIn: { email: true, google: true, apple: true } }) });
+    const checked = await store.probe("https://docs.example.com");
+    expect(checked).toMatchObject({ ok: true, signIn: { email: true, google: true, apple: true } });
+    store.add((checked as { probeId: string }).probeId);
+    expect(createServerStore({ file }).get("https://docs.example.com")?.signIn).toEqual({ email: true, google: true, apple: true, signup: "open" });
+    // Anything but true is no Apple at all.
+    expect(parseServerInfo({ ...INFO, signIn: { email: true, google: false, apple: "yes" } }, "https://docs.example.com")).toEqual({
+      ok: true,
+      info: { name: "Team docs", apiVersion: 1, version: "1.2.3", signIn: { email: true, google: false, signup: "open" } },
+    });
+  });
+
+  it("learns from Markie Cloud itself whether it offers Apple, and nothing else", async () => {
+    let time = 1_000_000;
+    const fetchImpl = answer(200, { ...INFO, name: "Markie Cloud", origin: DEFAULT_SERVER, signIn: { email: false, google: false, apple: true, signup: "closed" } });
+    const store = createServerStore({ file, fetchImpl, now: () => time });
+    expect(store.get(DEFAULT_SERVER)?.signIn).toEqual({ email: true, google: true, signup: "open" });
+    expect(await store.refreshDefault()).toBe(true);
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${DEFAULT_SERVER}/api/server-info`);
+    // Apple comes from the answer; Google, email and sign-up keep the defaults every build has used.
+    expect(store.get(DEFAULT_SERVER)?.signIn).toEqual({ email: true, google: true, signup: "open", apple: true });
+    // Asked once: later lists read what it said.
+    time += PROBE_TTL_MS * 2;
+    expect(await store.refreshDefault()).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("an unreachable Markie Cloud leaves Apple off and is asked again only after a while", async () => {
+    let time = 1_000_000;
+    const fetchImpl = vi.fn(async () => { throw new Error("offline"); }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+    const store = createServerStore({ file, fetchImpl, now: () => time });
+    const [first, second] = await Promise.all([store.refreshDefault(), store.refreshDefault()]);
+    expect([first, second]).toEqual([false, false]);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(await store.refreshDefault()).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(store.get(DEFAULT_SERVER)?.signIn).toEqual({ email: true, google: true, signup: "open" });
+    time += PROBE_TTL_MS;
+    await store.refreshDefault();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });

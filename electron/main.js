@@ -2049,11 +2049,30 @@ const serverView = (s) => ({
   signIn: {
     email: s.signIn?.email !== false,
     google: s.signIn?.google === true,
+    // Only when the server offers it, as servers.js keeps it.
+    ...(s.signIn?.apple === true ? { apple: true } : {}),
     signup: ["open", "invite", "closed"].includes(s.signIn?.signup) ? s.signIn.signup : "open",
   },
   version: s.version ?? null,
 });
-handle("servers-list", () => serverStore.list().map(serverView), {
+// Markie Cloud says for itself whether it offers Apple (servers.js
+// refreshDefault). Asked once at startup; the first list waits a moment for
+// that answer so a sign-in screen opened straight away is not missing Apple,
+// and never longer, so an offline start is not held up.
+void serverStore.refreshDefault();
+const DEFAULT_INFO_WAIT_MS = 1500;
+handle("servers-list", async () => {
+  let timer;
+  await Promise.race([
+    serverStore.refreshDefault(),
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, DEFAULT_INFO_WAIT_MS);
+      timer.unref?.();
+    }),
+  ]);
+  clearTimeout(timer);
+  return serverStore.list().map(serverView);
+}, {
   onFailure: () => [serverView({ origin: DEFAULT_SERVER, name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true, signup: "open" } })],
 });
 handle("servers-probe", (_event, input) => (privateReleaseConfig ? { ok: false, error: PRIVATE_SERVERS_REFUSAL } : serverStore.probe(typeof input === "string" ? input : "")), {
@@ -2547,7 +2566,7 @@ handle("open-external", (event, target) => {
   if (!webTarget) return;
   if (privateReleaseConfig && !privateRelease.authorized() && (new URL(webTarget).origin !== PRIVATE_AUTH_ORIGIN || !isStableDesktopAuthUrl(webTarget))) return;
   if (isDesktopPreview && isStableDesktopAuthUrl(webTarget)) {
-    void dialog.showMessageBox(mainWindow, { type: "info", message: "Google sign-in is unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
+    void dialog.showMessageBox(mainWindow, { type: "info", message: "Google and Apple sign-in are unavailable in Markie Preview.", detail: "This preview does not use installed Markie's browser callback. Use email sign-in instead." });
     return;
   }
   try { shell.openExternal(webTarget).catch(() => logCrash("open-external-failed", "Could not open the external browser.")); }

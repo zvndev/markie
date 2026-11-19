@@ -274,3 +274,18 @@ describe("Google sign-in bound to a server", () => {
     expect(state.consumeAuthStateFor(nonce)).toEqual({ ok: true, origin: CLOUD });
   });
 });
+
+describe("Apple sign-in bound to a server", () => {
+  it("starts at the server's own /auth/apple-start with a nonce for that server", () => {
+    const url = sessions.serverAuthClient(SELF).appleSignInURL()!;
+    expect(url.startsWith(`${SELF}/auth/apple-start?state=`)).toBe(true);
+    expect(state.consumeAuthStateFor(new URL(url).searchParams.get("state"))).toEqual({ ok: true, origin: SELF });
+  });
+
+  it("starts at Markie Cloud for the primary sign-in, and its deep link is accepted like Google's", () => {
+    const url = client.authClient.appleSignInURL()!;
+    expect(url.startsWith(`${CLOUD}/auth/apple-start?state=`)).toBe(true);
+    const nonce = new URL(url).searchParams.get("state")!;
+    expect(state.resolveAuthDeepLink(`markie://auth?token=t&state=${nonce}&iss=${encodeURIComponent(CLOUD)}`, { primaryOrigin: client.getServerURL() })).toEqual({ ok: true, token: "t", origin: null });
+  });
+});

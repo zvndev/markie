@@ -13,6 +13,7 @@ const verifyEmail = vi.fn();
 const requestPasswordReset = vi.fn();
 const resetPassword = vi.fn();
 const googleSignInURL = vi.fn();
+const appleSignInURL = vi.fn();
 
 // Only the network surface is replaced. authFailureCode is a pure reader of a
 // response body, and a test that stubbed it would stop checking that the form
@@ -31,6 +32,7 @@ vi.mock("@/lib/auth-client", async (importOriginal) => ({
     resetPassword: (...a: unknown[]) => resetPassword(...a),
     signOut: vi.fn(async () => undefined),
     googleSignInURL: () => googleSignInURL(),
+    appleSignInURL: () => appleSignInURL(),
   },
 }));
 
@@ -59,6 +61,7 @@ beforeEach(() => {
   requestPasswordReset.mockResolvedValue(ok);
   resetPassword.mockResolvedValue(ok);
   googleSignInURL.mockReturnValue("https://accounts.google/auth?state=n");
+  appleSignInURL.mockReturnValue("https://api.markiedocs.com/auth/apple-start?state=a");
 });
 
 describe("SignInForm — choose view", () => {
@@ -89,6 +92,50 @@ describe("SignInForm — choose view", () => {
     expect(
       screen.getByText("Couldn't start Google sign-in on this machine. Use an email code instead.")
     ).toBeInTheDocument();
+  });
+});
+
+describe("SignInForm — Apple", () => {
+  const cloud = (signIn: Record<string, unknown>) => vi.fn(async () => [{ origin: "https://api.markiedocs.com", name: "Markie Cloud", isDefault: true, signIn, version: null }]);
+
+  it("offers Apple under Google only when Markie Cloud says it has Apple, and opens it through the desktop bridge", async () => {
+    const user = userEvent.setup();
+    const bridge = installBridge({ serversList: cloud({ email: true, google: true, apple: true }) } as never);
+    render(<SignInForm reason="account" />);
+    const apple = await screen.findByRole("button", { name: "Continue with Apple" });
+    const buttons = screen.getAllByRole("button").map((button) => button.textContent?.trim());
+    expect(buttons.indexOf("Continue with Apple")).toBe(buttons.indexOf("Continue with Google") + 1);
+    await user.click(apple);
+    expect(bridge.openExternal).toHaveBeenCalledWith("https://api.markiedocs.com/auth/apple-start?state=a");
+    expect(googleSignInURL).not.toHaveBeenCalled();
+  });
+
+  it("shows no Apple anywhere when the server does not offer it", async () => {
+    const serversList = cloud({ email: true, google: true });
+    installBridge({ serversList } as never);
+    render(<SignInForm reason="account" />);
+    await vi.waitFor(() => expect(serversList).toHaveBeenCalled());
+    // The list main answered with, not whatever an earlier screen was shown.
+    await vi.waitFor(() => expect(screen.queryByText(/Apple/)).toBeNull());
+    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+  });
+
+  it("refuses to start Apple sign-in it cannot secure", async () => {
+    const user = userEvent.setup();
+    appleSignInURL.mockReturnValue(null);
+    const bridge = installBridge({ serversList: cloud({ email: true, google: true, apple: true }) } as never);
+    render(<SignInForm reason="account" />);
+    await user.click(await screen.findByRole("button", { name: "Continue with Apple" }));
+    expect(bridge.openExternal).not.toHaveBeenCalled();
+    expect(screen.getByText("Couldn't start Apple sign-in on this machine. Use an email code instead.")).toBeInTheDocument();
+  });
+
+  it("leaves Apple out wherever Google is left out", async () => {
+    const serversList = cloud({ email: true, google: true, apple: true });
+    installBridge({ serversList } as never);
+    render(<SignInForm reason="share" allowGoogle={false} />);
+    await vi.waitFor(() => expect(serversList).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Continue with Apple" })).toBeNull();
   });
 });
 

@@ -191,7 +191,7 @@ function ServerRow({ server, onRemoved }: { server: MarkieServer; onRemoved: () 
   );
 }
 
-/** Email and password against any added server; Google when it offers it. */
+/** Email and password against any added server; Google and Apple when it offers them. */
 export function ServerSignIn({
   server,
   onDone,
@@ -238,11 +238,11 @@ export function ServerSignIn({
     onDone();
   };
 
-  const google = async () => {
+  const startProvider = async (provider: "Google" | "Apple") => {
     setError(null);
-    const url = client.googleSignInURL();
+    const url = provider === "Apple" ? client.appleSignInURL() : client.googleSignInURL();
     if (!url) {
-      setError("Couldn't start Google sign-in on this device.");
+      setError(`Couldn't start ${provider} sign-in on this device.`);
       return;
     }
     await getElectronAPI()?.openExternal?.(url);
@@ -271,8 +271,13 @@ export function ServerSignIn({
         </div>
       </div>
       {server.signIn.google && (
-        <button type="button" className={BUTTON} onClick={() => void google()} disabled={busy}>
+        <button type="button" className={BUTTON} onClick={() => void startProvider("Google")} disabled={busy}>
           Continue with Google
+        </button>
+      )}
+      {server.signIn.apple === true && (
+        <button type="button" className={BUTTON} onClick={() => void startProvider("Apple")} disabled={busy}>
+          Continue with Apple
         </button>
       )}
       <input

@@ -109,7 +109,7 @@ function desktopStartUrl({ isPreview = false, isDev = false, devUrl = "http://lo
 }
 
 function isStableDesktopAuthUrl(value) {
-  try { return /^(?:\/auth\/(?:google-start|desktop-bridge)|\/api\/auth\/desktop)(?:\/|$)/.test(new URL(value).pathname); }
+  try { return /^(?:\/auth\/(?:google-start|apple-start|desktop-bridge)|\/api\/auth\/desktop)(?:\/|$)/.test(new URL(value).pathname); }
   catch { return false; }
 }
 

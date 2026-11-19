@@ -870,7 +870,8 @@ export interface MarkieServer {
   origin: string;
   name: string;
   isDefault: boolean;
-  signIn: { email: boolean; google: boolean; signup?: SignupMode };
+  /** apple is present, and true, only on a server that offers Apple. */
+  signIn: { email: boolean; google: boolean; apple?: boolean; signup?: SignupMode };
   version: string | null;
 }
 
@@ -882,7 +883,7 @@ export type ServerProbe =
       host: string;
       name: string;
       version: string | null;
-      signIn: { email: boolean; google: boolean; signup?: SignupMode };
+      signIn: { email: boolean; google: boolean; apple?: boolean; signup?: SignupMode };
       alreadyAdded: boolean;
     }
   | { ok: false; error: string };

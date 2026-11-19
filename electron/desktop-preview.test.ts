@@ -82,6 +82,11 @@ describe("trusted desktop preview runtime", () => {
     for (const target of ["C:\\", "\\\\host\\share\\preview", "C:relative", "c:\\users\\writer\\appdata\\roaming\\MARKIE\\new"]) expect(() => validatedProfilePath(target, context)).toThrow();
   });
 
+  it("identifies Apple's desktop sign-in start as the same kind of handoff", () => {
+    expect(isStableDesktopAuthUrl("https://example.invalid/auth/apple-start?state=synthetic")).toBe(true);
+    expect(isStableDesktopAuthUrl("https://example.invalid/auth/apple-start-other")).toBe(false);
+  });
+
   it("identifies the exact existing Google handoff paths without blocking normal links", () => {
     for (const pathname of ["/auth/google-start?state=synthetic", "/auth/desktop-bridge", "/api/auth/desktop/callback"]) expect(isStableDesktopAuthUrl(`https://example.invalid${pathname}`)).toBe(true);
     for (const value of ["not-a-url", "https://example.invalid/docs", "https://example.invalid/auth/google-start-other"]) expect(isStableDesktopAuthUrl(value)).toBe(false);

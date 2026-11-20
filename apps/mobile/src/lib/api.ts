@@ -702,9 +702,11 @@ export function documentErrorCopy(error: unknown, server = "this server"): Docum
   if (error instanceof ApiError) {
     const detail = error.serverMessage ? `The server said: "${error.serverMessage}" (${error.status})` : error.status ? `Status ${error.status}` : null;
     if (error.status === 0) return { title: "You're offline", body: error.message, detail: null, signIn: false, retry: true };
-    if (error.status === 401) return { title: "Sign in again", body: "Your session has ended. Sign in and the document opens right after.", detail, signIn: true, retry: false };
-    if (error.status === 403) return { title: "You don't have access", body: `This document belongs to someone else on ${server}, and it hasn't been shared with this account.`, detail, signIn: false, retry: false };
-    if (error.status === 404) return { title: "Document not found", body: "It may have been deleted, or it hasn't been shared with this account.", detail, signIn: false, retry: false };
+    // These three say all a reader needs. The server's own word and its
+    // status number ("forbidden" (403)) are kept for errors nobody explained.
+    if (error.status === 401) return { title: "Sign in again", body: "Your session has ended. Sign in and the document opens right after.", detail: null, signIn: true, retry: false };
+    if (error.status === 403) return { title: "You don't have access", body: `This document belongs to someone else on ${server}, and it hasn't been shared with this account.`, detail: null, signIn: false, retry: false };
+    if (error.status === 404) return { title: "Document not found", body: "It may have been deleted, or it hasn't been shared with this account.", detail: null, signIn: false, retry: false };
     return { title: "Couldn't open this document", body: error.message, detail, signIn: false, retry: true };
   }
   return { title: "Couldn't open this document", body: error instanceof Error ? error.message : "Something went wrong.", detail: null, signIn: false, retry: true };

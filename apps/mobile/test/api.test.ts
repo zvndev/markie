@@ -98,12 +98,14 @@ describe("api client: documents", () => {
     expect((await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).doc("d")).format).toBe("text");
   });
 
-  it("keeps the server's own words for a document it won't show", async () => {
+  it("explains a document it won't show in plain words, and keeps the server's own words for an error nobody explained", async () => {
     const { transport } = fake(() => ({ status: 404, json: { error: "not found" } }));
     const error = await createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN }).doc("gone").catch((e) => e);
     expect(error).toMatchObject({ status: 404, serverMessage: "not found" });
-    expect(documentErrorCopy(error)).toMatchObject({ title: "Document not found", detail: 'The server said: "not found" (404)', signIn: false });
-    expect(documentErrorCopy(new ApiError(403, "forbidden", "", "forbidden"))).toMatchObject({ title: "You don't have access" });
+    expect(documentErrorCopy(error)).toMatchObject({ title: "Document not found", detail: null, signIn: false });
+    expect(documentErrorCopy(new ApiError(403, "forbidden", "", "forbidden"))).toMatchObject({ title: "You don't have access", detail: null });
+    expect(documentErrorCopy(new ApiError(422, "Something went wrong. Try again.", "", "unsupported format")))
+      .toMatchObject({ title: "Couldn't open this document", detail: 'The server said: "unsupported format" (422)' });
     expect(documentErrorCopy(new ApiError(401, "x"))).toMatchObject({ signIn: true });
   });
 

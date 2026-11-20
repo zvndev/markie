@@ -19,6 +19,15 @@
   --m-field-bg: color-mix(in srgb, var(--surface-2) 88%, var(--foreground) 4%);
   --m-separator: color-mix(in srgb, var(--border) 80%, transparent);
   --m-agent: var(--status-purple);
+  /* The L3 brand (src/lib/brand.ts): the app's controls are ink (white in
+     the dark theme), and brand red is the accent: the caret, a count that
+     wants attention. Red is never the colour of words on a light page, where
+     it falls short of 4.5:1. Links inside a document keep the desktop's link
+     colour, so a document reads as it does on the Mac. */
+  --m-tint: var(--foreground);
+  --m-brand: #ec4431;
+  /* Brand red, darkened just enough for white text on it to read (4.9:1). */
+  --m-brand-strong: #d03a26;
   -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%;
 }
@@ -64,7 +73,7 @@ input {
 }
 
 :focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--m-tint);
   outline-offset: 2px;
 }
 
@@ -211,7 +220,7 @@ input {
   margin-left: -2px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 17px;
   white-space: nowrap;
 }
@@ -233,7 +242,7 @@ input {
   height: 44px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
 }
 
 .m-screen-body {
@@ -739,7 +748,7 @@ input {
   padding: 0 4px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 15px;
 }
 
@@ -786,8 +795,8 @@ input {
 }
 
 .m-field input:focus {
-  border-color: color-mix(in srgb, var(--blue) 70%, var(--border));
-  outline: 3px solid color-mix(in srgb, var(--blue) 22%, transparent);
+  border-color: color-mix(in srgb, var(--m-tint) 55%, var(--border));
+  outline: 3px solid color-mix(in srgb, var(--m-tint) 12%, transparent);
   outline-offset: 0;
 }
 
@@ -901,7 +910,7 @@ input {
   margin-bottom: 18px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--blue) 12%, transparent);
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
   color: var(--foreground);
   font-size: 14px;
   line-height: 1.4;
@@ -910,7 +919,7 @@ input {
 .m-callout svg {
   flex: none;
   margin-top: 1px;
-  color: var(--blue);
+  color: var(--m-brand);
 }
 
 .m-advanced {
@@ -1421,7 +1430,7 @@ input {
   padding: 0 8px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 17px;
   white-space: nowrap;
 }
@@ -1479,7 +1488,7 @@ input {
 }
 
 .m-editor-tool:active {
-  background: color-mix(in srgb, var(--blue) 18%, var(--m-field-bg));
+  background: color-mix(in srgb, var(--foreground) 12%, var(--m-field-bg));
 }
 
 .m-editor-tool-italic {
@@ -1502,7 +1511,7 @@ input {
   resize: none;
   background: var(--background);
   color: var(--foreground);
-  caret-color: var(--blue);
+  caret-color: var(--m-brand);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 17px;
   line-height: 1.55;
@@ -1621,7 +1630,7 @@ input {
 
 .m-type-check {
   flex: none;
-  color: var(--blue);
+  color: var(--m-tint);
 }
 
 .m-open-file {
@@ -1629,7 +1638,7 @@ input {
   align-items: center;
   gap: 12px;
   padding: 0 16px;
-  color: var(--blue);
+  color: var(--m-tint);
   text-align: left;
 }
 
@@ -1751,7 +1760,7 @@ input {
 .m-rich-host .ProseMirror {
   min-height: 60vh;
   outline: none;
-  caret-color: var(--blue);
+  caret-color: var(--m-brand);
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
@@ -1816,12 +1825,12 @@ input {
 }
 
 .m-tool:active:not(:disabled) {
-  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
 }
 
 .m-tool.is-active {
-  background: color-mix(in srgb, var(--blue) 20%, var(--m-field-bg));
-  color: var(--blue);
+  background: color-mix(in srgb, var(--foreground) 14%, var(--m-field-bg));
+  color: var(--foreground);
 }
 
 .m-tool:disabled {
@@ -1830,7 +1839,7 @@ input {
 
 .m-tool-bold { font-weight: 800; }
 .m-tool-italic { font-family: Georgia, serif; font-style: italic; }
-.m-tool-comment { color: var(--blue); }
+.m-tool-comment { color: var(--m-tint); }
 .m-tool-divider {
   flex: none;
   width: 1px;
@@ -1896,7 +1905,7 @@ input {
   height: 17px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--blue);
+  background: var(--m-brand-strong);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -2166,7 +2175,7 @@ input {
   margin-top: 12px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 15px;
 }
 
@@ -2184,7 +2193,7 @@ input {
   align-items: center;
   gap: 12px;
   padding: 0 16px;
-  color: var(--blue);
+  color: var(--m-tint);
   text-align: left;
 }
 
@@ -2461,8 +2470,8 @@ input {
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--m-brand-strong);
+  color: #fff;
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;

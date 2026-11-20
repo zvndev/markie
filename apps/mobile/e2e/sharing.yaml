@@ -1,0 +1,51 @@
+# Requests, the share sheet and a shared document's editor against
+# dev/mock-server.mjs. The mock seeds three share requests and puts the
+# weekly reading report on with a member, someone who hasn't accepted the
+# owner and a pending invite. Nothing here accepts or declines, so the walk
+# can run again on the same mock. The mock has no live rooms, so the editor
+# opens solo with its note; the comments sheet itself needs a real server.
+# Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/sharing.yaml
+appId: com.zvn.markie.mobile
+---
+- runFlow: launch-recent.yaml
+- tapOn: ".*requests to share with you.*"
+- extendedWaitUntil:
+    visible: "Requests"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-18-requests
+- runFlow: launch-recent.yaml
+- tapOn: ".*Weekly reading report.*"
+- extendedWaitUntil:
+    visible: "Thursday.*"
+    timeout: 10000
+# Let the push finish: Android hands Maestro the sliding screen's positions.
+- waitForAnimationToEnd
+- tapOn: "Share"
+- extendedWaitUntil:
+    visible: "People with access"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-19-share
+- scrollUntilVisible:
+    element: ".*new.hire.*"
+    direction: DOWN
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-20-share-people
+- runFlow: launch-recent.yaml
+- tapOn: ".*Weekly reading report.*"
+- extendedWaitUntil:
+    visible: "Thursday.*"
+    timeout: 10000
+# Let the push finish, then touch the body text once: until then Android can
+# hand Maestro the sliding screen's positions, and "Edit" lands on Share. Not
+# the "Updated" line: a public document's "Public link" chip sits beside it
+# and opens Share too.
+- waitForAnimationToEnd
+- tapOn: "Thursday.*"
+- tapOn: "Edit"
+- extendedWaitUntil:
+    visible: "Rich"
+    timeout: 15000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-21-editor-picture

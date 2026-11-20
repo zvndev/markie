@@ -1,0 +1,38 @@
+# The writing screens against dev/mock-server.mjs, without saving anything:
+# the New document chooser, the name step, and the Launch brief in the rich
+# editor (with the keyboard and its format row) and in Source.
+# write.yaml is the one that saves.
+# Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/writing.yaml
+appId: com.zvn.markie.mobile
+---
+- runFlow: launch-recent.yaml
+- tapOn: "New document"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-22-new
+- tapOn: "New Markdown document"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-23-new-name
+- runFlow: launch-recent.yaml
+- tapOn: ".*Launch brief.*"
+- extendedWaitUntil:
+    visible: "Edit"
+    timeout: 10000
+# Let the push finish, then touch the body text once: until then Android can
+# hand Maestro the sliding screen's positions, and "Edit" lands on Share. Not
+# the "Updated" line: a public document's "Public link" chip sits beside it
+# and opens Share too.
+- waitForAnimationToEnd
+- tapOn: ".*put this together.*"
+- tapOn: "Edit"
+- extendedWaitUntil:
+    visible: "Rich"
+    timeout: 15000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-24-editor
+- tapOn: ".*put this together.*"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-25-editor-keyboard
+- tapOn: "Source"
+- tapOn: "Text of Launch brief"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-26-editor-source

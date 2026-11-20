@@ -9,6 +9,10 @@ appId: com.zvn.markie.mobile
     visible: ".*Launch brief.*"
     timeout: 15000
 - openLink: "markie-mobile://d/someone-elses-doc"
+# iOS asks before it hands a custom-scheme link to the app.
+- tapOn:
+    text: "Open"
+    optional: true
 - extendedWaitUntil:
     visible: "You don't have access"
     timeout: 10000
@@ -21,6 +25,10 @@ appId: com.zvn.markie.mobile
     index: 1
 - waitForAnimationToEnd
 - openLink: "markie-mobile://d/no-such-doc"
+# iOS asks before it hands a custom-scheme link to the app.
+- tapOn:
+    text: "Open"
+    optional: true
 - extendedWaitUntil:
     visible: "Document not found"
     timeout: 10000

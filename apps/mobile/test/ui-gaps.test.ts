@@ -154,6 +154,62 @@ describe("the share sheet for someone who doesn't own the document", () => {
   });
 });
 
+describe("a sheet's dimmed backdrop", () => {
+  it("closes on a tap that starts and ends on it, after the tap's click, and not after a drag out of the sheet", async () => {
+    const { Sheet } = await import("../src/components/sheet");
+    const onClose = vi.fn();
+    const page = await mount(createElement(Sheet, { title: "Share", onClose, children: createElement("p", null, "Body") }));
+    const scrim = page.querySelector(".m-sheet-scrim")!;
+    const body = page.querySelector(".m-sheet-body")!;
+    // Pressed: still open, so the click that follows lands on the backdrop
+    // and not on the screen's button underneath.
+    await act(async () => { scrim.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => { scrim.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // A selection dragged out of the sheet clicks the backdrop too: stays open.
+    await act(async () => { body.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    await act(async () => { scrim.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the share sheet's list of people", () => {
+  it("shows an invite's address once, and says on a line of its own why someone can't open it yet", async () => {
+    const { ShareSheet } = await import("../src/components/share-sheet");
+    const people = {
+      invites: true,
+      list: async () => [
+        { userId: null, email: "new.hire@example.com", name: null, role: "viewer" as const, pending: true },
+        { userId: "u3", email: "sam@example.com", name: "Sam", role: "editor" as const, pending: false, waiting: true },
+      ],
+      add: async () => "member" as const,
+      setRole: async () => {},
+      remove: async () => {},
+    };
+    const page = await mount(createElement(ShareSheet, {
+      title: "Plan.md", people, canManage: true, me: { email: "o@example.com", name: "O" },
+      link: null, onClose: () => {}, onUnauthorized: () => {},
+    }));
+    expect(page.textContent?.split("new.hire@example.com")).toHaveLength(2);
+    const statuses = [...page.querySelectorAll(".m-share-person-status")].map((line) => line.textContent);
+    expect(statuses).toEqual(["Invited, not signed up yet", "Waiting for them to accept you"]);
+    expect(page.querySelector(".m-share-doc")?.textContent).toBe("Plan");
+  });
+
+  it("promises editing together live only for a document that is edited live", async () => {
+    const { ShareSheet } = await import("../src/components/share-sheet");
+    const people = { invites: false, list: async () => [], add: async () => "member" as const, setRole: async () => {}, remove: async () => {} };
+    const base = { people, canManage: true, me: { email: "o@example.com", name: "O" }, link: null, onClose: () => {}, onUnauthorized: () => {} };
+    const word = await mount(createElement(ShareSheet, { ...base, title: "Budget.docx" }));
+    expect(word.querySelector("[data-share-nobody]")?.textContent).toBe("Nobody else is on this document yet.");
+    act(() => root?.unmount());
+    host?.remove();
+    const plan = await mount(createElement(ShareSheet, { ...base, title: "Plan.md", editsTogether: true }));
+    expect(plan.querySelector("[data-share-nobody]")?.textContent).toContain("you edit it together live");
+  });
+});
+
 describe("the share sheet for a Live Doc", () => {
   const people = { invites: true, list: async () => [], add: async () => "member" as const, setRole: async () => {}, remove: async () => {} };
   const publicLink = { get: vi.fn(async () => null), create: vi.fn(async () => "https://markiedocs.com/s/x"), revoke: vi.fn(async () => {}) };

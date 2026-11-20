@@ -3,9 +3,13 @@
 // the account until it accepts the sender; accepting brings in everything
 // that person shared, and what they share later.
 import { useCallback, useEffect, useState } from "react";
+import { DocumentFormatMark } from "@/components/document-format-mark";
 import { ApiError, type ApiClient, type ShareRequest } from "../lib/api";
+import { formatFromName, kindFromName } from "../lib/docs";
 import { haptics } from "../lib/native";
+import { displayName } from "../lib/recent";
 import { Screen } from "../components/screen";
+import { Breakable } from "../components/breakable";
 
 interface RequestsProps {
   api: Pick<ApiClient, "shareRequests" | "acceptSender" | "declineRequest" | "blockSender">;
@@ -75,21 +79,27 @@ export function RequestsScreen({ api, onBack, onChanged, onUnauthorized }: Reque
       {requests && requests.length > 0 ? (
         <ul className="m-group m-requests-list" aria-label="Requests">
           {requests.map((request) => (
+            // The document leads, as it does on Recent; who sent it follows,
+            // and the address shows once (as the name when there is no name).
             <li key={request.docId} className="m-request" data-request={request.docId}>
-              <div className="m-request-text">
-                <span className="m-request-title"><strong>{who(request.sender)}</strong> wants to share {request.name}</span>
-                <span className="m-request-email">{request.sender.email}</span>
+              <div className="m-request-head">
+                <DocumentFormatMark format={kindFromName(request.name, formatFromName(request.name))} size="sm" />
+                <div className="m-request-text">
+                  <span className="m-request-title">{displayName(request.name)}</span>
+                  <span className="m-request-from">From <strong><Breakable text={who(request.sender)} /></strong></span>
+                  {request.sender.name ? <span className="m-request-email"><Breakable text={request.sender.email} /></span> : null}
+                </div>
               </div>
               <div className="m-request-actions">
                 <button type="button" className="m-button m-button-primary m-button-small" disabled={busy}
-                  onClick={() => void act(() => api.acceptSender(request.sender.id), `Accepted ${who(request.sender)}. What they share now lands in Recent.`, true)}>
+                  onClick={() => void act(() => api.acceptSender(request.sender.id), `Accepted ${who(request.sender)}. What they share now shows up in Recent.`, true)}>
                   Accept
                 </button>
                 <button type="button" className="m-button m-button-secondary m-button-small" disabled={busy}
-                  onClick={() => void act(() => api.declineRequest(request.docId), `Declined ${request.name}.`, false)}>
+                  onClick={() => void act(() => api.declineRequest(request.docId), `Declined "${displayName(request.name)}".`, false)}>
                   Decline
                 </button>
-                <button type="button" className="m-button m-button-secondary m-button-small" disabled={busy}
+                <button type="button" className="m-link-button m-destructive m-request-block" disabled={busy}
                   onClick={() => {
                     if (!window.confirm(`Block ${who(request.sender)}? You won't see anything they share. They are not told.`)) return;
                     void act(() => api.blockSender(request.sender.id), `Blocked ${who(request.sender)}.`, true);

@@ -22,6 +22,7 @@ import { ApiError, type ApiClient } from "../lib/api";
 import type { DocFormat } from "../lib/docs";
 import { haptics } from "../lib/native";
 import { useKeyboardInset } from "../lib/keyboard-inset";
+import { useEditorPictures } from "../lib/editor-pictures";
 import { applyMarkdownAction, type MarkdownAction } from "../lib/markdown-edits";
 import { displayName } from "../lib/recent";
 import { liveConfig, liveKind, saveLiveSnapshot, shouldGoLive } from "../lib/live";
@@ -79,6 +80,9 @@ const MARKDOWN_ACTIONS: { action: MarkdownAction; label: string; text: string }[
   { action: "code", label: "Code", text: "</>" },
 ];
 
+/** Comments were asked for, but they live in the room and the room never opened. */
+export const COMMENTS_UNAVAILABLE_NOTE = "Comments can't load right now.";
+
 /** What a viewer reads on a document no editor has opened live yet. */
 export const EMPTY_ROOM_NOTE = "This is the saved copy. Nobody who can edit has opened it live yet, and comments start once someone does.";
 
@@ -101,6 +105,12 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const markdown = draft.format === "markdown" && /\.(md|markdown|mdx)$/i.test(draft.name);
   const prose = markdown || (draft.format === "text" && /\.(txt|text)$/i.test(draft.name));
   const kind = liveKind(draft.name, draft.format);
+  // The document's synced pictures, fetched with the session before the rich
+  // view first draws them (src/lib/editor-pictures.ts).
+  const [loadPicture] = useState(() => (draft.kind === "cloud" && markdown
+    ? (ref: string) => api.asset({ kind: "doc", id: draft.id }, ref)
+    : null));
+  const picturesReady = useEditorPictures(loadPicture, draft.content);
 
   // Who else is on it decides solo or live, exactly as on the desktop.
   const [session, setSession] = useState<Session>(() => (draft.kind === "cloud" && kind ? { mode: "checking" } : { mode: "solo" }));
@@ -203,8 +213,19 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   // outside it. This session never writes over either of the last two.
   const liveRoomRef = useRef<{ ydoc: unknown } | null>(null);
   liveRoomRef.current = kind === "text" ? textSession : liveSession;
+  // As a live room turns editable, WebKit scrolls to reveal the editor's
+  // selection, which the room's text has just moved to the document's end:
+  // every live document opened scrolled past its title. Until the person
+  // touches the document, it is put back at its top.
+  const richHost = useRef<HTMLDivElement>(null);
+  const touchedRich = useRef(false);
   const onRoomReady = useCallback((roomText: string) => {
     roomTexts.current?.add(roomText);
+    const toTop = () => {
+      if (!touchedRich.current) richHost.current?.querySelector(".markie-document-scroll")?.scrollTo({ top: 0 });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(toTop));
+    setTimeout(toTop, 300);
     if (refusal || readOnly || !kind) return;
     void assessLiveRoom(roomText, { content: stored.current, version: version.current }, kind, roomMeta(liveRoomRef.current)).then((base) => {
       // Ahead: the room's text is what goes out, whether or not the editor
@@ -432,7 +453,11 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           </div>
         ) : null}
         {emptyRoom && !isLive ? <p className="m-editor-note" role="note" data-empty-room>{EMPTY_ROOM_NOTE}</p> : null}
-        {liveUnavailable && !isLive ? <p className="m-editor-note" role="note">The live session couldn't start, so you're editing your copy alone. Save when you're done.</p> : null}
+        {liveUnavailable && !isLive ? (
+          <p className="m-editor-note" role="note" data-live-unavailable>
+            {draft.kind === "cloud" && draft.openComments ? `${COMMENTS_UNAVAILABLE_NOTE} ` : ""}The live session couldn't start, so you're editing your copy alone. Save when you're done.
+          </p>
+        ) : null}
         {isLive ? <LiveLine status={status} save={liveSave} readOnly={readOnly} wait={wait} /> : null}
         {markdown ? (
           <div className="m-segmented m-editor-views" role="tablist" aria-label="Editor view">
@@ -451,10 +476,10 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           </div>
         ) : null}
 
-        {session.mode === "checking" ? (
+        {session.mode === "checking" || (richShown && !picturesReady) ? (
           <div className="m-editor-wait" role="status"><span className="m-spinner" aria-hidden="true" />Opening…</div>
         ) : richShown ? (
-          <div className="m-rich-host" onClickCapture={swallowLinkTaps}>
+          <div className="m-rich-host" ref={richHost} onClickCapture={swallowLinkTaps} onTouchStart={() => { touchedRich.current = true; }}>
             <RichView
               key={collab ? `live:${collab.docId}` : "solo"}
               value={value}

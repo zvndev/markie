@@ -87,11 +87,16 @@ IOS_DEVICE=<simulator udid> ANDROID_DEVICE=emulator-5554 e2e/screenshots.sh
 ```
 
 That builds both apps, signs in on each, walks every screen in light and dark, and writes
-`screenshots/<platform>-<tone>-<n>-<screen>.png`.
+`screenshots/<platform>-<tone>-<n>-<screen>.png` (or to `OUT=<dir>`). Besides Recent, the documents,
+the error links, Settings and Sign in, it covers wide content (`e2e/wide.yaml`: a transcript, a
+nine-column table, a log), Requests and the share sheet (`e2e/sharing.yaml`), and the writing screens
+(`e2e/writing.yaml`), all from the mock's seed data. Live editing, comments and Word files need a local
+real server (below), so they are not in the walk.
 
 ## Deep links
 
-The mock server seeds markdown documents (one with a synced picture), Darkmown documents and a text file.
+The mock server seeds markdown documents (one with a synced picture, one shared with three people,
+three wide ones), Darkmown documents, text files and three share requests.
 Their ids are printed at startup.
 
 ```sh

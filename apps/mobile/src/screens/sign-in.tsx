@@ -94,7 +94,7 @@ export function SignInScreen({ transport, initialOrigin, pendingLink, notice, on
           <h1>{step === "email" ? "Sign in to Markie" : "Check your email"}</h1>
           <p>
             {step === "email"
-              ? "Read the documents in your Markie Cloud, including the ones your agents make."
+              ? "Read, write and share the documents in your Markie Cloud, including the ones your agents make."
               : <>We sent a six-digit code to <strong>{email}</strong>. It expires in 5 minutes.</>}
           </p>
         </div>

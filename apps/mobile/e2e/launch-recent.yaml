@@ -1,0 +1,13 @@
+# A fresh launch onto Recent, signed in against dev/mock-server.mjs. Used by
+# the other flows between screens. Tried again when a cold start stalls,
+# which the iOS Simulator sometimes does right after the app was stopped.
+appId: com.zvn.markie.mobile
+---
+- retry:
+    maxRetries: 2
+    commands:
+      - launchApp:
+          stopApp: true
+      - extendedWaitUntil:
+          visible: ".*Launch brief.*"
+          timeout: 20000

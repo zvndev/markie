@@ -19,6 +19,15 @@
   --m-field-bg: color-mix(in srgb, var(--surface-2) 88%, var(--foreground) 4%);
   --m-separator: color-mix(in srgb, var(--border) 80%, transparent);
   --m-agent: var(--status-purple);
+  /* The L3 brand (src/lib/brand.ts): the app's controls are ink (white in
+     the dark theme), and brand red is the accent: the caret, a count that
+     wants attention. Red is never the colour of words on a light page, where
+     it falls short of 4.5:1. Links inside a document keep the desktop's link
+     colour, so a document reads as it does on the Mac. */
+  --m-tint: var(--foreground);
+  --m-brand: #ec4431;
+  /* Brand red, darkened just enough for white text on it to read (4.9:1). */
+  --m-brand-strong: #d03a26;
   -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%;
 }
@@ -63,9 +72,24 @@ input {
   font: inherit;
 }
 
+/* The brand's accent, as in the editors: the caret in every field. */
+input,
+textarea {
+  caret-color: var(--m-brand);
+}
+
 :focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--m-tint);
   outline-offset: 2px;
+}
+
+/* A box the keyboard is typing into is always "focus-visible". A full ink
+   ring around the comment box or the share sheet's address field read as an
+   error, so text fields get a quiet one. */
+input:focus-visible,
+textarea:not(.m-editor-text):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--m-tint) 28%, transparent);
+  outline-offset: 0;
 }
 
 .m-visually-hidden {
@@ -211,7 +235,7 @@ input {
   margin-left: -2px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 17px;
   white-space: nowrap;
 }
@@ -233,7 +257,7 @@ input {
   height: 44px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
 }
 
 .m-screen-body {
@@ -250,18 +274,26 @@ input {
 /* Android's web view draws an overlay scrollbar, and its track sits over the
    nav bar's right edge. Neither platform's own lists show one at rest.
    A highlighted code block scrolls in its own `code.hljs` (display: block,
-   overflow-x: auto), not only in the `pre`, so that one needs it too. */
+   overflow-x: auto), not only in the `pre`, so that one needs it too.
+   The editors scroll in boxes of their own (the rich view's scroller, the
+   source text area, a sheet), which drew the same bar down the right edge. */
 .m-screen-body,
 .m-markdown .m-table-scroll,
 .m-markdown pre,
-.m-markdown pre code {
+.m-markdown pre code,
+.m-rich-host .markie-document-scroll,
+.m-editor-text,
+.m-sheet-body {
   scrollbar-width: none;
 }
 
 .m-screen-body::-webkit-scrollbar,
 .m-markdown .m-table-scroll::-webkit-scrollbar,
 .m-markdown pre::-webkit-scrollbar,
-.m-markdown pre code::-webkit-scrollbar {
+.m-markdown pre code::-webkit-scrollbar,
+.m-rich-host .markie-document-scroll::-webkit-scrollbar,
+.m-editor-text::-webkit-scrollbar,
+.m-sheet-body::-webkit-scrollbar {
   display: none;
 }
 
@@ -463,14 +495,20 @@ input {
   min-width: 0;
 }
 
+/* Two lines before the ellipsis: agents name files in full sentences, and
+   one line cut "Customer interview, Northwind Logistics, November 12" off at
+   "Northwin". */
 .m-row-title {
+  display: -webkit-box;
   overflow: hidden;
   font-size: 17px;
   font-weight: 500;
   line-height: 22px;
   letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .m-row-meta {
@@ -739,7 +777,7 @@ input {
   padding: 0 4px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 15px;
 }
 
@@ -786,8 +824,8 @@ input {
 }
 
 .m-field input:focus {
-  border-color: color-mix(in srgb, var(--blue) 70%, var(--border));
-  outline: 3px solid color-mix(in srgb, var(--blue) 22%, transparent);
+  border-color: color-mix(in srgb, var(--m-tint) 55%, var(--border));
+  outline: 3px solid color-mix(in srgb, var(--m-tint) 12%, transparent);
   outline-offset: 0;
 }
 
@@ -901,7 +939,7 @@ input {
   margin-bottom: 18px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--blue) 12%, transparent);
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
   color: var(--foreground);
   font-size: 14px;
   line-height: 1.4;
@@ -910,7 +948,7 @@ input {
 .m-callout svg {
   flex: none;
   margin-top: 1px;
-  color: var(--blue);
+  color: var(--m-brand);
 }
 
 .m-advanced {
@@ -1153,9 +1191,28 @@ input {
   font-size: 0.88em;
 }
 
+/* A short cell keeps to one line, so a row reads across and the table
+   scrolls instead of stacking "Shanghai / to Long / Beach" three lines deep.
+   A cell long enough to be prose (document-html.ts marks it) wraps inside a
+   width a phone can read. */
 .m-markdown th,
 .m-markdown td {
   overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.m-markdown .m-table-scroll thead th {
+  padding: 0.55em 0.85em;
+}
+
+.m-markdown .m-table-scroll tbody td {
+  padding: 0.5em 0.85em;
+}
+
+.m-markdown th.m-cell-wrap,
+.m-markdown td.m-cell-wrap {
+  min-width: 14em;
+  white-space: normal;
 }
 
 .m-markdown pre {
@@ -1402,7 +1459,7 @@ input {
   padding: 0 8px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 17px;
   white-space: nowrap;
 }
@@ -1460,7 +1517,7 @@ input {
 }
 
 .m-editor-tool:active {
-  background: color-mix(in srgb, var(--blue) 18%, var(--m-field-bg));
+  background: color-mix(in srgb, var(--foreground) 12%, var(--m-field-bg));
 }
 
 .m-editor-tool-italic {
@@ -1483,7 +1540,7 @@ input {
   resize: none;
   background: var(--background);
   color: var(--foreground);
-  caret-color: var(--blue);
+  caret-color: var(--m-brand);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 17px;
   line-height: 1.55;
@@ -1602,7 +1659,7 @@ input {
 
 .m-type-check {
   flex: none;
-  color: var(--blue);
+  color: var(--m-tint);
 }
 
 .m-open-file {
@@ -1610,7 +1667,7 @@ input {
   align-items: center;
   gap: 12px;
   padding: 0 16px;
-  color: var(--blue);
+  color: var(--m-tint);
   text-align: left;
 }
 
@@ -1718,7 +1775,14 @@ input {
   user-select: text;
 }
 
+/* The desktop pads its document scroller with page margins sized for a
+   window (24px a side, on top of the canvas's own gutter), which left a
+   phone's text column 44px in from each edge. Writing uses the reader's
+   column and the reader's heading sizes, so a document looks the same on
+   both sides of the Edit button. */
 .m-rich-host .markie-document-scroll {
+  padding: 0;
+  scroll-padding: 16px 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
@@ -1727,12 +1791,29 @@ input {
   width: 100% !important;
   padding: 14px var(--m-gutter) 48px;
   font-size: 17px !important;
+  line-height: 1.6;
+}
+
+.m-rich-host .markdown-body h1 {
+  font-size: 1.7em;
+  line-height: 1.2;
+  margin-top: 0.4em;
+}
+
+.m-rich-host .markdown-body h2 {
+  font-size: 1.35em;
+  line-height: 1.25;
+}
+
+.m-rich-host .markdown-body h3 {
+  font-size: 1.15em;
+  line-height: 1.3;
 }
 
 .m-rich-host .ProseMirror {
   min-height: 60vh;
   outline: none;
-  caret-color: var(--blue);
+  caret-color: var(--m-brand);
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
@@ -1797,12 +1878,12 @@ input {
 }
 
 .m-tool:active:not(:disabled) {
-  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
 }
 
 .m-tool.is-active {
-  background: color-mix(in srgb, var(--blue) 20%, var(--m-field-bg));
-  color: var(--blue);
+  background: color-mix(in srgb, var(--foreground) 14%, var(--m-field-bg));
+  color: var(--foreground);
 }
 
 .m-tool:disabled {
@@ -1811,7 +1892,7 @@ input {
 
 .m-tool-bold { font-weight: 800; }
 .m-tool-italic { font-family: Georgia, serif; font-style: italic; }
-.m-tool-comment { color: var(--blue); }
+.m-tool-comment { color: var(--m-tint); }
 .m-tool-divider {
   flex: none;
   width: 1px;
@@ -1877,7 +1958,7 @@ input {
   height: 17px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--blue);
+  background: var(--m-brand-strong);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -2147,7 +2228,7 @@ input {
   margin-top: 12px;
   border: 0;
   background: none;
-  color: var(--blue);
+  color: var(--m-tint);
   font-size: 15px;
 }
 
@@ -2165,7 +2246,7 @@ input {
   align-items: center;
   gap: 12px;
   padding: 0 16px;
-  color: var(--blue);
+  color: var(--m-tint);
   text-align: left;
 }
 
@@ -2255,20 +2336,21 @@ input {
   min-width: 0;
 }
 
+/* Names, addresses and status lines wrap rather than end in an ellipsis: on
+   a phone the cut-off part is the domain or "accept", the part that matters. */
 .m-share-person-name {
-  overflow: hidden;
   font-size: 15px;
   font-weight: 550;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
-.m-share-person-email {
-  overflow: hidden;
+.m-share-person-email,
+.m-share-person-status {
   color: var(--muted);
   font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .m-share-person-role {
@@ -2287,8 +2369,9 @@ input {
 .m-share-remove {
   display: inline-grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
+  margin-right: -8px;
   border: 0;
   background: none;
   color: var(--muted);
@@ -2357,6 +2440,15 @@ input {
 .m-chooser .markie-overlay-panel {
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* The Writing cards are 138px tall so four sit level in a window's row. On
+   a phone they stack one per line and that height was mostly empty, pushing
+   Plain Text and the data formats a full scroll down. Here they take their
+   content's height. (Matches the class new-document-modal.tsx sets; if that
+   changes, the cards simply go back to the desktop's height.) */
+.m-chooser .markie-overlay-panel button[class*="min-h-[138px]"] {
+  min-height: 0;
 }
 
 .m-chooser-open {
@@ -2440,12 +2532,18 @@ input {
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--m-brand-strong);
+  color: #fff;
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+/* The screen's lines of text sit on the same edge as its title and list. */
+.m-requests .m-group-footer {
+  margin-left: var(--m-gutter);
+  margin-right: var(--m-gutter);
 }
 
 .m-requests-intro {
@@ -2476,8 +2574,15 @@ input {
   background: var(--m-separator);
 }
 
+.m-request-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 .m-request-text {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
@@ -2485,7 +2590,19 @@ input {
 
 .m-request-title {
   font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
   overflow-wrap: anywhere;
+}
+
+.m-request-from {
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.m-request-from strong {
+  font-weight: 550;
 }
 
 .m-request-email {
@@ -2497,5 +2614,16 @@ input {
 .m-request-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  /* Under the words, past the icon (29px) and its gap. */
+  padding-left: 41px;
+}
+
+/* Block is the rare, heavy one: a plain red word at the far end, not a
+   third button the same weight as Accept and Decline. */
+.m-request-block {
+  margin-left: auto;
+  padding: 0 4px;
+  font-weight: 500;
 }

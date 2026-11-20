@@ -2419,6 +2419,15 @@ input {
   user-select: none;
 }
 
+/* The Writing cards are 138px tall so four sit level in a window's row. On
+   a phone they stack one per line and that height was mostly empty, pushing
+   Plain Text and the data formats a full scroll down. Here they take their
+   content's height. (Matches the class new-document-modal.tsx sets; if that
+   changes, the cards simply go back to the desktop's height.) */
+.m-chooser .markie-overlay-panel button[class*="min-h-[138px]"] {
+  min-height: 0;
+}
+
 .m-chooser-open {
   display: flex;
   align-items: center;

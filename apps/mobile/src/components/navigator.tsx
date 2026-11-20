@@ -1,7 +1,16 @@
 // A push/pop stack with the platform's motion: the new screen slides in from
 // the right over a dimmed, parallaxed parent, and an edge swipe pulls it back.
 // Screens below the top stay mounted, so going back keeps the list where it was.
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type TouchEvent } from "react";
+import { createContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type TouchEvent } from "react";
+
+/**
+ * The stack item a screen is drawn in, for the panels that belong over that
+ * whole screen (sheets). They are put here rather than where the screen
+ * renders them: inside its scrolling body, iOS's web view paints them under
+ * the screen's own nav bar, which then stays bright and tappable over the
+ * dimmed backdrop. Null outside a Navigator (tests), where they stay inline.
+ */
+export const StackItemContext = createContext<HTMLElement | null>(null);
 
 export interface StackEntry {
   key: string;
@@ -113,7 +122,7 @@ export function Navigator({ entries, onPop }: NavigatorProps) {
         if (drag !== null && isTop) style = { transform: `translate3d(${drag}px,0,0)`, transition, animation: "none" };
         if (drag !== null && isUnder) style = { transform: `translate3d(${-30 + (drag / width) * 30}%,0,0)`, transition, animation: "none" };
         return (
-          <div
+          <StackItem
             key={entry.key}
             className={[
               "m-stack-item",
@@ -124,14 +133,28 @@ export function Navigator({ entries, onPop }: NavigatorProps) {
               hidden ? "is-hidden" : "",
             ].join(" ")}
             style={style}
-            aria-hidden={!isTop || isLeaving ? true : undefined}
-            inert={!isTop || isLeaving ? true : undefined}
-            tabIndex={-1}
+            inactive={!isTop || isLeaving}
           >
             {entry.node}
-          </div>
+          </StackItem>
         );
       })}
+    </div>
+  );
+}
+
+function StackItem({ className, style, inactive, children }: { className: string; style?: CSSProperties; inactive: boolean; children: ReactNode }) {
+  const [element, setElement] = useState<HTMLDivElement | null>(null);
+  return (
+    <div
+      ref={setElement}
+      className={className}
+      style={style}
+      aria-hidden={inactive ? true : undefined}
+      inert={inactive ? true : undefined}
+      tabIndex={-1}
+    >
+      <StackItemContext.Provider value={element}>{children}</StackItemContext.Provider>
     </div>
   );
 }

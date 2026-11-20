@@ -1,8 +1,11 @@
 // A bottom sheet: the phone's way to put a panel over the screen it belongs
 // to (comments, sharing, a link). It sits above the keyboard when one is up,
-// and a tap on the dimmed screen behind it closes it.
-import { useEffect, useId, type ReactNode } from "react";
+// and a tap on the dimmed screen behind it closes it. It is drawn in the
+// screen's stack item (navigator.tsx StackItemContext), over the nav bar too.
+import { useContext, useEffect, useId, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useKeyboardInset } from "../lib/keyboard-inset";
+import { StackItemContext } from "./navigator";
 
 interface SheetProps {
   title: string;
@@ -18,12 +21,13 @@ interface SheetProps {
 export function Sheet({ title, onClose, children, accessory, tall = false, className = "" }: SheetProps) {
   const keyboard = useKeyboardInset();
   const titleId = useId();
+  const layer = useContext(StackItemContext);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  const sheet = (
     <div className="m-sheet-scrim" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section
         role="dialog"
@@ -42,4 +46,5 @@ export function Sheet({ title, onClose, children, accessory, tall = false, class
       </section>
     </div>
   );
+  return layer ? createPortal(sheet, layer) : sheet;
 }

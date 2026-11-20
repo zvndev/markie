@@ -59,6 +59,14 @@ describe("a document's HTML on the phone", () => {
     expect(root.querySelectorAll(".m-table-scroll")).toHaveLength(1);
   });
 
+  it("lets only a table's prose-length cells wrap, so short ones read across on one line", () => {
+    const { html } = render(
+      "| Carrier | Lane | Notes |\n|---|---|---|\n| Maersk | Shanghai to Long Beach | Two vessels skipped Busan in October |\n"
+    );
+    const wrapping = Array.from(parse(html).querySelectorAll(".m-cell-wrap")).map((cell) => cell.textContent);
+    expect(wrapping).toEqual(["Two vessels skipped Busan in October"]);
+  });
+
   it("turns a picture beside the author's file into an asset to fetch, the way the server's web view does", () => {
     const { html, assets } = render(
       "![shot](shots/a%20b.png)\n\n![again](shots/a%20b.png?x=1#y)\n\n![web](https://example.com/a.png)\n\n![proto](//cdn.example/a.png)\n\n![inline](data:image/png;base64,AAAA)"

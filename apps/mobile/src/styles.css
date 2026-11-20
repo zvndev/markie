@@ -1153,9 +1153,28 @@ input {
   font-size: 0.88em;
 }
 
+/* A short cell keeps to one line, so a row reads across and the table
+   scrolls instead of stacking "Shanghai / to Long / Beach" three lines deep.
+   A cell long enough to be prose (document-html.ts marks it) wraps inside a
+   width a phone can read. */
 .m-markdown th,
 .m-markdown td {
   overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.m-markdown .m-table-scroll thead th {
+  padding: 0.55em 0.85em;
+}
+
+.m-markdown .m-table-scroll tbody td {
+  padding: 0.5em 0.85em;
+}
+
+.m-markdown th.m-cell-wrap,
+.m-markdown td.m-cell-wrap {
+  min-width: 14em;
+  white-space: normal;
 }
 
 .m-markdown pre {

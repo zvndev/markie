@@ -24,6 +24,9 @@ export const MAX_DOCUMENT_ASSETS = 60;
 
 const APP_CLASS = /^m-/;
 export const TABLE_SCROLL_CLASS = "m-table-scroll";
+export const TABLE_WRAP_CELL_CLASS = "m-cell-wrap";
+/** Longer than this, a table cell is prose and wraps; shorter, it stays on one line. */
+const WRAP_CELL_CHARS = 32;
 export const ASSET_MISSING_CLASS = "m-asset-missing";
 
 /** The server's own test (rehype-cloud-assets.ts isLocal): no scheme, not protocol-relative. */
@@ -82,11 +85,17 @@ export function prepareDocumentHtml(html: string, doc: Document = document): Pre
 
   // Every table in a scroller of its own. Added after the class pass, so the
   // only `m-` classes left in a document are the ones this file puts there.
+  // On a phone a table's short cells stay on one line (styles.css), so a row
+  // reads across instead of stacking every two words; a cell long enough to
+  // be a sentence is marked to wrap, inside a readable width.
   for (const table of Array.from(root.querySelectorAll("table"))) {
     const scroller = doc.createElement("div");
     scroller.className = TABLE_SCROLL_CLASS;
     table.replaceWith(scroller);
     scroller.append(table);
+    for (const cell of Array.from(table.querySelectorAll("th, td"))) {
+      if ((cell.textContent ?? "").trim().length > WRAP_CELL_CHARS) cell.classList.add(TABLE_WRAP_CELL_CLASS);
+    }
   }
 
   return { html: template.innerHTML, assets };

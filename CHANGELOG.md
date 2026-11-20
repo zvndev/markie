@@ -8,8 +8,16 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-11-20
+
 ### Added
 
+- **You choose who can share with you.** The first time someone shares a
+  document with you, it waits in Requests at the top of your Cloud list until
+  you accept them. Accept once and their later shares arrive straight away.
+  You can also decline a request or block the sender. Settings, Account lists
+  the people you accepted and the people you blocked, and you can remove or
+  unblock them there. People who already shared with you are accepted for you.
 - **Sign in with Apple.** On the desktop app and on markiedocs.com you can
   now choose Continue with Apple, under Continue with Google. If your Apple
   ID's email already has a Markie account, Markie asks you to sign in with an
@@ -29,6 +37,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider hasn't verified the account's email, Markie says so and makes no
   account. Verify the email with Google or Apple, or sign in with an email
   code.
+- **Sharing shows who hasn't accepted yet.** In the share dialog, a person
+  who hasn't accepted you yet shows as "Waiting for them to accept".
 
 ## [0.9.6] - 2026-11-13
 

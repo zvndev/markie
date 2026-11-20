@@ -4,7 +4,10 @@ import { authStore } from "./auth-store";
 const browserFetch: typeof fetch = (input, init) => globalThis.fetch(input, init);
 
 export interface AccountIdentity { id: string; email: string; primary: boolean; verifiedAt: string | number | null }
-export interface AccountProvider { id: string; providerId: string }
+/** A Google or Apple sign-in linked to the account. `email` names which one, when the server recorded it. */
+export interface AccountProvider { id: string; providerId: string; email?: string }
+export type LinkProvider = "google" | "apple";
+export type IdentityScope = "email-add" | "email-remove" | `${LinkProvider}-link` | `${LinkProvider}-remove`;
 export interface CloudArea { id: string; label: string; identityId?: string | null }
 export interface CloudPlacement { kind: "markdown" | "snapshot"; documentId: string; areaId: string }
 export interface CloudAreas { areas: CloudArea[]; placements: CloudPlacement[] }
@@ -95,22 +98,29 @@ export class AccountIdentitiesClient {
     const data = await this.call("/identities", "GET", undefined, signal);
     if (!Array.isArray(data.identities) || data.identities.length > 100) throw invalid();
     if (data.providers !== undefined && (!Array.isArray(data.providers) || data.providers.length > 100)) throw invalid();
-    const providers = ((data.providers ?? []) as unknown[]).map((provider): AccountProvider => { if (!record(provider) || !id(provider.id) || typeof provider.providerId !== "string" || provider.providerId.length > 80) throw invalid(); return { id: provider.id, providerId: provider.providerId }; });
-    return { identities: data.identities.map(identity), providers, googleAvailable: data.googleAvailable === true };
+    const providers = ((data.providers ?? []) as unknown[]).map((provider): AccountProvider => {
+      if (!record(provider) || !id(provider.id) || typeof provider.providerId !== "string" || provider.providerId.length > 80) throw invalid();
+      // A label only: shown as text, never used to decide anything. One that is
+      // not a short printable line is left off rather than failing the list.
+      const email = typeof provider.email === "string" && provider.email.length <= 320 && !/[\u0000-\u001f\u007f]/.test(provider.email) ? provider.email : undefined;
+      return { id: provider.id, providerId: provider.providerId, ...(email ? { email } : {}) };
+    });
+    return { identities: data.identities.map(identity), providers, googleAvailable: data.googleAvailable === true, appleAvailable: data.appleAvailable === true };
   }
-  async startGoogle(proofId: string, signal?: AbortSignal) {
-    const data = await this.call("/identities/google/start", "POST", { proofId }, signal);
+  /** The browser handoff for linking: /account/link-google or /account/link-apple on this server only. */
+  async startProviderLink(provider: LinkProvider, proofId: string, signal?: AbortSignal) {
+    const data = await this.call(`/identities/${provider}/start`, "POST", { proofId }, signal);
     if (!id(data.intentId) || typeof data.browserUrl !== "string") throw invalid();
     const target = new URL(data.browserUrl), base = new URL(this.#scope.serverURL);
-    if (target.origin !== base.origin || target.pathname !== "/account/link-google" || target.username || target.password || target.search || !target.hash.startsWith(`#${data.intentId}.`) || !/^#[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(target.hash)) throw invalid();
+    if (target.origin !== base.origin || target.pathname !== `/account/link-${provider}` || target.username || target.password || target.search || !target.hash.startsWith(`#${data.intentId}.`) || !/^#[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(target.hash)) throw invalid();
     return { intentId: data.intentId, browserUrl: target.href };
   }
-  async googleStatus(intentId: string, signal?: AbortSignal): Promise<"pending" | "complete" | "expired"> {
-    if (!id(intentId)) throw invalid(); const data = await this.call(`/identities/google/${intentId}`, "GET", undefined, signal);
+  async providerLinkStatus(provider: LinkProvider, intentId: string, signal?: AbortSignal): Promise<"pending" | "complete" | "expired"> {
+    if (!id(intentId)) throw invalid(); const data = await this.call(`/identities/${provider}/${intentId}`, "GET", undefined, signal);
     if (data.intentId !== intentId || !["pending", "complete", "expired"].includes(String(data.status))) throw invalid(); return data.status as "pending" | "complete" | "expired";
   }
-  async unlinkGoogle(providerId: string, proofId: string, signal?: AbortSignal) {
-    if (!id(providerId)) throw invalid(); const data = await this.call(`/identities/google-provider/${providerId}`, "DELETE", { proofId }, signal);
+  async unlinkProvider(provider: LinkProvider, providerId: string, proofId: string, signal?: AbortSignal) {
+    if (!id(providerId)) throw invalid(); const data = await this.call(`/identities/${provider}-provider/${providerId}`, "DELETE", { proofId }, signal);
     if (data.ok !== true || data.signedOut !== true) throw invalid(); return data;
   }
   async challenge(path: "/identities/step-up/start" | "/identities/email/start", body: unknown, signal?: AbortSignal): Promise<IdentityChallenge> {
@@ -118,7 +128,7 @@ export class AccountIdentitiesClient {
     if (!id(data.challengeId) || !Number.isSafeInteger(data.expiresInSeconds) || Number(data.expiresInSeconds) < 1) throw invalid();
     return { challengeId: data.challengeId, expiresInSeconds: Number(data.expiresInSeconds) };
   }
-  startStepUp(scope: "email-add" | "email-remove" | "google-link" | "google-remove" = "email-add", signal?: AbortSignal) { return this.challenge("/identities/step-up/start", { scope }, signal); }
+  startStepUp(scope: IdentityScope = "email-add", signal?: AbortSignal) { return this.challenge("/identities/step-up/start", { scope }, signal); }
   async verifyStepUp(challengeId: string, code: string, signal?: AbortSignal) {
     const data = await this.call("/identities/step-up/verify", "POST", { challengeId, code }, signal);
     if (!id(data.proofId)) throw invalid(); return data.proofId;

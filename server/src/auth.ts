@@ -8,13 +8,21 @@ import { claimPendingInvites } from "./pending.ts";
 import { resolveAuthSecret } from "./auth-secret.ts";
 import { otpEmail } from "./otp-email.ts";
 import { applicationOrigins } from "./application-origins.ts";
-import { accountContext, accountIdentitiesEnabled, assertNewAccountEmail } from "./account-context.ts";
-import { assertSignupAllowed } from "./signup.ts";
+import { accountContext, accountIdentitiesEnabled, allProviderLinks, assertNewAccountEmail, providerLinks } from "./account-context.ts";
+import { assertProviderEmailVerified, assertSignupAllowed } from "./signup.ts";
 import { revokeAgentTokensForUser } from "./agent-token-store.ts";
 import { clientIpHeader } from "./runtime-config.ts";
+import { APPLE_ISSUER, appleConfigFromEnv, createAppleClientSecret } from "./apple-sign-in.ts";
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
+
+// Sign in with Apple, on only when APPLE_CLIENT_ID, APPLE_TEAM_ID,
+// APPLE_KEY_ID and APPLE_PRIVATE_KEY are all set (apple-sign-in.ts).
+const appleConfig = appleConfigFromEnv(process.env);
+/** The signed client secret Apple's token endpoint gets, or null with Apple off. */
+export const appleClientSecret = appleConfig ? createAppleClientSecret(appleConfig) : null;
+export const appleConfigured = !!appleClientSecret;
 
 const authDatabase = openDatabase();
 
@@ -91,6 +99,12 @@ export const auth = betterAuth({
   trustedOrigins: [
     ...applicationOrigins(),
     "markie://", // desktop deep-link auth bridge target
+    // Apple answers its consent screen with a form POST from its own origin
+    // to /api/auth/callback/apple (response_mode=form_post), which
+    // better-auth's origin check refuses unless the origin is trusted. It
+    // then turns that POST into a GET so the Lax state cookie arrives.
+    // Trusted for auth only: it is not an application origin and gets no CORS.
+    ...(appleConfigured ? [APPLE_ISSUER] : []),
   ],
   // Which request header carries the real client address, so rate limits are
   // per client and not one shared bucket. Only a header the edge in front of
@@ -170,19 +184,22 @@ export const auth = betterAuth({
       create: {
         // MARKIE_SIGNUP (signup.ts). Every way an account comes into being
         // passes through here: email sign-up, a first email-code sign-in and
-        // a first Google sign-in, so this is the one place it is decided.
-        before: async (user) => {
+        // a first Google or Apple sign-in, so this is the one place it is decided.
+        before: async (user, context) => {
           assertSignupAllowed(authDatabase, user.email ?? "");
+          // A Google or Apple sign-up must arrive with an address its
+          // provider verified (signup.ts PROVIDER_EMAIL_UNVERIFIED).
+          assertProviderEmailVerified(user, context?.path);
           if (user.email) assertNewAccountEmail(user.email);
-          const google = accountContext()?.google;
-          if (google) {
-            // A first Google sign-in creates the user and its provider row in
-            // one transaction, and create.after only runs once that commits:
-            // after the provider row's create.before has already asked whether
-            // this request created the user. Fix the ID here and record it,
-            // or every new Google user is refused.
+          const links = allProviderLinks();
+          if (links.length) {
+            // A first Google or Apple sign-in creates the user and its
+            // provider row in one transaction, and create.after only runs once
+            // that commits: after the provider row's create.before has already
+            // asked whether this request created the user. Fix the ID here and
+            // record it, or every new Google or Apple user is refused.
             const id = typeof (user as { id?: unknown }).id === "string" && (user as { id: string }).id ? (user as { id: string }).id : randomUUID();
-            google.noteCreatedUser(id);
+            for (const provider of links) provider.noteCreatedUser(id);
             return { data: { ...user, id } };
           }
         },
@@ -195,7 +212,7 @@ export const auth = betterAuth({
           email?: string;
           emailVerified?: boolean;
         }) => {
-          accountContext()?.google?.noteCreatedUser(user.id);
+          for (const provider of allProviderLinks()) provider.noteCreatedUser(user.id);
           try {
             if (user.emailVerified && user.email) {
               claimPendingInvites(user.email, user.id);
@@ -229,34 +246,50 @@ export const auth = betterAuth({
     account: {
       create: {
         before: async (account) => {
-          const google = accountContext()?.google;
-          if (account.providerId === "google" && google) {
+          const links = providerLinks(account.providerId);
+          if (links) {
             // Upstream assigns an ID after its awaited before hook unless we
             // supply one. Fence this exact future INSERT, not merely the request.
             const id = randomUUID();
-            google.authorizeGoogleAccountCreation(account.userId, id);
+            links.authorizeAccountCreation(account.userId, id);
             return { data: { ...account, id } };
           }
         },
         after: async (account) => {
-          if (account.providerId === "google") accountContext()?.google?.noteGoogleAccountCreated(account.userId, account.id);
+          // Which Google or Apple account this is, for the linked sign-ins
+          // list (provider-account-labels.ts). Display only; never throws.
+          accountContext()?.labels?.record(account);
+          providerLinks(account.providerId)?.noteAccountCreated(account.userId, account.id);
         },
       },
       update: {
         before: async (account) => {
           // A known link callback must still hold its initiating session at
           // the provider-write boundary, even when upstream supplies a patch.
-          accountContext()?.google?.assertGoogleAccountMutation(typeof account.userId === "string" ? account.userId : "");
+          for (const provider of allProviderLinks()) provider.assertAccountMutation(typeof account.userId === "string" ? account.userId : "");
         },
       },
     },
   },
-  socialProviders: googleConfigured
+  socialProviders: googleConfigured || appleConfig
     ? {
-        google: {
-          clientId: process.env.GOOGLE_CLIENT_ID!,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-        },
+        ...(googleConfigured ? {
+          google: {
+            clientId: process.env.GOOGLE_CLIENT_ID!,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+          },
+        } : {}),
+        ...(appleConfig && appleClientSecret ? {
+          apple: {
+            clientId: appleConfig.clientId,
+            // A getter, not a value. better-auth builds the provider from
+            // this very object and reads options.clientSecret each time it
+            // calls Apple's token endpoint, so every exchange gets a secret
+            // that is less than a day old (apple-sign-in.test.ts drives the
+            // real provider to prove it).
+            get clientSecret() { return appleClientSecret.current(); },
+          },
+        } : {}),
       }
     : undefined,
   plugins: [

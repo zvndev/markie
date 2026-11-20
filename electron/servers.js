@@ -32,9 +32,11 @@ function signupMode(value) {
 }
 
 // The sign-in methods a server offers, reduced to what this app understands.
+// `apple` is there only when the server offers it, as the server says it
+// (server/src/index.ts), so a server without Apple reads exactly as before.
 function cleanSignIn(signIn) {
   const s = signIn && typeof signIn === "object" ? signIn : {};
-  return { email: s.email !== false, google: s.google === true, signup: signupMode(s.signup) };
+  return { email: s.email !== false, google: s.google === true, ...(s.apple === true ? { apple: true } : {}), signup: signupMode(s.signup) };
 }
 const MAX_NAME = 80;
 const MAX_INFO_BYTES = 64 * 1024;
@@ -273,6 +275,10 @@ function createServerStore({
 } = {}) {
   let added = load();
   let defaultInfo = { ...DEFAULT_INFO, signIn: { ...DEFAULT_INFO.signIn } };
+  // Whether Markie Cloud offers Apple, learned from its own answer
+  // (refreshDefault). Nobody adds Markie Cloud, so nothing else asks it.
+  // `known` says some answer has arrived; `at` is when the last check began.
+  let defaultCheck = { inflight: null, at: -Infinity, known: false };
   // probeId -> { origin, info, at }. A server is added from a check main
   // made itself, so the name the user confirmed is the name the server gave,
   // not one the renderer passed in.
@@ -408,7 +414,33 @@ function createServerStore({
     return { ok: true, removed: true };
   }
 
-  return { list, origins, isTrusted, get, probe, add, remove };
+  // Ask Markie Cloud what it offers, and ask again once the last answer, or
+  // the last failed try, is PROBE_TTL_MS old, so a running app follows Cloud
+  // turning Apple on or off. A failed try keeps the last answer. Only `apple`
+  // is taken from the answer: every other default stays what every build
+  // before this one assumed, so Google and email sign-in never depend on it.
+  function refreshDefault() {
+    if (defaultCheck.inflight) return defaultCheck.inflight;
+    if (now() - defaultCheck.at < PROBE_TTL_MS) return Promise.resolve(defaultCheck.known);
+    defaultCheck.at = now();
+    defaultCheck.inflight = probeServerInfo(DEFAULT_SERVER, { fetchImpl })
+      .then((answer) => {
+        if (!answer.ok) return defaultCheck.known;
+        const signIn = { ...defaultInfo.signIn };
+        delete signIn.apple;
+        if (answer.info.signIn.apple === true) signIn.apple = true;
+        defaultInfo = { ...defaultInfo, signIn };
+        defaultCheck.known = true;
+        return true;
+      })
+      .catch(() => defaultCheck.known)
+      .finally(() => {
+        defaultCheck.inflight = null;
+      });
+    return defaultCheck.inflight;
+  }
+
+  return { list, origins, isTrusted, get, probe, add, remove, refreshDefault };
 }
 
 module.exports = {

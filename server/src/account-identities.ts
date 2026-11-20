@@ -2,7 +2,8 @@ import { createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 
 import type Database from "better-sqlite3";
 
 export interface IdentityActor { userId: string; email: string; emailVerified: boolean; sessionId: string }
-export type IdentityScope = "email-add" | "email-remove" | "google-link" | "google-remove";
+export type IdentityScope = "email-add" | "email-remove" | "google-link" | "google-remove" | "apple-link" | "apple-remove";
+export const IDENTITY_SCOPES: readonly IdentityScope[] = ["email-add", "email-remove", "google-link", "google-remove", "apple-link", "apple-remove"];
 export interface AccountIdentity { id: string; email: string; primary: boolean; verifiedAt: number }
 export interface IdentityDelivery { challengeId: string; expiresInSeconds: number; email?: string; code?: string; unclaimedEmail?: string }
 export class IdentityError extends Error {
@@ -208,7 +209,7 @@ export function createIdentityStore(db: Database.Database, options: IdentityStor
     startStepUp(actor: IdentityActor, scope: IdentityScope = "email-add") {
       return transaction(() => {
         const row = currentActor(actor);
-        if (!["email-add", "email-remove", "google-link", "google-remove"].includes(scope)) fail("invalid-request", 400);
+        if (!IDENTITY_SCOPES.includes(scope)) fail("invalid-request", 400);
         primary(actor.userId);
         db.prepare("UPDATE account_identity_proofs SET consumed_at=? WHERE user_id=? AND session_hash=? AND scope=? AND consumed_at IS NULL").run(now(), actor.userId, mac("binding", actor.sessionId), scope);
         return issue(actor.userId, actor.sessionId, "step-up", normalizeIdentityEmail(row.email)!, scope);

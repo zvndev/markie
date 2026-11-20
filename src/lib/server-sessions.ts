@@ -253,8 +253,9 @@ export function serverFetch(origin: string, path: string, init?: RequestInit): P
 }
 
 /**
- * Sign-in against a non-primary server: email and password, and Google when
- * that server says it offers it. The email-code flows stay Markie Cloud's.
+ * Sign-in against a non-primary server: email and password, and Google or
+ * Apple when that server says it offers them. The email-code flows stay
+ * Markie Cloud's.
  */
 export function serverAuthClient(origin: string) {
   origin = norm(origin);
@@ -286,6 +287,10 @@ export function serverAuthClient(origin: string) {
     googleSignInURL: (): string | null => {
       const state = createAuthState({ origin });
       return state ? `${origin}/auth/google-start?state=${encodeURIComponent(state)}` : null;
+    },
+    appleSignInURL: (): string | null => {
+      const state = createAuthState({ origin });
+      return state ? `${origin}/auth/apple-start?state=${encodeURIComponent(state)}` : null;
     },
   };
 }

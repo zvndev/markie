@@ -483,6 +483,36 @@ describe("Settings — servers", () => {
   });
 });
 
+describe("Settings — Apple on an added server", () => {
+  const CLOUD = { origin: "https://api.markiedocs.com", name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true }, version: null };
+  const server = (signIn: Record<string, unknown>) => ({ origin: "https://docs.example.com", name: "Team docs", isDefault: false, signIn, version: null });
+
+  async function openSignIn(signIn: Record<string, unknown>) {
+    const user = userEvent.setup();
+    const bridge = installBridge({ serversList: vi.fn(async () => [CLOUD, server(signIn)]) } as never);
+    renderSettings({ initialSection: "advanced" });
+    const row = await screen.findByRole("listitem", { name: "Team docs" });
+    await user.click(within(row).getByRole("button", { name: "Sign in" }));
+    return { user, bridge, form: within(row).getByRole("form", { name: "Sign in to Team docs at docs.example.com" }) };
+  }
+
+  it("offers Continue with Apple under Google when the server has Apple, and starts it on that server", async () => {
+    const { user, bridge, form } = await openSignIn({ email: true, google: true, apple: true });
+    const buttons = within(form).getAllByRole("button").map((button) => button.textContent?.trim());
+    expect(buttons.indexOf("Continue with Apple")).toBe(buttons.indexOf("Continue with Google") + 1);
+    await user.click(within(form).getByRole("button", { name: "Continue with Apple" }));
+    const opened = String((bridge.openExternal as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+    expect(opened.startsWith("https://docs.example.com/auth/apple-start?state=")).toBe(true);
+    expect(await within(form).findByText("Finish signing in in your browser.")).toBeInTheDocument();
+  });
+
+  it("shows no Apple button on a server that does not offer it", async () => {
+    const { form } = await openSignIn({ email: true, google: true });
+    expect(within(form).getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+    expect(within(form).queryByRole("button", { name: "Continue with Apple" })).toBeNull();
+  });
+});
+
 describe("Settings — sign-up on a server", () => {
   const server = (signup: "open" | "invite" | "closed") => ({
     origin: "https://docs.example.com",

@@ -539,10 +539,10 @@ export const authClient = {
     return res;
   },
 
-  // Desktop Google sign-in. The whole flow must run in the browser so
-  // better-auth's OAuth state cookie is present on the callback, so we just
-  // open a server route that starts the flow and redirects to Google. After
-  // consent, the server's desktop bridge deep-links the session back in.
+  // Desktop Google or Apple sign-in. The whole flow must run in the browser
+  // so better-auth's OAuth state cookie is present on the callback, so we just
+  // open a server route that starts the flow and redirects to the provider.
+  // After consent, the server's desktop bridge deep-links the session back in.
   //
   // The `state` nonce rides along so the deep link that comes back can prove it
   // belongs to this sign-in. Returns null when we can't mint one, which the
@@ -550,13 +550,18 @@ export const authClient = {
   //
   // The nonce names the server it was minted for, so the token the deep link
   // brings back is stored for, and sent to, that server only.
-  googleSignInURL: (): string | null => {
-    const origin = getServerURL();
-    const state = createAuthState({ origin });
-    if (!state) return null;
-    return `${origin}/auth/google-start?state=${encodeURIComponent(state)}`;
-  },
+  googleSignInURL: (): string | null => desktopSignInURL("google"),
+  // The same flow through /auth/apple-start, offered only when the server
+  // says it has Apple (sign-in.tsx).
+  appleSignInURL: (): string | null => desktopSignInURL("apple"),
 };
+
+function desktopSignInURL(provider: "google" | "apple"): string | null {
+  const origin = getServerURL();
+  const state = createAuthState({ origin });
+  if (!state) return null;
+  return `${origin}/auth/${provider}-start?state=${encodeURIComponent(state)}`;
+}
 
 export interface ShareMember {
   // null for a pending invite (the email hasn't joined yet)

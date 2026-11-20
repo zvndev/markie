@@ -6,14 +6,17 @@
 // the top, and Settings renders the same component instead of its own copy.
 //
 // Method order is deliberate. Google is the smoothest path on a desktop app
-// that can hand off to the system browser, an emailed code is the one that
-// works for everyone, and a password is a preference rather than a default.
+// that can hand off to the system browser, Apple is the same path for people
+// who would rather use their Apple ID (shown only when the server offers it),
+// an emailed code is the one that works for everyone, and a password is a
+// preference rather than a default.
 
 import { useState } from "react";
 import { authClient, authFailureCode } from "@/lib/auth-client";
 import { authStore } from "@/lib/auth-store";
 import { authErrorMessage, signInReasonCopy, signupRefusal, type AuthContext, type SignInReason } from "@/lib/auth-errors";
 import { getElectronAPI } from "@/lib/electron";
+import { useTrustedServers } from "@/lib/server-sessions";
 import { MarkieLogo } from "@/components/markie-logo";
 
 type View = "choose" | "otp-code" | "password" | "reset-request" | "reset-verify";
@@ -22,7 +25,7 @@ interface SignInFormProps {
   reason: SignInReason;
   /** Fired once a session actually exists. */
   onDone?: () => void;
-  /** Browser document sharing uses email sign-in, not the desktop deep-link bridge. */
+  /** Browser document sharing uses email sign-in, not the desktop deep-link bridge, so no Google or Apple. */
   allowGoogle?: boolean;
 }
 
@@ -57,6 +60,10 @@ export function SignInForm({ reason, onDone, allowGoogle = true }: SignInFormPro
   const [busy, setBusy] = useState(false);
 
   const copy = signInReasonCopy(reason);
+  // Markie Cloud says for itself whether it offers Apple (electron/servers.js
+  // refreshDefault). Without that answer there is no Apple button.
+  const servers = useTrustedServers();
+  const allowApple = allowGoogle && servers.some((server) => server.isDefault && server.signIn.apple === true);
 
   // Every request funnels through here so no call site can invent its own error
   // string or forget to clear the last one.
@@ -83,14 +90,14 @@ export function SignInForm({ reason, onDone, allowGoogle = true }: SignInFormPro
     onDone?.();
   };
 
-  const startGoogle = () => {
+  const startProvider = (provider: "Google" | "Apple") => {
     setError(null);
     // Null means we couldn't mint the nonce that proves the returning deep link
     // belongs to this sign-in. Starting anyway would fail at the other end with
     // nothing to explain it.
-    const url = authClient.googleSignInURL();
+    const url = provider === "Apple" ? authClient.appleSignInURL() : authClient.googleSignInURL();
     if (!url) {
-      setError("Couldn't start Google sign-in on this machine. Use an email code instead.");
+      setError(`Couldn't start ${provider} sign-in on this machine. Use an email code instead.`);
       return;
     }
     const api = getElectronAPI();
@@ -193,8 +200,12 @@ export function SignInForm({ reason, onDone, allowGoogle = true }: SignInFormPro
 
       {view === "choose" && (
         <>
-          {allowGoogle && <button className={PRIMARY} onClick={startGoogle} disabled={busy}>
+          {allowGoogle && <button className={PRIMARY} onClick={() => startProvider("Google")} disabled={busy}>
             Continue with Google
+          </button>}
+
+          {allowApple && <button className={PRIMARY} onClick={() => startProvider("Apple")} disabled={busy}>
+            Continue with Apple
           </button>}
 
           {allowGoogle && <div className="flex items-center gap-3 py-1" aria-hidden="true">
@@ -309,7 +320,7 @@ export function SignInForm({ reason, onDone, allowGoogle = true }: SignInFormPro
             )}
           </div>
           <button className={LINK} onClick={() => setView("choose")}>
-            Back to Google and email codes
+            {allowApple ? "Back to Google, Apple and email codes" : "Back to Google and email codes"}
           </button>
         </>
       )}

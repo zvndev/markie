@@ -110,6 +110,27 @@ export function signupRefusalMessage(code: keyof typeof MESSAGES): string {
   return MESSAGES[code];
 }
 
+// A Google or Apple sign-up whose provider has not verified the address. The
+// address is only a claim then. An account made from it would keep its
+// provider row after the real mailbox owner proves the address
+// (/email-otp/verify-email only flips the flag), so the claimant would keep
+// a way in. Email-code and password sign-ups prove the address their own way
+// and are not affected.
+export const PROVIDER_EMAIL_UNVERIFIED = "provider_email_unverified";
+const PROVIDER_EMAIL_UNVERIFIED_MESSAGE = "Markie only makes an account from a Google or Apple sign-in whose email the provider has verified.";
+
+/** The better-auth routes where a provider's answer creates a user: its OAuth callback, or an ID-token sign-in. */
+export function isProviderSignUpPath(path: unknown): boolean {
+  return typeof path === "string" && (path.startsWith("/callback/") || path === "/sign-in/social");
+}
+
+/** Called from the user create hook with better-auth's endpoint path. */
+export function assertProviderEmailVerified(user: { emailVerified?: unknown }, path: unknown): void {
+  if (isProviderSignUpPath(path) && user.emailVerified !== true) {
+    throw new APIError("FORBIDDEN", { code: PROVIDER_EMAIL_UNVERIFIED, message: PROVIDER_EMAIL_UNVERIFIED_MESSAGE });
+  }
+}
+
 /** Throws the refusal better-auth turns into a 403 JSON body (and a Google error redirect). */
 export function assertSignupAllowed(db: Database.Database, email: string, env: Env = process.env): void {
   const refusal = signupRefusal(db, email, env);

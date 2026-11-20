@@ -8,6 +8,28 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Sign in with Apple.** On the desktop app and on markiedocs.com you can
+  now choose Continue with Apple, under Continue with Google. If your Apple
+  ID's email already has a Markie account, Markie asks you to sign in with an
+  email code and link Apple in Settings. Accounts never merge on their own.
+- **Link Apple IDs to your account.** In Settings, Account, Manage linked
+  sign-ins, choose Link Apple sign-in. One Markie account can hold several
+  Apple IDs and several Google accounts, and each can be unlinked.
+
+### Changed
+
+- **Linked sign-ins say which account each one is.** A Google or Apple
+  sign-in linked from now on shows its email address, such as
+  "Google: you@example.com", so two of the same kind are easy to tell apart.
+  If you use Hide My Email, you see the address Apple made for Markie. Sign-ins
+  linked before keep their old name.
+- **New accounts from Google or Apple need a verified email.** If the
+  provider hasn't verified the account's email, Markie says so and makes no
+  account. Verify the email with Google or Apple, or sign in with an email
+  code.
+
 ## [0.9.6] - 2026-11-13
 
 ### Changed

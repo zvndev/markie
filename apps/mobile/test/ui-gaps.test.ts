@@ -154,6 +154,30 @@ describe("the share sheet for someone who doesn't own the document", () => {
   });
 });
 
+describe("the share sheet's list of people", () => {
+  it("shows an invite's address once, and says on a line of its own why someone can't open it yet", async () => {
+    const { ShareSheet } = await import("../src/components/share-sheet");
+    const people = {
+      invites: true,
+      list: async () => [
+        { userId: null, email: "new.hire@example.com", name: null, role: "viewer" as const, pending: true },
+        { userId: "u3", email: "sam@example.com", name: "Sam", role: "editor" as const, pending: false, waiting: true },
+      ],
+      add: async () => "member" as const,
+      setRole: async () => {},
+      remove: async () => {},
+    };
+    const page = await mount(createElement(ShareSheet, {
+      title: "Plan.md", people, canManage: true, me: { email: "o@example.com", name: "O" },
+      link: null, onClose: () => {}, onUnauthorized: () => {},
+    }));
+    expect(page.textContent?.split("new.hire@example.com")).toHaveLength(2);
+    const statuses = [...page.querySelectorAll(".m-share-person-status")].map((line) => line.textContent);
+    expect(statuses).toEqual(["Invited, not signed up yet", "Waiting for them to accept you"]);
+    expect(page.querySelector(".m-share-doc")?.textContent).toBe("Plan");
+  });
+});
+
 describe("the share sheet for a Live Doc", () => {
   const people = { invites: true, list: async () => [], add: async () => "member" as const, setRole: async () => {}, remove: async () => {} };
   const publicLink = { get: vi.fn(async () => null), create: vi.fn(async () => "https://markiedocs.com/s/x"), revoke: vi.fn(async () => {}) };

@@ -4,9 +4,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, type ShareRole } from "../lib/api";
 import { haptics, shareLink } from "../lib/native";
+import { displayName } from "../lib/recent";
 import { Sheet } from "./sheet";
 import { Avatar } from "./presence";
 import { ShareIcon } from "./icons";
+import { Breakable } from "./breakable";
 
 export interface SharePerson {
   /** Null for an invitation nobody has taken up yet. */
@@ -130,7 +132,7 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
 
   return (
     <Sheet title="Share" onClose={onClose} tall className="m-share">
-      <p className="m-share-doc">{title}</p>
+      <p className="m-share-doc">{displayName(title)}</p>
       {link ? (
         <div className="m-group">
           <button type="button" className="m-group-action" onClick={() => void shareLink(title, link)}>
@@ -176,8 +178,8 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
           <li className="m-share-person">
             <Avatar name={me.name || me.email} />
             <span className="m-share-person-text">
-              <span className="m-share-person-name">{me.name || me.email} (you)</span>
-              {me.name ? <span className="m-share-person-email">{me.email}</span> : null}
+              <span className="m-share-person-name"><Breakable text={me.name || me.email} /> (you)</span>
+              {me.name ? <span className="m-share-person-email"><Breakable text={me.email} /></span> : null}
             </span>
             <span className="m-share-person-role">Owner</span>
           </li>
@@ -185,7 +187,7 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
           <li className="m-share-person" data-share-owner>
             <Avatar name={owner || "Owner"} />
             <span className="m-share-person-text">
-              <span className="m-share-person-name">{owner || "The document's owner"}</span>
+              <span className="m-share-person-name">{owner ? <Breakable text={owner} /> : "The document's owner"}</span>
             </span>
             <span className="m-share-person-role">Owner</span>
           </li>
@@ -194,12 +196,14 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
         {list?.map((person) => {
           const label = person.name || person.email;
           const isMe = person.email.toLowerCase() === me.email.toLowerCase();
+          const status = personStatus(person);
           return (
             <li key={person.userId ?? `invite:${person.email}`} className="m-share-person">
               <Avatar name={label} />
               <span className="m-share-person-text">
-                <span className="m-share-person-name">{label}{isMe ? " (you)" : ""}</span>
-                <span className="m-share-person-email">{person.pending ? `Invited · ${person.email}` : person.waiting ? `Waiting for them to accept · ${person.email}` : person.name ? person.email : ""}</span>
+                <span className="m-share-person-name"><Breakable text={label} />{isMe ? " (you)" : ""}</span>
+                {person.name ? <span className="m-share-person-email"><Breakable text={person.email} /></span> : null}
+                {status ? <span className="m-share-person-status">{status}</span> : null}
               </span>
               {canManage ? (
                 <span className="m-share-person-actions">
@@ -330,6 +334,16 @@ function PublicLinkSection({ api, title, liveDoc = false, onUnauthorized, onChan
       {error ? <p className="m-form-error" role="alert">{error}</p> : null}
     </section>
   );
+}
+
+/**
+ * Why someone on the list can't open the document yet, in a line of its own
+ * under their name and address, so it is never the part an ellipsis hides.
+ */
+export function personStatus(person: Pick<SharePerson, "pending" | "waiting">): string | null {
+  if (person.pending) return "Invited, not signed up yet";
+  if (person.waiting) return "Waiting for them to accept you";
+  return null;
 }
 
 function RolePicker({ value, onChange, label, disabled = false }: { value: ShareRole; onChange: (role: ShareRole) => void; label: string; disabled?: boolean }) {

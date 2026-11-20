@@ -154,6 +154,26 @@ describe("the share sheet for someone who doesn't own the document", () => {
   });
 });
 
+describe("a sheet's dimmed backdrop", () => {
+  it("closes on a tap that starts and ends on it, after the tap's click, and not after a drag out of the sheet", async () => {
+    const { Sheet } = await import("../src/components/sheet");
+    const onClose = vi.fn();
+    const page = await mount(createElement(Sheet, { title: "Share", onClose, children: createElement("p", null, "Body") }));
+    const scrim = page.querySelector(".m-sheet-scrim")!;
+    const body = page.querySelector(".m-sheet-body")!;
+    // Pressed: still open, so the click that follows lands on the backdrop
+    // and not on the screen's button underneath.
+    await act(async () => { scrim.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => { scrim.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // A selection dragged out of the sheet clicks the backdrop too: stays open.
+    await act(async () => { body.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    await act(async () => { scrim.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("the share sheet's list of people", () => {
   it("shows an invite's address once, and says on a line of its own why someone can't open it yet", async () => {
     const { ShareSheet } = await import("../src/components/share-sheet");

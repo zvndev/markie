@@ -213,8 +213,19 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   // outside it. This session never writes over either of the last two.
   const liveRoomRef = useRef<{ ydoc: unknown } | null>(null);
   liveRoomRef.current = kind === "text" ? textSession : liveSession;
+  // As a live room turns editable, WebKit scrolls to reveal the editor's
+  // selection, which the room's text has just moved to the document's end:
+  // every live document opened scrolled past its title. Until the person
+  // touches the document, it is put back at its top.
+  const richHost = useRef<HTMLDivElement>(null);
+  const touchedRich = useRef(false);
   const onRoomReady = useCallback((roomText: string) => {
     roomTexts.current?.add(roomText);
+    const toTop = () => {
+      if (!touchedRich.current) richHost.current?.querySelector(".markie-document-scroll")?.scrollTo({ top: 0 });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(toTop));
+    setTimeout(toTop, 300);
     if (refusal || readOnly || !kind) return;
     void assessLiveRoom(roomText, { content: stored.current, version: version.current }, kind, roomMeta(liveRoomRef.current)).then((base) => {
       // Ahead: the room's text is what goes out, whether or not the editor
@@ -468,7 +479,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
         {session.mode === "checking" || (richShown && !picturesReady) ? (
           <div className="m-editor-wait" role="status"><span className="m-spinner" aria-hidden="true" />Opening…</div>
         ) : richShown ? (
-          <div className="m-rich-host" onClickCapture={swallowLinkTaps}>
+          <div className="m-rich-host" ref={richHost} onClickCapture={swallowLinkTaps} onTouchStart={() => { touchedRich.current = true; }}>
             <RichView
               key={collab ? `live:${collab.docId}` : "solo"}
               value={value}

@@ -472,14 +472,20 @@ input {
   min-width: 0;
 }
 
+/* Two lines before the ellipsis: agents name files in full sentences, and
+   one line cut "Customer interview, Northwind Logistics, November 12" off at
+   "Northwin". */
 .m-row-title {
+  display: -webkit-box;
   overflow: hidden;
   font-size: 17px;
   font-weight: 500;
   line-height: 22px;
   letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .m-row-meta {

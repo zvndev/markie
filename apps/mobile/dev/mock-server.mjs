@@ -19,6 +19,8 @@
 //   GET|POST /api/docs/:id/threads, POST .../threads/:t/comments, .../threads/:t/status,
 //   DELETE .../threads/:t/comments/:c               comments, kept in memory
 //   POST /api/docs/:id/collab-ticket                always refused: the mock has no live rooms
+//   GET  /api/people/requests                       {requests:[{docId, name, kind, sender}], count}
+//   POST /api/people/:sender/accept|block, POST /api/people/requests/:doc/decline
 //
 // The document platform (/api/document-platform) and live editing need the
 // real server: run it locally (apps/mobile/README.md) to try Word files or
@@ -211,6 +213,80 @@ const FILLER = [
   ["Retro notes.md", "# Retro\n\n## Went well\n\nShipping the contract early.\n\n## Change\n\nScreenshot earlier.\n"],
 ];
 
+// Wide content: what runs off a phone's page if anything lets it. Tables and
+// code may scroll inside their own box; nothing may scroll the page sideways.
+const INTERVIEW_TRANSCRIPT = `---
+title: Customer interview, Northwind
+recorded: 2026-11-12T15:04:00Z
+participants: [Kirby Campbell, Dana Whitfield (Head of Operations, Northwind Logistics)]
+source: https://recordings.example.com/northwind/2026-11-12/customer-interview-northwind-logistics-full-transcript-with-timestamps
+---
+
+# Customer interview, Northwind
+
+**Kirby Campbell** [00:00:04]: Thanks for making the time. I want to understand how your team reads the reports your agents write, start to finish, so tell me about the last one you opened on your phone.
+
+**Dana Whitfield** [00:00:19]: Sure. So the last one was the weekly freight summary, and honestly the thing that drives me nuts is that half of it runs off the side of the screen when I open it on the train, the tables especially, and I end up pinching and dragging around like it's a map.
+
+**Kirby Campbell** [00:00:41]: Which parts run off?
+
+**Dana Whitfield** [00:00:44]: The tables, the long tracking links, anything with a file path in it. Like this one: https://tracking.example.com/shipments/NW-2026-11-0042/events?carrier=maersk&container=MSKU1234567&view=timeline&include=customs,demurrage,detention&tz=America/Chicago
+
+**Kirby Campbell** [00:01:02]: And the agents paste those in as they are?
+
+**Dana Whitfield** [00:01:05]: As they are. Sometimes it's worse, a container reference like MSKU1234567-NW2026110042-CUSTOMSHOLD-DEMURRAGEACCRUING-DETENTIONFREEUNTIL20261120 with no spaces at all.
+
+\`\`\`text
+[00:01:30] SYSTEM  carrier_feed  WARN  container=MSKU1234567 status=HELD reason="customs documentation incomplete" eta_shift=+72h demurrage_usd_per_day=175 detention_free_until=2026-11-20T23:59:59-06:00
+[00:01:31] SYSTEM  carrier_feed  INFO  container=MSKU1234568 status=RELEASED gate_out=2026-11-12T14:58:02-06:00
+\`\`\`
+
+**Kirby Campbell** [00:01:48]: That's useful. What would good look like?
+
+**Dana Whitfield** [00:01:52]: Text wraps, tables scroll on their own, and I never have to drag the whole page sideways.
+`;
+
+const WIDE_TABLE = `# Carrier scorecard
+
+Eight carriers, nine columns. On a phone the table scrolls inside its box.
+
+| Carrier | Lane | Shipments | On time | Late | Damaged | Claims open | Avg transit (days) | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Maersk | Shanghai to Long Beach | 412 | 91.2% | 36 | 3 | 1 | 18.4 | Two vessels skipped Busan in October |
+| MSC | Ningbo to Savannah | 388 | 87.9% | 47 | 5 | 2 | 31.0 | Panama draft limits added four days |
+| CMA CGM | Yantian to Oakland | 301 | 93.4% | 20 | 1 | 0 | 16.9 | Best performer this quarter |
+| Hapag-Lloyd | Rotterdam to Houston | 254 | 89.0% | 28 | 2 | 1 | 22.7 | Strike risk at Rotterdam in December |
+| ONE | Busan to Seattle | 199 | 95.5% | 9 | 0 | 0 | 12.2 | |
+| Evergreen | Kaohsiung to LA | 187 | 84.0% | 30 | 4 | 3 | 17.8 | Claims backlog with the insurer |
+| COSCO | Qingdao to Vancouver | 166 | 88.6% | 19 | 2 | 1 | 15.1 | |
+| ZIM | Haifa to New York | 98 | 79.6% | 20 | 1 | 0 | 24.5 | Red Sea diversions continue |
+
+## A long command
+
+\`\`\`sh
+curl -sS -X POST "https://api.example.com/v2/shipments/NW-2026-11-0042/events?include=customs,demurrage,detention" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data '{"status":"held","reason":"customs documentation incomplete"}'
+\`\`\`
+
+## A long path
+
+The export landed in \`/Users/dana/Library/Mobile Documents/com~apple~CloudDocs/Northwind/Reports/2026/November/weekly-freight-summary-final-v3.xlsx\` this morning.
+
+Supercalifragilisticexpialidocious-pneumonoultramicroscopicsilicovolcanoconiosis-floccinaucinihilipilification is one word as far as the layout is concerned.
+
+<details>
+<summary>Raw carrier feed</summary>
+
+    {"carrier":"maersk","container":"MSKU1234567","events":[{"at":"2026-11-12T14:58:02-06:00","type":"gate_out"},{"at":"2026-11-12T15:30:00-06:00","type":"customs_hold"}]}
+
+</details>
+`;
+
+const SERVER_LOG = `2026-11-19T09:12:04.118Z INFO  api  request_id=6f1c2b7e method=GET path=/api/docs/recent status=200 duration_ms=18 user=kirby@example.com ua="Markie/0.2.0 (iPhone; iOS 26.5)"
+2026-11-19T09:12:04.402Z WARN  api  request_id=6f1c2b7f method=PUT path=/api/docs/agent-brief status=409 duration_ms=41 reason="base version 3 is behind server version 4" user=kirby@example.com
+2026-11-19T09:12:05.991Z INFO  collab room=agent-brief event=join peers=2 schema=3
+2026-11-19T09:12:09.000Z ERROR mail  provider=ses to=success@simulator.amazonses.com message_id=0100018c-7a3b-4c1e-9b2d-5f6e7a8b9c0d-000000 error="Throttling: Maximum sending rate exceeded."
+`;
+
 const docs = new Map();
 function seed({ id, name, content, updatedAgo, createdAgo = updatedAgo, agent = null, shared = false, sharedBy = null, role = "owner", unlisted = false }) {
   const format = /\.wd$/i.test(name) ? "darkmown" : /\.(txt|text|log)$/i.test(name) ? "text" : "markdown";
@@ -247,6 +323,9 @@ const EDGE_CASES = [
 seed({ id: "edge-cases", name: "Edge cases.md", content: EDGE_CASES, updatedAgo: 90 * DAY, unlisted: true });
 seed({ id: "counter-wd", name: "Counter.wd", content: sample("Counter.wd"), updatedAgo: 40 * MIN, agent: "Codex" });
 seed({ id: "expense-form-wd", name: "Expense check.wd", content: sample("Local-form.wd"), updatedAgo: 5 * HOUR, agent: "Claude Code" });
+seed({ id: "interview-transcript", name: "Customer interview, Northwind Logistics, November 12 full transcript.md", content: INTERVIEW_TRANSCRIPT, updatedAgo: 2 * HOUR, agent: "Claude Code" });
+seed({ id: "carrier-scorecard", name: "Carrier scorecard.md", content: WIDE_TABLE, updatedAgo: 3 * HOUR });
+seed({ id: "server-log", name: "Server log.log", content: SERVER_LOG, updatedAgo: 6 * HOUR, agent: "Codex" });
 seed({ id: "reading-list", name: "Reading list.md", content: READING_LIST, updatedAgo: DAY + 3 * HOUR });
 seed({ id: "q3-roadmap", name: "Q3 roadmap.md", content: ROADMAP, updatedAgo: 3 * DAY, shared: true, sharedBy: "ana@example.com", role: "viewer" });
 seed({ id: "deploy-notes", name: "Deploy notes.txt", content: DEPLOY_NOTES, updatedAgo: 4 * DAY, agent: "Cursor" });
@@ -305,6 +384,20 @@ const sessions = new Map(); // token -> user
 const docShares = new Map(); // doc id -> [{user_id, role, created_at, email, name, pending?}]
 const docThreads = new Map(); // doc id -> [thread]
 const sharesFor = (id) => { if (!docShares.has(id)) docShares.set(id, []); return docShares.get(id); };
+// The reading report is on with other people, so the share sheet has a list to
+// show: a member, someone who hasn't accepted the owner yet, and an invite.
+docShares.set("reading-report", [
+  { user_id: "user-ana", role: "editor", created_at: ago(2 * DAY), email: "ana@example.com", name: "Ana Lopez" },
+  { user_id: "user-sam", role: "viewer", created_at: ago(DAY), email: "sam.okonkwo-whitfield@northwind-logistics.example.com", name: "Sam Okonkwo-Whitfield", waiting: true },
+  { user_id: null, role: "viewer", created_at: ago(3 * HOUR), email: "new.hire@example.com", name: null, pending: true },
+]);
+// Shares waiting for the signed-in account to accept their sender
+// (server/src/share-people.ts). Accepting a sender lands all of theirs.
+const shareRequests = [
+  { docId: "req-offsite", name: "Offsite agenda.md", kind: "doc", createdAt: ago(20 * MIN), sender: { id: "user-priya", name: "Priya Raman", email: "priya@example.com" } },
+  { docId: "req-budget", name: "Q1 budget, finance review draft with comments from the leadership offsite.docx", kind: "file", createdAt: ago(3 * HOUR), sender: { id: "user-marcus", name: null, email: "marcus.delacroix-hutchinson@contractors.example.com" } },
+  { docId: "req-notes", name: "Notes.md", kind: "doc", createdAt: ago(2 * DAY), sender: { id: "user-priya", name: "Priya Raman", email: "priya@example.com" } },
+];
 const threadsFor = (id) => { if (!docThreads.has(id)) docThreads.set(id, []); return docThreads.get(id); };
 const comment = (threadId, user, body) => ({ id: randomUUID(), thread_id: threadId, author_id: user.id, author_name: user.name, author_email: user.email, body: body.trim(), created_at: new Date().toISOString() });
 const users = new Map(); // email -> user
@@ -422,6 +515,35 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(`<!doctype html><meta name="viewport" content="width=device-width"><title>Markie</title><p>This is the mock server's stand-in for the web page at ${path}. With the app installed, the link opens there.</p>`);
     return;
+  }
+
+  if (path.startsWith("/api/people")) {
+    if (!userFor(req)) return reply(401, { error: "unauthorized" });
+    if (req.method === "GET" && path === "/api/people/requests") {
+      return reply(200, { requests: shareRequests.slice(0, 20), count: shareRequests.length });
+    }
+    const decline = /^\/api\/people\/requests\/([^/]+)\/decline$/.exec(path);
+    if (req.method === "POST" && decline) {
+      const at = shareRequests.findIndex((r) => r.docId === decodeURIComponent(decline[1]));
+      if (at < 0) return reply(404, { error: "not found" });
+      shareRequests.splice(at, 1);
+      return reply(200, { ok: true });
+    }
+    const person = /^\/api\/people\/([^/]+)\/(accept|block)$/.exec(path);
+    if (req.method === "POST" && person) {
+      const sender = decodeURIComponent(person[1]);
+      const theirs = shareRequests.filter((r) => r.sender.id === sender);
+      if (!theirs.length) return reply(404, { error: "not found" });
+      for (const request of theirs) {
+        shareRequests.splice(shareRequests.indexOf(request), 1);
+        // Accepted Markdown lands in Recent as shared with this account.
+        if (person[2] === "accept" && request.kind === "doc") {
+          seed({ id: request.docId, name: request.name, content: `# ${request.name.replace(/\.md$/i, "")}\n\nShared by ${request.sender.name ?? request.sender.email}.\n`, updatedAgo: 0, shared: true, sharedBy: request.sender.email, role: "editor" });
+        }
+      }
+      return reply(200, { ok: true });
+    }
+    return reply(404, { error: "not found" });
   }
 
   if (path.startsWith("/api/docs")) {

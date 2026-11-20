@@ -40,7 +40,7 @@ describe("against the mock server", () => {
     const recent = await api.recent({ limit: 4 });
     expect(recent).toHaveLength(4);
     expect(recent[0]).toMatchObject({ id: "agent-brief", format: "markdown", origin: { kind: "agent", agent: "Claude Code" }, privateLink: `${origin}/d/agent-brief` });
-    const next = await api.recent({ limit: 4, before: recent[3].updatedAt });
+    const next = await api.recent({ limit: 8, before: recent[3].updatedAt });
     expect(next.length).toBeGreaterThan(0);
     expect(next.some((doc) => recent.some((seen) => seen.id === doc.id))).toBe(false);
     expect([...recent, ...next].some((doc) => doc.shared && doc.sharedBy === "ana@example.com")).toBe(true);
@@ -106,6 +106,29 @@ describe("against the mock server", () => {
     expect((await api.recent({ limit: 1 }))[0].id).toBe(created.id);
 
     await expect(api.saveDoc({ id: "someone-elses-doc", name: "x.md", content: "x", baseVersion: 1 })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("lists share requests and answers them, so the Requests screen has something to walk", async () => {
+    const transport = fetchTransport();
+    const { token } = await createApiClient({ origin, transport }).verifyCode("requests@example.com", "123456");
+    const api = createApiClient({ origin, transport, getToken: () => token });
+
+    const before = await api.shareRequests();
+    expect(before.count).toBe(before.requests.length);
+    const priya = before.requests.filter((request) => request.sender.name === "Priya Raman");
+    expect(priya.length).toBe(2);
+    // A sender with no name is shown by address.
+    expect(before.requests.some((request) => request.sender.name === null && request.kind === "file")).toBe(true);
+
+    // Accepting a person brings in everything they shared.
+    await api.acceptSender(priya[0].sender.id);
+    const after = await api.shareRequests();
+    expect(after.requests.some((request) => request.sender.id === priya[0].sender.id)).toBe(false);
+    const recent = await api.recent({ limit: 5 });
+    expect(recent.some((doc) => doc.id === priya[0].docId && doc.shared)).toBe(true);
+
+    await api.declineRequest(after.requests[0].docId);
+    expect((await api.shareRequests()).count).toBe(after.count - 1);
   });
 
   it("routes a scheme deep link to a document on the signed-in server", () => {

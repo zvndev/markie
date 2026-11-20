@@ -22,6 +22,7 @@ import { ApiError, type ApiClient } from "../lib/api";
 import type { DocFormat } from "../lib/docs";
 import { haptics } from "../lib/native";
 import { useKeyboardInset } from "../lib/keyboard-inset";
+import { useEditorPictures } from "../lib/editor-pictures";
 import { applyMarkdownAction, type MarkdownAction } from "../lib/markdown-edits";
 import { displayName } from "../lib/recent";
 import { liveConfig, liveKind, saveLiveSnapshot, shouldGoLive } from "../lib/live";
@@ -104,6 +105,12 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const markdown = draft.format === "markdown" && /\.(md|markdown|mdx)$/i.test(draft.name);
   const prose = markdown || (draft.format === "text" && /\.(txt|text)$/i.test(draft.name));
   const kind = liveKind(draft.name, draft.format);
+  // The document's synced pictures, fetched with the session before the rich
+  // view first draws them (src/lib/editor-pictures.ts).
+  const [loadPicture] = useState(() => (draft.kind === "cloud" && markdown
+    ? (ref: string) => api.asset({ kind: "doc", id: draft.id }, ref)
+    : null));
+  const picturesReady = useEditorPictures(loadPicture, draft.content);
 
   // Who else is on it decides solo or live, exactly as on the desktop.
   const [session, setSession] = useState<Session>(() => (draft.kind === "cloud" && kind ? { mode: "checking" } : { mode: "solo" }));
@@ -458,7 +465,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           </div>
         ) : null}
 
-        {session.mode === "checking" ? (
+        {session.mode === "checking" || (richShown && !picturesReady) ? (
           <div className="m-editor-wait" role="status"><span className="m-spinner" aria-hidden="true" />Opening…</div>
         ) : richShown ? (
           <div className="m-rich-host" onClickCapture={swallowLinkTaps}>

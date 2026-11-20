@@ -1,0 +1,45 @@
+# Wide content against dev/mock-server.mjs: a transcript with long links and
+# unbroken tokens, a nine-column table with a long command and path, and a
+# log with long lines. Nothing may scroll the page sideways; tables and code
+# scroll inside their own box. Each document from a fresh launch, because
+# after a document screen is popped Android's WebView can hand Maestro a
+# stale accessibility tree until the next touch.
+# Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/wide.yaml
+appId: com.zvn.markie.mobile
+---
+- runFlow: launch-recent.yaml
+- tapOn: ".*Customer interview.*"
+- extendedWaitUntil:
+    visible: ".*Thanks for making the time.*"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-13-transcript
+- scrollUntilVisible:
+    element: ".*SYSTEM.*"
+    direction: DOWN
+    centerElement: true
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-14-transcript-more
+- runFlow: launch-recent.yaml
+- tapOn: ".*Carrier scorecard.*"
+- extendedWaitUntil:
+    visible: ".*Eight carriers.*"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-15-table
+- scrollUntilVisible:
+    element: "A long path"
+    direction: DOWN
+    centerElement: true
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-16-table-more
+- runFlow: launch-recent.yaml
+- scrollUntilVisible:
+    element: ".*Server log.*"
+    direction: DOWN
+- tapOn: ".*Server log.*"
+- extendedWaitUntil:
+    visible: ".*request_id.*"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-17-log

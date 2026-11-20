@@ -25,5 +25,9 @@ appId: com.zvn.markie.mobile
     timeout: 10000
 - takeScreenshot: ${OUT}/${NAME}-1-sign-in
 - openLink: "markie-mobile://d/agent-brief"
+# iOS asks before it hands a custom-scheme link to the app.
+- tapOn:
+    text: "Open"
+    optional: true
 - waitForAnimationToEnd
 - takeScreenshot: ${OUT}/${NAME}-8-link-before-sign-in

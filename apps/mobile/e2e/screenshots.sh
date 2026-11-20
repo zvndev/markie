@@ -9,7 +9,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 APP_DIR=$(pwd)
-OUT="$APP_DIR/screenshots"
+OUT=${OUT:-"$APP_DIR/screenshots"}
 IOS_DEVICE=${IOS_DEVICE:?set IOS_DEVICE to a booted simulator udid}
 ANDROID_DEVICE=${ANDROID_DEVICE:-emulator-5554}
 ADB="${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb"
@@ -40,6 +40,9 @@ shoot() { # platform device tone
   maestro --device "$device" test "e2e/sign-in-$platform.yaml" || { sleep 3; maestro --device "$device" test "e2e/sign-in-$platform.yaml" || true; }
   maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/screens.yaml
   maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/links.yaml
+  maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/wide.yaml
+  maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/sharing.yaml
+  maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/writing.yaml
   maestro --device "$device" test -e OUT="$OUT" -e NAME="$platform-$tone" e2e/settings.yaml
 }
 

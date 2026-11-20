@@ -72,9 +72,24 @@ input {
   font: inherit;
 }
 
+/* The brand's accent, as in the editors: the caret in every field. */
+input,
+textarea {
+  caret-color: var(--m-brand);
+}
+
 :focus-visible {
   outline: 2px solid var(--m-tint);
   outline-offset: 2px;
+}
+
+/* A box the keyboard is typing into is always "focus-visible". A full ink
+   ring around the comment box or the share sheet's address field read as an
+   error, so text fields get a quiet one. */
+input:focus-visible,
+textarea:not(.m-editor-text):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--m-tint) 28%, transparent);
+  outline-offset: 0;
 }
 
 .m-visually-hidden {

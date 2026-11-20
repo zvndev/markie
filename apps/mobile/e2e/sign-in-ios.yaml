@@ -1,16 +1,25 @@
 # Signs in against dev/mock-server.mjs on port 8790 (code 123456).
+# The server first: Advanced sits where the keyboard comes up, and with an
+# email typed a tap on it can land on a key instead. Focusing the server
+# field pans the page, so it is scrolled back before the email is tapped.
 appId: com.zvn.markie.mobile
 ---
 - launchApp:
     stopApp: true
-- tapOn: "you@example.com"
-- inputText: "kirby@example.com"
-- tapOn: "Sign in to Markie"
 - tapOn: "Advanced.*"
 - tapOn: "https?://.*"
+- eraseText: 60
 - inputText: "http://localhost:8790"
-- tapOn: "Send code"
-- assertVisible: "Check your email"
+- scrollUntilVisible:
+    element: "you@example.com"
+    direction: UP
+- tapOn: "you@example.com"
+- inputText: "kirby@example.com"
+# The keyboard's send key submits the form.
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: "Check your email"
+    timeout: 10000
 - inputText: "123456"
 - tapOn: "Sign in"
 - extendedWaitUntil:

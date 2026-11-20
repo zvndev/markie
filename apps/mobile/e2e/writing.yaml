@@ -17,8 +17,12 @@ appId: com.zvn.markie.mobile
 - extendedWaitUntil:
     visible: "Edit"
     timeout: 10000
-# Let the push finish: Android hands Maestro the sliding screen's positions.
+# Let the push finish, then touch the body text once: until then Android can
+# hand Maestro the sliding screen's positions, and "Edit" lands on Share. Not
+# the "Updated" line: a public document's "Public link" chip sits beside it
+# and opens Share too.
 - waitForAnimationToEnd
+- tapOn: ".*put this together.*"
 - tapOn: "Edit"
 - extendedWaitUntil:
     visible: "Rich"

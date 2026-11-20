@@ -1752,7 +1752,14 @@ input {
   user-select: text;
 }
 
+/* The desktop pads its document scroller with page margins sized for a
+   window (24px a side, on top of the canvas's own gutter), which left a
+   phone's text column 44px in from each edge. Writing uses the reader's
+   column and the reader's heading sizes, so a document looks the same on
+   both sides of the Edit button. */
 .m-rich-host .markie-document-scroll {
+  padding: 0;
+  scroll-padding: 16px 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
@@ -1761,6 +1768,23 @@ input {
   width: 100% !important;
   padding: 14px var(--m-gutter) 48px;
   font-size: 17px !important;
+  line-height: 1.6;
+}
+
+.m-rich-host .markdown-body h1 {
+  font-size: 1.7em;
+  line-height: 1.2;
+  margin-top: 0.4em;
+}
+
+.m-rich-host .markdown-body h2 {
+  font-size: 1.35em;
+  line-height: 1.25;
+}
+
+.m-rich-host .markdown-body h3 {
+  font-size: 1.15em;
+  line-height: 1.3;
 }
 
 .m-rich-host .ProseMirror {

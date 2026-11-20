@@ -274,18 +274,26 @@ textarea:not(.m-editor-text):focus-visible {
 /* Android's web view draws an overlay scrollbar, and its track sits over the
    nav bar's right edge. Neither platform's own lists show one at rest.
    A highlighted code block scrolls in its own `code.hljs` (display: block,
-   overflow-x: auto), not only in the `pre`, so that one needs it too. */
+   overflow-x: auto), not only in the `pre`, so that one needs it too.
+   The editors scroll in boxes of their own (the rich view's scroller, the
+   source text area, a sheet), which drew the same bar down the right edge. */
 .m-screen-body,
 .m-markdown .m-table-scroll,
 .m-markdown pre,
-.m-markdown pre code {
+.m-markdown pre code,
+.m-rich-host .markie-document-scroll,
+.m-editor-text,
+.m-sheet-body {
   scrollbar-width: none;
 }
 
 .m-screen-body::-webkit-scrollbar,
 .m-markdown .m-table-scroll::-webkit-scrollbar,
 .m-markdown pre::-webkit-scrollbar,
-.m-markdown pre code::-webkit-scrollbar {
+.m-markdown pre code::-webkit-scrollbar,
+.m-rich-host .markie-document-scroll::-webkit-scrollbar,
+.m-editor-text::-webkit-scrollbar,
+.m-sheet-body::-webkit-scrollbar {
   display: none;
 }
 

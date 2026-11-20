@@ -17,7 +17,7 @@ import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
 import { ShareSheet } from "../components/share-sheet";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
-import { liveKind } from "../lib/live";
+import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
 import type { ShareMember } from "../lib/api";
 
 interface DocumentProps {
@@ -166,6 +166,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           people={docsPeople(api, target.id)}
           publicLink={owner ? docsPublicLink(api, target.id) : null}
           liveDoc={isLiveDoc(doc)}
+          editsTogether={liveKind(doc.name, doc.format) !== null && doc.content.length <= LIVE_MAX_CHARS}
           canManage={owner}
           owner={owner ? null : sharedBy}
           me={me}

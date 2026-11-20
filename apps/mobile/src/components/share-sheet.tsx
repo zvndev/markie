@@ -60,6 +60,12 @@ interface ShareSheetProps {
    * and a link that exists anyway is shown with a way to turn it off.
    */
   liveDoc?: boolean;
+  /**
+   * Whether people on this document write in it together, live (a Markdown or
+   * text document under the size the live rule allows, src/lib/live.ts). A
+   * Word file or a Live Doc is shared, but not edited together.
+   */
+  editsTogether?: boolean;
   canManage: boolean;
   /**
    * For someone who doesn't own it: who does, as the list names them (Shared
@@ -76,7 +82,7 @@ interface ShareSheetProps {
   onChanged?: () => void;
 }
 
-export function ShareSheet({ title, people, publicLink = null, liveDoc = false, canManage, owner = null, me, link, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
+export function ShareSheet({ title, people, publicLink = null, liveDoc = false, editsTogether = false, canManage, owner = null, me, link, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
   const [list, setList] = useState<SharePerson[] | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<ShareRole>("viewer");
@@ -225,7 +231,11 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
           );
         })}
       </ul>
-      {list && list.length === 0 && canManage ? <p className="m-group-footer">Nobody else is on this document yet. Once someone is, you edit it together live.</p> : null}
+      {list && list.length === 0 && canManage ? (
+        <p className="m-group-footer" data-share-nobody>
+          {editsTogether ? "Nobody else is on this document yet. Once someone is, you edit it together live." : "Nobody else is on this document yet."}
+        </p>
+      ) : null}
     </Sheet>
   );
 }

@@ -196,6 +196,18 @@ describe("the share sheet's list of people", () => {
     expect(statuses).toEqual(["Invited, not signed up yet", "Waiting for them to accept you"]);
     expect(page.querySelector(".m-share-doc")?.textContent).toBe("Plan");
   });
+
+  it("promises editing together live only for a document that is edited live", async () => {
+    const { ShareSheet } = await import("../src/components/share-sheet");
+    const people = { invites: false, list: async () => [], add: async () => "member" as const, setRole: async () => {}, remove: async () => {} };
+    const base = { people, canManage: true, me: { email: "o@example.com", name: "O" }, link: null, onClose: () => {}, onUnauthorized: () => {} };
+    const word = await mount(createElement(ShareSheet, { ...base, title: "Budget.docx" }));
+    expect(word.querySelector("[data-share-nobody]")?.textContent).toBe("Nobody else is on this document yet.");
+    act(() => root?.unmount());
+    host?.remove();
+    const plan = await mount(createElement(ShareSheet, { ...base, title: "Plan.md", editsTogether: true }));
+    expect(plan.querySelector("[data-share-nobody]")?.textContent).toContain("you edit it together live");
+  });
 });
 
 describe("the share sheet for a Live Doc", () => {

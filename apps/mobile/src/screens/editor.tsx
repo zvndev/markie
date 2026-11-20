@@ -79,6 +79,9 @@ const MARKDOWN_ACTIONS: { action: MarkdownAction; label: string; text: string }[
   { action: "code", label: "Code", text: "</>" },
 ];
 
+/** Comments were asked for, but they live in the room and the room never opened. */
+export const COMMENTS_UNAVAILABLE_NOTE = "Comments can't load right now.";
+
 /** What a viewer reads on a document no editor has opened live yet. */
 export const EMPTY_ROOM_NOTE = "This is the saved copy. Nobody who can edit has opened it live yet, and comments start once someone does.";
 
@@ -432,7 +435,11 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           </div>
         ) : null}
         {emptyRoom && !isLive ? <p className="m-editor-note" role="note" data-empty-room>{EMPTY_ROOM_NOTE}</p> : null}
-        {liveUnavailable && !isLive ? <p className="m-editor-note" role="note">The live session couldn't start, so you're editing your copy alone. Save when you're done.</p> : null}
+        {liveUnavailable && !isLive ? (
+          <p className="m-editor-note" role="note" data-live-unavailable>
+            {draft.kind === "cloud" && draft.openComments ? `${COMMENTS_UNAVAILABLE_NOTE} ` : ""}The live session couldn't start, so you're editing your copy alone. Save when you're done.
+          </p>
+        ) : null}
         {isLive ? <LiveLine status={status} save={liveSave} readOnly={readOnly} wait={wait} /> : null}
         {markdown ? (
           <div className="m-segmented m-editor-views" role="tablist" aria-label="Editor view">

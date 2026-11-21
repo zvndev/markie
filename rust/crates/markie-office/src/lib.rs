@@ -21,6 +21,7 @@ pub mod error;
 pub mod legacy_doc;
 pub mod model;
 pub mod odt;
+pub mod rich_document;
 pub mod rich_text_model;
 pub mod rtf;
 pub mod xml;

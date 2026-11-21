@@ -31,6 +31,7 @@ use crate::actions::*;
 use crate::library::{Library, LibraryTab};
 
 mod file_ops;
+mod office;
 mod palette;
 mod panels;
 mod settings;
@@ -61,8 +62,10 @@ struct OpenDoc {
 
 enum DocKind {
     Text { encoding: TextEncoding, bom: bool, saved: String },
-    /// Office formats: shown with a placeholder until the engine port lands.
+    /// An Office file the engine could not open: a placeholder.
     Engine,
+    /// DOCX, RTF, ODT and DOC in the native Word page view.
+    Office(office::OfficeDoc),
     Html,
 }
 
@@ -360,7 +363,7 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dirty {
+        if self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)) {
             self.save(window, cx);
         }
         match document::open(path) {
@@ -389,7 +392,13 @@ impl Workspace {
                     Content::Engine => {
                         self.words = 0;
                         self.sections.clear();
-                        DocKind::Engine
+                        match office::open(&doc.path, doc.format, window, cx) {
+                            Ok(office) => DocKind::Office(office),
+                            Err(message) => {
+                                window.push_notification(message, cx);
+                                DocKind::Engine
+                            }
+                        }
                     }
                 };
                 self.csv_rows = None;
@@ -419,6 +428,9 @@ impl Workspace {
                 }
                 if self.mode == Mode::Source && matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. })) {
                     self.focus_editor(window, cx);
+                }
+                if let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc {
+                    office.focus(window, cx);
                 }
                 if let Some(reg) = &self.registry {
                     let _ = reg.track_opened(&doc.path);
@@ -571,6 +583,11 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(OpenDoc { path, kind: DocKind::Office(office), .. }) = &self.doc {
+            office::save(office, path, window, cx);
+            cx.notify();
+            return;
+        }
         let text = self.editor.read(cx).value().to_string();
         self.autosave.cancel();
         if let Err(err) = self.write_text(&text) {
@@ -1159,6 +1176,7 @@ impl Workspace {
         }
 
         match (&doc.kind, self.mode) {
+            (DocKind::Office(office), _) => office::render(office, self.zoom, cx),
             (DocKind::Engine, _) => {
                 let path = doc.path.clone();
                 v_flex()
@@ -1233,6 +1251,7 @@ impl Workspace {
                 let state = match &doc.kind {
                     DocKind::Text { .. } if self.dirty => "Edited",
                     DocKind::Text { .. } => "Saved",
+                    DocKind::Office(office) => office.status(cx),
                     _ => "Read only",
                 };
                 let mut right = String::new();

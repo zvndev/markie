@@ -40,10 +40,11 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-alt-]", PageWider, None),
         KeyBinding::new("cmd-alt-[", PageNarrower, None),
     ]);
+    markie_office_view::actions::bind_keys(cx);
 }
 
 fn set_menus(cx: &mut App) {
-    cx.set_menus([
+    let mut menus = vec![
         Menu {
             name: "Markie RS".into(),
             items: vec![
@@ -88,10 +89,16 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Narrower Page", PageNarrower),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Dark Mode", ToggleTheme),
+                MenuItem::separator(),
+                MenuItem::submenu(Menu { name: "Word Layout".into(), items: markie_office_view::actions::view_menu_items(), disabled: false }),
             ],
             disabled: false,
         },
-    ]);
+    ];
+    // Format, Insert, Layout and Review act on the Word page view; they show
+    // disabled when another document has focus.
+    menus.extend(markie_office_view::actions::menus());
+    cx.set_menus(menus);
 }
 
 fn main() {

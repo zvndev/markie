@@ -72,6 +72,26 @@ pub fn run_look(run: &Run, paragraph: &Paragraph) -> RunLook {
     }
 }
 
+/// One text size per paragraph: GPUI shapes a text element at a single size,
+/// so a paragraph uses the size most of its text has.
+pub fn paragraph_size_points(paragraph: &Paragraph) -> f64 {
+    let mut best: Option<(usize, f64)> = None;
+    let mut totals: Vec<(f64, usize)> = Vec::new();
+    for run in &paragraph.runs {
+        let size = run_look(run, paragraph).size_points;
+        match totals.iter_mut().find(|(s, _)| (*s - size).abs() < 0.01) {
+            Some(entry) => entry.1 += run.text.len().max(1),
+            None => totals.push((size, run.text.len().max(1))),
+        }
+    }
+    for (size, count) in totals {
+        if best.is_none_or(|(c, _)| count > c) {
+            best = Some((count, size));
+        }
+    }
+    best.map(|(_, size)| size).or_else(|| heading_fallback(paragraph.style_id.as_deref()).map(|(size, _)| size)).unwrap_or(DEFAULT_SIZE_POINTS)
+}
+
 /// The look of a paragraph box.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParagraphLook {
@@ -248,6 +268,19 @@ mod tests {
         let look = paragraph_look(&p);
         assert_eq!((look.indent_px, look.marker.as_deref()), (48.0, Some("3.")));
         assert_eq!(paragraph_look(&paragraph(None)).after_points, DEFAULT_AFTER_POINTS);
+    }
+
+    #[test]
+    fn a_paragraph_takes_the_size_most_of_its_text_has() {
+        let mut p = paragraph(None);
+        let mut big = run(RunStyle { font_size_points: Some(18.0), ..Default::default() });
+        big.text = "ab".into();
+        let mut small = run(RunStyle { font_size_points: Some(10.0), ..Default::default() });
+        small.text = "abcdef".into();
+        p.runs = vec![big, small];
+        assert_eq!(paragraph_size_points(&p), 10.0);
+        assert_eq!(paragraph_size_points(&paragraph(Some("Heading2"))), 16.0);
+        assert_eq!(paragraph_size_points(&paragraph(None)), DEFAULT_SIZE_POINTS);
     }
 
     #[test]

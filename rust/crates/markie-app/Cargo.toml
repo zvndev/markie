@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 markie-core.workspace = true
+markie-office = { path = "../markie-office" }
+markie-office-view = { path = "../markie-office-view" }
 anyhow.workspace = true
 serde_json.workspace = true
 serde.workspace = true

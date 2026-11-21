@@ -7,11 +7,16 @@
 //! * `colors`: authored run colors adapted to the page on screen only.
 //! * `view`: the GPUI page view, input handling and menus.
 
+pub mod actions;
 pub mod colors;
 pub mod commands;
 pub mod editor;
 pub mod layout;
 pub mod text;
+mod tools;
+pub mod view;
+
+pub use view::{PaperTone, ViewMode, WordView, WordViewEvent};
 
 #[cfg(test)]
 mod editor_tests;

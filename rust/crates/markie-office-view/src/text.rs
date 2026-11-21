@@ -123,6 +123,37 @@ pub fn word_at(text: &str, offset: usize) -> std::ops::Range<usize> {
     start..end
 }
 
+/// Style segments `(length, style)` of a text, after `start..end` is
+/// replaced by `insert` bytes of marked text. The marked text takes the style
+/// of the segment it starts in (or the one before it at a boundary), and is
+/// flagged `true`.
+pub fn splice_segments<S: Copy>(segments: &[(usize, S)], start: usize, end: usize, insert: usize) -> Vec<(usize, S, bool)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    let mut inserted = false;
+    for &(len, style) in segments {
+        let (from, to) = (at, at + len);
+        at = to;
+        let head_end = start.clamp(from, to);
+        if head_end > from {
+            out.push((head_end - from, style, false));
+        }
+        if !inserted && start >= from && start < to {
+            out.push((insert, style, true));
+            inserted = true;
+        }
+        let tail_start = end.clamp(from, to);
+        if tail_start < to && tail_start >= start {
+            out.push((to - tail_start, style, false));
+        }
+    }
+    if !inserted && let Some(&(_, style)) = segments.last() {
+        out.push((insert, style, true));
+    }
+    out.retain(|s| s.0 > 0);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +218,19 @@ mod tests {
         let text = "ae\u{301}b";
         assert_eq!(snap_back(text, 4), 4);
         assert_eq!(snap_back(text, 3), 1);
+    }
+
+    #[test]
+    fn marked_text_splices_into_style_segments() {
+        // "ab" + "cd" styled 1 and 2; mark 3 bytes replacing "bc".
+        let segments = [(2, 1), (2, 2)];
+        assert_eq!(splice_segments(&segments, 1, 3, 3), vec![(1, 1, false), (3, 1, true), (1, 2, false)]);
+        // Insert at a boundary takes the next segment's style.
+        assert_eq!(splice_segments(&segments, 2, 2, 1), vec![(2, 1, false), (1, 2, true), (2, 2, false)]);
+        // At the end it takes the last style.
+        assert_eq!(splice_segments(&segments, 4, 4, 2), vec![(2, 1, false), (2, 2, false), (2, 2, true)]);
+        // An empty paragraph has no style to take.
+        assert_eq!(splice_segments::<u8>(&[], 0, 0, 2), vec![]);
     }
 
     #[test]

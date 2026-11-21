@@ -16,6 +16,15 @@ impl Document {
     /// The document after the room's nodes replace its editable content.
     /// Opaque blocks (HTML, definitions) stay where they were.
     pub fn with_room_nodes(&self, incoming: &[Node]) -> Document {
+        // TipTap's TrailingNode keeps an empty paragraph at the end of the
+        // document. It belongs to the editor, not to the file.
+        let mut incoming = incoming;
+        while let Some((Node::Paragraph(c), rest)) = incoming.split_last() {
+            if !c.is_empty() {
+                break;
+            }
+            incoming = rest;
+        }
         let base = &self.blocks;
         let n = base.len();
         let m = incoming.len();

@@ -19,11 +19,12 @@ pub fn nodes_to_markdown(nodes: &[Node]) -> String {
 /// document's link reference definitions, which give `[text][label]` its
 /// meaning.
 pub fn nodes_to_markdown_with(nodes: &[Node], definitions: &str) -> String {
+    let want = canonical(nodes);
     let reads_back = |s: &str| {
         if definitions.is_empty() {
-            parse_nodes(s) == nodes
+            parse_nodes(s) == want
         } else {
-            parse_nodes(&format!("{s}\n\n{definitions}")) == nodes
+            parse_nodes(&format!("{s}\n\n{definitions}")) == want
         }
     };
     let tiers = [
@@ -49,11 +50,46 @@ pub fn nodes_to_markdown_with(nodes: &[Node], definitions: &str) -> String {
     first
 }
 
-/// Is `nodes_to_markdown_with(nodes, definitions)` read back as `nodes`?
+/// Is `nodes_to_markdown_with(nodes, definitions)` read back as `nodes`
+/// (in canonical form)?
 pub fn is_stable(nodes: &[Node], definitions: &str) -> bool {
     let s = nodes_to_markdown_with(nodes, definitions);
     let text = if definitions.is_empty() { s } else { format!("{s}\n\n{definitions}") };
-    parse_nodes(&text) == nodes
+    parse_nodes(&text) == canonical(nodes)
+}
+
+/// The nodes as Markdown can say them: a space at the edge of a mark takes
+/// only the marks its neighbour shares (`**a **b` cannot close). This is
+/// prosemirror-markdown's whitespace expulsion, so TipTap reads an edited
+/// block back the same way.
+pub fn canonical(nodes: &[Node]) -> Vec<Node> {
+    nodes.iter().map(canonical_node).collect()
+}
+
+fn canonical_node(n: &Node) -> Node {
+    match n {
+        Node::Paragraph(c) => Node::Paragraph(expel_whitespace(c)),
+        Node::Heading { level, content } => Node::Heading { level: *level, content: expel_whitespace(content) },
+        Node::Blockquote(c) => Node::Blockquote(canonical(c)),
+        Node::BulletList { tight, items } => {
+            Node::BulletList { tight: *tight, items: items.iter().map(|i| canonical(i)).collect() }
+        }
+        Node::OrderedList { tight, start, items } => {
+            Node::OrderedList { tight: *tight, start: *start, items: items.iter().map(|i| canonical(i)).collect() }
+        }
+        Node::TaskList { items } => Node::TaskList {
+            items: items.iter().map(|i| TaskItem { checked: i.checked, content: canonical(&i.content) }).collect(),
+        },
+        Node::Table { rows } => Node::Table {
+            rows: rows
+                .iter()
+                .map(|r| {
+                    r.iter().map(|c| Cell { header: c.header, align: c.align, content: canonical(&c.content) }).collect()
+                })
+                .collect(),
+        },
+        other => other.clone(),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]

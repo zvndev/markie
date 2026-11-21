@@ -8,7 +8,7 @@
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event, Parser};
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 use crate::model::Node;
 use crate::parse::{self, Ev, Opaque, Parsed};
@@ -115,7 +115,57 @@ impl Document {
         // and only an inline one in pulldown, so its blocks are found first
         // and blanked out for pulldown, offsets unchanged.
         let math = display_math_blocks(body);
-        let masked = mask(body, &math);
+        let ranges: Vec<Range<usize>> = math.iter().map(|(r, _)| r.clone()).collect();
+        let masked = mask(body, &ranges);
+        // Inline math the same way: markdown-it finds spans inside each leaf
+        // block once the block structure is known, so a first pass finds the
+        // leaves and a second parses with the spans blanked to plain text.
+        let mut spans: Vec<Range<usize>> = Vec::new();
+        if masked.contains('$') {
+            // Leaf blocks, and the inline runs a tight list item holds
+            // directly (pulldown gives those no paragraph).
+            let mut run: Option<Range<usize>> = None;
+            let mut leaf_depth = 0usize;
+            for (ev, r) in Parser::new_ext(&masked, parse::options()).into_offset_iter() {
+                match ev {
+                    Event::Start(Tag::Paragraph | Tag::Heading { .. } | Tag::TableCell) => {
+                        if leaf_depth == 0 {
+                            spans.extend(parse::inline_math_spans(&masked, r));
+                        }
+                        leaf_depth += 1;
+                    }
+                    Event::End(TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::TableCell) => leaf_depth -= 1,
+                    // Code and HTML hold no math; count them as leaves that are skipped.
+                    Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock | Tag::MetadataBlock(_)) => {
+                        if let Some(x) = run.take() {
+                            spans.extend(parse::inline_math_spans(&masked, x));
+                        }
+                        leaf_depth += 1;
+                    }
+                    Event::End(TagEnd::CodeBlock | TagEnd::HtmlBlock | TagEnd::MetadataBlock(_)) => leaf_depth -= 1,
+                    _ if leaf_depth > 0 => {}
+                    Event::Text(_) | Event::Code(_) | Event::InlineHtml(_) | Event::SoftBreak | Event::HardBreak
+                    | Event::FootnoteReference(_) | Event::TaskListMarker(_)
+                    | Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. } | Tag::Image { .. })
+                    | Event::End(TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link | TagEnd::Image) => {
+                        run = Some(match run {
+                            Some(x) => x.start..r.end.max(x.end),
+                            None => r,
+                        });
+                    }
+                    _ => {
+                        if let Some(x) = run.take() {
+                            spans.extend(parse::inline_math_spans(&masked, x));
+                        }
+                    }
+                }
+            }
+            if let Some(x) = run.take() {
+                spans.extend(parse::inline_math_spans(&masked, x));
+            }
+            spans.sort_by_key(|r| r.start);
+        }
+        let masked = if spans.is_empty() { masked } else { mask_with(&masked, &spans, b'x') };
         let events: Vec<Ev> = Parser::new_ext(&masked, parse::options()).into_offset_iter().collect();
 
         // Top-level groups of events: (byte range, event range).
@@ -158,7 +208,7 @@ impl Document {
                 let source = math.iter().find(|(r, _)| r.start == bytes.start).unwrap().1.clone();
                 BlockContent::Nodes(vec![Node::MathBlock { source }])
             } else {
-                match parse::convert_block_events(body, &events[evs]) {
+                match parse::convert_block_events(body, &events[evs], &spans) {
                     Parsed::Nodes(n) => BlockContent::Nodes(n),
                     Parsed::Opaque(o) => BlockContent::Opaque(o),
                 }
@@ -398,19 +448,20 @@ fn display_math_blocks(body: &str) -> Vec<(Range<usize>, String)> {
     out
 }
 
-fn mask(body: &str, blocks: &[(Range<usize>, String)]) -> String {
-    if blocks.is_empty() {
-        return body.to_string();
-    }
+fn mask(body: &str, ranges: &[Range<usize>]) -> String {
+    if ranges.is_empty() { body.to_string() } else { mask_with(body, ranges, b' ') }
+}
+
+/// Every byte of each range but line endings becomes `with`. Ranges start
+/// and end on character boundaries, so the result is still UTF-8.
+fn mask_with(body: &str, ranges: &[Range<usize>], with: u8) -> String {
     let mut b = body.as_bytes().to_vec();
-    for (r, _) in blocks {
+    for r in ranges {
         for x in &mut b[r.clone()] {
             if *x != b'\n' && *x != b'\r' {
-                *x = b' ';
+                *x = with;
             }
         }
     }
-    // Only ASCII bytes were replaced, and only inside whole characters'
-    // ranges? No: the range may hold UTF-8 sequences, all replaced fully.
-    String::from_utf8(b).expect("masking replaces whole byte ranges")
+    String::from_utf8(b).expect("masking replaces whole characters")
 }

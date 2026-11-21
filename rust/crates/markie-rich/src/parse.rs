@@ -21,11 +21,19 @@ pub fn options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_MATH
         | Options::ENABLE_FOOTNOTES
 }
 
 pub type Ev<'a> = (Event<'a>, Range<usize>);
+
+/// A soft line break while inline content is being resolved: a space,
+/// unless linkify turns the text before it into a link, after which TipTap
+/// drops it like after any other element. Never left in a model.
+pub const SOFT_BREAK: char = '\0';
+
+/// Where an inline HTML tag was: markdown-it's linkify runs per text token,
+/// so no link spans it. Removed once links are found.
+pub const TOKEN_BREAK: char = '\u{1}';
 
 /// Why a block is kept as source only and has no editable nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,8 +57,10 @@ pub fn parse_nodes(md: &str) -> Vec<Node> {
 }
 
 /// Convert the events of one top-level block.
-pub fn convert_block_events(src: &str, events: &[Ev]) -> Parsed {
-    let mut c = Conv { src, ev: events, i: 0, opaque: None };
+/// `math` holds the inline math spans of the whole text (see
+/// `inline_math_spans`), which were masked out before pulldown saw it.
+pub fn convert_block_events(src: &str, events: &[Ev], math: &[Range<usize>]) -> Parsed {
+    let mut c = Conv { src, ev: events, i: 0, opaque: None, math, math_emitted: vec![false; math.len()] };
     let nodes = c.blocks(None);
     match c.opaque {
         Some(o) => Parsed::Opaque(o),
@@ -63,6 +73,8 @@ struct Conv<'s, 'e> {
     ev: &'e [Ev<'s>],
     i: usize,
     opaque: Option<Opaque>,
+    math: &'e [Range<usize>],
+    math_emitted: Vec<bool>,
 }
 
 /// Inline content in progress, before whitespace rules and image splits.
@@ -331,7 +343,52 @@ impl<'s, 'e> Conv<'s, 'e> {
         st.pieces
     }
 
+    /// Indices of the math spans overlapping `r`.
+    fn math_overlapping(&self, r: &Range<usize>) -> Range<usize> {
+        let from = self.math.partition_point(|m| m.end <= r.start);
+        let to = self.math.partition_point(|m| m.start < r.end);
+        from..to.max(from)
+    }
+
+    fn emit_math(&mut self, k: usize, st: &mut InlineState) {
+        if !self.math_emitted[k] {
+            self.math_emitted[k] = true;
+            let source = self.src[self.math[k].clone()].replace("\r\n", "\n");
+            st.pieces.push(Piece::Math(source));
+            st.after_math = true;
+        }
+    }
+
     fn inline_event(&mut self, ev: &Event<'s>, range: &Range<usize>, st: &mut InlineState) {
+        // Inside a masked math span: the span stands for all of it.
+        let hits = self.math_overlapping(range);
+        if !hits.is_empty() {
+            let inside = self.math[hits.start].start <= range.start && range.end <= self.math[hits.start].end;
+            match ev {
+                Event::Text(t) if t.len() == range.len() && !inside => {
+                    st.after_element = false;
+                    let mut pos = range.start;
+                    for k in hits {
+                        let sp = self.math[k].clone();
+                        if sp.start > pos {
+                            st.text(&self.src[pos..sp.start], false);
+                        }
+                        self.emit_math(k, st);
+                        pos = pos.max(sp.end);
+                    }
+                    if pos < range.end {
+                        st.text(&self.src[pos..range.end], false);
+                    }
+                    return;
+                }
+                _ if inside => {
+                    st.after_element = false;
+                    self.emit_math(hits.start, st);
+                    return;
+                }
+                _ => {}
+            }
+        }
         let after = std::mem::replace(&mut st.after_element, false);
         match ev {
             Event::Text(t) => st.text(t, false),
@@ -340,17 +397,6 @@ impl<'s, 'e> Conv<'s, 'e> {
                 m.code = true;
                 st.pieces.push(Piece::Text(t.to_string(), m));
                 st.after_element = true;
-            }
-            Event::InlineMath(_) | Event::DisplayMath(_) => {
-                let source = &self.src[range.clone()];
-                // Markie's rule decides (rich-math.ts), not pulldown's: `$x$5`
-                // and `$$$x$$$` are text there.
-                if math_span_end(self.src, range.start) == Some(range.end) {
-                    st.pieces.push(Piece::Math(source.replace("\r\n", "\n")));
-                    st.after_math = true;
-                } else {
-                    st.text(source, true);
-                }
             }
             Event::SoftBreak => {
                 if std::mem::replace(&mut st.after_math, false) {
@@ -369,6 +415,7 @@ impl<'s, 'e> Conv<'s, 'e> {
             }
             Event::Html(h) | Event::InlineHtml(h) => {
                 inline_html(h, st);
+                st.pieces.push(Piece::Text(TOKEN_BREAK.to_string(), st.marks.clone()));
                 st.after_element = true;
             }
             Event::Start(Tag::Emphasis) => st.marks.italic = true,
@@ -426,7 +473,9 @@ impl<'s, 'e> Conv<'s, 'e> {
                     alt: Some(alt),
                     title,
                 }));
-                st.after_element = true;
+                // Not an element for the line-break rule: tiptap-markdown's
+                // normalizeBlocks lifts the picture out of its paragraph first,
+                // so the "\n" after it starts the next paragraph and survives.
             }
             Event::TaskListMarker(_) => {}
             Event::Start(_) => self.fail(Opaque::Unsupported),
@@ -537,15 +586,14 @@ fn finish_inlines(pieces: Vec<Piece>) -> Vec<Inline> {
             Piece::HardBreak => raw.push(Inline::HardBreak),
             Piece::Soft { after_element, marks } => {
                 if !after_element {
-                    raw.push(Inline::Text { text: " ".into(), marks });
+                    raw.push(Inline::Text { text: SOFT_BREAK.to_string(), marks });
                 }
             }
             Piece::Image(_) => {}
         }
     }
-    let collapsed = collapse_whitespace(raw);
-    let linked = linkify(collapsed);
-    normalize_inlines(linked)
+    let collapsed = normalize_inlines(collapse_whitespace(raw));
+    normalize_inlines(code_excludes(resolve_soft_breaks(linkify(collapsed))))
 }
 
 /// ProseMirror's DOM parser: whitespace runs fold to one space, none at the
@@ -559,10 +607,19 @@ fn collapse_whitespace(inlines: Vec<Inline>) -> Vec<Inline> {
             Inline::Text { text, marks } => {
                 let mut s = String::with_capacity(text.len());
                 for ch in text.chars() {
-                    if matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{c}') {
+                    if ch == TOKEN_BREAK {
+                        // Transparent to whitespace: "a  <x>  b" folds to one space.
+                        s.push(ch);
+                        continue;
+                    }
+                    if matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{c}' | SOFT_BREAK) {
                         if !prev_space {
-                            s.push(' ');
+                            s.push(if ch == SOFT_BREAK { SOFT_BREAK } else { ' ' });
                             prev_space = true;
+                        } else if ch == SOFT_BREAK && s.ends_with(' ') {
+                            // (a space already stands for this run)
+                            s.pop();
+                            s.push(SOFT_BREAK);
                         }
                     } else {
                         s.push(ch);
@@ -588,7 +645,7 @@ fn collapse_whitespace(inlines: Vec<Inline>) -> Vec<Inline> {
 
 fn strip_trailing_space(out: &mut Vec<Inline>) {
     while let Some(Inline::Text { text, .. }) = out.last_mut() {
-        if text.ends_with(' ') {
+        if text.ends_with(' ') || text.ends_with(SOFT_BREAK) {
             text.pop();
         }
         if text.is_empty() {
@@ -618,8 +675,6 @@ fn paragraph_nodes(pieces: Vec<Piece>, raw: &str) -> Vec<Node> {
                 }
                 out.push(img);
             }
-            // The "\n" after a picture is dropped like after any element.
-            Piece::Soft { after_element: true, .. } if seg.is_empty() => {}
             other => seg.push(other),
         }
     }
@@ -677,8 +732,11 @@ fn linkify(inlines: Vec<Inline>) -> Vec<Inline> {
 /// `mathSpanEnd` from `src/lib/rich-math.ts`: the end (exclusive) of a math
 /// span opening at byte `from`, or None.
 pub fn math_span_end(src: &str, from: usize) -> Option<usize> {
-    let b = src.as_bytes();
-    let to = b.len();
+    math_span_end_to(src, from, src.len())
+}
+
+pub fn math_span_end_to(src: &str, from: usize, to: usize) -> Option<usize> {
+    let b = &src.as_bytes()[..to];
     if b.get(from) != Some(&b'$') {
         return None;
     }
@@ -721,4 +779,109 @@ pub fn math_span_end(src: &str, from: usize) -> Option<usize> {
         i += 1;
     }
     None
+}
+
+/// Inline math spans in one leaf block's source, found the way markdown-it
+/// finds them with Markie's math rule: left to right, a `$` opens a span
+/// unless an earlier construct (a code span, an autolink or HTML tag, a link
+/// destination) already holds it.
+pub fn inline_math_spans(src: &str, r: Range<usize>) -> Vec<Range<usize>> {
+    let b = src.as_bytes();
+    let end = r.end.min(b.len());
+    let mut out = Vec::new();
+    let mut i = r.start;
+    while i < end {
+        match b[i] {
+            b'\\' => i += 2,
+            b'`' => {
+                let n = b[i..end].iter().take_while(|c| **c == b'`').count();
+                let mut j = i + n;
+                let mut closed = None;
+                while j < end {
+                    if b[j] == b'`' {
+                        let m = b[j..end].iter().take_while(|c| **c == b'`').count();
+                        if m == n {
+                            closed = Some(j + m);
+                            break;
+                        }
+                        j += m;
+                    } else {
+                        j += 1;
+                    }
+                }
+                i = closed.unwrap_or(i + n);
+            }
+            b'<' => {
+                let close = b[i..end].iter().position(|c| *c == b'>' || *c == b'\n');
+                match close {
+                    Some(k) if b[i + k] == b'>' && b.get(i + 1).is_some_and(|c| c.is_ascii_alphabetic() || b"/!?".contains(c)) => {
+                        i += k + 1
+                    }
+                    _ => i += 1,
+                }
+            }
+            b']' if b.get(i + 1) == Some(&b'(') => {
+                let mut depth = 0i32;
+                let mut j = i + 1;
+                while j < end {
+                    match b[j] {
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        b'\n' if j + 1 < end && b[j + 1] == b'\n' => break,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                i = j + 1;
+            }
+            b'$' => match math_span_end_to(src, i, end) {
+                Some(e) => {
+                    out.push(i..e);
+                    i = e;
+                }
+                None => i += if b.get(i + 1) == Some(&b'$') { 2 } else { 1 },
+            },
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// TipTap's Code mark `excludes: "_"`: code text carries no other mark.
+fn code_excludes(inlines: Vec<Inline>) -> Vec<Inline> {
+    inlines
+        .into_iter()
+        .map(|i| match i {
+            Inline::Text { text, marks } if marks.code => {
+                Inline::Text { text, marks: Marks { code: true, ..Marks::default() } }
+            }
+            other => other,
+        })
+        .collect()
+}
+
+/// Soft breaks become spaces, except straight after a linkified address.
+fn resolve_soft_breaks(inlines: Vec<Inline>) -> Vec<Inline> {
+    let mut out: Vec<Inline> = Vec::with_capacity(inlines.len());
+    for i in inlines {
+        match i {
+            Inline::Text { mut text, marks } => {
+                if text.starts_with(SOFT_BREAK) {
+                    let after_link = matches!(out.last(), Some(Inline::Text { marks: m, .. })
+                        if m.link.as_ref().is_some_and(|l| l.style == LinkStyle::Autolink));
+                    if after_link {
+                        text.remove(0);
+                    }
+                }
+                out.push(Inline::Text { text: text.replace(SOFT_BREAK, " ").replace(TOKEN_BREAK, ""), marks });
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }

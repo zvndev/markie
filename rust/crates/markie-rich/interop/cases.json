@@ -1,0 +1,101 @@
+{
+  "cases": [
+    {
+      "name": "safe/heading",
+      "markdown": "# Title\n\nBody text.\n"
+    },
+    {
+      "name": "safe/nested list",
+      "markdown": "- one\n- two\n  - two.a\n"
+    },
+    {
+      "name": "safe/fenced code",
+      "markdown": "```ts\nconst x = 1;\n```\n"
+    },
+    {
+      "name": "safe/link and image",
+      "markdown": "[site](https://example.com)\n\n![alt](img.png)\n"
+    },
+    {
+      "name": "safe/blockquote",
+      "markdown": "> quoted line\n"
+    },
+    {
+      "name": "safe/simple table",
+      "markdown": "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
+    },
+    {
+      "name": "safe/hr",
+      "markdown": "above\n\n---\n\nbelow\n"
+    },
+    {
+      "name": "safe/display math",
+      "markdown": "$$\n\\frac{a}{b} \\, dx\n$$\n"
+    },
+    {
+      "name": "safe/inline math",
+      "markdown": "Euler: $e^{i\\pi}$ stays.\n"
+    },
+    {
+      "name": "safe/table alignment",
+      "markdown": "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n"
+    },
+    {
+      "name": "safe/multi-line display math",
+      "markdown": "$$\na = b\n  + c\n$$\n"
+    },
+    {
+      "name": "corpus-shaped/hand-wrapped prose",
+      "markdown": "# Notes\n\nThis paragraph was wrapped\nby hand at eighty columns\nlike most real files.\n\nAnother wrapped\nparagraph follows.\n"
+    },
+    {
+      "name": "corpus-shaped/aligned table",
+      "markdown": "| left | right |\n| :--- | ---: |\n| 1 | 2 |\n"
+    },
+    {
+      "name": "corpus-shaped/loose list",
+      "markdown": "- one\n\n- two\n\n- three\n"
+    },
+    {
+      "name": "corpus-shaped/tight task list",
+      "markdown": "- [x] done\n- [ ] todo\n- [ ] later\n"
+    },
+    {
+      "name": "corpus-shaped/inline math",
+      "markdown": "Euler: $e^{i\\pi} + 1 = 0$ stays put.\n"
+    },
+    {
+      "name": "corpus-shaped/display math",
+      "markdown": "$$\n\\frac{a}{b} \\, dx\n$$\n"
+    },
+    {
+      "name": "corpus-shaped/ordered list with nested sub-lists",
+      "markdown": "## Priorities\n\n1. Web-first product truth\n   - Inspect the app first.\n   - Keep desktop work tied to runtime.\n\n2. Portfolio task import\n   - Use the guarded artifacts.\n   - Avoid direct writes.\n\n## After\n"
+    },
+    {
+      "name": "corpus-shaped/list item with an indented continuation paragraph",
+      "markdown": "1. Open the panel.\n\n2. Select the package from the list.\n\n    The manager picks a version for you.\n\n3. Press Install.\n"
+    },
+    {
+      "name": "clean/wrapped prose",
+      "markdown": "Wrapped\nby hand.\n\nMore wrapped\ntext here.\n"
+    },
+    {
+      "name": "clean/loose list",
+      "markdown": "- one\n\n- two\n"
+    },
+    {
+      "name": "features",
+      "markdown": "# Title\n\nSome **bold** and *it* and ***both*** `code` [l](http://x \"t\") ~~gone~~\n\n- [x] a\n- [ ] b\n\n1. one\n2. two\n\n> q\n\n```ts\nx\n```\n\n| a | b |\n| :- | -: |\n| 1 | 2 |\n\n$$\nx\n$$\n\nE $e$ x\n\n---\n\n![alt](i.png)\n\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\n"
+    },
+    {
+      "name": "quirks",
+      "markdown": "*a*\nb and `c`\nd and [l](x)\ne\n\nhard  \nbreak\\\nslash   three  spaces\n\nvisit www.x.com or example.com or a@b.co or http://x.y/a_(b). end\n\n![](e.png)\n\n![a](b.png) ![c](d.png)\n\ntext ![i](p.png \"T\") more\n\n- [ ] t\n- n\n\n3. three\n4. four\n\n> - q1\n> - q2\n\n|x|\n|-|\n||\n\n## H *i* `c`\n\n    indented\n\n$5 and $10, $x$5 and $y$.\n"
+    },
+    {
+      "name": "unicode",
+      "markdown": "# Über café 🎉\n\nnaïve **fête** and *émoji 👩‍💻* then `código` and [liên kết](https://example.com/ä).\n\n- 日本語 **太字**\n- 🎉🎉 *x*\n"
+    }
+  ],
+  "editBase": "# Shared doc\n\nFirst paragraph stays put.\n\nSecond paragraph gets\nan edit from Rust.\n\n- [ ] a task\n- [x] done task\n\n| left | right |\n| :--- | ---: |\n| 1 | 2 |\n\nLast line, wrapped\nby hand.\n"
+}

@@ -18,6 +18,15 @@ use crate::room::{Attrs, RoomError, RoomNode};
 /// The fragment TipTap's Collaboration extension uses by default.
 pub const FRAGMENT: &str = "default";
 
+/// A document that counts text positions the way Yjs does, in UTF-16 code
+/// units. yrs defaults to UTF-8 bytes, which puts every index after a
+/// non-ASCII character in the wrong place relative to a JavaScript peer.
+pub fn new_doc(client_id: u64) -> Doc {
+    let mut o = yrs::Options::with_client_id(yrs::block::ClientID::new(client_id));
+    o.offset_kind = yrs::OffsetKind::Utf16;
+    Doc::with_options(o)
+}
+
 pub fn fragment(doc: &Doc) -> XmlFragmentRef {
     doc.get_or_insert_xml_fragment(FRAGMENT)
 }
@@ -84,7 +93,7 @@ pub fn insert_node<F: XmlFragment>(txn: &mut TransactionMut, parent: &F, index: 
     }
 }
 
-/// Yjs text offsets count UTF-16 code units, and yrs is set to match.
+/// Yjs text offsets count UTF-16 code units; `new_doc` sets yrs to match.
 pub fn utf16_len(s: &str) -> u32 {
     s.encode_utf16().count() as u32
 }
@@ -145,7 +154,7 @@ fn read_node<T: ReadTxn>(txn: &T, n: XmlOut) -> Result<RoomNode, RoomError> {
 
 /// A new document holding `nodes`, written by client `client_id`.
 pub fn doc_with(nodes: &[RoomNode], client_id: u64) -> Doc {
-    let doc = Doc::with_client_id(client_id);
+    let doc = new_doc(client_id);
     let frag = fragment(&doc);
     {
         let mut txn = doc.transact_mut();

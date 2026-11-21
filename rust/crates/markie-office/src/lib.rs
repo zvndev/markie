@@ -14,9 +14,13 @@
 //! character is rejected.
 
 pub mod cfb;
+mod codepages;
 pub mod document_import;
 pub mod error;
 pub mod legacy_doc;
+pub mod model;
+pub mod rich_text_model;
+pub mod rtf;
 pub mod xml;
 pub mod zip;
 

@@ -24,6 +24,7 @@ use review::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
+pub use edit::{XmlEncoding, decode_docx_xml, encode_docx_xml};
 pub use links::safe_docx_hyperlink_target;
 pub use media::{Bitmap, inspect_docx_bitmap};
 pub use structure::grapheme_boundary;

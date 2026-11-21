@@ -58,14 +58,14 @@ pub(crate) fn digits(s: &str) -> bool {
 // ---- XML part encodings (W3C XML 1.0 section 4.3.3 and Appendix F) ----
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum XmlEncoding {
+pub enum XmlEncoding {
     Utf8,
     Utf8Bom,
     Utf16Le,
     Utf16Be,
 }
 
-pub(crate) fn decode_docx_xml(bytes: &[u8]) -> Result<(String, XmlEncoding)> {
+pub fn decode_docx_xml(bytes: &[u8]) -> Result<(String, XmlEncoding)> {
     let encoding = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
         XmlEncoding::Utf8Bom
     } else if bytes.starts_with(&[0xff, 0xfe]) {
@@ -138,7 +138,7 @@ fn declared_encoding(text: &str) -> Option<String> {
     None
 }
 
-pub(crate) fn encode_docx_xml(text: &str, encoding: XmlEncoding) -> Vec<u8> {
+pub fn encode_docx_xml(text: &str, encoding: XmlEncoding) -> Vec<u8> {
     match encoding {
         XmlEncoding::Utf8 => text.as_bytes().to_vec(),
         XmlEncoding::Utf8Bom => [&[0xefu8, 0xbb, 0xbf][..], text.as_bytes()].concat(),

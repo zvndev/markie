@@ -1,0 +1,22 @@
+[package]
+name = "markie-rich"
+description = "Markie RS rich editor model: byte-exact Markdown blocks and the TipTap Yjs schema. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The GPUI proof of concept. Off by default so the model tests never build GPUI.
+gui = ["dep:gpui-kit"]
+
+[dependencies]
+pulldown-cmark.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+yrs = "=0.28.2"
+gpui-kit = { version = "=0.10.0", optional = true }
+
+[[example]]
+name = "rich_editor"
+required-features = ["gui"]

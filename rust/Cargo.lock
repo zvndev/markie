@@ -3991,6 +3991,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "markie-rich"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "yrs",
+]
+
+[[package]]
 name = "markup5ever"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

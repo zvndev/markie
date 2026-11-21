@@ -1,0 +1,245 @@
+//! The local registry: recently opened files, workspace roots, stars, and a
+//! cached copy of the device index for instant first paint.
+//!
+//! The tables match `electron/registry.js` column for column, so a later import
+//! from the Electron app's `registry.db` is a straight copy. This build keeps
+//! its own database under [`crate::paths::data_dir`] and never opens that one.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use rusqlite::{Connection, OptionalExtension, params};
+
+use crate::index::IndexSnapshot;
+
+pub struct Registry {
+    db: Connection,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecentFile {
+    pub path: PathBuf,
+    pub name: String,
+    pub last_opened_at: String,
+}
+
+fn now_iso() -> String {
+    // RFC 3339 in UTC without pulling in a date crate.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs()) as i64;
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+/// Howard Hinnant's days-to-civil algorithm.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Windows paths are case-insensitive: one canonical spelling per file.
+fn key(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if cfg!(windows) { s.to_lowercase() } else { s.into_owned() }
+}
+
+impl Registry {
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let db = Connection::open(path)?;
+        Self::init(db)
+    }
+
+    pub fn in_memory() -> Result<Self> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(db: Connection) -> Result<Self> {
+        db.pragma_update(None, "journal_mode", "WAL")?;
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS files (
+               path TEXT PRIMARY KEY,
+               name TEXT NOT NULL,
+               content_hash TEXT,
+               cloud_doc_id TEXT,
+               cloud_version INTEGER DEFAULT 0,
+               sync_state TEXT NOT NULL DEFAULT 'local-only',
+               last_opened_at TEXT,
+               last_synced_at TEXT,
+               share_role TEXT
+             );
+             CREATE TABLE IF NOT EXISTS workspace_roots (
+               path TEXT PRIMARY KEY,
+               added_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS md_stars (
+               path TEXT PRIMARY KEY,
+               kind TEXT NOT NULL,
+               added_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS rs_index_snapshot (
+               id INTEGER PRIMARY KEY CHECK (id = 1),
+               json TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS rs_settings (
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
+             );",
+        )?;
+        Ok(Self { db })
+    }
+
+    pub fn track_opened(&self, path: &Path) -> Result<()> {
+        let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        self.db.execute(
+            "INSERT INTO files (path, name, last_opened_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(path) DO UPDATE SET name = excluded.name, last_opened_at = excluded.last_opened_at",
+            params![key(path), name, now_iso()],
+        )?;
+        Ok(())
+    }
+
+    pub fn recent(&self, limit: usize) -> Result<Vec<RecentFile>> {
+        let mut stmt = self.db.prepare(
+            "SELECT path, name, last_opened_at FROM files
+             WHERE last_opened_at IS NOT NULL ORDER BY last_opened_at DESC, rowid DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map([limit as i64], |r| {
+                Ok(RecentFile {
+                    path: PathBuf::from(r.get::<_, String>(0)?),
+                    name: r.get(1)?,
+                    last_opened_at: r.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn roots(&self) -> Result<Vec<PathBuf>> {
+        let mut stmt = self.db.prepare("SELECT path FROM workspace_roots ORDER BY added_at")?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0).map(PathBuf::from))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn add_root(&self, path: &Path) -> Result<()> {
+        self.db.execute(
+            "INSERT OR IGNORE INTO workspace_roots (path, added_at) VALUES (?1, ?2)",
+            params![key(path), now_iso()],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_root(&self, path: &Path) -> Result<()> {
+        self.db.execute("DELETE FROM workspace_roots WHERE path = ?1", [key(path)])?;
+        Ok(())
+    }
+
+    pub fn toggle_star(&self, path: &Path, kind: &str) -> Result<bool> {
+        let k = key(path);
+        let removed = self.db.execute("DELETE FROM md_stars WHERE path = ?1", [&k])?;
+        if removed > 0 {
+            return Ok(false);
+        }
+        self.db.execute(
+            "INSERT INTO md_stars (path, kind, added_at) VALUES (?1, ?2, ?3)",
+            params![k, kind, now_iso()],
+        )?;
+        Ok(true)
+    }
+
+    pub fn stars(&self) -> Result<Vec<PathBuf>> {
+        let mut stmt = self.db.prepare("SELECT path FROM md_stars ORDER BY added_at")?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0).map(PathBuf::from))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Persist the index for instant first paint. Body snippets are left out:
+    /// they are what makes a snapshot large, and the rescan that follows every
+    /// launch brings them back within seconds.
+    pub fn save_snapshot(&self, snapshot: &IndexSnapshot) -> Result<()> {
+        let mut slim = snapshot.clone();
+        for file in &mut slim.files {
+            file.snippet = None;
+        }
+        self.db.execute(
+            "INSERT INTO rs_index_snapshot (id, json) VALUES (1, ?1)
+             ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+            [serde_json::to_string(&slim)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_snapshot(&self) -> Result<Option<IndexSnapshot>> {
+        let json: Option<String> = self
+            .db
+            .query_row("SELECT json FROM rs_index_snapshot WHERE id = 1", [], |r| r.get(0))
+            .optional()?;
+        Ok(json.and_then(|j| serde_json::from_str(&j).ok()))
+    }
+
+    pub fn setting(&self, name: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT value FROM rs_settings WHERE key = ?1", [name], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, name: &str, value: &str) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO rs_settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [name, value],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recents_roots_stars_settings() {
+        let reg = Registry::in_memory().unwrap();
+        reg.track_opened(Path::new("/a/one.md")).unwrap();
+        reg.track_opened(Path::new("/a/two.md")).unwrap();
+        reg.track_opened(Path::new("/a/one.md")).unwrap();
+        let recent = reg.recent(10).unwrap();
+        assert_eq!(recent.len(), 2);
+        reg.add_root(Path::new("/a")).unwrap();
+        reg.add_root(Path::new("/a")).unwrap();
+        assert_eq!(reg.roots().unwrap(), vec![PathBuf::from("/a")]);
+        assert!(reg.toggle_star(Path::new("/a/one.md"), "file").unwrap());
+        assert!(!reg.toggle_star(Path::new("/a/one.md"), "file").unwrap());
+        reg.set_setting("theme", "dark").unwrap();
+        assert_eq!(reg.setting("theme").unwrap().as_deref(), Some("dark"));
+        let snap = IndexSnapshot::default();
+        reg.save_snapshot(&snap).unwrap();
+        assert!(reg.load_snapshot().unwrap().is_some());
+    }
+
+    #[test]
+    fn iso_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(20_413), (2025, 11, 21));
+        assert!(now_iso().ends_with('Z'));
+    }
+}

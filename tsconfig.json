@@ -32,6 +32,7 @@
     "node_modules",
     "server",
     "dist",
-    "apps"
+    "apps",
+    "rust"
   ]
 }

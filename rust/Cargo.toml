@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = ["crates/markie-core", "crates/markie-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+markie-core = { path = "crates/markie-core" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+dirs = "7"
+tempfile = "3"
+
+[profile.dev]
+# GPUI is slow unoptimized; keep our code debuggable and deps fast.
+opt-level = 0
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

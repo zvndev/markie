@@ -85,3 +85,6 @@ deploy/markie-backup-key.txt
 # into its image; the placeholder keeps the Dockerfile's COPY valid without it
 /server/web-dist/*
 !/server/web-dist/.gitkeep
+
+# Markie RS (native Rust build): cargo output
+rust/target/

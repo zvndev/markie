@@ -1,0 +1,39 @@
+# Markie RS
+
+The native Rust build of desktop Markie. A side project on branch `rust/markie-rs`. It is not part of the Electron release pipeline.
+
+- Research and the answer to "can Rust do everything": `docs/rust-port/RESEARCH.md`
+- Phases, finish lines and estimates: `docs/rust-port/PLAN.md`
+- What desktop Markie does today, feature by feature: `docs/rust-port/PARITY.md`
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `crates/markie-core` | No UI. Formats and lossless text decoding, the device index, search, atomic save, outline, stats, the registry. |
+| `crates/markie-app` | The GPUI window: Library, document pane, status bar, menus and shortcuts. |
+| `scripts/bundle-mac.sh` | Builds `target/release/Markie RS.app` for local testing. |
+| `rust-toolchain.toml` | Pins Rust 1.99 for this folder only. GPUI Kit needs it. |
+
+## Commands
+
+```sh
+cargo test -p markie-core
+cargo run -p markie-app -- path/to/file.md
+./scripts/bundle-mac.sh
+```
+
+`MARKIE_RS_DATA_DIR=/some/folder` keeps a test run's registry out of the real data folder.
+
+## Shortcuts
+
+| Keys | Action |
+|---|---|
+| ⌘O | Open |
+| ⇧⌘O | Add a folder to the Library |
+| ⌘N | New document |
+| ⌘S | Save |
+| ⌘E | Switch View and Source |
+| ⌘K or ⌘P | Search documents |
+| ⌘R | Rescan |
+| ⇧⌘L | Light or dark |

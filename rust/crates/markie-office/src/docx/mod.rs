@@ -1186,3 +1186,30 @@ pub fn create_docx(text: &str) -> Result<DocxDocument> {
     let entries: Vec<ZipEntry> = parts.into_iter().map(|(n, s)| ZipEntry::new(n, s)).collect();
     open_docx(&write_zip(&entries, DEFAULT_ZIP_LIMITS)?, DEFAULT_ZIP_LIMITS)
 }
+
+#[cfg(test)]
+mod theme_tests;
+
+#[cfg(test)]
+impl State {
+    /// A parts-only state for resolver unit tests (no main document parsing).
+    pub(crate) fn parts_only(entries: Vec<ZipEntry>, main_part: &str) -> State {
+        State {
+            source: String::new(),
+            identities: BTreeMap::new(),
+            next_id: 0,
+            entries: Arc::new(entries),
+            main_part: main_part.into(),
+            part_overrides: PartMap::default(),
+            deleted_parts: BTreeSet::new(),
+            next_image_id: None,
+            next_revision_id: None,
+            original: Arc::new(vec![]),
+            original_source: Arc::new(String::new()),
+            run_nodes: HashMap::new(),
+            original_run_nodes: Arc::new(HashMap::new()),
+            limits: DEFAULT_ZIP_LIMITS,
+            encodings: Arc::new(HashMap::new()),
+        }
+    }
+}

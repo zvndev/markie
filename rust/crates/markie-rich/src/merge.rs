@@ -87,7 +87,13 @@ impl Document {
             }
         }
 
-        let mut out = Document { front_matter: self.front_matter.clone(), leading: self.leading.clone(), blocks: vec![] };
+        let mut out = Document {
+            front_matter: self.front_matter.clone(),
+            leading: self.leading.clone(),
+            blocks: vec![],
+            ending: self.ending.clone(),
+            end_origin: self.end_origin,
+        };
         for step in plan {
             match step {
                 Step::Keep(i) => out.blocks.push(base[i].clone()),

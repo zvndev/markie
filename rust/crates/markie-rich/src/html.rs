@@ -345,7 +345,8 @@ pub fn inline_html_content(html: &str) -> Vec<Inline> {
                 continue;
             }
         }
-        let next = rest[1..].find('<').map(|i| i + 1).unwrap_or(rest.len());
+        let first = rest.chars().next().map_or(1, char::len_utf8);
+        let next = rest[first..].find('<').map(|i| i + first).unwrap_or(rest.len());
         text.push_str(&rest[..next]);
         rest = &rest[next..];
     }

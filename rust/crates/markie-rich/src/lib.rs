@@ -8,6 +8,7 @@
 
 pub mod document;
 pub mod edit;
+pub mod editor;
 pub mod embed;
 pub mod html;
 pub mod linkify;

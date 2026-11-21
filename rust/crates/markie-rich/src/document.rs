@@ -21,6 +21,11 @@ pub struct Document {
     /// Blank lines before the first block.
     pub leading: String,
     pub blocks: Vec<Block>,
+    /// The bytes after the last block as read (the file's own ending), and
+    /// that block's origin. An edit that removes or replaces the last block
+    /// still ends the file the way it ended.
+    pub ending: String,
+    pub end_origin: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -197,7 +202,7 @@ impl Document {
         }
         groups.sort_by_key(|(r, _)| r.start);
 
-        let mut doc = Document { front_matter, leading: String::new(), blocks: Vec::new() };
+        let mut doc = Document { front_matter, leading: String::new(), blocks: Vec::new(), ending: String::new(), end_origin: None };
         let mut cursor = 0usize;
         for (bytes, evs) in groups {
             let start = bytes.start.max(cursor);
@@ -220,6 +225,8 @@ impl Document {
         for (i, b) in doc.blocks.iter_mut().enumerate() {
             b.origin = Some(i);
         }
+        doc.end_origin = doc.blocks.len().checked_sub(1);
+        doc.ending = doc.blocks.last().map(|b| b.trailing.clone()).unwrap_or_default();
         doc
     }
 
@@ -296,17 +303,14 @@ impl Document {
         for (i, b) in self.blocks.iter().enumerate() {
             out.push_str(&b.markdown(&definitions));
             if i + 1 == n {
-                // The file's own ending, from whichever block ended it.
-                let ending = self
-                    .blocks
-                    .iter()
-                    .find(|x| x.origin.is_some() && x.origin == last_origin)
-                    .map(|x| x.trailing.clone())
-                    .unwrap_or_else(|| "\n".into());
-                if b.origin == last_origin && b.origin.is_some() {
+                // The file's own ending.
+                let _ = last_origin;
+                if b.origin.is_some() && b.origin == self.end_origin {
                     out.push_str(&b.trailing);
+                } else if self.end_origin.is_some() {
+                    out.push_str(last_line_ending(&self.ending));
                 } else {
-                    out.push_str(last_line_ending(&ending));
+                    out.push_str("\n");
                 }
             } else {
                 let next = &self.blocks[i + 1];

@@ -644,7 +644,7 @@ fn finish_inlines(pieces: Vec<Piece>) -> Vec<Inline> {
 
 /// ProseMirror's DOM parser: whitespace runs fold to one space, none at the
 /// start of the block, after a break, or at the end.
-fn collapse_whitespace(inlines: Vec<Inline>) -> Vec<Inline> {
+pub(crate) fn collapse_whitespace(inlines: Vec<Inline>) -> Vec<Inline> {
     let mut out: Vec<Inline> = Vec::new();
     // True when the last emitted character was whitespace or a block/line start.
     let mut prev_space = true;

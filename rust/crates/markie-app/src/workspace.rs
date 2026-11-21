@@ -33,6 +33,7 @@ use crate::library::{Library, LibraryTab};
 mod file_ops;
 mod palette;
 mod panels;
+mod rich;
 mod settings;
 
 /// The panel on the right of the document.
@@ -73,6 +74,8 @@ pub struct Workspace {
     search: Entity<InputState>,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
+    /// View mode for Markdown: the native rich editor.
+    rich: Entity<markie_editor::RichView>,
     doc: Option<OpenDoc>,
     mode: Mode,
     dirty: bool,
@@ -121,6 +124,7 @@ impl Workspace {
                 .searchable(true)
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
+        let (rich, rich_sub) = Self::new_rich(cx);
 
         let subscriptions = vec![
             cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
@@ -135,6 +139,7 @@ impl Workspace {
                     this.on_edit(cx);
                 }
             }),
+            rich_sub,
         ];
 
         let template = registry
@@ -164,6 +169,7 @@ impl Workspace {
             search,
             editor,
             preview,
+            rich,
             doc: None,
             mode: Mode::View,
             dirty: false,
@@ -419,6 +425,12 @@ impl Workspace {
                 }
                 if self.mode == Mode::Source && matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. })) {
                     self.focus_editor(window, cx);
+                } else if self.rich_active() {
+                    if let Some(DocKind::Text { saved, .. }) = self.doc.as_ref().map(|d| &d.kind) {
+                        let text = saved.clone();
+                        self.load_rich(&text, cx);
+                    }
+                    self.focus_rich(window, cx);
                 }
                 if let Some(reg) = &self.registry {
                     let _ = reg.track_opened(&doc.path);
@@ -448,6 +460,10 @@ impl Workspace {
         // Front matter is held aside in the rich view, never shown.
         let body = &text[outline::front_matter_len(text)..];
         self.preview.update(cx, |state, cx| state.set_text(body, cx));
+        // (open_path loads the rich editor itself, once the document is set.)
+        if self.doc.as_ref().is_some_and(|d| !d.large) && text.len() <= 1_000_000 {
+            self.load_rich(text, cx);
+        }
     }
 
     fn update_stats(&mut self, text: &str) {
@@ -488,7 +504,7 @@ impl Workspace {
     /// Autosave never opens a dialog: a failure leaves a crash draft and the
     /// edited marker, and the next save tries again.
     fn autosave_now(&mut self, cx: &mut Context<Self>) {
-        let text = self.editor.read(cx).value().to_string();
+        let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
         if self.write_text(&text).is_ok() {
@@ -571,7 +587,7 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.editor.read(cx).value().to_string();
+        let text = self.current_text(cx);
         self.autosave.cancel();
         if let Err(err) = self.write_text(&text) {
             window.push_notification(format!("Markie could not save: {err:#}"), cx);
@@ -594,12 +610,19 @@ impl Workspace {
         let format = doc.format;
         self.mode = match self.mode {
             Mode::View => {
+                if self.rich_active() {
+                    self.rich_to_source(window, cx);
+                }
                 self.focus_editor(window, cx);
                 Mode::Source
             }
             Mode::Source => {
                 let text = self.editor.read(cx).value().to_string();
                 self.set_preview(&text, format, cx);
+                self.mode = Mode::View;
+                if self.rich_active() {
+                    self.focus_rich(window, cx);
+                }
                 Mode::View
             }
         };
@@ -1192,6 +1215,10 @@ impl Workspace {
                     .into_any_element()
             }
             (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Csv => self.render_csv(cx),
+            (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown && !doc.large => {
+                self.sync_rich_appearance(cx);
+                div().size_full().child(self.rich.clone()).into_any_element()
+            }
             (DocKind::Html, _) | (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown || matches!(doc.kind, DocKind::Html) => {
                 div()
                     .size_full()

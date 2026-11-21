@@ -36,6 +36,9 @@ impl Workspace {
     /// Jump to a heading. Source mode moves the caret; View mode switches to
     /// Source at that line until the rich editor can scroll to a block.
     fn jump_to_line(&mut self, line: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.rich_active() && self.reveal_section_line(line, window, cx) {
+            return;
+        }
         if self.mode == Mode::View {
             self.set_mode(Mode::Source, window, cx);
         }

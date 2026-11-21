@@ -1,0 +1,13 @@
+[package]
+name = "markie-editor"
+description = "Markie RS rich (View mode) editor: the GPUI view over markie-rich's editor model."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+markie-rich = { path = "../markie-rich" }
+markie-math = { path = "../markie-math" }
+gpui-kit = "=0.10.0"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }

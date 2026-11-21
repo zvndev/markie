@@ -9,6 +9,7 @@
 pub mod document;
 pub mod edit;
 pub mod embed;
+pub mod html;
 pub mod linkify;
 pub mod merge;
 pub mod model;

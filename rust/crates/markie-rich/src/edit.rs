@@ -57,8 +57,8 @@ pub enum TextKind {
 
 pub fn text_block(nodes: &[Node]) -> Option<(TextKind, &[Inline])> {
     match nodes {
-        [Node::Paragraph(c)] => Some((TextKind::Paragraph, c)),
-        [Node::Heading { level, content }] => Some((TextKind::Heading(*level), content)),
+        [Node::Paragraph { content: c, .. }] => Some((TextKind::Paragraph, c)),
+        [Node::Heading { level, content, .. }] => Some((TextKind::Heading(*level), content)),
         _ => None,
     }
 }
@@ -124,8 +124,8 @@ impl RichEditor {
     fn store(&mut self, block: usize, kind: TextKind, units: &[Unit]) {
         let content = unflatten(units);
         let node = match kind {
-            TextKind::Paragraph => Node::Paragraph(content),
-            TextKind::Heading(level) => Node::Heading { level, content },
+            TextKind::Paragraph => Node::para(content),
+            TextKind::Heading(level) => Node::heading(level, content),
         };
         self.doc.set_nodes(block, vec![node]);
     }
@@ -216,7 +216,7 @@ impl RichEditor {
         self.delete_selection(&mut units);
         let tail = units.split_off(self.caret);
         self.store(self.active, kind, &units);
-        self.doc.insert_block(self.active + 1, vec![Node::Paragraph(unflatten(&tail))]);
+        self.doc.insert_block(self.active + 1, vec![Node::para(unflatten(&tail))]);
         self.active += 1;
         self.caret = 0;
         self.typing = None;

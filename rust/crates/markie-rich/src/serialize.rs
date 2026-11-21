@@ -68,8 +68,17 @@ pub fn canonical(nodes: &[Node]) -> Vec<Node> {
 
 fn canonical_node(n: &Node) -> Node {
     match n {
-        Node::Paragraph(c) => Node::Paragraph(expel_whitespace(c)),
-        Node::Heading { level, content } => Node::Heading { level: *level, content: expel_whitespace(content) },
+        Node::Paragraph { content, align } if is_aligned(align, content) => {
+            Node::Paragraph { content: crate::html::inline_html_content(&crate::html::inline_to_html(content)), align: align.clone() }
+        }
+        Node::Heading { level, content, align } if is_aligned(align, content) => Node::Heading {
+            level: *level,
+            content: crate::html::inline_html_content(&crate::html::inline_to_html(content)),
+            align: align.clone(),
+        },
+        // An alignment HTML would not carry reads back as none.
+        Node::Paragraph { content, .. } => Node::para(expel_whitespace(content)),
+        Node::Heading { level, content, .. } => Node::heading(*level, expel_whitespace(content)),
         Node::Blockquote(c) => Node::Blockquote(canonical(c)),
         Node::BulletList { tight, items } => {
             Node::BulletList { tight: *tight, items: items.iter().map(|i| canonical(i)).collect() }
@@ -129,8 +138,14 @@ fn block(n: &Node, esc: Escape, alt: bool) -> String {
     let bullet = if alt { "* " } else { "- " };
     let delim = if alt { ')' } else { '.' };
     match n {
-        Node::Paragraph(c) => inline_md(c, esc, false),
-        Node::Heading { level, content } => {
+        Node::Paragraph { content, align } if is_aligned(align, content) => {
+            crate::html::aligned_html("p", align.as_deref().unwrap_or(""), content)
+        }
+        Node::Heading { level, content, align } if is_aligned(align, content) => {
+            crate::html::aligned_html(&format!("h{level}"), align.as_deref().unwrap_or(""), content)
+        }
+        Node::Paragraph { content, .. } => inline_md(content, esc, false),
+        Node::Heading { level, content, .. } => {
             format!("{} {}", "#".repeat(*level as usize), inline_md(content, esc, false))
         }
         Node::Blockquote(children) => prefix_lines(&write_nodes(children, esc), "> ", ">"),
@@ -155,10 +170,19 @@ fn block(n: &Node, esc: Escape, alt: bool) -> String {
         }
         Node::HorizontalRule => "---".into(),
         Node::Table { rows } => table(rows, esc),
-        Node::Image { src, alt, title } => image(src, alt.as_deref().unwrap_or(""), title.as_deref()),
+        Node::Image { src, alt, title, width } => {
+            crate::html::sized_media_html(src, alt.as_deref(), title.as_deref(), *width)
+                .unwrap_or_else(|| image(src, alt.as_deref().unwrap_or(""), title.as_deref()))
+        }
         Node::MathBlock { source } => source.clone(),
         Node::Embed { url } => url.clone(),
     }
+}
+
+/// `isAligned` in rich-aligned-blocks.ts: left is no alignment, and an
+/// empty block has nothing to align.
+pub fn is_aligned(align: &Option<String>, content: &[Inline]) -> bool {
+    align.as_deref().is_some_and(|a| !a.is_empty() && a != "left") && !content.is_empty()
 }
 
 fn list<'a>(items: impl Iterator<Item = (String, &'a Vec<Node>)>, tight: bool, esc: Escape) -> String {
@@ -231,7 +255,7 @@ fn table(rows: &[Vec<Cell>], esc: Escape) -> String {
             r.iter()
                 .map(|c| {
                     let inl = match c.content.first() {
-                        Some(Node::Paragraph(i)) => inline_md(i, esc, true),
+                        Some(Node::Paragraph { content: i, .. }) => inline_md(i, esc, true),
                         _ => String::new(),
                     };
                     inl
@@ -281,31 +305,64 @@ fn table(rows: &[Vec<Cell>], esc: Escape) -> String {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MarkKind {
     Link,
+    TextStyle,
     Bold,
     Italic,
     Strike,
     Underline,
+    Highlight,
 }
 
 fn has(m: &Marks, k: MarkKind) -> bool {
     match k {
         MarkKind::Link => m.link.is_some(),
+        MarkKind::TextStyle => m.text_style.as_ref().is_some_and(|t| crate::html::span_open(t).is_some()),
         MarkKind::Bold => m.bold,
         MarkKind::Italic => m.italic,
         MarkKind::Strike => m.strike,
         MarkKind::Underline => m.underline,
+        MarkKind::Highlight => m.highlight.is_some(),
     }
 }
 
-const ORDER: [MarkKind; 5] =
-    [MarkKind::Link, MarkKind::Bold, MarkKind::Italic, MarkKind::Strike, MarkKind::Underline];
+/// Outside in, as tiptap-markdown nests them: `[<span>**<mark>a</mark>**</span>](…)`.
+const ORDER: [MarkKind; 7] = [
+    MarkKind::Link,
+    MarkKind::TextStyle,
+    MarkKind::Bold,
+    MarkKind::Italic,
+    MarkKind::Strike,
+    MarkKind::Underline,
+    MarkKind::Highlight,
+];
+
+/// Does an open mark `k` (opened for `open`) continue into `next`?
+fn continues(k: MarkKind, open: &Marks, next: &Marks) -> bool {
+    has(next, k)
+        && match k {
+            MarkKind::Link => next.link == open.link,
+            MarkKind::TextStyle => next.text_style == open.text_style,
+            MarkKind::Highlight => next.highlight == open.highlight,
+            _ => true,
+        }
+}
 
 fn bare(link: Option<&Link>, esc: Escape) -> bool {
     esc.bare_links && link.is_some_and(|l| l.style == LinkStyle::Autolink)
 }
 
-fn open(k: MarkKind, link: Option<&Link>, esc: Escape) -> &'static str {
+fn open(k: MarkKind, marks: &Marks, esc: Escape) -> String {
+    let link = marks.link.as_ref();
     match k {
+        MarkKind::TextStyle => marks.text_style.as_ref().and_then(crate::html::span_open).unwrap_or_default(),
+        MarkKind::Highlight => marks.highlight.as_ref().map(crate::html::mark_open).unwrap_or_default(),
+        _ => open_simple(k, link, esc).to_string(),
+    }
+}
+
+fn open_simple(k: MarkKind, link: Option<&Link>, esc: Escape) -> &'static str {
+    match k {
+        MarkKind::TextStyle | MarkKind::Highlight => "",
         MarkKind::Link if bare(link, esc) => "",
         MarkKind::Link => "[",
         MarkKind::Bold if esc.html_marks => "<strong>",
@@ -345,6 +402,8 @@ fn close(k: MarkKind, link: Option<&Link>, esc: Escape) -> String {
         MarkKind::Italic => "*".into(),
         MarkKind::Strike => "~~".into(),
         MarkKind::Underline => "</u>".into(),
+        MarkKind::TextStyle => "</span>".into(),
+        MarkKind::Highlight => "</mark>".into(),
     }
 }
 
@@ -357,6 +416,8 @@ fn common(a: &Marks, b: &Marks) -> Marks {
         underline: a.underline && b.underline,
         code: false,
         link: if a.link == b.link { a.link.clone() } else { None },
+        highlight: if a.highlight == b.highlight { a.highlight.clone() } else { None },
+        text_style: if a.text_style == b.text_style { a.text_style.clone() } else { None },
     }
 }
 
@@ -397,8 +458,8 @@ fn expel_whitespace(inlines: &[Inline]) -> Vec<Inline> {
 fn inline_md(inlines: &[Inline], esc: Escape, in_table: bool) -> String {
     let inlines = expel_whitespace(inlines);
     let mut out = String::new();
-    let mut stack: Vec<MarkKind> = Vec::new();
-    let mut cur_link: Option<Link> = None;
+    // Open marks, each with the marks of the run that opened it.
+    let mut stack: Vec<(MarkKind, Marks)> = Vec::new();
     let empty = Marks::default();
     for inl in inlines.iter() {
         let marks = match inl {
@@ -406,26 +467,15 @@ fn inline_md(inlines: &[Inline], esc: Escape, in_table: bool) -> String {
             _ => &empty,
         };
         // Close marks this run does not continue (and everything above them).
-        let keep = stack
-            .iter()
-            .take_while(|k| {
-                has(marks, **k) && (**k != MarkKind::Link || marks.link.as_ref() == cur_link.as_ref())
-            })
-            .count();
+        let keep = stack.iter().take_while(|(k, opened)| continues(*k, opened, marks)).count();
         while stack.len() > keep {
-            let k = stack.pop().unwrap();
-            out.push_str(&close(k, cur_link.as_ref(), esc));
-            if k == MarkKind::Link {
-                cur_link = None;
-            }
+            let (k, opened) = stack.pop().unwrap();
+            out.push_str(&close(k, opened.link.as_ref(), esc));
         }
         for k in ORDER {
-            if has(marks, k) && !stack.contains(&k) {
-                if k == MarkKind::Link {
-                    cur_link = marks.link.clone();
-                }
-                out.push_str(open(k, cur_link.as_ref(), esc));
-                stack.push(k);
+            if has(marks, k) && !stack.iter().any(|(x, _)| *x == k) {
+                out.push_str(&open(k, marks, esc));
+                stack.push((k, marks.clone()));
             }
         }
         match inl {
@@ -445,8 +495,8 @@ fn inline_md(inlines: &[Inline], esc: Escape, in_table: bool) -> String {
             Inline::HardBreak => out.push_str(if in_table { "<br>" } else { "\\\n" }),
         }
     }
-    while let Some(k) = stack.pop() {
-        out.push_str(&close(k, cur_link.as_ref(), esc));
+    while let Some((k, opened)) = stack.pop() {
+        out.push_str(&close(k, opened.link.as_ref(), esc));
     }
     out
 }

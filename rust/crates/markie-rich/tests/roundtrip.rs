@@ -96,7 +96,7 @@ fn empty_documents() {
 }
 
 fn first_paragraph_index(doc: &Document) -> usize {
-    doc.blocks.iter().position(|b| matches!(b.nodes().first(), Some(Node::Paragraph(_)))).unwrap()
+    doc.blocks.iter().position(|b| matches!(b.nodes().first(), Some(Node::Paragraph { .. }))).unwrap()
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn editing_one_paragraph_of_a_400_line_document_leaves_every_other_line_identica
     assert!(md.split('\n').count() > 400);
     let mut doc = Document::parse(&md);
     assert_eq!(doc.blocks.len(), PARAGRAPHS);
-    doc.set_nodes(EDITED, vec![Node::Paragraph(vec![Inline::text("Paragraph 42 was rewritten by hand.")])]);
+    doc.set_nodes(EDITED, vec![Node::para(vec![Inline::text("Paragraph 42 was rewritten by hand.")])]);
     let out = doc.to_markdown();
     let before: Vec<&str> = md.split('\n').collect();
     let after: Vec<&str> = out.split('\n').collect();
@@ -128,7 +128,7 @@ fn bolding_a_word_rewrites_only_that_block() {
     let mut doc = Document::parse(md);
     let i = first_paragraph_index(&doc);
     let nodes = doc.nodes_mut(i).unwrap();
-    let Node::Paragraph(inl) = &mut nodes[0] else { panic!() };
+    let Node::Paragraph { content: inl, .. } = &mut nodes[0] else { panic!() };
     // "Prose wrapped by hand across lines." -> "**Prose** wrapped by hand across lines."
     let Inline::Text { text, .. } = &inl[0] else { panic!() };
     let rest = text["Prose".len()..].to_string();
@@ -145,12 +145,12 @@ fn bolding_a_word_rewrites_only_that_block() {
 fn inserting_and_deleting_blocks_keeps_separators_valid() {
     let md = "# A\n\nfirst\n\nsecond\n";
     let mut doc = Document::parse(md);
-    doc.insert_block(2, vec![Node::Paragraph(vec![Inline::text("new")])]);
+    doc.insert_block(2, vec![Node::para(vec![Inline::text("new")])]);
     assert_eq!(doc.to_markdown(), "# A\n\nfirst\n\nnew\n\nsecond\n");
     doc.remove_block(3);
     assert_eq!(doc.to_markdown(), "# A\n\nfirst\n\nnew\n");
     let mut doc = Document::parse("one\n\ntwo");
-    doc.insert_block(2, vec![Node::Heading { level: 2, content: vec![Inline::text("end")] }]);
+    doc.insert_block(2, vec![Node::heading(2, vec![Inline::text("end")])]);
     assert_eq!(doc.to_markdown(), "one\n\ntwo\n\n## end");
 }
 

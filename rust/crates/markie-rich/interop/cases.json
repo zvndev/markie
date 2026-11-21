@@ -95,6 +95,46 @@
     {
       "name": "unicode",
       "markdown": "# Über café 🎉\n\nnaïve **fête** and *émoji 👩‍💻* then `código` and [liên kết](https://example.com/ä).\n\n- 日本語 **太字**\n- 🎉🎉 *x*\n"
+    },
+    {
+      "name": "marks/highlight colours",
+      "markdown": "<mark data-color=\"#fef08a\" style=\"background-color: rgb(254, 240, 138); color: inherit;\">yellow</mark> and <mark>plain</mark> and **<mark data-color=\"#bbf7d0\" style=\"background-color: #bbf7d0; color: inherit;\">bold green</mark>**\n"
+    },
+    {
+      "name": "marks/text colour font size",
+      "markdown": "<span style=\"color: rgb(220, 38, 38);\">red</span>, <span style=\"font-family: Georgia, Charter, serif;\">serif</span> and <span style=\"font-size: 20px;\">big</span>.\n"
+    },
+    {
+      "name": "marks/style inside link and around italic",
+      "markdown": "[<span style=\"color: #2563eb;\">site</span>](https://example.com) then <span style=\"color: #16a34a;\">*green italic*</span>\n"
+    },
+    {
+      "name": "marks/underline",
+      "markdown": "Some <u>underlined</u> and **<u>bold underline</u>** text.\n"
+    },
+    {
+      "name": "blocks/aligned paragraph and heading",
+      "markdown": "<h2 style=\"text-align: center;\">Centred</h2>\n\n<p style=\"text-align: right;\">Right <strong>bold</strong> &amp; <a target=\"_blank\" rel=\"noopener noreferrer nofollow\" href=\"a.md\">link</a><br><code>c</code></p>\n\n<p style=\"text-align: justify;\">x $a^2$ y</p>\n"
+    },
+    {
+      "name": "blocks/sized image and clip",
+      "markdown": "<img src=\"shot.png\" alt=\"A shot\" width=\"300\">\n\n<video src=\"clip.mp4\" width=\"320\" controls></video>\n\n![plain](plain.png)\n"
+    },
+    {
+      "name": "blocks/inline media tag splits a paragraph",
+      "markdown": "text <img src=\"a.png\" width=\"50\"> more\n"
+    },
+    {
+      "name": "lists/nested tasks",
+      "markdown": "- [ ] a\n  - [x] b\n- [ ] c\n"
+    },
+    {
+      "name": "lists/mixed nesting",
+      "markdown": "- a\n  1. b\n  2. c\n- d\n\n3. three\n4. four\n"
+    },
+    {
+      "name": "blocks/code with language and quote",
+      "markdown": "> quoted\n>\n> - item\n\n```rust\nfn main() {}\n```\n"
     }
   ],
   "editBase": "# Shared doc\n\nFirst paragraph stays put.\n\nSecond paragraph gets\nan edit from Rust.\n\n- [ ] a task\n- [x] done task\n\n| left | right |\n| :--- | ---: |\n| 1 | 2 |\n\nLast line, wrapped\nby hand.\n"

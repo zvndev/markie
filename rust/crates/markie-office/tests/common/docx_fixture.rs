@@ -40,3 +40,33 @@ pub fn fmt(f: impl FnOnce(&mut RunFormat)) -> RunFormat { let mut r = RunFormat:
 pub fn package(parts: &[(&str, String)]) -> Vec<u8> {
     write_zip(&parts.iter().map(|(n, d)| ZipEntry::new(*n, d.clone())).collect::<Vec<_>>(), DEFAULT_ZIP_LIMITS).unwrap()
 }
+
+/// Original 1x1 red RGBA PNG (one zero filter byte plus four samples).
+pub fn png(width: u32, height: u32) -> Vec<u8> {
+    let chunk = |name: &[u8], data: &[u8]| {
+        let mut out = (data.len() as u32).to_be_bytes().to_vec();
+        out.extend(name); out.extend(data);
+        let crc = markie_office::zip::zip_crc32(&out[4..]);
+        out.extend(crc.to_be_bytes()); out
+    };
+    let mut ihdr = width.to_be_bytes().to_vec(); ihdr.extend(height.to_be_bytes()); ihdr.extend([8u8, 6, 0, 0, 0]);
+    let idat = miniz_oxide::deflate::compress_to_vec_zlib(&[0, 255, 0, 0, 255], 6);
+    let mut out = vec![137u8, 80, 78, 71, 13, 10, 26, 10];
+    out.extend(chunk(b"IHDR", &ihdr)); out.extend(chunk(b"IDAT", &idat)); out.extend(chunk(b"IEND", &[]));
+    out
+}
+pub fn image(after: InsertAt, w: f64, h: f64) -> Operation {
+    Operation::InsertImage(ImageInput { after_paragraph_id: after, bytes: png(1, 1), content_type: ImageType::Png, width_points: w, height_points: h, alt_text: None })
+}
+pub fn swap_part(bytes: &[u8], name: &str, change: impl FnOnce(&str) -> String) -> Vec<u8> {
+    let mut parts = read_zip(bytes, DEFAULT_ZIP_LIMITS).unwrap();
+    change_xml(&mut parts, name, change);
+    write_zip(&parts, DEFAULT_ZIP_LIMITS).unwrap()
+}
+/// Replaces the `<Default Extension="rels" .../>` with an override-only declaration.
+pub fn override_only_rels(bytes: &[u8]) -> Vec<u8> {
+    swap_part(bytes, "[Content_Types].xml", |x| {
+        let s = x.find(r#"<Default Extension="rels""#).unwrap(); let e = s + x[s..].find("/>").unwrap() + 2;
+        format!("{}{}{}", &x[..s], r#"<Override PartName="/_rels/.rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#, &x[e..])
+    })
+}

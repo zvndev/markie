@@ -27,6 +27,7 @@ pub mod document;
 pub mod drafts;
 pub mod formats;
 pub mod history;
+pub mod import;
 pub mod index;
 pub mod outline;
 pub mod paths;

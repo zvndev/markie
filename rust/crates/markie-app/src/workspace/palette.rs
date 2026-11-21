@@ -24,6 +24,8 @@ fn commands() -> Vec<(&'static str, Box<dyn Action>, &'static [&'static str])> {
         ("Reveal in Finder", Box::new(RevealDocument), &["show", "folder"]),
         ("Copy path", Box::new(CopyPath), &["clipboard"]),
         ("Move to Trash", Box::new(TrashDocument), &["delete", "remove"]),
+        ("Star or unstar document", Box::new(ToggleStar), &["favorite", "pin"]),
+        ("Import recents and stars from Markie", Box::new(ImportFromMarkie), &["electron", "migrate"]),
         ("Rescan documents", Box::new(Rescan), &["index", "refresh"]),
         ("Toggle dark mode", Box::new(ToggleTheme), &["theme", "light", "appearance"]),
     ]

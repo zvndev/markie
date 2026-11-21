@@ -112,6 +112,34 @@ impl Registry {
         Ok(())
     }
 
+    /// Record an open with a known time, keeping whichever is newer.
+    pub fn track_opened_at(&self, path: &Path, at: &str) -> Result<()> {
+        let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        self.db.execute(
+            "INSERT INTO files (path, name, last_opened_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(path) DO UPDATE SET last_opened_at = max(coalesce(last_opened_at, ''), excluded.last_opened_at)",
+            params![key(path), name, at],
+        )?;
+        Ok(())
+    }
+
+    /// Star without toggling. Returns true when the star is new.
+    pub fn set_star(&self, path: &Path, kind: &str) -> Result<bool> {
+        let added = self.db.execute(
+            "INSERT OR IGNORE INTO md_stars (path, kind, added_at) VALUES (?1, ?2, ?3)",
+            params![key(path), kind, now_iso()],
+        )?;
+        Ok(added > 0)
+    }
+
+    pub fn is_starred(&self, path: &Path) -> Result<bool> {
+        Ok(self
+            .db
+            .query_row("SELECT 1 FROM md_stars WHERE path = ?1", [key(path)], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+
     pub fn recent(&self, limit: usize) -> Result<Vec<RecentFile>> {
         let mut stmt = self.db.prepare(
             "SELECT path, name, last_opened_at FROM files

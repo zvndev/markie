@@ -21,6 +21,8 @@ actions!(
         SearchAll,
         ToggleOutline,
         ToggleStats,
+        ToggleStar,
+        ImportFromMarkie,
         Quit,
     ]
 );

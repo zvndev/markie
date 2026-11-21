@@ -7,12 +7,22 @@ use markie_core::formats::FormatKind;
 use markie_core::index::{IndexSnapshot, IndexedDoc};
 use markie_core::search::{Hit, LibraryQuery, search_library};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LibraryTab {
+    #[default]
+    All,
+    Recent,
+    Starred,
+}
+
 #[derive(Default)]
 pub struct Library {
+    pub tab: LibraryTab,
     docs: Vec<IndexedDoc>,
+    recent: Vec<IndexedDoc>,
+    starred: Vec<IndexedDoc>,
     query: LibraryQuery,
     hits: Vec<Hit>,
-    counts: BTreeMap<FormatKind, usize>,
     pub scanning: bool,
     pub truncated: bool,
 }
@@ -21,10 +31,18 @@ impl Library {
     pub fn set_snapshot(&mut self, snapshot: IndexSnapshot) {
         self.truncated = snapshot.truncated.is_some();
         self.docs = snapshot.files;
-        self.counts.clear();
-        for doc in &self.docs {
-            *self.counts.entry(doc.format).or_default() += 1;
-        }
+        self.refresh();
+    }
+
+    pub fn set_tab(&mut self, tab: LibraryTab) {
+        self.tab = tab;
+        self.refresh();
+    }
+
+    /// Recent and starred lists come from the registry as paths.
+    pub fn set_lists(&mut self, recent: Vec<std::path::PathBuf>, starred: Vec<std::path::PathBuf>) {
+        self.recent = recent.into_iter().filter_map(|p| row_for(&p)).collect();
+        self.starred = starred.into_iter().filter_map(|p| row_for(&p)).collect();
         self.refresh();
     }
 
@@ -59,14 +77,23 @@ impl Library {
 
     /// Formats present in the index, in display order, with their counts.
     pub fn format_counts(&self) -> Vec<(FormatKind, usize)> {
-        FormatKind::OPENABLE
-            .iter()
-            .filter_map(|k| self.counts.get(k).map(|n| (*k, *n)))
-            .collect()
+        let mut counts: BTreeMap<FormatKind, usize> = BTreeMap::new();
+        for doc in self.source() {
+            *counts.entry(doc.format).or_default() += 1;
+        }
+        FormatKind::OPENABLE.iter().filter_map(|k| counts.get(k).map(|n| (*k, *n))).collect()
     }
 
     pub fn total(&self) -> usize {
-        self.docs.len()
+        self.source().len()
+    }
+
+    fn source(&self) -> &[IndexedDoc] {
+        match self.tab {
+            LibraryTab::All => &self.docs,
+            LibraryTab::Recent => &self.recent,
+            LibraryTab::Starred => &self.starred,
+        }
     }
 
     pub fn hits(&self) -> &[Hit] {
@@ -74,10 +101,36 @@ impl Library {
     }
 
     pub fn doc(&self, hit: &Hit) -> &IndexedDoc {
-        &self.docs[hit.index]
+        &self.source()[hit.index]
     }
 
     fn refresh(&mut self) {
-        self.hits = search_library(&self.docs, &self.query);
+        let mut hits = search_library(self.source(), &self.query);
+        if self.tab != LibraryTab::All && self.query.text.trim().is_empty() {
+            // Recent keeps the registry's order (newest open first), not mtime.
+            hits.sort_by_key(|h| h.index);
+        }
+        self.hits = hits;
     }
+}
+
+/// A Library row for a path that is not necessarily in the device index.
+fn row_for(path: &std::path::Path) -> Option<IndexedDoc> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    Some(IndexedDoc {
+        path: path.to_path_buf(),
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        dir: path.parent()?.to_path_buf(),
+        mtime_ms: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0.0, |d| d.as_secs_f64() * 1000.0),
+        size: meta.len(),
+        format: markie_core::formats::classify(&path.to_string_lossy()),
+        snippet: None,
+    })
 }

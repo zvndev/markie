@@ -28,7 +28,7 @@ use markie_core::registry::Registry;
 use markie_core::{outline, paths, stats};
 
 use crate::actions::*;
-use crate::library::Library;
+use crate::library::{Library, LibraryTab};
 
 mod file_ops;
 mod palette;
@@ -177,6 +177,8 @@ impl Workspace {
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
+        this.refresh_lists();
+        this.import_once(cx);
 
         let mut first_file = None;
         for path in initial {
@@ -193,6 +195,75 @@ impl Workspace {
         }
         this.rescan(cx);
         this
+    }
+
+    fn refresh_lists(&mut self) {
+        let Some(reg) = &self.registry else { return };
+        let recent = reg.recent(200).unwrap_or_default().into_iter().map(|r| r.path).collect();
+        let starred = reg.stars().unwrap_or_default();
+        self.library.set_lists(recent, starred);
+    }
+
+    /// The first launch copies recents, folders and stars from the Electron
+    /// app, reading a copy of its registry. It never writes to Markie's data.
+    fn import_once(&mut self, cx: &mut Context<Self>) {
+        let Some(reg) = &self.registry else { return };
+        if reg.setting("electron_import").ok().flatten().is_some() {
+            return;
+        }
+        let _ = reg.set_setting("electron_import", "started");
+        self.import_from_markie(cx);
+    }
+
+    fn import_from_markie(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = markie_core::import::electron_registry_path().filter(|p| p.exists()) else { return };
+        let db_path = paths::data_dir().join("registry.db");
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    let reg = Registry::open(&db_path)?;
+                    markie_core::import::import_from_electron(&source, &reg)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(summary) => {
+                        if let Some(reg) = &this.registry {
+                            let _ = reg.set_setting(
+                                "electron_import",
+                                &format!("{} recents, {} folders, {} stars", summary.recents, summary.roots, summary.stars),
+                            );
+                        }
+                        this.refresh_lists();
+                        if summary.roots > 0 {
+                            this.rescan(cx);
+                        }
+                    }
+                    Err(e) => eprintln!("markie-rs: import from Markie failed: {e:#}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn on_import(&mut self, _: &ImportFromMarkie, _: &mut Window, cx: &mut Context<Self>) {
+        self.import_from_markie(cx);
+    }
+
+    fn on_toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
+        let (Some(reg), Some(doc)) = (&self.registry, &self.doc) else { return };
+        let _ = reg.toggle_star(&doc.path, "file");
+        self.refresh_lists();
+        cx.notify();
+    }
+
+    fn is_starred(&self) -> bool {
+        match (&self.registry, &self.doc) {
+            (Some(reg), Some(doc)) => reg.is_starred(&doc.path).unwrap_or(false),
+            _ => false,
+        }
     }
 
     fn most_recent(&self) -> Option<PathBuf> {
@@ -296,6 +367,7 @@ impl Workspace {
                 if let Some(reg) = &self.registry {
                     let _ = reg.track_opened(&doc.path);
                 }
+                self.refresh_lists();
                 let title = doc
                     .path
                     .file_name()
@@ -823,6 +895,16 @@ impl Workspace {
                                     .on_click(cx.listener(|this, _, window, cx| this.set_mode(Mode::Source, window, cx))),
                             )
                         })
+                        .when(self.doc.is_some(), |el| {
+                            el.child(
+                                Button::new("star")
+                                    .ghost()
+                                    .small()
+                                    .icon(if self.is_starred() { IconName::StarFill } else { IconName::Star })
+                                    .tooltip("Star")
+                                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleStar), cx)),
+                            )
+                        })
                         .child(
                             Button::new("theme")
                                 .ghost()
@@ -861,6 +943,23 @@ impl Workspace {
                 v_flex()
                     .p_2()
                     .gap_2()
+                    .child(h_flex().gap_1().children([
+                        (LibraryTab::All, "All documents"),
+                        (LibraryTab::Recent, "Recent"),
+                        (LibraryTab::Starred, "Starred"),
+                    ]
+                    .into_iter()
+                    .map(|(tab, label)| {
+                        Button::new(SharedString::from(format!("tab-{label}")))
+                            .small()
+                            .ghost()
+                            .label(label)
+                            .selected(self.library.tab == tab)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.library.set_tab(tab);
+                                cx.notify();
+                            }))
+                    })))
                     .child(Input::new(&self.search).small().cleanable(true).prefix(IconName::Search))
                     .child(
                         h_flex()
@@ -1142,6 +1241,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_show_history))
             .on_action(cx.listener(Self::on_toggle_outline))
+            .on_action(cx.listener(Self::on_toggle_star))
+            .on_action(cx.listener(Self::on_import))
             .on_action(cx.listener(Self::on_toggle_stats))
             .on_action(cx.listener(Self::on_palette))
             .on_action(cx.listener(Self::on_rename))

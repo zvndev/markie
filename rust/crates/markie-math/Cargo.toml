@@ -1,0 +1,32 @@
+[package]
+name = "markie-math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "TeX math (as KaTeX reads it) to SVG for Markie RS, via mitex and typst. Pure Rust, no system TeX."
+
+[features]
+# Opt-in corpus audit (tests/corpus.rs). Kept out of the default build so the
+# math tests never depend on markie-rich compiling.
+corpus = ["dep:markie-rich"]
+
+[dependencies]
+# mitex 0.2.4 split into its parts: the converter is vendored with a fix (src/mitex_convert.rs).
+mitex-parser = "0.2.4"
+mitex-spec-gen = "0.2.4"
+rowan = "0.15.15"
+typst = "0.15.1"
+typst-layout = "0.15.1"
+typst-svg = "0.15.1"
+typst-assets = { version = "0.15.1", features = ["fonts"] }
+markie-rich = { path = "../markie-rich", optional = true }
+
+[dev-dependencies]
+# Same usvg as gpui-pre 0.3.12 rasterizes SVG images with.
+usvg = { version = "0.46.0", default-features = false }
+resvg = { version = "0.46.0", default-features = false }
+
+[[test]]
+name = "corpus"
+required-features = ["corpus"]

@@ -1,0 +1,23 @@
+//! Markie Cloud client for Markie RS.
+//!
+//! Mirrors the Electron client's rules (electron/servers.js, share-origin.js,
+//! server-request.js, sync.js and src/lib/{auth-client,collab,text-collab,
+//! comments,live-snapshot}.ts). Pure rules live in their own functions so they
+//! unit-test without a network; the HTTP and websocket layers sit on top.
+pub mod auth;
+pub mod client;
+pub mod collab;
+pub mod comments;
+pub mod docs;
+pub mod error;
+pub mod http;
+pub mod origin;
+pub mod registry;
+pub mod sharing;
+pub mod sync;
+pub mod tokens;
+
+pub use origin::{CLOUD_ALIASES, CLOUD_DOCS_ORIGIN, DEFAULT_SERVER};
+
+pub use client::CloudClient;
+pub use error::CloudError;

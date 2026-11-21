@@ -24,6 +24,11 @@ actions!(
         ToggleStar,
         ImportFromMarkie,
         OpenSettings,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
+        PageWider,
+        PageNarrower,
         Quit,
     ]
 );

@@ -96,6 +96,10 @@ pub struct Workspace {
     csv_rows: Option<Rc<Vec<Vec<String>>>>,
     versions: Vec<Version>,
     viewing_version: Option<(String, String)>,
+    /// Document zoom (1.0 = 100%) and reading column width, shared by every
+    /// document like the Electron app's `markie.documents.zoom.v1`.
+    zoom: f32,
+    page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -180,9 +184,19 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
+            zoom: 1.0,
+            page_width: 768.0,
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
+        if let Some(reg) = &this.registry {
+            if let Some(z) = reg.setting("zoom").ok().flatten().and_then(|v| v.parse().ok()) {
+                this.zoom = z;
+            }
+            if let Some(w) = reg.setting("page_width").ok().flatten().and_then(|v| v.parse().ok()) {
+                this.page_width = w;
+            }
+        }
         this.refresh_lists();
         this.import_once(cx);
 
@@ -252,6 +266,42 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+
+    fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
+        self.zoom = (zoom * 10.0).round().clamp(5.0, 30.0) / 10.0;
+        if let Some(reg) = &self.registry {
+            let _ = reg.set_setting("zoom", &self.zoom.to_string());
+        }
+        cx.notify();
+    }
+
+    fn set_page_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        self.page_width = width.clamp(480.0, 1600.0);
+        if let Some(reg) = &self.registry {
+            let _ = reg.set_setting("page_width", &self.page_width.to_string());
+        }
+        cx.notify();
+    }
+
+    fn on_zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_zoom(self.zoom + 0.1, cx);
+    }
+
+    fn on_zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_zoom(self.zoom - 0.1, cx);
+    }
+
+    fn on_zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_zoom(1.0, cx);
+    }
+
+    fn on_wider(&mut self, _: &PageWider, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_page_width(self.page_width + 96.0, cx);
+    }
+
+    fn on_narrower(&mut self, _: &PageNarrower, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_page_width(self.page_width - 96.0, cx);
     }
 
     fn on_import(&mut self, _: &ImportFromMarkie, _: &mut Window, cx: &mut Context<Self>) {
@@ -1147,12 +1197,17 @@ impl Workspace {
                     .size_full()
                     .bg(theme.background)
                     .child(
-                        TextView::new(&self.preview)
-                            .scrollable(true)
-                            .selectable(true)
-                            .size_full()
-                            .px(px(56.))
-                            .py(px(32.)),
+                        h_flex().size_full().justify_center().child(
+                            TextView::new(&self.preview)
+                                .scrollable(true)
+                                .selectable(true)
+                                .h_full()
+                                .w_full()
+                                .max_w(px(self.page_width))
+                                .text_size(rems(self.zoom))
+                                .px(px(40.))
+                                .py(px(32.)),
+                        ),
                     )
                     .into_any_element()
             }
@@ -1164,7 +1219,7 @@ impl Workspace {
                         .bordered(false)
                         .h(relative(1.))
                         .font_family(theme.mono_font_family.clone())
-                        .text_size(theme.mono_font_size),
+                        .text_size(theme.mono_font_size * self.zoom),
                 )
                 .into_any_element(),
         }
@@ -1191,6 +1246,9 @@ impl Workspace {
                 }
                 if doc.large {
                     right.push_str("Large file, Source only · ");
+                }
+                if (self.zoom - 1.0).abs() > 0.01 {
+                    right.push_str(&format!("{}% · ", (self.zoom * 100.0).round()));
                 }
                 right.push_str(state);
                 (format!("{} · {}", doc.format.label(), short_dir(&doc.path)), right)
@@ -1250,6 +1308,11 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_toggle_star))
             .on_action(cx.listener(Self::on_import))
             .on_action(cx.listener(Self::on_settings))
+            .on_action(cx.listener(Self::on_zoom_in))
+            .on_action(cx.listener(Self::on_zoom_out))
+            .on_action(cx.listener(Self::on_zoom_reset))
+            .on_action(cx.listener(Self::on_wider))
+            .on_action(cx.listener(Self::on_narrower))
             .on_action(cx.listener(Self::on_toggle_stats))
             .on_action(cx.listener(Self::on_palette))
             .on_action(cx.listener(Self::on_rename))

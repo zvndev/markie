@@ -40,17 +40,19 @@ The serial limits are the rich editor (one design, hard to split), Kirby's sign-
 
 ### Phase 1 list
 
-1. File operations: new document modal with every type, rename, move, trash, reveal, duplicate.
-2. Outside-edit watcher with `notify`, ignoring Markie's own writes.
-3. Autosave (1 s idle, at most every 5 s while typing), crash drafts, save-conflict strip and dialog.
-4. Version history in the same on-disk format as `electron/history.js`, with diff and restore.
-5. Find and replace, section rail, statistics panel, zoom and page width.
-6. Command palette, full menus and shortcuts from PARITY.md section 29.
-7. Settings with the eight style templates in light and dark, and custom presets.
-8. Large-document tier (source only above 1 MB, refuse above 100 MB), CSV table view.
-9. Library tabs: Recent, Starred, Projects, workspace folders.
-10. Link previews on hover, with the same size, timeout and address limits.
-11. A read-only import of the Electron registry: recents, roots and stars.
+Status on 2026-11-21: items 2, 3, 6, 8 and 11 are done. Items 1, 4, 5, 7, 9 and 10 are mostly done; what is left of each is noted.
+
+1. File operations: new document modal with every type, rename, move, trash, reveal, duplicate. Done except move, and new Word, Darkmown and vault documents (phases 4 to 6).
+2. Outside-edit watcher, ignoring Markie's own writes. Done, as a 1 s poll like Electron's.
+3. Autosave (1 s idle, at most every 5 s while typing), crash drafts, save-conflict strip. Done.
+4. Version history in the same on-disk format as `electron/history.js`, with diff and restore. Done except the diff view.
+5. Find and replace, section rail, statistics panel, zoom and page width. Done except find in View mode, which waits for the rich editor.
+6. Command palette, full menus and shortcuts from PARITY.md section 29. Done for every command that exists so far.
+7. Settings with the eight style templates in light and dark, and custom presets. Done except custom presets and template typography.
+8. Large-document tier (source only above 1 MB, refuse above 100 MB), CSV table view. Done.
+9. Library tabs: Recent, Starred, Projects, workspace folders. Done except Projects and removing a folder.
+10. Link previews on hover, with the same size, timeout and address limits. The address rules and page parsing are ported and tested; the hover card waits for the rich editor and the fetch for phase 3 networking.
+11. A read-only import of the Electron registry: recents, roots and stars. Done.
 
 ## The rich editor gate
 

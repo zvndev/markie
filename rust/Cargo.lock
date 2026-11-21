@@ -3694,12 +3694,14 @@ dependencies = [
  "chrono",
  "dirs 7.0.0",
  "pulldown-cmark",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "trash",
+ "url",
  "xattr",
 ]
 

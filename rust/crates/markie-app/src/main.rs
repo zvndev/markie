@@ -33,6 +33,12 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-alt-o", ToggleOutline, None),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ZoomReset, None),
+        KeyBinding::new("cmd-alt-]", PageWider, None),
+        KeyBinding::new("cmd-alt-[", PageNarrower, None),
     ]);
 }
 
@@ -74,6 +80,12 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Statistics", ToggleStats),
                 MenuItem::action("Search Documents", FocusSearch),
                 MenuItem::action("Rescan Documents", Rescan),
+                MenuItem::separator(),
+                MenuItem::action("Zoom In", ZoomIn),
+                MenuItem::action("Zoom Out", ZoomOut),
+                MenuItem::action("Actual Size", ZoomReset),
+                MenuItem::action("Wider Page", PageWider),
+                MenuItem::action("Narrower Page", PageNarrower),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Dark Mode", ToggleTheme),
             ],

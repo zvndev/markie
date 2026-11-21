@@ -16,6 +16,8 @@ dirs.workspace = true
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 trash = "5"
+regex = "1"
+url = "2"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

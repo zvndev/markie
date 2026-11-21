@@ -4,8 +4,10 @@
 //! * `parse` / `serialize`: blocks to the TipTap-shaped model and back.
 //! * `room` / `ydoc`: that model as y-prosemirror's XML, through `yrs`.
 //! * `merge`: a room's content folded back onto the opened document.
+//! * `edit`: caret, selection, typing and marks on the model (no UI).
 
 pub mod document;
+pub mod edit;
 pub mod embed;
 pub mod linkify;
 pub mod merge;

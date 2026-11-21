@@ -11,6 +11,7 @@ actions!(
         FocusSearch,
         Rescan,
         ToggleTheme,
+        ShowHistory,
         Quit,
     ]
 );

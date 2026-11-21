@@ -14,9 +14,18 @@
 //! |             | "Markie RS" folder so this build never touches the   |
 //! |             | shipping app's registry or settings.                 |
 //! | `registry`  | `electron/registry.js` (recents and sync state)      |
+//! | `history`   | `electron/history.js` + `snapshots.js` (versions)    |
+//! | `drafts`    | `electron/drafts.js` (crash drafts)                  |
+//! | `autosave`  | `src/lib/autosave.ts` (when to save)                 |
+//! | `disk`      | `electron/disk-memory.js` (own write or outside edit)|
 
+pub mod autosave;
+pub mod clock;
+pub mod disk;
 pub mod document;
+pub mod drafts;
 pub mod formats;
+pub mod history;
 pub mod index;
 pub mod outline;
 pub mod paths;

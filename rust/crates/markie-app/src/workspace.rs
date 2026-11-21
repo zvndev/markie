@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
@@ -16,7 +17,11 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use markie_core::autosave::Autosave;
+use markie_core::disk::{DiskChange, DiskMemory};
 use markie_core::document::{self, Content};
+use markie_core::drafts::{Draft, Drafts};
+use markie_core::history::{History, Version, Writer};
 use markie_core::formats::{FormatKind, TextEncoding};
 use markie_core::index::{ScanOptions, scan};
 use markie_core::registry::Registry;
@@ -58,6 +63,23 @@ pub struct Workspace {
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
+    history: History,
+    drafts: Drafts,
+    disk: DiskMemory,
+    autosave: Autosave,
+    _autosave_task: Task<()>,
+    _poll_task: Task<()>,
+    /// What the file says on disk when it changed under unsaved edits.
+    disk_conflict: Option<String>,
+    disk_missing: bool,
+    /// Unsaved text recovered from a crash, offered once at launch.
+    recovered: Vec<Draft>,
+    /// The version history panel, and the version being looked at.
+    show_history: bool,
+    versions: Vec<Version>,
+    viewing_version: Option<(String, String)>,
+    /// Text to put in the editor at the next render, which has the window.
+    pending_editor_text: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -105,6 +127,9 @@ impl Workspace {
             library.set_snapshot(snapshot);
         }
 
+        let data_dir = paths::data_dir();
+        let drafts = Drafts::new(&data_dir);
+        let recovered = drafts.pending();
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             registry,
@@ -118,8 +143,22 @@ impl Workspace {
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
+            history: History::new(&data_dir),
+            drafts,
+            disk: DiskMemory::default(),
+            autosave: Autosave::default(),
+            _autosave_task: Task::ready(()),
+            _poll_task: Task::ready(()),
+            disk_conflict: None,
+            disk_missing: false,
+            recovered,
+            show_history: false,
+            versions: Vec::new(),
+            viewing_version: None,
+            pending_editor_text: None,
             _subscriptions: subscriptions,
         };
+        this.start_disk_poll(cx);
 
         let mut first_file = None;
         for path in initial {
@@ -190,6 +229,7 @@ impl Workspace {
                         });
                         self.set_preview(&text, doc.format, cx);
                         self.update_stats(&text);
+                        self.disk.remember(&doc.path, &text, false);
                         DocKind::Text { encoding, bom, saved: text }
                     }
                     Content::Html(html) => {
@@ -213,8 +253,18 @@ impl Workspace {
                 } else if doc.format == FormatKind::Markdown && self.doc.is_none() {
                     self.mode = Mode::View;
                 }
+                if let Some(old) = &self.doc {
+                    self.disk.forget(&old.path);
+                }
                 self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, kind });
                 self.dirty = false;
+                self.autosave.cancel();
+                self.disk_conflict = None;
+                self.disk_missing = false;
+                self.viewing_version = None;
+                if self.show_history {
+                    self.refresh_versions();
+                }
                 if self.mode == Mode::Source && matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. })) {
                     self.focus_editor(window, cx);
                 }
@@ -255,19 +305,121 @@ impl Workspace {
         let text = self.editor.read(cx).value().to_string();
         self.dirty = &text != saved;
         self.update_stats(&text);
+        if self.dirty && self.disk_conflict.is_none() {
+            self.autosave.note_change(Instant::now());
+            self.schedule_autosave(cx);
+        }
         cx.notify();
+    }
+
+    fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
+        let Some(due) = self.autosave.due_at() else { return };
+        let wait = due.saturating_duration_since(Instant::now()) + Duration::from_millis(10);
+        self._autosave_task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            this.update(cx, |this, cx| {
+                if this.autosave.take_due(Instant::now()) {
+                    this.autosave_now(cx);
+                } else {
+                    this.schedule_autosave(cx);
+                }
+            })
+            .ok();
+        });
+    }
+
+    /// Autosave never opens a dialog: a failure leaves a crash draft and the
+    /// edited marker, and the next save tries again.
+    fn autosave_now(&mut self, cx: &mut Context<Self>) {
+        let text = self.editor.read(cx).value().to_string();
+        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        let _ = self.drafts.save(Some(&path), &text);
+        if self.write_text(&text).is_ok() {
+            let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
+        }
+        cx.notify();
+    }
+
+    /// Keep the previous text as a version, write the new text, and remember
+    /// that this write was ours.
+    fn write_text(&mut self, text: &str) -> anyhow::Result<()> {
+        let Some(doc) = self.doc.as_mut() else { return Ok(()) };
+        let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return Ok(()) };
+        let _ = self.history.capture(&doc.path, text, Writer::User);
+        document::save_text(&doc.path, text, *encoding, *bom)?;
+        *saved = text.to_string();
+        self.disk.remember(&doc.path, text, true);
+        self.dirty = false;
+        if self.show_history {
+            self.refresh_versions();
+        }
+        Ok(())
+    }
+
+    /// Check the open file once a second, like the Electron watcher, so an
+    /// agent's or another app's edit shows up without a reload.
+    fn start_disk_poll(&mut self, cx: &mut Context<Self>) {
+        self._poll_task = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this.update(cx, |this, cx| this.check_disk(cx)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    fn check_disk(&mut self, cx: &mut Context<Self>) {
+        let Some(doc) = &self.doc else { return };
+        if !matches!(doc.kind, DocKind::Text { .. }) || self.disk_conflict.is_some() {
+            return;
+        }
+        match self.disk.changed_since(&doc.path) {
+            None => {
+                if self.disk_missing {
+                    self.disk_missing = false;
+                    cx.notify();
+                }
+            }
+            Some(DiskChange::Missing) => {
+                if !self.disk_missing {
+                    self.disk_missing = true;
+                    cx.notify();
+                }
+            }
+            Some(DiskChange::Changed(theirs)) => {
+                let path = doc.path.clone();
+                if self.dirty {
+                    self.disk_conflict = Some(theirs);
+                    self.autosave.cancel();
+                } else {
+                    self.load_text(&path, theirs, cx);
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    /// Replace the editor's text with what is on disk, as the saved state.
+    fn load_text(&mut self, path: &Path, text: String, cx: &mut Context<Self>) {
+        self.disk.remember(path, &text, false);
+        if let Some(OpenDoc { kind: DocKind::Text { saved, .. }, format, .. }) = self.doc.as_mut() {
+            *saved = text.clone();
+            let format = *format;
+            self.pending_editor_text = Some(text.clone());
+            self.set_preview(&text, format, cx);
+        }
+        self.update_stats(&text);
+        self.dirty = false;
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.editor.read(cx).value().to_string();
-        let Some(doc) = self.doc.as_mut() else { return };
-        let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return };
-        match document::save_text(&doc.path, &text, *encoding, *bom) {
-            Ok(()) => {
-                *saved = text;
-                self.dirty = false;
-            }
-            Err(err) => window.push_notification(format!("Markie could not save: {err:#}"), cx),
+        self.autosave.cancel();
+        if let Err(err) = self.write_text(&text) {
+            window.push_notification(format!("Markie could not save: {err:#}"), cx);
+        } else if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
+            let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
         }
         cx.notify();
     }
@@ -390,6 +542,220 @@ impl Workspace {
         if let Some(reg) = &self.registry {
             let _ = reg.set_setting("color_mode", if next.is_dark() { "dark" } else { "light" });
         }
+    }
+
+    fn refresh_versions(&mut self) {
+        self.versions = match &self.doc {
+            Some(doc) => {
+                let mut v = self.history.list(&doc.path);
+                v.reverse();
+                v
+            }
+            None => Vec::new(),
+        };
+    }
+
+    fn on_show_history(&mut self, _: &ShowHistory, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_history = !self.show_history;
+        self.viewing_version = None;
+        if self.show_history {
+            self.refresh_versions();
+        }
+        cx.notify();
+    }
+
+    fn view_version(&mut self, stamp: String, cx: &mut Context<Self>) {
+        let Some(doc) = &self.doc else { return };
+        if let Some(text) = self.history.read(&doc.path, &stamp) {
+            self.viewing_version = Some((stamp, text));
+        }
+        cx.notify();
+    }
+
+    /// Restoring is a save like any other, so the text it replaces becomes a
+    /// version too and nothing is lost.
+    fn restore_version(&mut self, cx: &mut Context<Self>) {
+        let Some((_, text)) = self.viewing_version.take() else { return };
+        if self.write_text(&text).is_ok() {
+            if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
+                self.load_text(&path, text, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// The file changed on disk while there were unsaved edits.
+    fn take_theirs(&mut self, cx: &mut Context<Self>) {
+        let Some(theirs) = self.disk_conflict.take() else { return };
+        if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
+            self.load_text(&path, theirs, cx);
+        }
+        cx.notify();
+    }
+
+    fn keep_mine(&mut self, cx: &mut Context<Self>) {
+        self.disk_conflict = None;
+        let text = self.editor.read(cx).value().to_string();
+        // History keeps the outside version first, so overwriting loses nothing.
+        let _ = self.write_text(&text);
+        cx.notify();
+    }
+
+    fn restore_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(draft) = self.recovered.first().cloned() else { return };
+        let Some(text) = self.drafts.read(&draft.key) else {
+            self.recovered.remove(0);
+            return;
+        };
+        if let Some(path) = draft.meta.path.as_deref().map(PathBuf::from) {
+            self.open_path(&path, window, cx);
+            self.mode = Mode::Source;
+            self.pending_editor_text = Some(text);
+        }
+        self.recovered.remove(0);
+        cx.notify();
+    }
+
+    fn discard_draft(&mut self, cx: &mut Context<Self>) {
+        if !self.recovered.is_empty() {
+            let draft = self.recovered.remove(0);
+            let _ = self.drafts.discard(&draft.key);
+        }
+        cx.notify();
+    }
+
+    fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let theme = cx.theme();
+        let bar = |message: String| {
+            h_flex()
+                .w_full()
+                .px_3()
+                .py_1p5()
+                .gap_2()
+                .bg(theme.warning.opacity(0.15))
+                .border_b_1()
+                .border_color(theme.border)
+                .child(div().flex_1().text_sm().child(message))
+        };
+        if self.disk_conflict.is_some() {
+            return Some(
+                bar("This file changed on disk while you were editing.".into())
+                    .child(
+                        Button::new("take-theirs")
+                            .small()
+                            .label("Load the disk version")
+                            .on_click(cx.listener(|this, _, _, cx| this.take_theirs(cx))),
+                    )
+                    .child(
+                        Button::new("keep-mine")
+                            .small()
+                            .primary()
+                            .label("Keep mine")
+                            .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx))),
+                    )
+                    .into_any_element(),
+            );
+        }
+        if self.disk_missing {
+            return Some(
+                bar("This file was moved or deleted. Saving will create it again.".into()).into_any_element(),
+            );
+        }
+        if let Some(draft) = self.recovered.first() {
+            let name = draft.meta.name.clone().unwrap_or_else(|| "an untitled document".into());
+            return Some(
+                bar(format!("Markie kept unsaved text from {name}."))
+                    .child(
+                        Button::new("draft-restore")
+                            .small()
+                            .primary()
+                            .label("Restore")
+                            .on_click(cx.listener(|this, _, window, cx| this.restore_draft(window, cx))),
+                    )
+                    .child(
+                        Button::new("draft-discard")
+                            .small()
+                            .label("Discard")
+                            .on_click(cx.listener(|this, _, _, cx| this.discard_draft(cx))),
+                    )
+                    .into_any_element(),
+            );
+        }
+        None
+    }
+
+    fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let viewing = self.viewing_version.as_ref().map(|(s, _)| s.clone());
+        v_flex()
+            .size_full()
+            .bg(theme.sidebar)
+            .border_l_1()
+            .border_color(theme.sidebar_border)
+            .child(
+                h_flex()
+                    .p_2()
+                    .justify_between()
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Version history"))
+                    .child(
+                        Button::new("history-close")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Close)
+                            .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowHistory), cx)),
+                    ),
+            )
+            .when(self.versions.is_empty(), |el| {
+                el.child(
+                    div()
+                        .px_3()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("No versions yet. Markie keeps one every time this file is saved."),
+                )
+            })
+            .child(
+                v_flex()
+                    .id("versions")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .children(self.versions.iter().map(|v| {
+                        let stamp = v.stamp.clone();
+                        let when = v
+                            .ms
+                            .and_then(chrono::DateTime::from_timestamp_millis)
+                            .map(|d| d.with_timezone(&chrono::Local).format("%b %-d, %-I:%M %p").to_string())
+                            .unwrap_or_else(|| v.stamp.clone());
+                        let who = match (v.meta.author.as_str(), v.meta.agent.as_deref()) {
+                            ("agent", Some(agent)) if !agent.is_empty() => agent.to_string(),
+                            ("external", _) => "Outside edit".into(),
+                            ("user", _) => "You".into(),
+                            _ => "Unknown".into(),
+                        };
+                        let active = viewing.as_deref() == Some(v.stamp.as_str());
+                        div()
+                            .id(SharedString::from(format!("v-{}", v.stamp)))
+                            .px_3()
+                            .py_1()
+                            .cursor_pointer()
+                            .when(active, |el| el.bg(theme.list_active))
+                            .hover(|el| el.bg(theme.list_hover))
+                            .on_click(cx.listener(move |this, _, _, cx| this.view_version(stamp.clone(), cx)))
+                            .child(div().text_sm().child(v.meta.name.clone().unwrap_or(when)))
+                            .child(div().text_xs().text_color(theme.muted_foreground).child(who))
+                    })),
+            )
+            .when(viewing.is_some(), |el| {
+                el.child(
+                    h_flex().p_2().gap_2().child(
+                        Button::new("restore-version")
+                            .small()
+                            .primary()
+                            .label("Restore this version")
+                            .on_click(cx.listener(|this, _, _, cx| this.restore_version(cx))),
+                    ),
+                )
+            })
     }
 
     // ---------------------------------------------------------------- render
@@ -602,6 +968,20 @@ impl Workspace {
                 .into_any_element();
         };
 
+        if let Some((_, text)) = &self.viewing_version {
+            return div()
+                .id("version-preview")
+                .size_full()
+                .overflow_y_scroll()
+                .bg(theme.muted)
+                .px(px(56.))
+                .py(px(32.))
+                .font_family(theme.mono_font_family.clone())
+                .text_size(theme.mono_font_size)
+                .child(text.clone())
+                .into_any_element();
+        }
+
         match (&doc.kind, self.mode) {
             (DocKind::Engine, _) => {
                 let path = doc.path.clone();
@@ -675,9 +1055,9 @@ impl Workspace {
                 };
                 let mut right = String::new();
                 if matches!(doc.kind, DocKind::Text { .. }) {
-                    right = format!("{} words · {} min read · ", self.words, self.reading_minutes);
+                    right = format!("{} · {} min read · ", plural(self.words, "word"), self.reading_minutes);
                     if !self.sections.is_empty() {
-                        right = format!("{} sections · {right}", self.sections.len());
+                        right = format!("{} · {right}", plural(self.sections.len(), "section"));
                     }
                 }
                 right.push_str(state);
@@ -688,6 +1068,10 @@ impl Workspace {
             .left(div().text_xs().text_color(theme.muted_foreground).child(left))
             .right(div().text_xs().text_color(theme.muted_foreground).child(right))
     }
+}
+
+fn plural(n: usize, word: &str) -> String {
+    if n == 1 { format!("1 {word}") } else { format!("{n} {word}s") }
 }
 
 /// `~/Notes/plan.md` instead of the full home path.
@@ -706,7 +1090,12 @@ impl Focusable for Workspace {
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(text) = self.pending_editor_text.take() {
+            self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
+        }
+        let banner = self.render_banner(cx);
+        let history = if self.show_history { Some(self.render_history(cx).into_any_element()) } else { None };
         v_flex()
             .id("workspace")
             .track_focus(&self.focus_handle)
@@ -719,21 +1108,34 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_focus_search))
             .on_action(cx.listener(Self::on_rescan))
             .on_action(cx.listener(Self::on_toggle_theme))
+            .on_action(cx.listener(Self::on_show_history))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(cx))
             .child(
-                div().flex_1().overflow_hidden().child(
-                    h_resizable("main")
-                        .child(
-                            resizable_panel()
-                                .size(px(300.))
-                                .size_range(px(220.)..px(520.))
-                                .child(self.render_library(cx)),
-                        )
-                        .child(resizable_panel().child(self.render_document(cx))),
-                ),
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(
+                        div().flex_1().h_full().overflow_hidden().child(
+                            h_resizable("main")
+                                .child(
+                                    resizable_panel()
+                                        .size(px(300.))
+                                        .size_range(px(220.)..px(520.))
+                                        .child(self.render_library(cx)),
+                                )
+                                .child(resizable_panel().child(
+                                    v_flex()
+                                        .size_full()
+                                        .children(banner)
+                                        .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_document(cx))),
+                                )),
+                        ),
+                    )
+                    .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h))),
             )
             .child(self.render_status(cx))
     }

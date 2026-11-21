@@ -24,6 +24,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-k", FocusSearch, None),
         KeyBinding::new("cmd-r", Rescan, None),
         KeyBinding::new("cmd-shift-l", ToggleTheme, None),
+        KeyBinding::new("cmd-alt-y", ShowHistory, None),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
 }
@@ -43,6 +44,7 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Open Folder…", OpenFolder),
                 MenuItem::separator(),
                 MenuItem::action("Save", Save),
+                MenuItem::action("Version History", ShowHistory),
             ],
             disabled: false,
         },

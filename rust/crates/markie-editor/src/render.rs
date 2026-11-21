@@ -83,9 +83,27 @@ impl RichView {
     pub(crate) fn render_document(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         {
             let mut s = self.store.borrow_mut();
+            // Heights of what was drawn last frame.
+            let n = self.editor.block_count();
+            if self.heights.len() != n {
+                // Blocks came or went: measure everything once more.
+                self.heights = vec![None; n];
+            } else {
+                for (b, bounds) in s.blocks.drain() {
+                    if b < n {
+                        self.heights[b] = Some(bounds.size.height);
+                    }
+                }
+            }
+            s.blocks.clear();
             s.leaves.clear();
             s.atoms.clear();
             s.frame += 1;
+        }
+        let viewport = self.scroll.bounds();
+        if (viewport.size.width - self.heights_width).abs() > px(0.5) {
+            self.heights_width = viewport.size.width;
+            self.heights.iter_mut().for_each(|h| *h = None);
         }
         if self.find.is_some() {
             self.recompute_find(cx);
@@ -93,15 +111,41 @@ impl RichView {
         let theme = cx.theme().clone();
         let look = self.look(&theme, window);
         let col = px(self.page_width);
+        // Draw what is on screen (with a screen of margin either way), the
+        // caret's and selection's ends, and any block not measured yet;
+        // the rest is space of its last height.
+        let top_visible = -self.scroll.offset().y;
+        let screen = viewport.size.height.max(px(400.));
+        let (lo, hi) = (top_visible - screen, top_visible + screen * 2.);
+        let (a, h) = (self.editor.anchor.block, self.editor.head.block);
+        let mut y = px(28.);
         let mut blocks: Vec<AnyElement> = Vec::with_capacity(self.editor.block_count());
         for b in 0..self.editor.block_count() {
+            let height = self.heights.get(b).copied().flatten();
+            let near = height.is_none_or(|ht| y + ht >= lo && y <= hi);
+            y += height.unwrap_or(px(30.));
+            if !near && b != a && b != h {
+                blocks.push(div().w_full().h(height.unwrap_or(px(30.))).into_any_element());
+                continue;
+            }
             let el = self.render_block(b, &look, window, cx);
+            let store = self.store.clone();
             blocks.push(
                 div()
+                    .relative()
                     .w_full()
                     .flex()
                     .justify_center()
                     .child(div().w_full().max_w(col).px(px(40.)).child(el))
+                    .child(
+                        canvas(move |bounds, _, _| {
+                            store.borrow_mut().blocks.insert(b, bounds);
+                        }, |_, _, _, _| {})
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
                     .into_any_element(),
             );
         }
@@ -112,6 +156,8 @@ impl RichView {
         let to_top = self.scroll_to_top.take();
         let head = self.editor.head;
         let scroll = self.scroll.clone();
+        let view_for_retry = view.clone();
+        let retries = if autoscroll { std::mem::take(&mut self.autoscroll_retries) } else { 0 };
         div()
             .id("rich-scroll")
             .key_context(CONTEXT)
@@ -198,7 +244,7 @@ impl RichView {
             .child(div().h(px(240.)).w_full())
             .child(
                 canvas(
-                    move |_bounds, window, _cx| {
+                    move |_bounds, window, cx| {
                         // Keep the caret in sight after keyboard moves.
                         let st = store.borrow();
                         let viewport = scroll.bounds();
@@ -227,10 +273,26 @@ impl RichView {
                                     off.y -= r.bottom() - (viewport.bottom() - margin);
                                 }
                                 let max = scroll.max_offset().y;
+                                let wanted = off.y;
                                 off.y = off.y.min(px(0.)).max(-max);
                                 if off != scroll.offset() {
                                     scroll.set_offset(off);
-                                    window.refresh();
+                                    // A cached view would keep the old offset:
+                                    // draw this one again.
+                                    let v = view_for_retry.clone();
+                                    window.defer(cx, move |_, cx| v.update(cx, |_, cx| cx.notify()));
+                                }
+                                // Content still growing (pictures loading): try
+                                // again next frame, a few times.
+                                if wanted < -max - px(1.) && retries < 4 {
+                                    let v = view_for_retry.clone();
+                                    window.defer(cx, move |_, cx| {
+                                        v.update(cx, |v, cx| {
+                                            v.autoscroll = true;
+                                            v.autoscroll_retries = retries + 1;
+                                            cx.notify();
+                                        });
+                                    });
                                 }
                             }
                         }
@@ -659,13 +721,16 @@ impl RichView {
             .right(px(-5.))
             .size(px(12.))
             .rounded(px(2.))
-            .bg(look.link)
+            .bg(look.accent)
             .border_1()
             .border_color(gpui_kit::white())
             .cursor(CursorStyle::ResizeLeftRight)
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
-                let start = this.store.borrow().atoms.get(&key).map(|b| f32::from(b.size.width) / this.zoom).unwrap_or(300.);
+                // From the width the file holds, else the drawn width.
+                let start = width.map(|w| w as f32).unwrap_or_else(|| {
+                    this.store.borrow().atoms.get(&key).map(|b| f32::from(b.size.width) / this.zoom - 4.).unwrap_or(300.)
+                });
                 this.resize = Some((pos, f32::from(ev.position.x), start));
                 this.live_width = Some((pos, start));
             }));
@@ -678,7 +743,7 @@ impl RichView {
                     .flex_none()
                     .max_w_full()
                     .when(w.is_some(), |d| d.w(px(w.unwrap() * look.zoom)))
-                    .when(selected, |d| d.border_2().border_color(look.link).rounded(px(3.)))
+                    .when(selected, |d| d.border_2().border_color(look.accent).rounded(px(3.)))
                     .child(image)
                     .child(track(self.store.clone(), key))
                     .when(selected && kind == markie_rich::html::MediaKind::Image, |d| d.child(handle)),

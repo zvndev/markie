@@ -24,6 +24,8 @@ pub struct Store {
     pub leaves: HashMap<LeafKey, Placement>,
     /// Atoms (pictures, rules, embeds) by key, for clicks and scrolling.
     pub atoms: HashMap<LeafKey, Bounds<Pixels>>,
+    /// Each drawn block's bounds, for the heights of blocks not drawn.
+    pub blocks: HashMap<usize, Bounds<Pixels>>,
     /// The frame these were drawn in; older entries are stale.
     pub frame: u64,
 }

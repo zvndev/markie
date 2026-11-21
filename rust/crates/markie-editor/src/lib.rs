@@ -242,6 +242,11 @@ pub struct RichView {
     pub(crate) prompt: Option<Prompt>,
     pub(crate) media: media::Media,
     autoscroll: bool,
+    autoscroll_retries: u32,
+    /// Block heights as last drawn, and the width they were drawn at:
+    /// blocks far from the viewport are drawn as empty space this tall.
+    heights: Vec<Option<Pixels>>,
+    heights_width: Pixels,
     scroll_to_top: Option<(usize, usize)>,
     /// A picture being resized: its leaf, the x the drag started at and the
     /// width it started from; `live` is the width while dragging.
@@ -268,6 +273,9 @@ impl RichView {
             prompt: None,
             media: media::Media::default(),
             autoscroll: false,
+            autoscroll_retries: 0,
+            heights: Vec::new(),
+            heights_width: px(0.),
             scroll_to_top: None,
             resize: None,
             live_width: None,
@@ -281,6 +289,7 @@ impl RichView {
     /// pictures.
     pub fn load(&mut self, markdown: &str, base_dir: Option<PathBuf>, cx: &mut Context<Self>) {
         self.editor = Editor::parse(markdown);
+        self.heights.clear();
         self.emitted = self.editor.version;
         self.base_dir = base_dir;
         self.marked = None;

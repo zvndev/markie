@@ -320,10 +320,14 @@ impl RichView {
 
 impl Render for RichView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let started = std::time::Instant::now();
         let toolbar = (!self.read_only).then(|| self.render_toolbar(window, cx));
         let prompt = self.render_prompt(cx);
         let doc = self.render_document(window, cx);
         let find = self.render_find(cx);
+        if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
+            eprintln!("render {} blocks in {:?}", self.editor.block_count(), started.elapsed());
+        }
         gpui_kit::component::v_flex()
             .size_full()
             .children(toolbar)

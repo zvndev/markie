@@ -201,9 +201,9 @@ pub(super) fn render(office: &OfficeDoc, zoom: f32, cx: &mut Context<Workspace>)
                 .border_b_1()
                 .border_color(theme.border)
                 .bg(theme.info.opacity(0.12))
-                .child(v_flex().flex_1().gap_0p5().text_xs().children(warnings.iter().map(|w| div().child(w.clone()))))
+                .child(v_flex().flex_1().min_w_0().gap_0p5().text_xs().children(warnings.iter().map(|w| div().child(w.clone()))))
                 .when(text.is_some(), |d| {
-                    d.child(Button::new("doc-txt-copy").small().primary().label("Save a TXT copy").on_click(cx.listener(|this, _, window, cx| this.save_doc_copy(window, cx))))
+                    d.child(Button::new("doc-txt-copy").small().primary().flex_none().label("Save a TXT copy").on_click(cx.listener(|this, _, window, cx| this.save_doc_copy(window, cx))))
                 }),
         ),
     };

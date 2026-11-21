@@ -2,6 +2,8 @@
 //! the engine's own edit API, for checks in the running app:
 //!
 //!   cargo run -p markie-office-view --example sample_docx -- out.docx
+//!
+//! An `.rtf` or `.odt` path writes a plain editable document instead.
 
 use markie_office::model::*;
 use markie_office::rich_document::{OfficeDocument, apply_rich_operations, create_rich_document, export_rich_document};
@@ -39,6 +41,15 @@ fn id(doc: &OfficeDocument, index: usize) -> String {
 
 fn main() {
     let out = std::env::args().nth(1).expect("output path");
+    // RTF and ODT: a plain editable document from the engine's own writer.
+    for (ext, format) in [(".rtf", Format::Rtf), (".odt", Format::Odt)] {
+        if out.ends_with(ext) {
+            let doc = create_rich_document(format, "Simple document\nSecond paragraph to edit.").unwrap();
+            std::fs::write(&out, export_rich_document(&doc).unwrap()).unwrap();
+            println!("wrote {out}");
+            return;
+        }
+    }
     let body = [
         "Markie page view sample",
         "This paragraph has bold, italic and underlined words, a colored phrase and a link to Markie.",

@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 markie-core.workspace = true
 anyhow.workspace = true
+trash = "5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 gpui-kit = { version = "=0.10.0", features = [
   "tree-sitter-markdown",

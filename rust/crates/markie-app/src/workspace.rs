@@ -30,6 +30,9 @@ use markie_core::{outline, paths, stats};
 use crate::actions::*;
 use crate::library::Library;
 
+mod file_ops;
+mod palette;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     View,
@@ -489,31 +492,6 @@ impl Workspace {
                     this.rescan(cx);
                 })
                 .ok();
-            }
-        })
-        .detach();
-    }
-
-    fn on_new(&mut self, _: &NewDocument, window: &mut Window, cx: &mut Context<Self>) {
-        let dir = self
-            .registry
-            .as_ref()
-            .and_then(|r| r.roots().ok())
-            .and_then(|r| r.into_iter().next())
-            .unwrap_or_else(|| paths::home_dir().join("Documents"));
-        let suggested = document::untitled_path(&dir, "md");
-        let name = suggested.file_name().map(|n| n.to_string_lossy().into_owned());
-        let rx = cx.prompt_for_new_path(&dir, name.as_deref());
-        cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(Some(path))) = rx.await {
-                if std::fs::write(&path, "").is_ok() {
-                    this.update_in(cx, |this, window, cx| {
-                        this.mode = Mode::Source;
-                        this.open_path(&path, window, cx);
-                        this.rescan(cx);
-                    })
-                    .ok();
-                }
             }
         })
         .detach();
@@ -1109,6 +1087,12 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_rescan))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_show_history))
+            .on_action(cx.listener(Self::on_palette))
+            .on_action(cx.listener(Self::on_rename))
+            .on_action(cx.listener(Self::on_duplicate))
+            .on_action(cx.listener(Self::on_trash))
+            .on_action(cx.listener(Self::on_reveal))
+            .on_action(cx.listener(Self::on_copy_path))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)

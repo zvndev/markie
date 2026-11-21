@@ -12,6 +12,13 @@ actions!(
         Rescan,
         ToggleTheme,
         ShowHistory,
+        CommandPalette,
+        RenameDocument,
+        DuplicateDocument,
+        TrashDocument,
+        RevealDocument,
+        CopyPath,
+        SearchAll,
         Quit,
     ]
 );

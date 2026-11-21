@@ -3681,6 +3681,7 @@ dependencies = [
  "chrono",
  "gpui-kit",
  "markie-core",
+ "trash",
 ]
 
 [[package]]

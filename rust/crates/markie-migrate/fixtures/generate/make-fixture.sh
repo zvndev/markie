@@ -15,6 +15,6 @@ rm -rf "$out/electron-userdata"
 mkdir -p "$out/electron-userdata"
 # Only the two storage folders the migration reads, without lock files.
 cp -R "$scratch/userData/Local Storage" "$scratch/userData/IndexedDB" "$out/electron-userdata/"
-find "$out/electron-userdata" -name LOCK -delete
+find "$out/electron-userdata" \( -name LOCK -o -name LOG -o -name LOG.old \) -delete
 cp "$scratch/data.json" "$out/fixture-data.json"
 echo "fixture written to $out"

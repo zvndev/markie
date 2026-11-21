@@ -27,11 +27,19 @@ pub trait DeviceKeeper: Send + Sync {
     fn remove(&self, vault_id: &str) -> Result<(), DeviceFailure>;
 }
 
+/// The user declined or failed the biometric check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromptDeclined;
+
+/// The secret store refused a write or delete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecretStoreError;
+
 /// The biometric prompt. `MacTouchId` in the app, a double in tests.
 pub trait Biometric: Send + Sync {
     fn can_prompt(&self) -> bool;
     /// The sheet reads "Markie RS is trying to <reason>." Err means cancelled or failed.
-    fn prompt(&self, reason: &str) -> Result<(), ()>;
+    fn prompt(&self, reason: &str) -> Result<(), PromptDeclined>;
 }
 
 /// The secret's home. `KeychainSecretStore` in the app, `MemorySecretStore` in tests.
@@ -39,8 +47,8 @@ pub trait SecretStore: Send + Sync {
     fn available(&self) -> bool;
     fn has(&self, vault_id: &str) -> bool;
     fn get(&self, vault_id: &str) -> Option<Zeroizing<Vec<u8>>>;
-    fn put(&self, vault_id: &str, secret: &[u8]) -> Result<(), ()>;
-    fn delete(&self, vault_id: &str) -> Result<(), ()>;
+    fn put(&self, vault_id: &str, secret: &[u8]) -> Result<(), SecretStoreError>;
+    fn delete(&self, vault_id: &str) -> Result<(), SecretStoreError>;
 }
 
 /// A canonical 16-byte base64url vault ID: the only thing allowed into a Keychain account name.
@@ -173,11 +181,11 @@ impl SecretStore for MemorySecretStore {
     fn get(&self, vault_id: &str) -> Option<Zeroizing<Vec<u8>>> {
         self.map.lock().unwrap().get(vault_id).cloned()
     }
-    fn put(&self, vault_id: &str, secret: &[u8]) -> Result<(), ()> {
+    fn put(&self, vault_id: &str, secret: &[u8]) -> Result<(), SecretStoreError> {
         self.map.lock().unwrap().insert(vault_id.to_string(), Zeroizing::new(secret.to_vec()));
         Ok(())
     }
-    fn delete(&self, vault_id: &str) -> Result<(), ()> {
+    fn delete(&self, vault_id: &str) -> Result<(), SecretStoreError> {
         self.map.lock().unwrap().remove(vault_id);
         Ok(())
     }
@@ -195,11 +203,11 @@ impl Biometric for FakeBiometric {
     fn can_prompt(&self) -> bool {
         !self.unavailable.load(Ordering::SeqCst)
     }
-    fn prompt(&self, reason: &str) -> Result<(), ()> {
+    fn prompt(&self, reason: &str) -> Result<(), PromptDeclined> {
         self.reasons.lock().unwrap().push(reason.to_string());
         let mut answers = self.answers.lock().unwrap();
         let ok = if answers.is_empty() { true } else { answers.remove(0) };
-        if ok { Ok(()) } else { Err(()) }
+        if ok { Ok(()) } else { Err(PromptDeclined) }
     }
 }
 
@@ -233,13 +241,13 @@ impl SecretStore for KeychainSecretStore {
         let secret = self.entry(vault_id)?.get_secret().ok().map(Zeroizing::new)?;
         (secret.len() == VAULT_DEVICE_SECRET_BYTES).then_some(secret)
     }
-    fn put(&self, vault_id: &str, secret: &[u8]) -> Result<(), ()> {
-        self.entry(vault_id).ok_or(())?.set_secret(secret).map_err(|_| ())
+    fn put(&self, vault_id: &str, secret: &[u8]) -> Result<(), SecretStoreError> {
+        self.entry(vault_id).ok_or(SecretStoreError)?.set_secret(secret).map_err(|_| SecretStoreError)
     }
-    fn delete(&self, vault_id: &str) -> Result<(), ()> {
-        match self.entry(vault_id).ok_or(())?.delete_credential() {
+    fn delete(&self, vault_id: &str) -> Result<(), SecretStoreError> {
+        match self.entry(vault_id).ok_or(SecretStoreError)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => Err(()),
+            Err(_) => Err(SecretStoreError),
         }
     }
 }
@@ -259,7 +267,7 @@ impl Biometric for MacTouchId {
         }
     }
 
-    fn prompt(&self, reason: &str) -> Result<(), ()> {
+    fn prompt(&self, reason: &str) -> Result<(), PromptDeclined> {
         use block2::RcBlock;
         use objc2::runtime::Bool;
         use objc2_foundation::{NSError, NSString};
@@ -277,7 +285,7 @@ impl Biometric for MacTouchId {
             );
         }
         // The reply runs on a private queue; this thread waits for it.
-        if rx.recv().unwrap_or(false) { Ok(()) } else { Err(()) }
+        if rx.recv().unwrap_or(false) { Ok(()) } else { Err(PromptDeclined) }
     }
 }
 
@@ -327,7 +335,7 @@ mod tests {
             fn can_prompt(&self) -> bool {
                 true
             }
-            fn prompt(&self, _: &str) -> Result<(), ()> {
+            fn prompt(&self, _: &str) -> Result<(), PromptDeclined> {
                 if let Some(k) = self.0.get().and_then(|w| w.upgrade()) {
                     *self.1.lock().unwrap() = k.confirm(&id(), "open", "x").err();
                 }

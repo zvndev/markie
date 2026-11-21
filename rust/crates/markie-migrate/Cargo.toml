@@ -1,0 +1,17 @@
+[package]
+name = "markie-migrate"
+description = "Markie RS one-time migration: reads a copy of the Electron app's Chromium localStorage and IndexedDB into typed records. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+markie-vault = { path = "../markie-vault" }
+serde_json.workspace = true
+thiserror = "2"
+snap = "1"
+dirs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

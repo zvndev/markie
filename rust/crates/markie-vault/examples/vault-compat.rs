@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::io::Read;
 
 fn b64(s: &str) -> Vec<u8> {
-    decode_base64_checked(&s.replace('+', "-").replace('/', "_").trim_end_matches('='), 0, 1 << 40).unwrap_or_default()
+    decode_base64_checked(s.replace('+', "-").replace('/', "_").trim_end_matches('='), 0, 1 << 40).unwrap_or_default()
 }
 
 fn std_b64(bytes: &[u8]) -> String {

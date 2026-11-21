@@ -169,8 +169,9 @@ mod tests {
         }
     }
 
+    type Job = (Duration, Box<dyn FnOnce() + Send>);
     #[derive(Default)]
-    struct ManualScheduler(Mutex<Vec<(Duration, Box<dyn FnOnce() + Send>)>>);
+    struct ManualScheduler(Mutex<Vec<Job>>);
     impl Scheduler for ManualScheduler {
         fn schedule(&self, delay: Duration, job: Box<dyn FnOnce() + Send>) {
             self.0.lock().unwrap().push((delay, job));

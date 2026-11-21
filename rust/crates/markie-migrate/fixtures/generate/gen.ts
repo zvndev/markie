@@ -107,6 +107,7 @@ const localStorage1: Record<string, string> = {
   "markie.seen.v1": "1",
   "markie.vault.touchIdOffer": "dismissed",
   "markie.richoverride.v1:/Users/fixture/Notes/Ünïcödé.md": "1",
+  "markie.richoverride.v1:/Users/fixture/🔐 秘密.md": "1",
   "markie.documents.zoom.v1": "1.25",
   "unrelated.key": "ignored by the migration",
 };

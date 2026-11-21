@@ -1,0 +1,31 @@
+[package]
+name = "markie-vault"
+description = "Markie RS vault: the encrypted vault format, byte-compatible with the Electron app, plus Touch ID, Keychain and the secret clipboard. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+thiserror = "2"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha2 = "0.10"
+hmac = "0.12"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+aes-kw = { version = "0.2", features = ["alloc"] }
+aes = "0.8"
+getrandom = "0.3"
+zeroize = "1"
+regex = "1"
+keyring = "4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-local-authentication = { version = "0.3", default-features = false, features = ["std", "LAContext", "LAError", "block2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -175,7 +175,7 @@ pub fn xml_descendants(node: &XmlElement) -> Vec<&XmlElement> {
 }
 
 /// The element whose direct child starts at `start`.
-pub fn xml_parent<'a>(root: &'a XmlElement, start: usize) -> Option<&'a XmlElement> {
+pub fn xml_parent(root: &XmlElement, start: usize) -> Option<&XmlElement> {
     xml_descendants(root).into_iter().find(|n| n.has_child(start))
 }
 

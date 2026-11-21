@@ -80,7 +80,7 @@ pub fn inspect_docx_bitmap(input: &[u8], kind: ImageType) -> Result<Bitmap> {
                     indexed = color == 3;
                 }
                 b"PLTE" => {
-                    if idat || palette || size == 0 || size > 768 || size % 3 != 0 {
+                    if idat || palette || size == 0 || size > 768 || !size.is_multiple_of(3) {
                         return Err(bad("Invalid PNG palette."));
                     }
                     palette = true;

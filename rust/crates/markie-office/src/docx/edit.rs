@@ -80,7 +80,7 @@ pub fn decode_docx_xml(bytes: &[u8]) -> Result<(String, XmlEncoding)> {
         XmlEncoding::Utf8 => std::str::from_utf8(bytes).map_err(|_| bad())?.to_string(),
         XmlEncoding::Utf8Bom => std::str::from_utf8(&bytes[3..]).map_err(|_| bad())?.to_string(),
         XmlEncoding::Utf16Le | XmlEncoding::Utf16Be => {
-            if bytes.len() % 2 != 0 {
+            if !bytes.len().is_multiple_of(2) {
                 return Err(bad());
             }
             let little = encoding == XmlEncoding::Utf16Le;

@@ -669,7 +669,7 @@ impl ThemeResolver {
         let latin = |c: char| matches!(c as u32, 0..=0x24f | 0x1e00..=0x1eff | 0x2000..=0x206f);
         let unsupported_script = text.chars().any(|c| !latin(c));
         let guarded = cs || rtl || hint.as_deref().is_some_and(|h| h != "default") || unsupported_script || ambiguous;
-        let non_ascii = text.chars().any(|c| !c.is_ascii());
+        let non_ascii = !text.is_ascii();
         let has_ascii = text.chars().any(|c| c.is_ascii());
         let selected = if non_ascii && !unsupported_script { hansi.as_ref() } else { ascii.as_ref() };
         let mut font_family = if ambiguous { None } else { self.font(selected, guarded) };

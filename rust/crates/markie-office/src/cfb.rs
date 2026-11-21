@@ -300,7 +300,7 @@ pub fn read_compound_file(input: &[u8], limits: CfbLimits) -> Result<CompoundFil
         return fail(Malformed, "Invalid compound file sector parameters.");
     }
     let sector_size = if major_version == 3 { 512 } else { 4096 };
-    if bytes.len() < sector_size * 3 || bytes.len() % sector_size != 0 {
+    if bytes.len() < sector_size * 3 || !bytes.len().is_multiple_of(sector_size) {
         return fail(Malformed, "Truncated or unaligned compound file.");
     }
     if bytes[8..24].iter().any(|v| *v != 0)
@@ -420,7 +420,7 @@ pub fn read_compound_file(input: &[u8], limits: CfbLimits) -> Result<CompoundFil
             let mut name = String::new();
             if kind != 0 {
                 let length = le16(d, at + 64) as usize;
-                if !(2..=64).contains(&length) || length % 2 != 0 || le16(d, at + length - 2) != 0 || d[at + 67] > 1 {
+                if !(2..=64).contains(&length) || !length.is_multiple_of(2) || le16(d, at + length - 2) != 0 || d[at + 67] > 1 {
                     return fail(Malformed, "Invalid directory entry name or color.");
                 }
                 let units: Vec<u16> = (0..length - 2).step_by(2).map(|p| le16(d, at + p)).collect();
@@ -481,11 +481,10 @@ pub fn read_compound_file(input: &[u8], limits: CfbLimits) -> Result<CompoundFil
         } else if entry.child != FREE {
             return fail(Malformed, "Stream directory entry has children.");
         }
-        if parent == 0 && entry.kind == 2 {
-            if root_streams.insert(key, (entry.clone(), id)).is_none() {
+        if parent == 0 && entry.kind == 2
+            && root_streams.insert(key, (entry.clone(), id)).is_none() {
                 root_stream_names.push(entry.name.clone());
             }
-        }
     }
     for (i, entry) in entries.iter().enumerate().skip(1) {
         if entry.kind != 0 && !seen_entries.contains(&i) {

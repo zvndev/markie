@@ -144,13 +144,12 @@ fn find_close_tag(source: &str, from: usize, name: &str) -> Option<usize> {
     let n = name.len();
     let mut i = from.min(b.len());
     while i + 2 + n < b.len() + 1 {
-        if b[i] == b'<' && b.get(i + 1) == Some(&b'/') && b.len() >= i + 2 + n && b[i + 2..i + 2 + n].eq_ignore_ascii_case(name.as_bytes()) {
-            if let Some(c) = b.get(i + 2 + n)
+        if b[i] == b'<' && b.get(i + 1) == Some(&b'/') && b.len() >= i + 2 + n && b[i + 2..i + 2 + n].eq_ignore_ascii_case(name.as_bytes())
+            && let Some(c) = b.get(i + 2 + n)
                 && matches!(c, b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' | b'/' | b'>')
             {
                 return Some(i);
             }
-        }
         i += 1;
     }
     None

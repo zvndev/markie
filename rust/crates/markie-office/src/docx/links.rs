@@ -51,7 +51,8 @@ pub fn safe_docx_hyperlink_target(value: &str) -> Result<String> {
         };
         let host_ok = !host.is_empty()
             && (host.starts_with('[') && host.ends_with(']')
-                || host.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~' || !c.is_ascii()))
+                // Internationalized hosts would need IDNA (punycode) mapping; they are refused, not guessed.
+                || host.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~'))
             && !host.contains(['<', '>', '"', '^', '|', '`', '{', '}']);
         let port_ok = port.is_none_or(|p| p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u32>().map_or(p.is_empty(), |n| n <= 65535));
         if !host_ok || !port_ok {
@@ -66,7 +67,7 @@ pub fn safe_docx_hyperlink_target(value: &str) -> Result<String> {
             _ => String::new(),
         };
         let path = if tail.is_empty() || tail.starts_with('?') || tail.starts_with('#') { format!("/{tail}") } else { tail.to_string() };
-        return Ok(format!("{scheme_lower}://{}{port_text}{path}", host.to_lowercase()));
+        return Ok(format!("{scheme_lower}://{}{port_text}{}", host.to_lowercase(), percent_encode_tail(&path)));
     }
     if scheme_lower == "mailto" {
         let at = rest.find('@');
@@ -82,6 +83,40 @@ pub fn safe_docx_hyperlink_target(value: &str) -> Result<String> {
         }
     }
     Err(unsafe_link("Only credential-free HTTP/HTTPS and simple mailto destinations are supported."))
+}
+
+/// WHATWG URL serializer percent-encoding for path, query and fragment:
+/// non-ASCII is UTF-8 percent-encoded, plus the per-component special sets.
+fn percent_encode_tail(tail: &str) -> String {
+    let mut out = String::with_capacity(tail.len());
+    let mut component = 0; // 0 path, 1 query, 2 fragment
+    for c in tail.chars() {
+        if c == '?' && component == 0 {
+            component = 1;
+            out.push(c);
+            continue;
+        }
+        if c == '#' && component < 2 {
+            component = 2;
+            out.push(c);
+            continue;
+        }
+        let encode = !c.is_ascii()
+            || match component {
+                0 => matches!(c, '"' | '<' | '>' | '`' | '{' | '}'),
+                1 => matches!(c, '"' | '<' | '>' | '\''),
+                _ => matches!(c, '"' | '<' | '>' | '`'),
+            };
+        if encode {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// `(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}`

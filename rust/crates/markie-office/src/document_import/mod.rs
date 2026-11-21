@@ -136,7 +136,7 @@ pub fn decode_import_text(bytes: &[u8], utf8_only: bool) -> ImportResult<String>
         )
     };
     let utf16 = |little: bool| -> ImportResult<String> {
-        if utf8_only || bytes.len() % 2 != 0 {
+        if utf8_only || !bytes.len().is_multiple_of(2) {
             return Err(fail());
         }
         let units: Vec<u16> = bytes[2..]

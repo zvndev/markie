@@ -233,3 +233,14 @@ fn declares_main_relationship_parts_for_image_insertion_into_override_only_manif
     assert!(saved.can_edit); assert_eq!(saved.images.len(), 1);
     assert_eq!(export(&original), bytes);
 }
+
+#[test]
+fn normalizes_link_targets_like_the_url_serializer() {
+    assert_eq!(safe_docx_hyperlink_target("HTTPS://Example.COM").unwrap(), "https://example.com/");
+    assert_eq!(safe_docx_hyperlink_target("https://example.com:443/a").unwrap(), "https://example.com/a");
+    assert_eq!(safe_docx_hyperlink_target("http://example.com:8080?q=1").unwrap(), "http://example.com:8080/?q=1");
+    assert_eq!(safe_docx_hyperlink_target("https://example.com/caf\u{e9}?x=\"y\"#\u{e9}").unwrap(), "https://example.com/caf%C3%A9?x=%22y%22#%C3%A9");
+    assert_eq!(safe_docx_hyperlink_target("MAILTO:writer@example.com").unwrap(), "mailto:writer@example.com");
+    // Internationalized host names need IDNA mapping, which this port refuses rather than guesses.
+    assert!(safe_docx_hyperlink_target("https://ex\u{e4}mple.com/").is_err());
+}

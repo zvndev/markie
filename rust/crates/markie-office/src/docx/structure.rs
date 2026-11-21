@@ -257,12 +257,11 @@ fn remove_attribute(opening: &str, name: &str) -> String {
         let after = opening[at + name.len()..].trim_start();
         if lead > 0 && after.starts_with('=') {
             let value = after[1..].trim_start();
-            if let Some(q) = value.chars().next().filter(|c| *c == '"' || *c == '\'') {
-                if let Some(close) = value[1..].find(q) {
+            if let Some(q) = value.chars().next().filter(|c| *c == '"' || *c == '\'')
+                && let Some(close) = value[1..].find(q) {
                     let consumed = opening.len() - value.len() + 1 + close + 1;
                     return format!("{}{}", &opening[..at - lead], &opening[consumed..]);
                 }
-            }
         }
         from = at + name.len();
     }

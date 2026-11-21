@@ -207,7 +207,7 @@ pub fn extract_legacy_doc_text(input: &[u8], limits: LegacyDocLimits) -> Result<
             return fail(Malformed, "Truncated CLX property record.");
         }
         let length = u16le(clx, at + 1) as i16;
-        if length < 0 || length > 0x3fa2 || length as usize > clx.len() - at - 3 {
+        if !(0..=0x3fa2).contains(&length) || length as usize > clx.len() - at - 3 {
             return fail(Malformed, "Invalid CLX property record length.");
         }
         at += 3 + length as usize;
@@ -218,7 +218,7 @@ pub fn extract_legacy_doc_text(input: &[u8], limits: LegacyDocLimits) -> Result<
     let plc_length = u32le(clx, at + 1) as usize;
     at += 5;
     // [MS-DOC] 2.8.35/2.9.178: n+1 four-byte CPs followed by n eight-byte Pcds.
-    if plc_length < 4 || (plc_length - 4) % 12 != 0 || plc_length != clx.len() - at {
+    if plc_length < 4 || !(plc_length - 4).is_multiple_of(12) || plc_length != clx.len() - at {
         return fail(Malformed, "Invalid piece-table byte count.");
     }
     let piece_count = (plc_length - 4) / 12;

@@ -92,6 +92,7 @@ pub struct PushPlan {
 /// Plan a push after save. Only a tracked, cloud-linked row in `synced` or
 /// `unpushed` is pushed. A viewer's push is refused before it is sent, and the
 /// row turns `unpushed` because the edit is on disk only.
+#[allow(clippy::result_large_err)]
 pub fn plan_push(record: &SyncRecord, viewer: bool) -> Result<PushPlan, (SyncRecord, PushResult)> {
     let pushable = matches!(record.state, SyncState::Synced | SyncState::Unpushed);
     let Some(id) = record.cloud_doc_id.clone().filter(|_| pushable) else {
@@ -105,6 +106,7 @@ pub fn plan_push(record: &SyncRecord, viewer: bool) -> Result<PushPlan, (SyncRec
 
 /// Plan turning sync on. A linked row pushes against its version; a new one
 /// gets a fresh client UUID and base version 0.
+#[allow(clippy::result_large_err)]
 pub fn plan_sync_on(record: &SyncRecord, viewer: bool, new_id: impl FnOnce() -> String) -> Result<PushPlan, (SyncRecord, PushResult)> {
     if viewer && record.cloud_doc_id.is_some() {
         return Err((SyncRecord { state: SyncState::Unpushed, ..record.clone() }, PushResult::Error(VIEWER_REFUSAL.into())));

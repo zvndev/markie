@@ -238,7 +238,7 @@ impl Trust {
             return true;
         }
         // A localhost server the user added in a dev build is on the list as http.
-        self.allow_dev && u.scheme() == "http" && self.added.iter().any(|o| *o == origin)
+        self.allow_dev && u.scheme() == "http" && self.added.contains(&origin)
     }
 
     /// The base origin to fetch a shared document from. A deep link's `src` is

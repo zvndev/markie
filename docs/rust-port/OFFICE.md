@@ -1,8 +1,8 @@
 # Markie RS: the Office engine port
 
-Date: 2026-11-21. Circular task ENG-8734, phase 4, codec half.
+Date: 2026-11-21. Circular task ENG-8734, phase 4.
 
-The Office codecs now run in Rust, in the crate `rust/crates/markie-office`. The crate has no UI and no GPUI dependency. The native Word page view is the other half of phase 4 and is not part of this work.
+The Office codecs run in Rust, in the crate `rust/crates/markie-office`. That crate has no UI and no GPUI dependency. The native Word page view is the crate `rust/crates/markie-office-view`, described in [The Word page view](#the-word-page-view) below.
 
 ## What is ported
 
@@ -73,28 +73,104 @@ The other 16 unported cases are mostly ones Rust types cannot express: lone UTF-
 ## What remains
 
 - **The print projection.** `docx-print.ts` builds Chromium print HTML. Phase 5 prints and exports PDF through Typst, so the gate (`canPrintDocx`) should move to that pipeline rather than ship as HTML. Its 26 test cases are not ported yet.
-- **The native Word page view.** GPUI page, continuous and outline views, the Format, Insert, Layout and Review menus (49 command ids), and caret mapping into the byte offsets above.
 - **The document workspace layer.** Sessions, the local library and recovery, which the two skipped rich-document cases exercise.
 - **CJK code pages, if wanted.** Only if Kirby accepts a decoding dependency or wants the WHATWG indexes generated into the crate (several MB).
 - **A Word-generated corpus.** The decision record asks for real Word reopen, repair and layout checks before broad support is advertised. That needs Kirby's Word install.
+- **The page view gaps** listed in its own section below.
 
-## Estimate
+## The Word page view
 
-Agentic wall-clock time, with agents running in parallel:
+`markie-office-view` draws Office documents natively in GPUI and edits them only through the engine. `markie-app` opens DOCX, RTF, ODT and DOC with it. The app changes are one new module, `workspace/office.rs`, plus routing lines in `workspace.rs` and menu lines in `main.rs`.
+
+### What works
+
+Display:
+
+- Pages at the document's paper size, orientation and margins, at 96 pixels per inch like Electron. Blocks are measured after layout and placed on pages; the second frame settles the page breaks.
+- Continuous view, one sheet up to 960 px wide. Outline view, a heading list beside the page that jumps to a heading.
+- Runs with bold, italic, underline, color, font family and size. Word's resolved styles win; headings fall back to fixed sizes when a file has no styles.
+- Paragraph alignment, spacing before and after, line spacing, bullet and numbered lists with levels.
+- Tables, with editable cells. PNG and JPEG pictures from the package bytes.
+- Links in the link color, opened with Cmd-click, or a plain click when the file is read-only.
+- Explicit page breaks start a new page. Continuous view marks them with a dashed rule.
+- Comments and tracked changes in a margin beside each page, with Accept and Reject on each change. Paragraphs with pending changes get a change bar.
+- Light paper in dark mode by default, with a Theme paper toggle. Authored run colors are adapted to the paper on screen only, a port of `word-colors.ts`. Save keeps the authored colors.
+
+Editing:
+
+- Typing and IME through `EntityInputHandler`. Marked text is drawn underlined in place and committed to the engine once, when the input method finishes. The platform sees UTF-16 offsets into the caret's paragraph; the engine sees UTF-8 byte offsets. Every conversion lands on a character boundary, and caret moves land on the engine's grapheme boundaries.
+- Click, Shift-click, double-click word, triple-click paragraph, and drag selection across paragraphs. Arrows, Option-arrows, Cmd-arrows, Home, End, Backspace, Delete and Option-Backspace.
+- Inside one paragraph, edits become run text edits, so untouched runs keep their XML. Enter, joins and cross-paragraph edits use the engine's source-preserving range edit (DOCX). RTF and ODT split paragraphs with replace-paragraph and insert-paragraph, as Electron does.
+- Undo and redo of 100 snapshots, with the caret restored. Copy, cut and paste as plain text, read-only documents included for copy.
+- The Format, Insert, Layout and Review menus from `document-menu-commands.json`, plus Word Layout items in the View menu. A command shows disabled when the selection does not allow it, using the same rules as Electron's `availableCommands`. A toolbar offers the same commands.
+- The tool panel for Font, Picture, Table, Link and Page Breaks, Page Setup, Paragraph Spacing and Document Review: tracking, revision author, accept or reject all, final or original text, comments, and the engine's compatibility notes.
+- Refused edits explain why in a banner and leave the document as it was.
+
+Saving:
+
+- Cmd-S writes the engine's export with an atomic write. An untouched or reverted document writes its original bytes, and a clean document is not written at all.
+- Documents the engine opens read-only (unsupported RTF, ODT or DOCX features, pending deletions in a redline) show the engine's reason and are never written.
+- DOC opens as extracted text, off the UI thread, with Electron's warnings. "Save a TXT copy" writes `name (converted).txt` next to the original, never over another file, and opens it.
+
+### Tests
+
+`cargo test -p markie-office-view` runs 57 tests. They cover:
+
+- UTF-8 and UTF-16 caret mapping, surrogate pairs, grapheme steps, word moves and marked-text splicing.
+- Typing, Backspace and Delete over graphemes, splits, joins, cross-paragraph replacement, multi-line paste, and RTF and ODT editing with a save and reopen.
+- Formatting, headings, lists, alignment, page layout, tables, pictures, links, page breaks, comments, tracking and accept.
+- Undo, redo and the dirty state, the original-bytes guarantee for untouched and reverted files, and read-only hosts.
+- Menu availability for DOCX and RTF, pagination, run and paragraph looks, and color adaptation.
+
+`cargo test -p markie-office -p markie-office-view -p markie-app` runs 455 tests, all passing.
+
+### Checks in the running app
+
+Run against copies in a scratch folder with `MARKIE_RS_DATA_DIR` set. No original file was opened by the app.
+
+| File | Checked |
+|---|---|
+| A sample DOCX built through the engine (`examples/sample_docx.rs`) | Every feature drawn; click and type; Enter continues a bullet list; Shift-arrow selection and Cmd-B; undo and redo; Cmd-S writes the bold run; Cmd-Down scrolls to page 2 after an explicit break; Layout > Landscape from the native menu; Outline; Theme paper |
+| A real lease DOCX with comments | Editable; untouched save and type-then-delete save both keep the original bytes; drag selection across paragraphs and Backspace; tracking from Review > Track Paragraph Text, tracked typing with a change bar, Accept all |
+| A real redlined DOCX | Opens read-only with the engine's reason |
+| The engine's RTF and ODT fixtures | Open read-only with their reasons |
+| Engine-written RTF and ODT | Typing, Enter and Cmd-S on RTF; Option-Shift-Left and Cmd-B and Cmd-S on ODT, checked in the saved files |
+| A spec-shaped DOC from the engine's own fixture builder | Text, separators and warnings shown; TXT copy written and opened |
+| A real Word DOC with an extended FIB | Shows the engine's refusal (outside the Word 97 to 2003 scope) |
+
+### Gaps
+
+- **One text size per paragraph.** GPUI shapes a text element at a single size, so a paragraph uses the size most of its text has. Mixed sizes inside one paragraph show at that size; save keeps them.
+- **Justified text shows left aligned.** GPUI has no justified alignment.
+- **Pages never split a block.** A paragraph or table taller than the page gets its own page and runs over. A page break inside a paragraph's text is drawn after the paragraph.
+- **Live IME is not verified.** The composition path is unit tested for its offsets, but no Japanese or Chinese input source was switched on for a live check, to avoid changing Kirby's input settings.
+- **Picture insert was not driven through the file dialog.** The insert path is unit tested with real PNG bytes.
+- **No autosave, drafts or version history for Office files.** Unsaved Office edits are saved when another document is opened, as text documents are.
+- **Strikethrough stays disabled.** The engine has no strike property. Soft line breaks and tabs are refused, as in Electron.
+- **Find and replace is not ported.** Electron's Word find tool is a stub too.
+- **The margin and wide pages scroll sideways** when the window is narrow. The Library panel takes 300 px.
+- **Paper in dark mode differs from Electron on screen.** Electron's on-screen page follows the theme and only print and PDF use white paper. The brief asked for light paper, so Markie RS defaults to light paper and offers Theme paper as a toggle. Kirby should pick the default.
+
+### Estimate for the gaps
+
+Agentic wall-clock time:
 
 | Work | Estimate | Serial limit |
 |---|---|---|
-| Print gate on the Typst path | Half a day | Waits on phase 5's Typst setup |
-| Word page view in GPUI | 4 to 6 days | One canvas design; shares GPUI text layout with the rich editor (phase 2b) |
-| Menus and command wiring | 1 day, parallel with the page view | Needs the page view's selection model |
-| Workspace sessions and recovery | 1 to 2 days, parallel | Reads the Electron registry format |
-| Word corpus check | Half a day of agent time | Kirby runs real Word reopen and repair |
+| Split long paragraphs and tables across pages | 1 to 1.5 days | One layout pass design, shared with print in phase 5 |
+| Per-run font sizes | 1 day | Needs a line layout that mixes sizes; GPUI's `StyledText` cannot |
+| Justified text | Half a day | Same custom line painter |
+| Office autosave, drafts and history | 1 day | Uses the workspace layer above |
+| Find and replace in Word documents | Half a day | None |
+| Live IME and picture dialog checks | 1 hour | Kirby enables an input method, or approves a test-only input source |
 
-That leaves phase 4 at about 1 to 1.5 weeks of wall-clock time, mostly the page view.
+With the print gate, the workspace layer and the Word corpus check above, that leaves phase 4 at about 4 to 6 days of wall-clock time, run in parallel with phase 2b.
 
 ## How to run it
 
 ```sh
 cd rust
-cargo test -p markie-office
+cargo test -p markie-office -p markie-office-view
+cargo run -p markie-office-view --example sample_docx -- /tmp/sample.docx
+MARKIE_RS_DATA_DIR=/tmp/markie-rs-data cargo run -p markie-app -- /tmp/sample.docx
 ```

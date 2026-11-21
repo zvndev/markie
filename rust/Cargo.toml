@@ -1,6 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["crates/markie-core", "crates/markie-app", "crates/markie-cloud", "crates/markie-rich", "crates/markie-office", "crates/markie-vault", "crates/markie-migrate"]
+members = [
+  "crates/markie-core",
+  "crates/markie-app",
+  "crates/markie-cloud",
+  "crates/markie-rich",
+  "crates/markie-office",
+  "crates/markie-office-view",
+  "crates/markie-vault",
+  "crates/markie-migrate",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -3681,6 +3681,8 @@ dependencies = [
  "chrono",
  "gpui-kit",
  "markie-core",
+ "serde",
+ "serde_json",
  "trash",
 ]
 

@@ -23,6 +23,7 @@ actions!(
         ToggleStats,
         ToggleStar,
         ImportFromMarkie,
+        OpenSettings,
         Quit,
     ]
 );

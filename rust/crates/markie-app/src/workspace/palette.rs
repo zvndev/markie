@@ -27,6 +27,7 @@ fn commands() -> Vec<(&'static str, Box<dyn Action>, &'static [&'static str])> {
         ("Star or unstar document", Box::new(ToggleStar), &["favorite", "pin"]),
         ("Import recents and stars from Markie", Box::new(ImportFromMarkie), &["electron", "migrate"]),
         ("Rescan documents", Box::new(Rescan), &["index", "refresh"]),
+        ("Settings", Box::new(OpenSettings), &["preferences", "theme", "style", "appearance"]),
         ("Toggle dark mode", Box::new(ToggleTheme), &["theme", "light", "appearance"]),
     ]
 }

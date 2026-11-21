@@ -33,6 +33,7 @@ use crate::library::{Library, LibraryTab};
 mod file_ops;
 mod palette;
 mod panels;
+mod settings;
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -132,6 +133,11 @@ impl Workspace {
             }),
         ];
 
+        let template = registry
+            .as_ref()
+            .and_then(|r| r.setting("style_template").ok().flatten())
+            .unwrap_or_else(|| "markie".into());
+        crate::themes::apply(&template, Some(window), cx);
         // The user's own light or dark choice outranks the system appearance.
         match registry.as_ref().and_then(|r| r.setting("color_mode").ok().flatten()).as_deref() {
             Some("dark") => Theme::change(ThemeMode::Dark, Some(window), cx),
@@ -1243,6 +1249,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_toggle_outline))
             .on_action(cx.listener(Self::on_toggle_star))
             .on_action(cx.listener(Self::on_import))
+            .on_action(cx.listener(Self::on_settings))
             .on_action(cx.listener(Self::on_toggle_stats))
             .on_action(cx.listener(Self::on_palette))
             .on_action(cx.listener(Self::on_rename))

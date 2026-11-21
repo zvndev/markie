@@ -5,6 +5,7 @@
 
 mod actions;
 mod library;
+mod themes;
 mod workspace;
 
 use gpui_kit::component::{Theme, TitleBar};
@@ -31,6 +32,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-i", ToggleStats, None),
         KeyBinding::new("cmd-alt-o", ToggleOutline, None),
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-,", OpenSettings, None),
     ]);
 }
 
@@ -38,7 +40,11 @@ fn set_menus(cx: &mut App) {
     cx.set_menus([
         Menu {
             name: "Markie RS".into(),
-            items: vec![MenuItem::action("Quit Markie RS", Quit)],
+            items: vec![
+                MenuItem::action("Settings…", OpenSettings),
+                MenuItem::separator(),
+                MenuItem::action("Quit Markie RS", Quit),
+            ],
             disabled: false,
         },
         Menu {

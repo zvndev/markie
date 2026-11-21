@@ -19,6 +19,8 @@ actions!(
         RevealDocument,
         CopyPath,
         SearchAll,
+        ToggleOutline,
+        ToggleStats,
         Quit,
     ]
 );

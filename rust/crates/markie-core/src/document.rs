@@ -22,10 +22,24 @@ pub struct Document {
     pub path: PathBuf,
     pub format: FormatKind,
     pub content: Content,
+    pub size: u64,
 }
+
+impl Document {
+    /// Large documents open in Source only, as in the Electron app.
+    pub fn is_large(&self) -> bool {
+        self.size >= LARGE_DOC_BYTES
+    }
+}
+
+/// At or above this a file opens in Source only (`electron/doc-tiers.js`).
+pub const LARGE_DOC_BYTES: u64 = 1_000_000;
+/// At or above this Markie refuses the file and says so.
+pub const MAX_DOC_BYTES: u64 = 100_000_000;
 
 #[derive(Debug)]
 pub enum OpenError {
+    TooLarge(u64),
     Io(std::io::Error),
     Text(crate::formats::TextError),
     Unsupported,
@@ -34,6 +48,12 @@ pub enum OpenError {
 impl std::fmt::Display for OpenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            OpenError::TooLarge(n) => write!(
+                f,
+                "This file is {} MB. Markie opens files up to {} MB.",
+                n / 1_000_000,
+                MAX_DOC_BYTES / 1_000_000
+            ),
             OpenError::Io(e) => write!(f, "Markie could not read this file: {e}"),
             OpenError::Text(e) => write!(f, "{e}"),
             OpenError::Unsupported => f.write_str("Markie does not open this kind of file."),
@@ -48,6 +68,13 @@ pub fn open(path: &Path) -> Result<Document, OpenError> {
     // become a second registry row or a confusing status bar.
     let path = &std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let format = classify(&path.to_string_lossy());
+    if format == FormatKind::Unsupported {
+        return Err(OpenError::Unsupported);
+    }
+    let size = std::fs::metadata(path).map_err(OpenError::Io)?.len();
+    if size >= MAX_DOC_BYTES {
+        return Err(OpenError::TooLarge(size));
+    }
     let content = match (format, format.representation(), format.editing()) {
         (FormatKind::Unsupported, ..) => return Err(OpenError::Unsupported),
         (FormatKind::Html, ..) => {
@@ -62,7 +89,7 @@ pub fn open(path: &Path) -> Result<Document, OpenError> {
         (_, _, Editing::Engine) => Content::Engine,
         _ => return Err(OpenError::Unsupported),
     };
-    Ok(Document { path: path.to_path_buf(), format, content })
+    Ok(Document { path: path.to_path_buf(), format, content, size })
 }
 
 /// Write `text` back in the document's own encoding.

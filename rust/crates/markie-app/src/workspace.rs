@@ -32,6 +32,16 @@ use crate::library::Library;
 
 mod file_ops;
 mod palette;
+mod panels;
+
+/// The panel on the right of the document.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SidePanel {
+    None,
+    History,
+    Outline,
+    Stats,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -43,6 +53,8 @@ enum Mode {
 struct OpenDoc {
     path: PathBuf,
     format: FormatKind,
+    /// Over 1 MB: Source only, like the Electron app.
+    large: bool,
     kind: DocKind,
 }
 
@@ -78,7 +90,9 @@ pub struct Workspace {
     /// Unsaved text recovered from a crash, offered once at launch.
     recovered: Vec<Draft>,
     /// The version history panel, and the version being looked at.
-    show_history: bool,
+    side: SidePanel,
+    /// Parsed rows when a CSV document is shown as a table.
+    csv_rows: Option<Rc<Vec<Vec<String>>>>,
     versions: Vec<Version>,
     viewing_version: Option<(String, String)>,
     /// Text to put in the editor at the next render, which has the window.
@@ -155,7 +169,8 @@ impl Workspace {
             disk_conflict: None,
             disk_missing: false,
             recovered,
-            show_history: false,
+            side: SidePanel::None,
+            csv_rows: None,
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
@@ -223,6 +238,7 @@ impl Workspace {
         }
         match document::open(path) {
             Ok(doc) => {
+                let large = doc.is_large();
                 let kind = match doc.content {
                     Content::Text { text, encoding, bom } => {
                         let language = doc.format.editor_language();
@@ -249,23 +265,29 @@ impl Workspace {
                         DocKind::Engine
                     }
                 };
-                if !matches!(doc.format, FormatKind::Markdown | FormatKind::Html)
-                    && matches!(kind, DocKind::Text { .. })
+                self.csv_rows = None;
+                if large || (!matches!(doc.format, FormatKind::Markdown | FormatKind::Html | FormatKind::Csv)
+                    && matches!(kind, DocKind::Text { .. }))
                 {
                     self.mode = Mode::Source;
-                } else if doc.format == FormatKind::Markdown && self.doc.is_none() {
+                } else if matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && self.doc.is_none() {
                     self.mode = Mode::View;
+                }
+                if let DocKind::Text { saved, .. } = &kind {
+                    if doc.format == FormatKind::Csv && !large {
+                        self.csv_rows = Some(Rc::new(markie_core::csv::parse(saved)));
+                    }
                 }
                 if let Some(old) = &self.doc {
                     self.disk.forget(&old.path);
                 }
-                self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, kind });
+                self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind });
                 self.dirty = false;
                 self.autosave.cancel();
                 self.disk_conflict = None;
                 self.disk_missing = false;
                 self.viewing_version = None;
-                if self.show_history {
+                if self.side == SidePanel::History {
                     self.refresh_versions();
                 }
                 if self.mode == Mode::Source && matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. })) {
@@ -288,6 +310,10 @@ impl Workspace {
     }
 
     fn set_preview(&mut self, text: &str, format: FormatKind, cx: &mut Context<Self>) {
+        if format == FormatKind::Csv {
+            self.csv_rows = Some(Rc::new(markie_core::csv::parse(text)));
+            return;
+        }
         if format != FormatKind::Markdown {
             return;
         }
@@ -353,7 +379,7 @@ impl Workspace {
         *saved = text.to_string();
         self.disk.remember(&doc.path, text, true);
         self.dirty = false;
-        if self.show_history {
+        if self.side == SidePanel::History {
             self.refresh_versions();
         }
         Ok(())
@@ -434,9 +460,10 @@ impl Workspace {
 
     fn toggle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        if doc.format != FormatKind::Markdown {
+        if !matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) || doc.large {
             return;
         }
+        let format = doc.format;
         self.mode = match self.mode {
             Mode::View => {
                 self.focus_editor(window, cx);
@@ -444,7 +471,7 @@ impl Workspace {
             }
             Mode::Source => {
                 let text = self.editor.read(cx).value().to_string();
-                self.set_preview(&text, FormatKind::Markdown, cx);
+                self.set_preview(&text, format, cx);
                 Mode::View
             }
         };
@@ -533,10 +560,23 @@ impl Workspace {
         };
     }
 
-    fn on_show_history(&mut self, _: &ShowHistory, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_history = !self.show_history;
+    fn toggle_side(&mut self, panel: SidePanel, cx: &mut Context<Self>) {
+        self.side = if self.side == panel { SidePanel::None } else { panel };
         self.viewing_version = None;
-        if self.show_history {
+        cx.notify();
+    }
+
+    fn on_toggle_outline(&mut self, _: &ToggleOutline, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_side(SidePanel::Outline, cx);
+    }
+
+    fn on_toggle_stats(&mut self, _: &ToggleStats, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_side(SidePanel::Stats, cx);
+    }
+
+    fn on_show_history(&mut self, _: &ShowHistory, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_side(SidePanel::History, cx);
+        if self.side == SidePanel::History {
             self.refresh_versions();
         }
         cx.notify();
@@ -744,7 +784,10 @@ impl Workspace {
             .as_ref()
             .and_then(|d| d.path.file_name())
             .map_or_else(|| "No document".to_string(), |n| n.to_string_lossy().into_owned());
-        let is_md = self.doc.as_ref().is_some_and(|d| d.format == FormatKind::Markdown);
+        let is_md = self
+            .doc
+            .as_ref()
+            .is_some_and(|d| matches!(d.format, FormatKind::Markdown | FormatKind::Csv) && !d.large);
         TitleBar::new().child(
             h_flex()
                 .w_full()
@@ -993,6 +1036,7 @@ impl Workspace {
                     )
                     .into_any_element()
             }
+            (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Csv => self.render_csv(cx),
             (DocKind::Html, _) | (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown || matches!(doc.kind, DocKind::Html) => {
                 div()
                     .size_full()
@@ -1032,11 +1076,16 @@ impl Workspace {
                     _ => "Read only",
                 };
                 let mut right = String::new();
-                if matches!(doc.kind, DocKind::Text { .. }) {
+                if let (FormatKind::Csv, Some(rows)) = (doc.format, &self.csv_rows) {
+                    right = format!("{} · ", plural(rows.len().saturating_sub(1), "row"));
+                } else if matches!(doc.kind, DocKind::Text { .. }) {
                     right = format!("{} · {} min read · ", plural(self.words, "word"), self.reading_minutes);
                     if !self.sections.is_empty() {
                         right = format!("{} · {right}", plural(self.sections.len(), "section"));
                     }
+                }
+                if doc.large {
+                    right.push_str("Large file, Source only · ");
                 }
                 right.push_str(state);
                 (format!("{} · {}", doc.format.label(), short_dir(&doc.path)), right)
@@ -1073,7 +1122,12 @@ impl Render for Workspace {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         let banner = self.render_banner(cx);
-        let history = if self.show_history { Some(self.render_history(cx).into_any_element()) } else { None };
+        let history = match self.side {
+            SidePanel::History => Some(self.render_history(cx).into_any_element()),
+            SidePanel::Outline => Some(self.render_outline(cx).into_any_element()),
+            SidePanel::Stats => Some(self.render_stats(cx).into_any_element()),
+            SidePanel::None => None,
+        };
         v_flex()
             .id("workspace")
             .track_focus(&self.focus_handle)
@@ -1087,6 +1141,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_rescan))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_show_history))
+            .on_action(cx.listener(Self::on_toggle_outline))
+            .on_action(cx.listener(Self::on_toggle_stats))
             .on_action(cx.listener(Self::on_palette))
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_duplicate))

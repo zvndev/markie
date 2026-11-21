@@ -16,6 +16,8 @@ fn commands() -> Vec<(&'static str, Box<dyn Action>, &'static [&'static str])> {
         ("Save", Box::new(Save), &[]),
         ("Search documents", Box::new(FocusSearch), &["find", "library"]),
         ("Toggle View and Source", Box::new(ToggleMode), &["mode", "edit", "preview"]),
+        ("Outline", Box::new(ToggleOutline), &["sections", "headings", "rail", "toc"]),
+        ("Statistics", Box::new(ToggleStats), &["words", "count", "stats"]),
         ("Version history", Box::new(ShowHistory), &["versions", "restore", "snapshots"]),
         ("Rename document", Box::new(RenameDocument), &["file"]),
         ("Duplicate document", Box::new(DuplicateDocument), &["copy", "fork"]),

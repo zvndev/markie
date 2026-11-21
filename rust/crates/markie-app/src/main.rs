@@ -28,6 +28,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-r", Rescan, None),
         KeyBinding::new("cmd-shift-l", ToggleTheme, None),
         KeyBinding::new("cmd-alt-y", ShowHistory, None),
+        KeyBinding::new("cmd-shift-i", ToggleStats, None),
+        KeyBinding::new("cmd-alt-o", ToggleOutline, None),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
 }
@@ -62,6 +64,8 @@ fn set_menus(cx: &mut App) {
             items: vec![
                 MenuItem::action("Command Palette", CommandPalette),
                 MenuItem::action("Toggle View and Source", ToggleMode),
+                MenuItem::action("Outline", ToggleOutline),
+                MenuItem::action("Statistics", ToggleStats),
                 MenuItem::action("Search Documents", FocusSearch),
                 MenuItem::action("Rescan Documents", Rescan),
                 MenuItem::separator(),

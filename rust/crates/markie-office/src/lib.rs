@@ -13,7 +13,9 @@
 //! which is what Rust strings and GPUI use. Every offset that would split a
 //! character is rejected.
 
+pub mod cfb;
 pub mod error;
+pub mod legacy_doc;
 pub mod xml;
 pub mod zip;
 

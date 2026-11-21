@@ -3998,6 +3998,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "markie-office-view"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "markie-office",
+ "miniz_oxide 0.8.9",
+]
+
+[[package]]
 name = "markie-rich"
 version = "0.1.0"
 dependencies = [

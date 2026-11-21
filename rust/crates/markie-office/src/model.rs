@@ -222,7 +222,7 @@ pub struct PageBreak {
     pub offset: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RevisionKind {
     Insertion,
     Deletion,

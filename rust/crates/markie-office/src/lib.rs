@@ -15,6 +15,7 @@
 
 pub mod cfb;
 mod codepages;
+pub mod docx;
 pub mod document_import;
 pub mod error;
 pub mod legacy_doc;

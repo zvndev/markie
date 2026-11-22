@@ -103,10 +103,11 @@ impl Workspace {
 
     /// Before each render: compile what changed, put the right document in
     /// the frame, and keep the frame hidden whenever it must not be seen
-    /// (another document, Source mode, or a GPUI menu that would sit under it).
+    /// (another document, Source mode, or any GPUI layer over it:
+    /// `Workspace::web_views_covered`).
     pub(super) fn sync_darkmown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let wanted = self.is_darkmown_doc() && self.darkmown.mode != Mode::Source;
-        let overlay = self.shell.menu.is_some();
+        let overlay = self.web_views_covered(window, cx);
         if !wanted {
             if let Some(frame) = &self.darkmown.frame {
                 let _ = frame.set_visible(false);

@@ -1,0 +1,170 @@
+# Audit: editors, saving, history and link previews
+
+Date: 2026-11-22. Branch: `t3/markie-rs-editor-parity-1`, from `rust/markie-rs` at 3b6f6c0. Reference: Markie 0.9.7 (`/Applications/Markie.app`, a stable build) and its source. Scope: PARITY.md sections 7, 8, 9, 13 and 24.
+
+## Score
+
+**Parity: 43 PASS of 53 scored rows (81.1%).**
+
+| Status | Rows |
+|---|---|
+| PASS | 43 |
+| FAIL | 5 (two leaf rows, 7.4 and 8.13, and the three groups above them) |
+| NEEDS-CAPTURE | 5 |
+| EXCLUDED | 0 |
+| EXCLUDED-PLATFORM | 0 |
+| Total | 53 |
+
+Score = PASS ÷ (all rows − EXCLUDED) = 43 ÷ 53. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
+
+The screen was locked for the whole run (`IOConsoleLocked = Yes`). No captures were taken and no app was launched. Visual and live-gesture rows are NEEDS-CAPTURE, with their steps below.
+
+## How rows were checked
+
+Most rows are proved by running Electron's own code in Node on generated inputs, writing its output as a fixture, and holding Markie RS to it byte for byte:
+
+| Fixture | Generator | Electron code | Rust test |
+|---|---|---|---|
+| `markie-core/tests/fixtures/link_preview_electron.json` | `rust/scripts/parity/link-preview-cases.mjs` | `parseMeta`, `parseTarget`, `isPrivateAddress` | `markie-core/tests/link_preview_electron.rs` |
+| `markie-core/tests/fixtures/history_electron.json` | `rust/scripts/parity/history-cases.mjs` | `planRetention` (60 generated histories), `msForStamp`, `stampFor`, `cleanName`, `slugFor`, drafts `keyFor` | `history::tests::retention_matches_electron_on_generated_histories`, `stamps_names_and_slugs_match_electron` |
+| `markie-app/tests/fixtures/source_electron.json` | `rust/scripts/parity/source-cases.mjs` | `formatMarkdownTables`, `csvToMarkdownTable`, `markdownTableToCSV`, `csvDropsContent`, `computeStats` | `csv_doc::tests::source_conversions_match_electron` |
+| TipTap corpus (below) | `markie-rich/interop/tiptap-corpus.sh` | `probeReconstruction`, the block normalizer | `markie-rich/tests/tiptap_corpus.rs` |
+
+`line_diff` values were checked the same way, by running `src/lib/line-diff.ts` in Node on the test's inputs.
+
+## TipTap round-trip corpus
+
+`rust/crates/markie-rich/interop/tiptap-corpus.sh` runs `rich-roundtrip.ts` (Electron's `probeReconstruction` and its per-block normalizer) and Markie RS on the same files, then compares:
+
+1. Markie RS's zero-edit save must be the file, byte for byte.
+2. Where Electron's pipeline reconstructs a document, Markie RS's output must be the same bytes.
+3. For every editable block, the bytes each app writes once that block is edited.
+
+Corpus: the first 300 Markdown files under `~/Desktop/Coding/ZVN` (code repositories' docs, the same tree earlier corpus runs used). The Node half is slow (about 8 s a file under this machine's load), which is why it is 300 and not 2,000.
+
+| Check | Result |
+|---|---|
+| Markie RS zero-edit save is the file | 300 of 300 |
+| Documents Electron's pipeline reconstructs | 294 of 300 (the other 6 open read-only in Electron) |
+| Of those, Markie RS's output is the same bytes | 294 of 294 |
+| Edited blocks written the same as TipTap writes them | 14,452 of 14,898 (97.0%); was 13,754 (92.3%) before the fix below |
+
+Fixed from this run: Markie RS escaped line starts after a heading's `### ` and at a table cell's start (`### 1\. Title`, `59\.90`), where prosemirror-markdown does not. That was 671 of the 1,144 differing blocks. Its line-start rule now follows prosemirror-markdown's `esc` (test `edited_blocks_escape_line_starts_as_tiptap_does`, values from Electron). Edit stability on 2,000 files is unchanged (103,163 of 103,177 blocks read back as shown) and blocks written exactly as their source rose from 79,653 to 85,245.
+
+The 446 blocks that still differ are all TipTap rewriting what the user wrote:
+
+| Count | What TipTap does to the edited block |
+|---|---|
+| 92 | Turns a bare address or email into a link (`parcellewine.co` becomes `[parcellewine.co](http://parcellewine.co)`) |
+| 91 | Writes `>`, `<` and `&` in text as `&gt;`, `&lt;`, `&amp;` |
+| 56 | Loosens a tight task or bullet list (a blank line between items) |
+| 34 | Writes a link whose text is its address as `<https://…>` |
+| 15 | Rewrites inline HTML (`<strong>` to `**`) |
+| 23 | Tables whose column widths follow one of the rewrites above |
+| 135 | Other damage: nested lists split into `- [ ] ` items, `~~` struck text turned into `\~`, `**` doubled to `****`, list indentation dropped, an empty line between fences removed |
+
+## Section 7: Source mode
+
+| # | Bullet | Status | Evidence (Electron / Markie RS) | Notes |
+|---|---|---|---|---|
+| 7.0 | What the user can do (group) | FAIL | children | Follows 7.4; 7.5 needs a capture. |
+| 7.1 | Edit raw source in Source (⌘2) or Split (⌘3); Rich is ⌘1 | PASS | `page.tsx` `requestMode` / `markie-app/src/main.rs:61-63`, `workspace.rs` `set_mode`, `mode_tests` | Large and literal documents stay in Source, as `requestMode`. |
+| 7.2 | Find and replace (⌘F, ⌥⌘F) | PASS | `find-bar.tsx` / GPUI Kit search, `workspace/source.rs` `FindReplace` | Now also in the Edit menu (7.5). |
+| 7.3 | Format GFM tables (⌥⌘T) | PASS | `format-tables.ts` / `markie-core/src/format_tables.rs`; fixture, 14 inputs byte-identical | Also in the Edit menu. |
+| 7.4 | Syntax highlighting for fenced code through `@codemirror/language-data` | FAIL | `source-editor.tsx` / `markie-app/Cargo.toml` `tree-sitter-languages` | Fixed in part: Source now has every grammar GPUI Kit ships (36 plus JSON, was 11). Blocker for the rest: `language-data` covers about 150 languages through CodeMirror's legacy modes; GPUI Kit has no grammar for the others (for example R, Haskell, Clojure, Dart, Perl, OCaml, Fortran), and adding one means a tree-sitter crate and highlight queries per language outside GPUI Kit. |
+| 7.5 | Undo and redo through the menu | NEEDS-CAPTURE | `electron/main.js` Edit menu, `undo-target.ts` / `workspace/source.rs` `edit_menu`, `source_actions` | Was FAIL: Markie RS had no Edit menu. Fixed: Undo, Redo, Cut, Copy, Paste, Select All, Find…, Find and Replace…, Format Tables, routed to the rich editor when it has the keyboard and to GPUI Kit's action otherwise (the source editor, the find box), as `undoTargetFor`. Builds; needs a live click (steps below). |
+| 7.6 | Large documents get a virtualized editor | PASS | `doc-tiers.ts` `LARGE_DOC_BYTES`, `large-doc.tsx` / `markie-core/src/document.rs:29`, `mode_allowed`, `text_view.rs:218` | Same 1 MB line, same note wording, GPUI Kit's rope editor draws only visible lines. |
+| 7.7 | CSV shows as a table, converts CSV ↔ GFM | PASS | `csv.ts` / `workspace/csv_doc.rs`, `markie-core/src/csv.rs`; fixture | Fixed: a CSV save of a document with no table wrote an empty file; Electron writes `"\n"`. |
+| 7.8 | Files | PASS | each file has its port: `editor-keymap.ts` (`main.rs` bindings), `source-find.ts` (GPUI Kit search), `source-handle.ts` (`workspace.rs` editor entity), `format-tables.ts`, `csv.ts`, `undo-target.ts` (`edit_menu`), `large-doc.tsx` (`text_view.rs`) | `source-comments.ts` is local comments, section 12's. |
+| 7.9 | Rust port note: performance on a 1 to 100 MB buffer | NEEDS-CAPTURE | GPUI Kit rope editor | Needs a timed live run (steps below). Files at 100 MB are refused by both apps (`MAX_DOC_BYTES`). |
+
+## Section 8: Rich View mode
+
+| # | Bullet | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 8.0 | What the user can do (group) | FAIL | children | Follows 8.13 through 8.11; 8.4 to 8.6 need captures. |
+| 8.1 | WYSIWYG: headings, aligned blocks, lists, task lists, aligned tables, sized pictures, video cards | PASS | `rich-extensions.ts` / `markie-rich` `tests/editor.rs` (`lists_split_exit_indent_outdent`, `tables_tab_and_align`, `images_alignment_and_find`), interop 34/34, `video::tests` | |
+| 8.2 | Math, inline and block (KaTeX) | PASS | `rich-math.ts` / `markie-math` (MATH.md: 98 of 98 Markie formulas) | Drawn by typst, not KaTeX; glyphs differ slightly (VISUAL-EDITOR.md). |
+| 8.3 | Highlight, colour, font family, size, underline as inline HTML | PASS | `rich-extensions.ts` / `markie-rich/src/html.rs`, `marks_and_tiptap_html_marks`, interop | |
+| 8.4 | Formatting rail, document toolbar, formatting toolbar | NEEDS-CAPTURE | `format-rail.tsx` / new `markie-editor/src/format_rail.rs`, tests `the_buttons_are_electrons_in_order`, `commands_write_what_tiptap_writes` | Was FAIL: the pencil view drew no rail. Fixed: the 44 pt rail with Electron's 16 buttons, the advanced four, active states and the read-only state. One stated difference: link and picture open Markie RS's prompt bar, not Electron's small centred form. Toolbars were captured before (VISUAL-EDITOR.md); the rail was not. |
+| 8.5 | Section rail, image lightbox, statistics panel (⇧⌘I) | NEEDS-CAPTURE | `section-rail.tsx` / `rail.rs` (`rail::tests`); `image-lightbox.tsx` / new `lightbox.rs` (`steps_stop_at_the_ends_and_the_caption_counts`); `stats-panel.tsx`, `stats.ts` / `panels.rs`, `markie-core/src/stats.rs` (fixture) | Two FAILs fixed. The picture viewer was missing: now a double-click (a click when read-only) opens it, with arrows, the caption pill, ‹ › and natural size on click. Statistics showed 5 of 8 rows, counted code points, had no thousands separators, read the Source buffer in View mode and sat in a side panel: now Electron's 8 rows and counts, en-US grouping, Electron's dash character (`\u{2014}`) for no reading time, a 240 pt popover 48 pt from the top, Escape closes. |
+| 8.6 | Zoom (⌘=, ⌘-, ⌘0), page width (⌥⌘], ⌥⌘[), pinch zoom | NEEDS-CAPTURE | `doc-appearance.ts`, `document-zoom.ts` / `style.rs` (`ZOOM_STEPS`, `PinchZoom`, `pinch_collects_like_document_zoom_ts`), `workspace.rs` `on_pinch` | Was FAIL: no pinch. Fixed with Electron's 60-unit steps and 220 ms reset, for a trackpad pinch and ctrl + scroll. The pinch's magnification is mapped to Chromium's wheel delta by formula; a live pinch should confirm one pinch moves one or two steps. |
+| 8.7 | Front matter held aside, never shown | PASS | `front-matter.ts` / `markie-rich/src/document.rs` `front_matter_len`, `zero_edit_preserved` | |
+| 8.8 | Byte-for-byte preservation | PASS | `rich-block-preserve.ts` / `markie-rich` `zero_edit_and_undo_are_byte_exact`, `editing_one_paragraph_of_a_400_line_document_leaves_every_other_line_identical`, fuzz 900 of 900, the TipTap corpus above | |
+| 8.9 | Files: components | PASS | each has a port in `markie-editor` (`render.rs`, `chrome.rs`, `format_rail.rs`, `rail.rs`, `lightbox.rs`, `video.rs`) and `panels.rs` | `rich-guard.tsx` and `rich-pane-error.tsx` gate documents TipTap cannot rebuild; Markie RS reconstructs every document exactly (corpus), so it never needs the gate. |
+| 8.10 | Files: libs | PASS | `markie-rich` (model, parse, serialize, html, embed, editor), `markie-core` (`outline.rs`, `stats.rs`), `markie-editor` (`media.rs`, `attach.rs`, `style.rs`) | |
+| 8.11 | Compatibility (group) | FAIL | children | Follows 8.13. |
+| 8.12 | Node and mark names (Yjs XML) | PASS | `rich-extensions.ts` / `markie-rich/src/room.rs`; interop 34/34 both ways | |
+| 8.13 | tiptap-markdown with `html`, `linkify`, `tightLists` | FAIL | TipTap corpus above; `markie-rich/src/serialize.rs` | Unedited blocks and every document Electron reconstructs: byte-identical. Edited blocks: 97.0% identical after the line-start fix. Blocker for the other 3%: each is TipTap rewriting text the user did not touch in a way that changes what it says or how it reads back (table above). Copying them would make Markie RS damage text exactly as TipTap does. Needs Kirby's decision: accept these as deliberate differences, or have Markie RS copy them. |
+| 8.14 | `$…$` / `$$…$$` kept as written | PASS | `rich-math.ts` / `math_input_rule_makes_a_formula`, `unicode_and_math_atoms` | |
+| 8.15 | A width is written as `<img width>` | PASS | `rich-media-html.ts` / `html.rs`, `marks_and_tiptap_html_marks` | |
+| 8.16 | Rust port note (group) | PASS | children | |
+| 8.17 | Native editor: exact round trip, Yjs schema, math | PASS | 8.8, 8.12, 8.2 | |
+| 8.18 | Native TeX renderer | PASS | `markie-math` | |
+| 8.19 | Embed thumbnails; video needs a web view | PASS | `render.rs` embed card, `video.rs` (`video::tests`), markie-web `VideoPlayer` | |
+| 8.20 | Raw inline HTML interpreted or shown as source | PASS | `html.rs` (spans, marks, sized media), `source_blocks_edit_as_written` | |
+
+Pending Kirby, recorded and unchanged:
+
+- Highlighted text uses dark ink in dark mode. Electron keeps the page's white ink.
+- A code block shows its language label while the caret is in it. Electron never shows one.
+
+## Section 9: Autosave, drafts, conflicts, outside edits
+
+| # | Bullet | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 9.0 | What the user can do (group) | PASS | children | |
+| 9.1 | Autosave after 1 s idle, at most every 5 s while typing | PASS | `autosave.ts` / `markie-core/src/autosave.rs` `idle_and_max_wait` | Same rule: due at `min(last + idle, burstStart + maxWait)`. |
+| 9.2 | Crash-recovery draft strip after a crash | PASS | `use-save-guard.ts`, `drafts.js`, `draft-strip.tsx` / `drafts.rs` (`journal_waits_like_the_save_guard`), `workspace.rs` `schedule_journal`, `strips.rs` | Was FAIL: Markie RS wrote the draft only at save time and deleted it on success, so a crash in the 1 to 5 s before a save lost the edits. Fixed: the buffer is journalled 250 ms after an edit (2 s past 256 K UTF-16 units), off for large documents, and once more on close. Also fixed: restoring a draft armed an autosave; Electron loads it unsaved. |
+| 9.3 | Non-modal strip on an outside change; conflict dialog when both changed | PASS | `disk-change.tsx`, `disk-change.ts` / `strips.rs` (`names_copies_like_electron`), `markie-core/src/line_diff.rs` | The dialog's summary now uses an exact port of `lineDiff` (it differed for CRLF lines and long files). |
+| 9.4 | Closing flushes pending saves first | PASS | `close-flush.js`, `settle()` / `workspace.rs` `flush_pending` | Fixed: a close wrote any dirty buffer to the file, including a restored version or edits held back by a conflict. Now, as `settle`, only an armed save is written and everything else goes to the journal. |
+| 9.5 | Files | PASS | `autosave.rs`, `drafts.rs`, `disk.rs`, `strips.rs`, `workspace.rs` | |
+| 9.6 | Compatibility (group) | PASS | children | |
+| 9.7 | IPC `draft-save`, `draft-check`, `draft-discard`; `app-will-close` with a hard timeout | PASS | `preload.js` / in-process calls in `workspace.rs` | No process boundary in Markie RS; the flush is synchronous, so it needs no timeout. |
+| 9.8 | `drafts/` with one file per document plus `index.json`, named by slug | PASS | `drafts.js` / `drafts.rs`; draft keys in the history fixture | Fixed: `slug_for` did not fold `..` the way `path.resolve` does. Markie RS keeps the folder in its own data dir, as the side build must. |
+| 9.9 | Autosave never opens a dialog; it refuses and shows the strip | PASS | `save-conflict.js`, `main.js` `save-file` / `disk.rs` `save_conflict_action` (`save_conflict_rules_match_electron`, `an_emptied_file_is_still_a_change`), `workspace.rs` `autosave_now`, `save` | Was FAIL, the most serious one: Markie RS wrote without checking the disk, so an agent's edit in the second before the poll saw it was overwritten. Fixed: autosave refuses and raises the strip; ⌘S asks Electron's question ("Reload from disk", "Overwrite", "Cancel") with its wording; a file grown past 100 MB is never written, with Electron's message. |
+
+## Section 13: Version history
+
+| # | Bullet | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 13.0 | What the user can do (group) | PASS | children | |
+| 13.1 | A version is kept before every overwrite | PASS | `history.js` `record` / `history.rs` (`keeps_the_previous_text_with_an_author`, `an_outside_write_is_kept_as_its_own_version`) | Fixed: an outside edit is now recorded as a version when it is seen (`captureExternal`); before, an agent's edit appeared in history only if the user saved over it. An agent write over an unknown file is "unknown", as Electron. |
+| 13.2 | List with author, name, view, restore, diff | PASS | `history-dialog.tsx` / `history_dialog.rs` | The stable 0.9.7 dialog has no naming; naming lives in the nightly view, and `set_name` is ported. Row counts now use the exact `lineDiff`. Fixed: Restore armed an autosave; Electron loads it unsaved and never writes. The diff view is the stated polish from VISUAL-DIALOGS.md. |
+| 13.3 | Retention: 24 h, hourly to 7 days, daily to 30, newest 5, 200 per file, 500 MB, named kept | PASS | `planRetention` / `plan_retention`, 60 generated histories identical | Names: control and format characters are now cleared exactly as `[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]` (generated from V8's tables). One quirk left out: V8's lenient `Date.parse` dates some stray non-stamp file names; Markie never writes such names. |
+| 13.4 | Files | PASS | `history.rs`, `history_dialog.rs`, `line_diff.rs` | |
+| 13.5 | Compatibility (group) | PASS | children | |
+| 13.6 | IPC `history-list`, `history-read`, `history-head`, `history-name`; `menu-history` | PASS | `main.js` / `History::list`, `read`, `set_name`; File menu | `history-head` serves only the nightly view. The File menu item is now "History…", Electron's label. |
+| 13.7 | On disk: `snapshots/<hash8>-<basename>/<stamp>[-N].md`, `meta.json`, `last-write.json` | PASS | `snapshots.js`, `history.js` / `history.rs`, `clock.rs`; stamp and slug fixture | |
+
+## Section 24: Link previews
+
+| # | Bullet | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 24.1 | Hover card with title, description, site, picture; deliberate hover only; Settings switch | PASS | `link-preview-card.tsx` / `link_card.rs` (450 ms, 180 ms, 320 pt), `link_card::tests`, `link_preview_tests` | Fixed: a page whose `<title>` is blank gave a card with an empty title row. |
+| 24.2 | Files | PASS | `link-preview.js` / `markie-core/src/link_preview.rs`, `markie-editor/src/link_preview.rs`, `link_card.rs` | |
+| 24.3 | `LinkPreview`: four strings and a data URI | PASS | `markie-editor/src/link_preview.rs` `LinkPreview` | |
+| 24.4 | Keep the size, timeout and SSRF limits | PASS | constants identical; fixture for `parseMeta` (27), `parseTarget` (35), `isPrivateAddress` (36) | Fixed in `parseMeta`: `property` now beats `name` whatever the order, later duplicate attributes win, text is clipped in UTF-16 units, `\s` is JavaScript's, and `&#12a;` decodes as `parseInt` reads it. One deliberate difference: Electron reads `3fff::1` as public because of a NaN in its IPv6 check; Markie RS refuses it. |
+
+## Capture steps for NEEDS-CAPTURE rows
+
+Follow SCREEN.md. Launch with `env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=<scratch>`, a scratch data dir, and only your own fixture. Resize both windows to 1280 by 820 with `act.sh <pid> resize 1280 820`. Do each in light and dark.
+
+1. **7.5 Edit menu.** Type in Source, then Edit › Undo and Redo. Click into View, type, then Edit › Undo. Open the find box, type, then Edit › Undo: only the find box changes.
+2. **7.9 Speed.** Open a 50 MB Markdown fixture in Source; time to first paint and scroll to the end; compare with Electron.
+3. **8.4 Rail.** Click the pencil. Capture the rail beside Electron's, with a heading and a list selected, and with Advanced open. Then all eight templates' pages, light and dark, side by side with `side-by-side.py`.
+4. **8.5 Viewer and statistics.** Double-click a picture in a document with three pictures; press → twice and ←; click the picture for natural size. Press ⇧⌘I and capture the popover beside Electron's.
+5. **8.6 Pinch.** One slow pinch out and in on the trackpad; it should move one or two zoom steps each way, as in Electron.
+6. **8.0 group** follows its children.
+
+## Files changed
+
+Markie RS only, in `rust/` and `docs/rust-port/`:
+
+- markie-core: `disk.rs`, `drafts.rs`, `history.rs`, `clock.rs`, `line_diff.rs` (new), `link_preview.rs`, `csv.rs`, `stats.rs`, `lib.rs`; `tests/link_preview_electron.rs` and fixtures.
+- markie-editor: `lightbox.rs` and `format_rail.rs` (new), `lib.rs`, `chrome.rs`, `style.rs`, `link_preview.rs`.
+- markie-app: `workspace.rs`, `workspace/{strips,history_dialog,rich,rail,csv_doc,source,panels}.rs`, `icons.rs`, `Cargo.toml`; fixture.
+- markie-rich: `serialize.rs` (line-start escapes), `tests/roundtrip.rs`, `tests/tiptap_corpus.rs`, `interop/tiptap-corpus.{sh,test.ts}`.
+- `rust/scripts/parity/{link-preview,history,source}-cases.mjs`.
+
+Shared files, small edits, for the other auditors: `main.rs` (Edit menu inserted from `workspace::source::edit_menu()`, File's "Version History" renamed "History…"), `icons.rs` (14 rail icons), `workspace.rs` (pinch hooks, statistics popover, save checks), `Cargo.toml` (`tree-sitter-languages`).

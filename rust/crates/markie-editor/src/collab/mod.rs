@@ -18,6 +18,7 @@
 //!   client's edits, with TipTap's 500 ms grouping: undo never takes back a
 //!   peer's work.
 pub mod editor_pos;
+pub mod legacy;
 pub mod positions;
 pub mod relpos;
 pub mod ydiff;

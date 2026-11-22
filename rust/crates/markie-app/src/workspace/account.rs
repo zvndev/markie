@@ -1583,18 +1583,25 @@ impl CloudPanel {
     }
 }
 
-/// "3m", "2h", "5d", like `shortAgo` in relative-time.ts, from an ISO time.
-fn short_ago(iso: &str) -> Option<String> {
+/// "3m", "2h", "5d", "2w", like `shortAgo` in relative-time.ts, from an ISO time.
+pub(super) fn short_ago(iso: &str) -> Option<String> {
     let then = chrono::DateTime::parse_from_rfc3339(iso).ok()?;
-    let secs = (chrono::Utc::now() - then.with_timezone(&chrono::Utc)).num_seconds().max(0);
-    Some(match secs {
+    Some(short_ago_ms(then.timestamp_millis()))
+}
+
+/// `shortAgo` from milliseconds since the epoch.
+pub(super) fn short_ago_ms(ms: i64) -> String {
+    let secs = (chrono::Utc::now().timestamp_millis() - ms).max(0) / 1000;
+    let days = secs / 86_400;
+    match secs {
         s if s < 60 => "now".into(),
         s if s < 3600 => format!("{}m", s / 60),
         s if s < 86_400 => format!("{}h", s / 3600),
-        s if s < 86_400 * 30 => format!("{}d", s / 86_400),
-        s if s < 86_400 * 365 => format!("{}mo", s / (86_400 * 30)),
-        s => format!("{}y", s / (86_400 * 365)),
-    })
+        _ if days < 7 => format!("{days}d"),
+        _ if days < 30 => format!("{}w", days / 7),
+        _ if days < 365 => format!("{}mo", days / 30),
+        _ => format!("{}y", days / 365),
+    }
 }
 
 impl Render for CloudPanel {
@@ -1773,6 +1780,9 @@ mod tests {
         let now = chrono::Utc::now();
         assert_eq!(short_ago(&(now - chrono::Duration::minutes(5)).to_rfc3339()).as_deref(), Some("5m"));
         assert_eq!(short_ago(&(now - chrono::Duration::hours(3)).to_rfc3339()).as_deref(), Some("3h"));
+        assert_eq!(short_ago(&(now - chrono::Duration::days(3)).to_rfc3339()).as_deref(), Some("3d"));
+        assert_eq!(short_ago(&(now - chrono::Duration::days(15)).to_rfc3339()).as_deref(), Some("2w"));
+        assert_eq!(short_ago(&(now - chrono::Duration::days(65)).to_rfc3339()).as_deref(), Some("2mo"));
         assert_eq!(short_ago("not a time"), None);
     }
 }

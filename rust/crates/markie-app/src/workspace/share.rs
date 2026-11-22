@@ -144,6 +144,52 @@ impl Workspace {
         cx.notify();
     }
 
+    /// "Manage" on a Cloud page row: the share dialog for that cloud
+    /// document, whether or not it is the open one (handleManageShare).
+    pub(super) fn manage_cloud_share(&mut self, doc_id: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let open_is_it = self.collab.cloud.as_ref().is_some_and(|c| c.doc_id == doc_id);
+        if open_is_it {
+            self.open_share(window, cx);
+            return;
+        }
+        let Some(scope) = self.cloud.selected_scope() else { return };
+        let user = super::account::signed_in_user(cx)
+            .filter(|u| u.id == scope.user)
+            .unwrap_or_else(|| markie_cloud::auth::MarkieUser { id: scope.user.clone(), email: String::new(), name: None });
+        let account = Arc::new(super::collab::CloudAccount { client: Arc::new(scope.client.clone()), user });
+        let doc = super::collab::CloudDoc { account, doc_id, name: name.clone() };
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Add people by email"));
+        let subs = vec![cx.subscribe_in(&query, window, |w, state, ev: &InputEvent, window, cx| w.share_field_event(state, ev, window, cx))];
+        self.collab.share = Some(ShareSheet {
+            gate: Gate::Ready,
+            doc: Some(doc),
+            file_name: name,
+            body: String::new(),
+            access: None,
+            members: None,
+            public_url: None,
+            rotated: None,
+            loaded: false,
+            contacts: Vec::new(),
+            pending: Vec::new(),
+            query: query.clone(),
+            role: Role::Viewer,
+            menu: None,
+            highlight: 0,
+            error: None,
+            flash: None,
+            busy: false,
+            link_busy: false,
+            copied: false,
+            row_busy: None,
+            _subs: subs,
+            _task: None,
+        });
+        self.share_load(cx);
+        query.update(cx, |s, cx| s.focus(window, cx));
+        cx.notify();
+    }
+
     /// The server answered while the sheet waited: show the dialog.
     pub(super) fn share_cloud_ready(&mut self, cx: &mut Context<Self>) {
         let cloud = self.collab.cloud.clone();

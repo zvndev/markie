@@ -54,6 +54,15 @@ const ICONS: &[(&str, &str)] = &[
     ("markie/code.svg", stroke!("2", r#"<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>"#)),
     ("markie/file-lines.svg", stroke!("2", r#"<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>"#)),
     // Comments and the share dialog (comments.tsx, share-dialog.tsx).
+    // Cloud page (library.tsx SYNC_STATUS, cloud-view.tsx, document-cloud-library.tsx).
+    ("markie/sync-synced.svg", stroke!("1.8", r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="m9.5 13 2 2 3.5-3.5"/>"#)),
+    ("markie/sync-unpushed.svg", stroke!("1.8", r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M12 15.5v-5M9.8 12.6 12 10.4l2.2 2.2"/>"#)),
+    ("markie/sync-paused.svg", stroke!("1.8", r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M10.5 11v4M13.5 11v4"/>"#)),
+    ("markie/sync-conflict.svg", stroke!("1.8", r#"<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4M12 16.8v.2"/>"#)),
+    ("markie/sync-behind.svg", stroke!("1.8", r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M12 10v5M9.8 12.8 12 15l2.2-2.2"/>"#)),
+    ("markie/sync-shared.svg", stroke!("1.8", r#"<circle cx="9" cy="9" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="10" r="2.3"/><path d="M16 14.6a4.5 4.5 0 0 1 5 4.4"/>"#)),
+    ("markie/people.svg", stroke!("1.7", r#"<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>"#)),
+    ("markie/refresh.svg", stroke!("2", r#"<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/>"#)),
     ("markie/comment.svg", stroke!("2", r#"<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>"#)),
     ("markie/link.svg", stroke!("2", r#"<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>"#)),
     ("markie/lock.svg", stroke!("2", r#"<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>"#)),

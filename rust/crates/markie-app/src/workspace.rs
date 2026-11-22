@@ -41,6 +41,7 @@ mod history_dialog;
 mod cloud;
 mod cloud_drive;
 mod cloud_office;
+mod cloud_page;
 mod cloud_resources;
 mod cloud_ui;
 mod darkmown;
@@ -171,7 +172,7 @@ impl Workspace {
                 .searchable(true)
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
-        let cloud_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search cloud documents"));
+        let cloud_search = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by name or folder"));
         let (rich, rich_sub) = Self::new_rich(window, cx);
 
         let mut subscriptions = vec![

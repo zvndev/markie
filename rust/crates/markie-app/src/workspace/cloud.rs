@@ -97,6 +97,11 @@ pub(super) struct Listing {
     pub snapshots: Vec<SnapshotMeta>,
     pub areas: Vec<Area>,
     pub error: Option<String>,
+    /// `GET /api/docs/shared-by-me`; None while unknown.
+    pub shared_by_me: Option<Vec<markie_cloud::sharing::SharedByMeDoc>>,
+    pub shared_by_me_error: bool,
+    /// Why the snapshot list did not load.
+    pub snapshot_error: Option<String>,
 }
 
 pub(super) struct CloudWorkspace {
@@ -109,7 +114,11 @@ pub(super) struct CloudWorkspace {
     pub checking: bool,
     pub selection: Option<String>,
     pub area: Option<String>,
-    pub source: super::cloud_ui::Source,
+    /// The Cloud page's type and order menus, source chips and open menu.
+    pub type_filter: Option<formats::FormatKind>,
+    pub sort: super::cloud_page::Sort,
+    pub sources: Vec<super::cloud_page::Source>,
+    pub menu: Option<super::cloud_page::Menu>,
     pub busy: HashSet<PathBuf>,
     pub resource_epoch: u64,
     pub pending_link: Option<PathBuf>,
@@ -163,7 +172,14 @@ impl CloudWorkspace {
             checking: false,
             selection: None,
             area: None,
-            source: Default::default(),
+            type_filter: None,
+            sort: Default::default(),
+            sources: super::cloud_page::sources_from_setting(
+                registry
+                    .and_then(|r| r.setting(super::cloud_page::SOURCES_SETTING).ok().flatten())
+                    .as_deref(),
+            ),
+            menu: None,
             busy: HashSet::new(),
             resource_epoch: 0,
             pending_link: None,
@@ -980,8 +996,9 @@ impl Workspace {
                 for (scope, known) in requests {
                     let docs = DocsClient::new(&scope.client);
                     let platform = PlatformClient(&scope.client);
-                    let (legacy, snapshots, areas) =
-                        tokio::join!(docs.list(), platform.list(), platform.areas());
+                    let shares = markie_cloud::sharing::SharesClient::new(&scope.client);
+                    let (legacy, snapshots, areas, by_me) =
+                        tokio::join!(docs.list(), platform.list(), platform.areas(), shares.shared_by_me());
                     let mut landed = Vec::new();
                     if let Ok(list) = &legacy {
                         for row in sync::arriving(list, &known).into_iter().take(25) {
@@ -991,12 +1008,16 @@ impl Workspace {
                         }
                     }
                     let error = legacy.as_ref().err().map(ToString::to_string);
+                    let snapshot_error = snapshots.as_ref().err().map(ToString::to_string);
                     let listing = Listing {
                         user: scope.user.clone(),
                         docs: legacy.ok(),
                         snapshots: snapshots.unwrap_or_default(),
                         areas: areas.unwrap_or_default(),
                         error,
+                        shared_by_me_error: by_me.is_err(),
+                        shared_by_me: by_me.ok(),
+                        snapshot_error,
                     };
                     response.push((scope, listing, landed));
                 }

@@ -1358,7 +1358,17 @@ impl Workspace {
                             .child(
                                 v_flex()
                                     .child(div().text_size(px(17.)).font_weight(FontWeight::SEMIBOLD).child(title))
-                                    .child(
+                                    .child(if signed_in_cloud {
+                                        // Signed in, the header says so and is not a button (library.tsx).
+                                        h_flex()
+                                            .id("page-sign-in")
+                                            .mt(px(2.))
+                                            .gap(px(6.))
+                                            .text_size(px(11.))
+                                            .text_color(p.muted)
+                                            .child(div().size(px(6.)).rounded_full().bg(p.green))
+                                            .child("Connected")
+                                    } else {
                                         h_flex()
                                             .id("page-sign-in")
                                             .mt(px(2.))
@@ -1368,9 +1378,9 @@ impl Workspace {
                                             .cursor_pointer()
                                             .hover(|s| s.text_color(p.foreground))
                                             .child(div().size(px(6.)).rounded_full().bg(p.yellow))
-                                            .child(if signed_in_cloud { "Signed in" } else { "Sign in" })
-                                            .on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx))),
-                                    ),
+                                            .child("Sign in")
+                                            .on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx)))
+                                    }),
                             ),
                     )
                     .child(

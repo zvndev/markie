@@ -428,6 +428,19 @@ impl AccountStore {
     }
 }
 
+/// The signed-in account, for surfaces outside this module (the rail).
+pub fn signed_in_user(cx: &App) -> Option<MarkieUser> {
+    AccountStore::global(cx).and_then(|s| s.read(cx).user().cloned())
+}
+
+/// The account button's avatar: `colorForName` and `initials` from collab.ts.
+pub fn avatar_for(user: &MarkieUser) -> (Hsla, String) {
+    let shown = user.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| user.email.clone());
+    let hex = markie_cloud::collab::color_for_name(&shown).trim_start_matches('#');
+    let color = u32::from_str_radix(hex, 16).map(rgb).map(Hsla::from).unwrap_or_else(|_| Hsla::white());
+    (color, markie_cloud::collab::initials(&shown))
+}
+
 /// Hand the `markie-rs://` URLs macOS passed to the session.
 pub fn handle_open_urls(links: Vec<String>, cx: &mut App) {
     let Some(store) = AccountStore::global(cx) else { return };
@@ -1315,11 +1328,14 @@ impl Workspace {
         ]
     }
 
-    pub(super) fn on_show_cloud(&mut self, _: &ShowCloud, window: &mut Window, cx: &mut Context<Self>) {
-        if self.cloud.take().is_none() {
-            self.cloud = Some(cx.new(|cx| CloudPanel::new(window, cx)));
-        }
-        cx.notify();
+    /// View › Cloud and the palette's "Cloud…": the rail's Cloud destination.
+    pub(super) fn on_show_cloud(&mut self, _: &ShowCloud, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_view(super::rail::LeftView::Cloud, cx);
+    }
+
+    /// The Cloud page, for the rail's workspace page.
+    pub(super) fn render_cloud_page(&self) -> AnyElement {
+        div().size_full().child(self.cloud.clone()).into_any_element()
     }
 }
 

@@ -165,13 +165,7 @@ impl Workspace {
                     .mt(px(4.))
                     .child(format!("You are running Markie RS {}.", env!("CARGO_PKG_VERSION"))),
             ))
-            .child(setting_block(
-                "Links",
-                "Preview links on hover",
-                "Rest the pointer on a link and Markie fetches the page\u{2019}s title, summary and picture. Nothing is fetched when you open a document, only when you point at a link, and the site you point at can tell that somebody looked.",
-                true,
-                t,
-            ))
+            .child(self.link_preview_setting(t, cx))
             // The working switch from logs.rs; absent, as in Electron, when no
             // report address is configured.
             .children(crate::logs::render_crash_setting(cx).map(|el| div().mb(px(20.)).child(el)))
@@ -310,6 +304,63 @@ pub(crate) fn badge(t: &Tokens) -> Div {
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(t.foreground)
         .child(NOT_YET)
+}
+
+/// `markie.linkPreviews.v1`: absent or anything but "0" means on, so a
+/// half-written value never turns the feature off (`link-previews.ts`).
+pub(crate) const LINK_PREVIEWS_SETTING: &str = "markie.linkPreviews.v1";
+
+pub(crate) fn link_previews_enabled(stored: Option<&str>) -> bool {
+    stored != Some("0")
+}
+
+impl Workspace {
+    /// The stored switch, given to the editor at start.
+    pub(super) fn load_link_previews(&mut self, cx: &mut Context<Self>) {
+        let stored = self.registry.as_ref().and_then(|r| r.setting(LINK_PREVIEWS_SETTING).ok().flatten());
+        let on = link_previews_enabled(stored.as_deref());
+        self.rich.update(cx, |r, _| r.link_previews = on);
+    }
+
+    fn set_link_previews(&mut self, on: bool, cx: &mut Context<Self>) {
+        if let Some(reg) = &self.registry {
+            let _ = reg.set_setting(LINK_PREVIEWS_SETTING, if on { "1" } else { "0" });
+        }
+        self.rich.update(cx, |r, cx| r.set_link_previews(on, cx));
+        cx.notify();
+    }
+
+    /// `LinkPreviewSetting`: the working switch under Links.
+    fn link_preview_setting(&self, t: &Tokens, cx: &mut Context<Self>) -> Div {
+        let on = self.rich.read(cx).link_previews;
+        div().mb(px(20.)).child(section_label("Links", t).mb(px(8.))).child(
+            div()
+                .id("link-previews")
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap(px(12.))
+                .py(px(4.))
+                .cursor_pointer()
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(12.))
+                        .text_color(t.muted)
+                        .child("Preview links on hover")
+                        .child(
+                            div()
+                                .mt(px(2.))
+                                .text_size(px(11.))
+                                .line_height(px(18.))
+                                .text_color(t.muted_soft())
+                                .child("Rest the pointer on a link and Markie fetches the page\u{2019}s title, summary and picture. Nothing is fetched when you open a document, only when you point at a link, and the site you point at can tell that somebody looked."),
+                        ),
+                )
+                .child(checkbox(on, false, t))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_link_previews(!on, cx))),
+        )
+    }
 }
 
 /// A labelled checkbox row in Advanced (`label.flex.items-start`), greyed
@@ -627,4 +678,18 @@ pub(super) fn specimen(body: &'static str, heading: &'static str, size: f32, lh:
                     linear_color_stop(t.background, 1.),
                 )),
         )
+}
+
+#[cfg(test)]
+mod link_preview_tests {
+    use super::link_previews_enabled;
+
+    #[test]
+    fn only_an_explicit_zero_turns_previews_off() {
+        assert!(link_previews_enabled(None));
+        assert!(link_previews_enabled(Some("1")));
+        assert!(link_previews_enabled(Some("")));
+        assert!(link_previews_enabled(Some("garbage")));
+        assert!(!link_previews_enabled(Some("0")));
+    }
 }

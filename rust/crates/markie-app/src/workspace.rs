@@ -287,6 +287,7 @@ impl Workspace {
                 this.page_width = w;
             }
         }
+        this.load_link_previews(cx);
         this.refresh_lists();
         this.build_search_pool();
 

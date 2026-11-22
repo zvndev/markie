@@ -1,0 +1,295 @@
+{
+ "stats": [
+  {
+   "in": "",
+   "out": {
+    "words": 0,
+    "chars": 0,
+    "charsNoSpaces": 0,
+    "lines": 0,
+    "headings": 0,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 0
+   }
+  },
+  {
+   "in": "   ",
+   "out": {
+    "words": 0,
+    "chars": 3,
+    "charsNoSpaces": 0,
+    "lines": 1,
+    "headings": 0,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 0
+   }
+  },
+  {
+   "in": "# Title\n\nSome words here.\n## Two",
+   "out": {
+    "words": 7,
+    "chars": 32,
+    "charsNoSpaces": 25,
+    "lines": 4,
+    "headings": 2,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 1
+   }
+  },
+  {
+   "in": "#\nnot a heading?\n####### seven\n###\ttab",
+   "out": {
+    "words": 8,
+    "chars": 38,
+    "charsNoSpaces": 31,
+    "lines": 4,
+    "headings": 2,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 1
+   }
+  },
+  {
+   "in": "```js\ncode\n```\n\n```\nunclosed",
+   "out": {
+    "words": 5,
+    "chars": 28,
+    "charsNoSpaces": 23,
+    "lines": 6,
+    "headings": 0,
+    "codeBlocks": 1,
+    "links": 0,
+    "readingTimeMin": 1
+   }
+  },
+  {
+   "in": "[a](b) [c]() [](d) ![img](e) [x](y)(z)",
+   "out": {
+    "words": 5,
+    "chars": 38,
+    "charsNoSpaces": 34,
+    "lines": 1,
+    "headings": 0,
+    "codeBlocks": 0,
+    "links": 4,
+    "readingTimeMin": 1
+   }
+  },
+  {
+   "in": "日本語 😀 é word﻿join",
+   "out": {
+    "words": 5,
+    "chars": 18,
+    "charsNoSpaces": 14,
+    "lines": 1,
+    "headings": 0,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 1
+   }
+  },
+  {
+   "in": "line\r\n# crlf heading\r\n",
+   "out": {
+    "words": 4,
+    "chars": 22,
+    "charsNoSpaces": 16,
+    "lines": 3,
+    "headings": 1,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 1
+   }
+  },
+  {
+   "in": "a # after LS",
+   "out": {
+    "words": 4,
+    "chars": 12,
+    "charsNoSpaces": 9,
+    "lines": 1,
+    "headings": 1,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 1
+   }
+  },
+  {
+   "in": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word ",
+   "out": {
+    "words": 450,
+    "chars": 2250,
+    "charsNoSpaces": 1800,
+    "lines": 1,
+    "headings": 0,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 2
+   }
+  },
+  {
+   "in": "tabs\tand\nnew\n\nlines  ",
+   "out": {
+    "words": 4,
+    "chars": 21,
+    "charsNoSpaces": 15,
+    "lines": 4,
+    "headings": 0,
+    "codeBlocks": 0,
+    "links": 0,
+    "readingTimeMin": 1
+   }
+  }
+ ],
+ "formatTables": [
+  {
+   "in": "| a | b |\n|---|---|\n| 1 | 22 |\n",
+   "out": "| a   | b   |\n| --- | --- |\n| 1   | 22  |\n"
+  },
+  {
+   "in": "|a|b|\n|:-|-:|\n|long cell|x|\n",
+   "out": "| a         | b   |\n| :-------- | --: |\n| long cell | x   |\n"
+  },
+  {
+   "in": "| a | b | c |\n|:---:|---|--:|\n| 1 |\n| 1 | 2 | 3 | 4 |\n",
+   "out": "| a   | b   | c   |     |\n| :-: | --- | --: | --- |\n| 1   |     |     |     |\n| 1   | 2   | 3   | 4   |\n"
+  },
+  {
+   "in": "a | b\n--- | ---\nc | d\n",
+   "out": "a | b\n--- | ---\nc | d\n"
+  },
+  {
+   "in": "| 日本 | é |\n|---|---|\n| 😀 | x |\n",
+   "out": "| 日本  | é   |\n| --- | --- |\n| 😀  | x   |\n"
+  },
+  {
+   "in": "| a \\| b | c |\n|---|---|\n| `x | y` | z |\n",
+   "out": "| a \\| b | c   |     |\n| ------ | --- | --- |\n| `x     | y`  | z   |\n"
+  },
+  {
+   "in": "text\n\n| a |\n|---|\n| b |\n\nmore text\n",
+   "out": "text\n\n| a   |\n| --- |\n| b   |\n\nmore text\n"
+  },
+  {
+   "in": "```\n| not | a table |\n|---|---|\n```\n",
+   "out": "```\n| not | a table |\n|---|---|\n```\n"
+  },
+  {
+   "in": "    | indented | code |\n    |---|---|\n",
+   "out": "| indented | code |\n| -------- | ---- |\n"
+  },
+  {
+   "in": "> | a | b |\n> |---|---|\n> | c | d |\n",
+   "out": "> | a | b |\n> |---|---|\n> | c | d |\n"
+  },
+  {
+   "in": "| a |\n| b |\n",
+   "out": "| a |\n| b |\n"
+  },
+  {
+   "in": "| a | b |\r\n|---|---|\r\n| c | d |\r\n",
+   "out": "| a   | b   |\n| --- | --- |\n| c   | d   |\n"
+  },
+  {
+   "in": "~~~\n| a |\n|---|\n~~~\n| x | y |\n|-|-|\n",
+   "out": "~~~\n| a |\n|---|\n~~~\n| x   | y   |\n| --- | --- |\n"
+  },
+  {
+   "in": "no tables here\n",
+   "out": "no tables here\n"
+  }
+ ],
+ "csvToMarkdown": [
+  {
+   "in": "a,b\n1,2\n",
+   "out": "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
+  },
+  {
+   "in": "name,note\n\"Smith, J\",\"said \"\"hi\"\"\"\n",
+   "out": "| name | note |\n| --- | --- |\n| Smith, J | said \"hi\" |\n"
+  },
+  {
+   "in": "a,b\n1\n1,2,3\n",
+   "out": "| a | b |  |\n| --- | --- | --- |\n| 1 |  |  |\n| 1 | 2 | 3 |\n"
+  },
+  {
+   "in": "a|b,c\nx,y\n",
+   "out": "| a\\|b | c |\n| --- | --- |\n| x | y |\n"
+  },
+  {
+   "in": "multi,line\n\"one\ntwo\",x\n",
+   "out": "| multi | line |\n| --- | --- |\n| one two | x |\n"
+  },
+  {
+   "in": "",
+   "out": ""
+  },
+  {
+   "in": "﻿a,b\r\n1,2\r\n",
+   "out": "| ﻿a | b |\n| --- | --- |\n| 1 | 2 |\n"
+  },
+  {
+   "in": "a,b\n\n",
+   "out": "| a | b |\n| --- | --- |\n"
+  }
+ ],
+ "markdownToCsv": [
+  {
+   "in": "| a | b |\n|---|---|\n| 1 | 2 |\n",
+   "out": "a,b\n1,2\n",
+   "drops": {
+    "drops": false,
+    "droppedLines": 0,
+    "hasTable": true
+   }
+  },
+  {
+   "in": "# Title\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n| c |\n|---|\n| 3 |\n",
+   "out": "a,b\n1,2\n",
+   "drops": {
+    "drops": true,
+    "droppedLines": 4,
+    "hasTable": true
+   }
+  },
+  {
+   "in": "| a \\| b | c |\n|---|---|\n| x, y | \"q\" |\n",
+   "out": "a | b,c\n\"x, y\",\"\"\"q\"\"\"\n",
+   "drops": {
+    "drops": false,
+    "droppedLines": 0,
+    "hasTable": true
+   }
+  },
+  {
+   "in": "| a<br>b | c |\n|---|---|\n| 1 | 2 |\n",
+   "out": "a<br>b,c\n1,2\n",
+   "drops": {
+    "drops": false,
+    "droppedLines": 0,
+    "hasTable": true
+   }
+  },
+  {
+   "in": "just text\n",
+   "out": "\n",
+   "drops": {
+    "drops": true,
+    "droppedLines": 1,
+    "hasTable": false
+   }
+  },
+  {
+   "in": "",
+   "out": "\n",
+   "drops": {
+    "drops": false,
+    "droppedLines": 0,
+    "hasTable": false
+   }
+  }
+ ]
+}

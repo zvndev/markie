@@ -81,10 +81,48 @@ thread_local! {
     static RECT: RefCell<Option<(Vec<Line>, (usize, usize))>> = const { RefCell::new(None) };
 }
 
-actions!(markie_source, [FormatTables, FindReplace]);
+actions!(markie_source, [FormatTables, FindReplace, EditUndo, EditRedo, EditCut, EditCopy, EditPaste, EditSelectAll, EditFind]);
+
+/// Electron's Edit menu (`electron/main.js`): Undo and Redo go to the pane
+/// that has focus (`undo-target.ts`), as do the clipboard items and Find.
+/// The keys stay with each editor; the menu items carry no accelerators of
+/// their own so a key is never handled twice.
+pub fn edit_menu() -> Menu {
+    Menu {
+        name: "Edit".into(),
+        items: vec![
+            MenuItem::action("Undo", EditUndo),
+            MenuItem::action("Redo", EditRedo),
+            MenuItem::separator(),
+            MenuItem::os_action("Cut", EditCut, OsAction::Cut),
+            MenuItem::os_action("Copy", EditCopy, OsAction::Copy),
+            MenuItem::os_action("Paste", EditPaste, OsAction::Paste),
+            MenuItem::os_action("Select All", EditSelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Find…", EditFind),
+            MenuItem::action("Find and Replace…", FindReplace),
+            MenuItem::separator(),
+            MenuItem::action("Format Tables", FormatTables),
+        ],
+        disabled: false,
+    }
+}
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("cmd-alt-t", FormatTables, None), KeyBinding::new("cmd-alt-f", FindReplace, None)]);
+    // The Edit menu's shortcuts, as Electron's menu shows them. The editors'
+    // own bindings sit deeper in the key context, so they still take the
+    // keys; these answer only where no editor has focus.
+    let ws = Some("Workspace");
+    cx.bind_keys([
+        KeyBinding::new("cmd-z", EditUndo, ws),
+        KeyBinding::new("cmd-shift-z", EditRedo, ws),
+        KeyBinding::new("cmd-x", EditCut, ws),
+        KeyBinding::new("cmd-c", EditCopy, ws),
+        KeyBinding::new("cmd-v", EditPaste, ws),
+        KeyBinding::new("cmd-a", EditSelectAll, ws),
+        KeyBinding::new("cmd-f", EditFind, ws),
+    ]);
 }
 
 impl Workspace {
@@ -154,7 +192,34 @@ impl Workspace {
     }
 
     pub(super) fn source_actions(d: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
-        d.on_action(cx.listener(Self::on_format_tables)).on_action(cx.listener(Self::on_find_replace))
+        // Each menu item sends both editors' own action: only the focused one
+        // (or a focused text field, for GPUI Kit's) handles it.
+        // `undoTargetFor`: the rich editor when it has the keyboard itself,
+        // else GPUI Kit's action, which the source editor or a focused text
+        // field (the find box, a rename field) takes for its own history.
+        fn both(rich: Box<dyn Action>, kit: Box<dyn Action>) -> impl Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) {
+            move |this, window, cx| {
+                let rich_has_keys = this.rich.focus_handle(cx).is_focused(window);
+                window.dispatch_action(if rich_has_keys { rich.boxed_clone() } else { kit.boxed_clone() }, cx);
+            }
+        }
+        use gpui_kit::component::input as kit;
+        let undo = both(Box::new(markie_editor::Undo), Box::new(kit::Undo));
+        let redo = both(Box::new(markie_editor::Redo), Box::new(kit::Redo));
+        let cut = both(Box::new(markie_editor::Cut), Box::new(kit::Cut));
+        let copy = both(Box::new(markie_editor::Copy), Box::new(kit::Copy));
+        let paste = both(Box::new(markie_editor::Paste), Box::new(kit::Paste));
+        let all = both(Box::new(markie_editor::SelectAll), Box::new(kit::SelectAll));
+        let find = both(Box::new(markie_editor::Find), Box::new(kit::Search));
+        d.on_action(cx.listener(Self::on_format_tables))
+            .on_action(cx.listener(Self::on_find_replace))
+            .on_action(cx.listener(move |this, _: &EditUndo, w, cx| undo(this, w, cx)))
+            .on_action(cx.listener(move |this, _: &EditRedo, w, cx| redo(this, w, cx)))
+            .on_action(cx.listener(move |this, _: &EditCut, w, cx| cut(this, w, cx)))
+            .on_action(cx.listener(move |this, _: &EditCopy, w, cx| copy(this, w, cx)))
+            .on_action(cx.listener(move |this, _: &EditPaste, w, cx| paste(this, w, cx)))
+            .on_action(cx.listener(move |this, _: &EditSelectAll, w, cx| all(this, w, cx)))
+            .on_action(cx.listener(move |this, _: &EditFind, w, cx| find(this, w, cx)))
     }
 
     fn on_format_tables(&mut self, _: &FormatTables, window: &mut Window, cx: &mut Context<Self>) {

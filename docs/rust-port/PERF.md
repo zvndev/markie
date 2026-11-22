@@ -2,7 +2,86 @@
 
 Date: 2026-11-22. Goal set by Kirby on 2026-11-21: Markie RS must be much faster than Electron Markie (0.9.7). "Much faster" means at least 2x on launch and open, and no worse anywhere.
 
-<!-- RESULTS -->
+## Status
+
+Not finished. The fixes are in and profiled, but the final before-and-after run against Electron has not run yet. For about six hours this Mac had 0 to 15% idle CPU from other agents' Rust builds and iOS simulators, and once rebooted. A timed launch in those conditions measures the other agents, so the run waits for at least half the CPU to be idle before each sample, and that never happened for long enough.
+
+The verdict so far:
+
+- **Open of large files: fixed, and now well ahead.** 10 MB went from 8.4 s to 142 ms of open work; 900 KB rich from 730 ms to 146 ms. Both are profiled single launches, not yet the 5-run table.
+- **Launch: not yet proven 2x.** Before the fixes Markie RS reached a full frame in 207 ms on a fresh data folder and 355 to 462 ms once a Library snapshot existed; Electron took 418 ms. The snapshot cost and 120 to 150 ms of other startup work are now off the launch path, but the 2x line (209 ms) needs the final run to confirm.
+- **Memory:** Markie RS used half of Electron's RSS on small files, but 3 GB on 10 MB. That came from the soft wrap layout cache, which the large-file fix removes. To be confirmed by the final run.
+- **Idle CPU:** 0.0% against Electron's 0.2% with a 10 KB file. With a 10 MB file Markie RS hashed the file every second; that is fixed.
+
+### Run the final comparison
+
+On a quiet Mac (no other agent building):
+
+```sh
+cd rust && ./scripts/bundle-mac.sh && cd ..
+MARKIE_BENCH_RS_BEFORE="$PWD/.autoloop/runs/perf/bin-before/Markie RS.app" \
+  python3 rust/scripts/bench/bench.py all --apps electron,rsb,rs --label final
+```
+
+`bin-before` is a copy of the build at 57b2342 plus the instrumentation, made before any fix. Build it again from that commit with `perf.rs` if the folder is gone. About 40 minutes.
+
+## Baseline, before the fixes
+
+Run on 2026-11-21 at normal load, 5 runs each, median (min to max). Electron 0.9.7 against Markie RS at 57b2342.
+
+### Launch to first full frame, ms
+
+| Fixture | Electron 0.9.7 | Markie RS | Ratio |
+|---|---|---|---|
+| 10 KB Markdown | 418 (416 to 450) | 373 (207 to 462) | 1.1x faster |
+| 1 MB Markdown | 755 (730 to 805) | 856 (813 to 872) | 0.9x, slower |
+| 10 MB Markdown | 937 (812 to 980) | 8,645 (7,388 to 9,255) | 9x slower |
+| 50-page .docx | 668 (613 to 961) | 391 (266 to 394) | 1.7x faster |
+
+Markie RS's 10 KB spread is the Library snapshot: 207 ms on the first run, 355 to 462 ms once a saved snapshot was parsed on the main thread.
+
+### Markie RS open work (start of `open_path` to the painted frame), ms
+
+| Fixture | Before | After (one profiled launch) |
+|---|---|---|
+| 10 KB Markdown | 61.5 (27.4 to 81.1) | not yet measured |
+| 900 KB Markdown, rich | 730 to 750 | 146 |
+| 1 MB Markdown | 580 (553 to 594) | not yet measured |
+| 10 MB Markdown | 8,358 (7,129 to 8,972) | 142 |
+| 50-page .docx | 56.2 (41.0 to 58.0) | not yet measured |
+
+### Memory after open, MB
+
+| Fixture | Electron RSS | Markie RS RSS | Electron footprint | Markie RS footprint |
+|---|---|---|---|---|
+| 10 KB Markdown | 519 | 277 | 240 | 237 |
+| 1 MB Markdown | 526 | 525 | 286 | 359 |
+| 10 MB Markdown | 611 | 2,965 | 366 | 1,877 |
+| 50-page .docx | 601 | 288 | 331 | 298 |
+
+Electron's numbers add up its four processes.
+
+### Idle CPU over 30 s, 10 KB file open
+
+Electron 0.2% (0.1 to 0.3). Markie RS 0.0%.
+
+### Keystroke to frame, Markie RS
+
+10 KB file: 3.3 ms median (3.1 to 4.1 across runs). In a smoke run, 900 KB and 1 MB took 17 to 18 ms a key with frames of 1 to 4 ms; the rest was whole-document work in the edit handler, now deferred. The baseline runs for those two sizes lost their keystrokes to a focus failure and are not reported. Electron is not measured (see the method).
+
+### Scrolling, Markie RS (smoke run)
+
+1 MB (Source): 0.7 ms frame cost, frames every 8.3 ms (120 Hz), none over 16.7 ms. 900 KB (rich): 5.1 ms frame cost, also no slow frames. The rich editor's per-frame cost came from one element per off-screen block, now merged.
+
+## Where Markie RS is not clearly faster, and the plan
+
+| Area | Reason | Fix or plan |
+|---|---|---|
+| Launch, 10 KB | About 150 ms of GPUI and AppKit startup before any app code: keyboard layout, power observers, system font enumeration in `gpui_component::init`, window and Metal setup | App-side work is now off the launch path. The rest is in gpui-kit; ask upstream for lazy font enumeration and power observers, or carry a small patch |
+| 1 MB and 10 MB in Source | Large files now open without soft wrap, because gpui-kit measures every line before the first frame. Electron's CodeMirror wraps lazily | Lazy, viewport-only wrapping in gpui-base's `TextWrapper`, upstream or patched; then turn wrap back on |
+| Keystroke latency on Electron | Not measured | A CDP-based measure would change what it measures; left out |
+| Index scan | Both apps stop at the same 30 s budget on a real home folder | The fixed 20,000-file tree in the benchmark compares their speed; pending the final run |
+
 
 ## Hot spots found and fixed
 

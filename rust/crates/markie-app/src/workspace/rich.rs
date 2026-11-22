@@ -29,6 +29,11 @@ impl Workspace {
                 }
             }
             RichEvent::OpenLocal(href) => this.open_rich_link(href, window, cx),
+            RichEvent::GrantAttachments(paths) => {
+                for path in paths {
+                    this.file_grants.grant_attachment(path);
+                }
+            }
             RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
             RichEvent::Zoom(z) => this.set_zoom(*z, cx),
             RichEvent::PageWidth(w) => this.set_width_step(*w, cx),
@@ -135,10 +140,10 @@ impl Workspace {
     /// Like Electron's open-local-file handler, apply the workspace's
     /// grants before handing a passive file to the OS default app.
     fn open_rich_link(&mut self, href: &str, _window: &mut Window, cx: &mut Context<Self>) {
-        use markie_core::links::{LinkClick, classify_click_with_roots};
+        use markie_core::links::LinkClick;
         let dir = self.doc.as_ref().filter(|d| !d.untitled).and_then(|d| d.path.parent());
         let roots = self.registry.as_ref().and_then(|r| r.roots().ok()).unwrap_or_default();
-        match classify_click_with_roots(href, dir, &roots) {
+        match self.file_grants.classify(href, dir, &roots) {
             LinkClick::Open(path) => cx.open_with_system(&path),
             // Programs and installers are shown in Finder, not run, and the
             // page says so (`openAsLocalFile`).

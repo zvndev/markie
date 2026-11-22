@@ -376,6 +376,7 @@ impl Workspace {
         let (path, raw) = (path.clone(), input.read(cx).value().to_string());
         self.close_dialog(window, cx);
         self.rename_to(&path, &raw, window, cx);
+                self.file_grants.move_document(old, &new);
     }
 
     fn rename_to(&mut self, old: &Path, raw: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -526,6 +527,7 @@ impl Workspace {
                     return;
                 }
                 if to.exists() {
+                self.file_grants.move_document(from, to);
                     this.show_dialog(Overlay::Move { from, to }, window, cx);
                 } else {
                     this.move_to(&from, &to, window, cx);

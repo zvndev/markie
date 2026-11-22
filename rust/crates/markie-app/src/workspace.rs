@@ -132,6 +132,7 @@ pub struct Workspace {
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
     rich: Entity<markie_editor::RichView>,
+    file_grants: markie_core::links::FileGrants,
     doc: Option<OpenDoc>,
     mode: Mode,
     /// In Split, the pane whose text is newest: the source editor (true) or
@@ -271,6 +272,7 @@ impl Workspace {
             editor,
             preview,
             rich,
+            file_grants: Default::default(),
             doc: None,
             mode: Mode::View,
             split_source_latest: false,
@@ -500,6 +502,7 @@ impl Workspace {
         self.doc_notes.clear();
         match document::open(path) {
             Ok(doc) => {
+                self.file_grants.grant_document(&doc.path);
                 let large = doc.is_large();
                 let kind = match doc.content {
                     Content::Text { text: raw, encoding, bom } => {

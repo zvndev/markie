@@ -4641,6 +4641,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "markie-agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.4",
+ "markie-cloud",
+ "markie-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "markie-app"
 version = "0.1.0"
 dependencies = [
@@ -4650,6 +4668,7 @@ dependencies = [
  "futures",
  "getrandom 0.3.4",
  "gpui-kit",
+ "markie-agent",
  "markie-cloud",
  "markie-core",
  "markie-editor",
@@ -4658,6 +4677,7 @@ dependencies = [
  "markie-vault",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "pulldown-cmark",
  "raw-window-handle",
  "regex",
  "reqwest",

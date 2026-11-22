@@ -71,6 +71,7 @@ word_commands! {
     ViewContinuous => "view-continuous",
     ViewOutline => "view-outline",
     ViewZoomReset => "view-zoom-reset",
+    ViewLightPaper => "view-light-paper",
 }
 
 gpui_kit::actions!(markie_word, [WordCopy, WordCut, WordPaste, WordSelectAll, WordUndo, WordRedo]);

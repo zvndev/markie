@@ -569,6 +569,10 @@ impl VaultPage {
         cx.notify();
     }
 
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
     /// Whether leaving the page would lose edits. The caller asks first.
     pub fn has_unsaved(&self) -> bool {
         self.opened.as_ref().is_some_and(|d| d.dirty) || self.repo.lock().map(|r| r.has_volatile_recovery()).unwrap_or(false)
@@ -2051,28 +2055,41 @@ impl Render for VaultPage {
 // ── Workspace hooks ──
 
 impl Workspace {
-    /// Show the vault page in the document area. The activity bar's vault
-    /// button calls this.
+    /// Show the vault page in the document area: the window shell's Vault view.
     pub fn open_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.vault.is_none() {
-            self.vault = Some(cx.new(|cx| VaultPage::new(window, cx)));
+        if !self.vault_open() {
+            self.select_view(super::rail::LeftView::Vault, cx);
         }
-        self.vault_visible = true;
-        cx.notify();
+        self.sync_vault(window, cx);
     }
 
     pub fn vault_open(&self) -> bool {
-        self.vault_visible
+        self.workspace_page_open() && self.shell.view == super::rail::LeftView::Vault
     }
 
-    /// Leave the vault page. Unsaved edits ask first; leaving locks the vault,
-    /// as Electron's close guard does.
+    /// Make the page the first time the Vault view shows. Leaving the view
+    /// locks the vault, as Electron's close guard does, unless edits are
+    /// unsaved: those stay, and the idle lock still applies.
+    pub(super) fn sync_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.vault_open() {
+            if self.vault.is_none() {
+                self.vault = Some(cx.new(|cx| VaultPage::new(window, cx)));
+            }
+        } else if let Some(page) = self.vault.clone()
+            && !page.read(cx).is_locked()
+            && !page.read(cx).has_unsaved()
+        {
+            page.update(cx, |p, cx| p.lock_now("Vault locked.", window, cx));
+        }
+    }
+
+    /// Leave the vault page. Unsaved edits ask first; leaving locks the vault.
     pub fn close_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(page) = self.vault.clone() else {
-            self.vault_visible = false;
+        if !self.vault_open() {
             return;
-        };
-        let unsaved = page.read(cx).has_unsaved();
+        }
+        let unsaved = self.vault.as_ref().is_some_and(|p| p.read(cx).has_unsaved());
+        let page = self.vault.clone();
         cx.spawn_in(window, async move |this, cx| {
             if unsaved {
                 let Ok(rx) = this.update_in(cx, |_, window, cx| {
@@ -2091,9 +2108,10 @@ impl Workspace {
                 }
             }
             this.update_in(cx, |this, window, cx| {
-                page.update(cx, |p, cx| p.lock_now("Vault locked.", window, cx));
-                this.vault_visible = false;
-                cx.notify();
+                if let Some(page) = page {
+                    page.update(cx, |p, cx| p.lock_now("Vault locked.", window, cx));
+                }
+                this.select_view(super::rail::LeftView::Library, cx);
             })
             .ok();
         })
@@ -2101,12 +2119,15 @@ impl Workspace {
     }
 
     pub(super) fn on_toggle_vault(&mut self, _: &ToggleVault, window: &mut Window, cx: &mut Context<Self>) {
-        if self.vault_visible { self.close_vault(window, cx) } else { self.open_vault(window, cx) }
+        if self.vault_open() { self.close_vault(window, cx) } else { self.open_vault(window, cx) }
     }
 
-    /// The vault page when it is showing, for the document area.
+    /// The vault page when the Vault view shows, for the document area.
     pub(super) fn render_vault(&self) -> Option<AnyElement> {
-        self.vault_visible.then(|| self.vault.clone().map(|v| v.into_any_element())).flatten()
+        if !self.vault_open() {
+            return None;
+        }
+        self.vault.clone().map(|v| v.into_any_element())
     }
 }
 

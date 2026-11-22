@@ -6,6 +6,7 @@
 mod actions;
 mod deeplinks;
 mod default_apps;
+mod icons;
 mod instance;
 mod library;
 mod logs;
@@ -34,6 +35,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-alt-r", RevealDocument, None),
         KeyBinding::new("cmd-r", Rescan, None),
         KeyBinding::new("cmd-shift-l", ToggleTheme, None),
+        KeyBinding::new("cmd-l", ToggleLibrary, None),
         KeyBinding::new("cmd-alt-y", ShowHistory, None),
         KeyBinding::new("cmd-shift-i", ToggleStats, None),
         KeyBinding::new("cmd-alt-o", ToggleOutline, None),
@@ -82,10 +84,11 @@ fn set_menus(cx: &mut App) {
             name: "View".into(),
             items: vec![
                 MenuItem::action("Command Palette", CommandPalette),
+                MenuItem::action("Library", ToggleLibrary),
                 MenuItem::action("Toggle View and Source", ToggleMode),
                 MenuItem::action("Outline", ToggleOutline),
                 MenuItem::action("Statistics", ToggleStats),
-                MenuItem::action("Search Documents", FocusSearch),
+                MenuItem::action("Search All Documents", FocusSearch),
                 MenuItem::action("Rescan Documents", Rescan),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ZoomIn),
@@ -138,7 +141,7 @@ fn main() {
     // launch through Launch Services, often hands the first file the same way
     // instead of in argv. The callback has no App, so it only queues.
     let (open_tx, mut open_rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    let app = gpui_kit::application().with_assets(icons::MarkieAssets);
     let instance_tx = open_tx.clone();
     app.on_open_urls(move |urls| {
         let _ = open_tx.unbounded_send(urls);
@@ -166,7 +169,14 @@ fn main() {
             let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                // Electron's minWidth 600, minHeight 400.
                 window_min_size: Some(size(px(600.), px(400.))),
+                // Electron's `hiddenInset` traffic lights sit at x 14, y 14 in its
+                // 40px title bar (electron/main.js).
+                titlebar: Some(TitlebarOptions {
+                    traffic_light_position: Some(point(px(14.), px(14.))),
+                    ..TitleBar::title_bar_options()
+                }),
                 ..TitleBar::window_options()
             };
             let (window_handle, workspace) = gpui_kit::open_window(options, cx, move |window, cx| {

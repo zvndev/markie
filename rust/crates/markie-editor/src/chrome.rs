@@ -409,9 +409,8 @@ impl RichView {
             })).into_any_element());
         }
         if shows(Group::Output) {
-            // Printing arrives with phase 5's PDF export; until then the
-            // button is shown where Electron has it, and disabled.
-            row.push(self.tool("rt-print", "icons/printer.svg", "Print (⌘P)", false, true, cx, |_, _, _| {}).into_any_element());
+            // The host prints through its export path (RichEvent::Print).
+            row.push(self.tool("rt-print", "icons/printer.svg", "Print (⌘P)", false, false, cx, |_, _, cx| cx.emit(RichEvent::Print)).into_any_element());
             row.push(self.tool("rt-history", "icons/clock.svg", "Version history", false, false, cx, |_, _, cx| cx.emit(RichEvent::History)).into_any_element());
         }
         if !compact {
@@ -571,6 +570,7 @@ impl RichView {
                     menu = menu.item(act("Redo", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| { e.redo(); }))));
                 }
                 if has(Group::Output) {
+                    menu = menu.item(act("Print", Box::new(|_, _, cx| cx.emit(RichEvent::Print))));
                     menu = menu.item(act("Version history", Box::new(|_, _, cx| cx.emit(RichEvent::History))));
                 }
                 if has(Group::View) {

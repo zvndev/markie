@@ -6,7 +6,6 @@
 //! layout and `src/app/globals.css` (`.markie-toolbar`, `.markie-toolbar-action`,
 //! `.markie-segmented-*`, `.markie-menu-*`) for the surfaces.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{Theme, ThemeMode, TitleBar, WindowExt as _, h_flex, v_flex};
@@ -157,6 +156,7 @@ impl Workspace {
             let _ = reg.set_setting("style_template", id);
         }
         themes::apply(id, Some(window), cx);
+        self.save_theme_store(cx);
         self.shell.template = id.to_string();
         self.shell.menu = None;
         cx.notify();
@@ -203,14 +203,17 @@ impl Workspace {
     fn save_a_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shell.menu = None;
         let Some(doc) = &self.doc else { return };
-        let dir = doc.path.parent().map(PathBuf::from).unwrap_or_else(markie_core::paths::home_dir);
+        let dir = self.default_dir();
         let name = doc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let source = doc.path.clone();
         let text = matches!(doc.kind, DocKind::Text { .. }).then(|| self.current_text(cx));
         let rx = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |_, cx| {
             if let Ok(Ok(Some(target))) = rx.await {
+                let as_csv = target.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
                 let result = match text {
+                    // A copy saved as .csv holds the first table as CSV.
+                    Some(text) if as_csv => std::fs::write(&target, super::csv_doc::markdown_table_to_csv(&text)),
                     Some(text) => std::fs::write(&target, text),
                     None => std::fs::copy(&source, &target).map(|_| ()),
                 };
@@ -230,7 +233,8 @@ impl Workspace {
 
     pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = themes::palette(cx);
-        let name = self.doc.as_ref().and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned());
+        // An untitled buffer shows no name, as Electron's null fileName.
+        let name = self.doc.as_ref().filter(|d| !d.untitled).and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned());
         let dirty = self.dirty
             || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
         let has_text = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }));

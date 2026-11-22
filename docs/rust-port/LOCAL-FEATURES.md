@@ -12,8 +12,8 @@ Status words:
 
 | Check | Where |
 |---|---|
-| Core unit tests | `cargo test -p markie-core` (81 tests, all pass) |
-| App tests (Library, Projects rows) | `cargo test -p markie-app` |
+| Core unit tests | `cargo test -p markie-core` (all pass) |
+| App tests (Library, Projects rows, moves, sliders, theme painting) | `cargo test -p markie-app` |
 | Electron's own code on the same rows | `rust/scripts/parity/local-parity.mjs`, fed by `cargo run -p markie-core --example local_parity` |
 | Fixture run of that harness | `.autoloop/runs/local-features/parity-report.txt`: 20 checks, all match |
 | Real device index, default 1.8 s budget | `.autoloop/runs/local-features/real-index-report.txt`: 84,361 rows, 31,708 Markdown files, 370 projects. The whole Projects tree matches. One excerpt differed only because Electron's budget ran out before the row Rust reached in time. |
@@ -22,7 +22,7 @@ Status words:
 
 The parity harness runs `mcp/doc-text.cjs` `searchDocuments`, `electron/frontmatter.js`, `electron/mdmeta.js` `findRepoRoot`, and `src/lib/projects/taxonomy.ts` `buildTaxonomy`, unmodified, on the rows Markie RS indexed. It compares result order, name hits, excerpts, every project key and name, every block id and name, every file and its order, and the ignored count.
 
-Screenshots were not possible in this session: `screencapture` was refused ("could not create image from window") and `act.sh` correctly refused input because Kirby's Markie held the front. The on-screen comparison of the Projects tab and ⇧⌘F results is still owed.
+Screenshots were not possible in this session: `screencapture` was refused ("could not create image from window") and `act.sh` correctly refused input because Kirby's Markie held the front. The on-screen comparison of the Projects tab, ⇧⌘F and Settings › Appearance is still owed.
 
 ## 1. Library panel and Files workspace
 
@@ -32,7 +32,7 @@ Screenshots were not possible in this session: `screencapture` was refused ("cou
 | Projects tab | Matches | `workspace/projects.rs` mirrors `projects-panel.tsx`: one "Search projects and files" field, projects newest first with Unfiled last, the open document's project open by default, a project you shut stays shut, every match open while searching, the shared folder not repeated under each file, `compactDir` labels, the rules error banner, "Edit how this is organized". Tests: `projects::tests::the_open_documents_project_opens_and_shared_folders_hide`, core `projects::*`. |
 | Empty and loading states | Matches | "Still finding your markdown…", "Working out where everything belongs…", "Nothing matches that.", "No projects yet." |
 | Move a document | Matches (API) | `workspace_ops::move_into` is `workspace.js` `move`: same root guard, never overwrites ("Already a file with that name there"), and every path-keyed registry table follows (`Registry::move_path`, `move_prefix`). Electron 0.9.7's renderer never calls `ws-move` (Projects replaced the Folders tab), so there is no UI to match. Test: `workspace_ops::tests::moves_files_and_folders_with_their_registry_rows`. |
-| Rename | Matches (API) | `workspace_ops::rename` with `sanitize_name`. The dialogs agent's rename UI in `file_ops.rs` does not call it yet, so registry rows other than the recent do not follow a rename from the UI. |
+| Rename and move from the UI carry their records | Matches | Rename and Move in `file_ops.rs` call `follow_move` (`workspace/projects.rs`), Electron's `afterWorkspaceMove`: every path-keyed registry row (recent, star, project pin, assignment, metadata), the office recovery history and local comments (`LocalComments::move_records`) follow the file. Text version history stays at the old path, as in Electron. Test: `projects::tests::a_move_carries_every_record`. |
 | Remove a workspace folder | Matches (API) | `workspace_ops::remove_root` only unregisters; nothing on disk changes. No UI in Electron 0.9.7 either. |
 | New document, drop to import, trash, reveal, sync on/off, cloud area picker | Not mine | File operations (dialogs agent) and cloud (cloud agent). |
 | Recovery records from IndexedDB | Not mine | Migration agent (`markie-migrate`). |
@@ -91,7 +91,7 @@ Screenshots were not possible in this session: `screencapture` was refused ("cou
 | Supersede: a newer search stops an older one | Matches | Generation counter. The app also drops a stale answer (`Library::set_body_results`). |
 | ⇧⌘F wiring | Matches | The shell's search overlay keeps its instant name filter, then swaps in the ranked body results after a 120 ms pause. Test: `library::tests::body_results_replace_the_instant_filter_until_the_query_moves`. |
 | Type chips | Matches (shell agent) | The chips feed `formats`. |
-| Term highlighting inside excerpts | Not built | The marks are delivered on `Hit::marks`; drawing them is the search panel's look (shell agent). |
+| Term highlighting in names and excerpts | Matches | `doc_text::highlight_ranges` and `merge_marks` are `highlight` and `marked` from `global-search.tsx`; excerpts use the body search's own marks. Drawn as `.markie-search-mark`: status yellow at 30 % with a 70 % line under the words (GPUI has no inset shadow, so an underline stands in). Test: `highlights_merge_like_global_search`. |
 | Hot path note for the performance agent | | `doc_text::search_documents` and `extract_search_text` are the hot paths. The pool is an `Arc<Vec<SearchRow>>` shared, never cloned per query. |
 
 ## 6. Open and save pipeline
@@ -109,20 +109,21 @@ Screenshots were not possible in this session: `screencapture` was refused ("cou
 
 | Item | Status | Notes and tests |
 |---|---|---|
-| Autosave with Markdown's rules (1 s idle, at most 5 s while typing) | Differs | Built as the brief asks: an edit in the Word view schedules the same `Autosave`, and the save goes through the engine (`office_autosave`), never opening a dialog. Electron itself does not autosave office files to disk: it writes a recovery revision 600 ms after each change and the file only on ⌘S. |
+| Office files are never written on a timer | Matches | As in Electron, an edit keeps only a recovery revision; the file is written by ⌘S or Save. |
 | Recovery revision 600 ms after a change | Matches | `office.rs` `on_office_changed` with `RECOVERY_DEBOUNCE_MS`. |
-| Closing flushes pending saves | Matches | Built this round for every document: `on_app_quit` and the window's should-close hook run the no-dialog autosave (`flush_pending`). Markie RS used to quit without it. |
+| Closing flushes pending work | Matches | `on_app_quit` and the window's should-close hook run `flush_pending`: Markdown and text get their autosave, office documents get a durable recovery revision and no file write, which is what Electron's `prepareClose` does. Electron asks nothing on close for office documents, so neither does Markie RS. |
+| Unsaved edits from an earlier session | Matches | Opening an office file whose newest revision is unsaved and differs from disk says so and points at Recovery history. |
 
 ## 13. Version history for office documents
 
 | Item | Status | Notes and tests |
 |---|---|---|
 | Recovery history: revisions on open, on edit, on save | Matches | `office_recovery.rs` follows `document-library/repository.ts`: five per document, 32 MB per document, 128 MB in all, eviction of the oldest and never the newest, identical bytes not stored twice, revision numbers never reused. Stored under `<data>/document-recovery/`. Tests: `office_recovery::tests::*`. |
-| List, newest first | Matches | The history panel shows office revisions with their time. |
+| List, newest first | Matches | The History dialog (`history_dialog.rs`) lists office revisions with their time. |
 | View a revision | Differs | Electron has no preview; Markie RS shows the revision's words (extracted with `doc_text`) in the existing read-only preview. |
 | Restore makes a newer revision | Matches | `RecoveryStore::restore`. |
-| Restore leaves the file unchanged | Differs | Markie RS writes the restored bytes at once, because with autosave on the file would be written a second later anyway. |
-| History follows a rename or move | Not built in the UI | `RecoveryStore::moved` exists; `file_ops.rs` (dialogs agent) does not call it yet. |
+| Restore loads the revision unsaved and leaves the file unchanged | Matches | `restore_office_version` opens the revision with `WordEditor::new_unsaved`, so the document shows edited and Save writes it. Test: `a_restored_revision_opens_unsaved_until_saved`. |
+| History follows a rename or move | Matches | Through `follow_move`. |
 | Markdown history (text versions, retention, names) | Matches | Existing `history.rs`; the diff view is the dialogs agent's. |
 
 ## 28. Settings: presets and typography
@@ -130,10 +131,12 @@ Screenshots were not possible in this session: `screencapture` was refused ("cou
 | Item | Status | Notes and tests |
 |---|---|---|
 | Eight templates, light and dark | Matches | `theme.rs` reads the same `templates.json` the app paints from. Test: `eight_templates_with_their_typography`. |
-| Template typography (body and heading face, line height, paragraph gap, size, width) | Matches (data) | `typography_of` with Electron's clamps, `TYPEFACES` as native family lists. Test: `typography_is_clamped_and_unknown_faces_fall_back`. |
-| Custom presets: fork on first colour edit, per-tone overrides, edit in place, delete, choose, reset | Matches (logic) | `ThemeStore` with `markie.themes.v1`'s JSON shape and `normalizeThemeStore`'s legacy handling. Tests: `store_transitions_match_theme_ts`, `legacy_stores_normalize`. |
-| Painting typography in documents | Not built | The rich editor hard-codes 16 px and the theme face (`markie-editor/src/render.rs` `look`). The editor agent can read `ThemeStore::painted(tone)`. |
-| Settings UI for presets and typography | Not built | Dialogs agent (`settings.rs`). The store is not yet persisted by the app; the natural key is a registry setting `themes.v1` holding `ThemeStore::to_json()`. |
+| Template typography (body and heading face, line height, paragraph gap, size, width) | Matches | `typography_of` with Electron's clamps, `TYPEFACES` as native family lists. Test: `typography_is_clamped_and_unknown_faces_fall_back`. |
+| Custom presets: fork on first colour edit, per-tone overrides, edit in place, delete, choose, reset | Matches | `ThemeStore` with `markie.themes.v1`'s JSON shape and `normalizeThemeStore`'s legacy handling. Tests: `store_transitions_match_theme_ts`, `legacy_stores_normalize`. |
+| Painting typography in documents | Matches | The rich editor's `DocStyle` comes from `ThemeStore::painted` for the tone on screen (`workspace/rich.rs` `doc_style`), so each template's faces, size, line height, paragraph gap and width, a custom preset and the person's tweaks all reach the page. GPUI Kit's themes, Markie's palettes and the dialog tokens are built from the same painted presets. Test: `themes::tests::every_painted_preset_reaches_the_chrome`. |
+| Settings › Appearance | Matches | `workspace/appearance.rs`: templates with "Customized", "Your presets", body and heading font menus, the four sliders with Electron's limits, steps and rounding, "Customize colors" over the seven `COLOR_FIELDS`, "Delete preset", "Reset to template", and the status line. Every change paints at once and persists as the registry setting `themes.v1`. Tests: `appearance::tests::*`. |
+| Colour wells | Differs | Chromium's colour input opens the system colour panel; GPUI has none, so each colour is a hex field with a swatch. |
+| Font menus | Differs | Electron's menu floats over the panel; here the list opens in place below the button. |
 | Theme sync, pinned document themes | Not mine | Cloud agent. |
 
 ## Safety notes
@@ -145,8 +148,5 @@ Screenshots were not possible in this session: `screencapture` was refused ("cou
 
 ## Open items
 
-1. On-screen comparison of the Projects tab and ⇧⌘F against Electron, once screen capture is allowed.
-2. Draw `Hit::marks` highlighting in the search overlay (shell agent).
-3. Paint template typography in the rich editor (editor agent) and persist `ThemeStore` from Settings (dialogs agent).
-4. Call `workspace_ops::rename` and `RecoveryStore::moved` from the rename and duplicate UI (dialogs agent).
-5. Decide whether office autosave should write the file (this build) or only recovery revisions (Electron). It is a product call for Kirby.
+1. On-screen comparison of the Projects tab, ⇧⌘F and Settings › Appearance against Electron, once screen capture is allowed.
+2. Theme sync with the account and themes pinned to shared documents (cloud agent); the store already has the cloud JSON shape.

@@ -31,13 +31,19 @@ use crate::library::Library;
 pub(crate) mod account;
 mod account_slot;
 mod agents;
+mod appearance;
 mod chrome;
+mod csv_doc;
 mod collab;
 mod comments;
 mod share;
 mod dialog_chrome;
 mod file_ops;
+mod folder_tree;
 mod history_dialog;
+mod library_rows;
+mod live_docs;
+mod import_copy;
 mod cloud;
 mod cloud_drive;
 mod cloud_office;
@@ -54,6 +60,7 @@ mod projects;
 mod rail;
 mod rich;
 mod text_view;
+mod untitled;
 mod settings;
 mod shortcuts;
 mod strips;
@@ -70,10 +77,14 @@ enum SidePanel {
     Stats,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
+    /// ⌘1: the rich editor (Electron's "preview").
     View,
+    /// ⌘2: the Markdown source (Electron's "edit").
     Source,
+    /// ⌘3: source on the left, rich on the right (Electron's "split").
+    Split,
 }
 
 /// The document in the pane, and how to write it back.
@@ -83,6 +94,8 @@ struct OpenDoc {
     /// Over 1 MB: Source only, like the Electron app.
     large: bool,
     kind: DocKind,
+    /// No file behind it yet (`untitled.rs`): `path` holds only its name.
+    untitled: bool,
 }
 
 enum DocKind {
@@ -108,6 +121,10 @@ pub struct Workspace {
     shell: rail::Shell,
     /// The Projects tab and the ⇧⌘F body search.
     projects: projects::Projects,
+    /// Settings › Appearance's live controls.
+    appearance: appearance::AppearanceUi,
+    /// Live Docs: the projects page and the site preview (`live_docs.rs`).
+    live_docs: live_docs::LiveDocs,
     /// The open `.wd` document's preview (`workspace/darkmown.rs`).
     darkmown: darkmown::DarkmownState,
     editor: Entity<EditorState>,
@@ -116,7 +133,15 @@ pub struct Workspace {
     rich: Entity<markie_editor::RichView>,
     doc: Option<OpenDoc>,
     mode: Mode,
+    /// In Split, the pane whose text is newest: the source editor (true) or
+    /// the rich editor (false). Electron's `lastPane`.
+    split_source_latest: bool,
+    /// Text Split just copied into the other pane, so its change event is
+    /// not copied back.
+    split_echo: Option<String>,
     dirty: bool,
+    /// Warnings shown above a converted copy (Electron's `session.warnings`).
+    doc_notes: Vec<String>,
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
@@ -136,8 +161,6 @@ pub struct Workspace {
     recovered: Vec<Draft>,
     /// The version history panel, and the version being looked at.
     side: SidePanel,
-    /// Parsed rows when a CSV document is shown as a table.
-    csv_rows: Option<Rc<Vec<Vec<String>>>>,
     versions: Vec<Version>,
     viewing_version: Option<(String, String)>,
     /// Document zoom (1.0 = 100%) and reading column width, shared by every
@@ -186,11 +209,17 @@ impl Workspace {
         ];
         subscriptions.extend(Self::watch_account(window, cx));
 
-        let template = registry
-            .as_ref()
-            .and_then(|r| r.setting("style_template").ok().flatten())
-            .unwrap_or_else(|| "markie".into());
-        crate::themes::apply(&template, Some(window), cx);
+        // The theme store (`markie.themes.v1`); a build before it kept only
+        // the template id.
+        let store = match registry.as_ref().and_then(|r| r.setting("themes.v1").ok().flatten()) {
+            Some(json) => markie_core::theme::ThemeStore::parse(&json),
+            None => {
+                let id = registry.as_ref().and_then(|r| r.setting("style_template").ok().flatten()).unwrap_or_else(|| "markie".into());
+                markie_core::theme::ThemeStore::default().choose_template(&id, markie_core::theme::Tone::Dark)
+            }
+        };
+        let template = store.active_template().id.clone();
+        crate::themes::apply_store(store, Some(window), cx);
         // The user's own light or dark choice outranks the system appearance;
         // System follows macOS, also when it changes while the app runs.
         let color_mode =
@@ -201,6 +230,8 @@ impl Workspace {
         subscriptions.extend(shell_subs);
         let (projects, projects_sub) = projects::Projects::new(window, cx);
         subscriptions.push(projects_sub);
+        let (appearance, appearance_subs) = appearance::AppearanceUi::new(window, cx);
+        subscriptions.extend(appearance_subs);
         // Closing flushes pending saves first (Electron's close-flush.js).
         subscriptions.push(cx.on_app_quit(|this, cx| {
             this.flush_pending(cx);
@@ -232,13 +263,18 @@ impl Workspace {
             library,
             shell,
             projects,
+            appearance,
             darkmown: Default::default(),
+            live_docs: live_docs::LiveDocs::new(&data_dir),
             editor,
             preview,
             rich,
             doc: None,
             mode: Mode::View,
+            split_source_latest: false,
+            split_echo: None,
             dirty: false,
+            doc_notes: Vec::new(),
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
@@ -254,7 +290,6 @@ impl Workspace {
             disk_missing: false,
             recovered,
             side: SidePanel::None,
-            csv_rows: None,
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
@@ -280,6 +315,8 @@ impl Workspace {
             }
         }
         this.refresh_lists();
+        this.restore_browse_open();
+        this.restore_panel_width(window);
         this.build_search_pool();
 
         let mut first_file = None;
@@ -292,7 +329,13 @@ impl Workspace {
                 first_file = Some(path);
             }
         }
-        if let Some(path) = first_file.or_else(|| this.most_recent()) {
+        if let Some(path) = first_file.clone() {
+            this.open_path(&path, window, cx);
+        } else if this.untitled_draft_pending() {
+            // Electron offers the untitled journal entry when the launch opens
+            // no document: an empty untitled buffer shows the recovery strip.
+            this.open_untitled(untitled::untitled_name("md"), String::new(), window, cx);
+        } else if let Some(path) = this.most_recent() {
             this.open_path(&path, window, cx);
         }
         this.rescan(cx);
@@ -304,6 +347,7 @@ impl Workspace {
         let recent = reg.recent(200).unwrap_or_default().into_iter().map(|r| r.path).collect();
         let starred = reg.stars().unwrap_or_default();
         self.library.set_lists(Vec::new(), starred.clone());
+        self.shell.stars = starred.iter().cloned().collect();
         self.shell.recent.set_lists(recent, starred);
         self.shell.invalidate_browse();
     }
@@ -352,6 +396,9 @@ impl Workspace {
 
     fn on_toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
         let (Some(reg), Some(doc)) = (&self.registry, &self.doc) else { return };
+        if doc.untitled {
+            return;
+        }
         let _ = reg.toggle_star(&doc.path, "file");
         self.refresh_lists();
         cx.notify();
@@ -434,18 +481,22 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)) {
-            self.save(window, cx);
+        if self.intercept_import(path, window, cx) {
+            return;
         }
+        self.settle(window, cx);
+        self.doc_notes.clear();
         match document::open(path) {
             Ok(doc) => {
                 let large = doc.is_large();
                 let kind = match doc.content {
-                    Content::Text { text, encoding, bom } => {
-                        let language = doc.format.editor_language();
+                    Content::Text { text: raw, encoding, bom } => {
+                        // A CSV is edited as its Markdown table (fromDisk).
+                        let text = csv_doc::from_disk(doc.format, &raw);
+                        let language = if doc.format == FormatKind::Csv { "markdown" } else { doc.format.editor_language() };
                         // Electron shows literal text formats in a plain field:
                         // no syntax colors and no line numbers.
-                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !large;
+                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown | FormatKind::Csv) && !large;
                         self.editor.update(cx, |state, cx| {
                             state.set_highlighter(if literal { "text" } else { language }, cx);
                             state.set_line_number(!literal, window, cx);
@@ -453,7 +504,7 @@ impl Workspace {
                         });
                         self.set_preview(&text, doc.format, cx);
                         self.update_stats(&text);
-                        self.disk.remember(&doc.path, &text, false);
+                        self.disk.remember(&doc.path, &raw, false);
                         DocKind::Text { encoding, bom, saved: text }
                     }
                     Content::Html(html) => {
@@ -478,7 +529,6 @@ impl Workspace {
                         }
                     }
                 };
-                self.csv_rows = None;
                 if large || (!matches!(doc.format, FormatKind::Markdown | FormatKind::Html | FormatKind::Csv)
                     && matches!(kind, DocKind::Text { .. }))
                 {
@@ -486,15 +536,15 @@ impl Workspace {
                 } else if matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && self.doc.is_none() {
                     self.mode = Mode::View;
                 }
-                if let DocKind::Text { saved, .. } = &kind {
-                    if doc.format == FormatKind::Csv && !large {
-                        self.csv_rows = Some(Rc::new(markie_core::csv::parse(saved)));
-                    }
+                if !mode_allowed(doc.format, large, self.mode) {
+                    self.mode = Mode::View;
                 }
+                self.split_source_latest = false;
+                self.split_echo = None;
                 if let Some(old) = &self.doc {
                     self.disk.forget(&old.path);
                 }
-                self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind });
+                self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind, untitled: false });
                 if self.shell.view == rail::LeftView::Cloud {
                     self.shell.panel_open = false;
                 }
@@ -504,7 +554,13 @@ impl Workspace {
                 self.disk_missing = false;
                 self.viewing_version = None;
                 // The opened bytes are the first recovery revision, as in
-                // Electron's import, and they match the file.
+                // Electron's import, and they match the file. Unsaved edits
+                // from an earlier session stay in Recovery history.
+                if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+                    if let Some(notice) = self.office_unsaved_notice(&doc.path) {
+                        window.push_notification(notice, cx);
+                    }
+                }
                 self.keep_office_revision(true, cx);
                 if self.side == SidePanel::History {
                     self.refresh_versions();
@@ -541,11 +597,7 @@ impl Workspace {
     }
 
     fn set_preview(&mut self, text: &str, format: FormatKind, cx: &mut Context<Self>) {
-        if format == FormatKind::Csv {
-            self.csv_rows = Some(Rc::new(markie_core::csv::parse(text)));
-            return;
-        }
-        if format != FormatKind::Markdown {
+        if !matches!(format, FormatKind::Markdown | FormatKind::Csv) {
             return;
         }
         // Front matter is held aside in the rich view, never shown.
@@ -565,9 +617,18 @@ impl Workspace {
     }
 
     fn on_edit(&mut self, cx: &mut Context<Self>) {
-        self.live_source_edit(cx);
-        let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         let text = self.editor.read(cx).value().to_string();
+        if self.split_echo.as_deref() == Some(text.as_str()) {
+            // The rich pane's own edit, copied over: nothing new to save.
+            self.split_echo = None;
+            return;
+        }
+        self.live_source_edit(cx);
+        if self.mode == Mode::Split {
+            self.split_source_latest = true;
+            self.split_rich_follow(&text, cx);
+        }
+        let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         self.dirty = &text != saved;
         self.update_stats(&text);
         if self.dirty && self.disk_conflict.is_none() {
@@ -595,8 +656,10 @@ impl Workspace {
 
     /// Write whatever autosave still owes, now. Never a dialog.
     fn flush_pending(&mut self, cx: &mut Context<Self>) {
-        let office_dirty = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
-        if self.autosave.is_pending() || self.dirty || office_dirty {
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            return self.office_flush_recovery(cx);
+        }
+        if self.autosave.is_pending() || self.dirty {
             self.autosave.cancel();
             self.autosave_now(cx);
         }
@@ -606,9 +669,15 @@ impl Workspace {
     /// edited marker, and the next save tries again.
     fn autosave_now(&mut self, cx: &mut Context<Self>) {
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
-            return self.office_autosave(cx);
+            // Office files are never written on a timer.
+            return;
         }
         let text = self.current_text(cx);
+        if self.is_untitled() {
+            // No file yet: the journal is where autosave keeps it.
+            let _ = self.drafts.save(None, &text);
+            return;
+        }
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
         if self.write_text(&text, cx).is_ok() {
@@ -621,11 +690,16 @@ impl Workspace {
     /// that this write was ours.
     fn write_text(&mut self, text: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
         let Some(doc) = self.doc.as_mut() else { return Ok(()) };
+        if doc.untitled {
+            return Ok(());
+        }
         let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return Ok(()) };
-        let _ = self.history.capture(&doc.path, text, Writer::User);
-        document::save_text(&doc.path, text, *encoding, *bom)?;
+        // A CSV writes its first table back as CSV (toDisk).
+        let disk_text = csv_doc::to_disk(doc.format, text);
+        let _ = self.history.capture(&doc.path, &disk_text, Writer::User);
+        document::save_text(&doc.path, &disk_text, *encoding, *bom)?;
         *saved = text.to_string();
-        self.disk.remember(&doc.path, text, true);
+        self.disk.remember(&doc.path, &disk_text, true);
         let path = doc.path.clone();
         self.dirty = false;
         if self.side == SidePanel::History {
@@ -650,7 +724,7 @@ impl Workspace {
 
     fn check_disk(&mut self, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        if !matches!(doc.kind, DocKind::Text { .. }) {
+        if !matches!(doc.kind, DocKind::Text { .. }) || doc.untitled {
             return;
         }
         match self.disk.changed_since(&doc.path) {
@@ -672,8 +746,12 @@ impl Workspace {
     }
 
     /// Replace the editor's text with what is on disk, as the saved state.
-    fn load_text(&mut self, path: &Path, text: String, cx: &mut Context<Self>) {
-        self.disk.remember(path, &text, false);
+    fn load_text(&mut self, path: &Path, raw: String, cx: &mut Context<Self>) {
+        self.disk.remember(path, &raw, false);
+        let text = match &self.doc {
+            Some(d) => csv_doc::from_disk(d.format, &raw),
+            None => raw,
+        };
         if let Some(OpenDoc { kind: DocKind::Text { saved, .. }, format, .. }) = self.doc.as_mut() {
             *saved = text.clone();
             let format = *format;
@@ -685,6 +763,12 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace_page_open() && self.live_docs_open() {
+            return self.live_save(cx);
+        }
+        if self.is_untitled() {
+            return self.save_untitled(window, cx);
+        }
         if let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc {
             let (path, format) = (path.clone(), *format);
             self.autosave.cancel();
@@ -703,6 +787,12 @@ impl Workspace {
             window.push_notification(format!("Markie could not save: {err:#}"), cx);
         } else if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
             let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
+            // ⌘S on a .csv keeps the first table only, and says so.
+            if self.doc.as_ref().is_some_and(|d| d.format == FormatKind::Csv) {
+                if let Some(note) = csv_doc::csv_save_note(&text) {
+                    window.push_notification(note, cx);
+                }
+            }
         }
         cx.notify();
     }
@@ -712,37 +802,65 @@ impl Workspace {
         handle.focus(window, cx);
     }
 
+    /// ⌘E: Source from View or Split, View from Source.
     fn toggle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = if self.mode == Mode::Source { Mode::View } else { Mode::Source };
+        self.set_mode(next, window, cx);
+    }
+
+    /// ⌘1, ⌘2 and ⌘3. Like Electron's `requestMode`, a large or literal
+    /// text document stays in Source, and only Markdown splits.
+    fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        if !matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) || doc.large {
+        if self.mode == mode || !mode_allowed(doc.format, doc.large, mode) || !matches!(doc.kind, DocKind::Text { .. }) {
             return;
         }
         let format = doc.format;
-        self.mode = match self.mode {
-            Mode::View => {
-                if self.rich_active() {
-                    self.rich_to_source(window, cx);
-                }
-                self.focus_editor(window, cx);
-                Mode::Source
-            }
-            Mode::Source => {
-                let text = self.editor.read(cx).value().to_string();
-                self.set_preview(&text, format, cx);
-                self.mode = Mode::View;
-                if self.rich_active() {
-                    self.focus_rich(window, cx);
-                }
-                Mode::View
-            }
+        let was = self.mode;
+        let source_latest = match was {
+            Mode::Source => true,
+            Mode::Split => self.split_source_latest,
+            Mode::View => false,
         };
+        if source_latest {
+            let text = self.editor.read(cx).value().to_string();
+            self.mode = mode;
+            if mode != Mode::Source {
+                self.set_preview(&text, format, cx);
+            }
+        } else {
+            if self.rich_active() && mode != Mode::View {
+                self.rich_to_source(window, cx);
+            }
+            self.mode = mode;
+        }
+        self.split_source_latest = mode == Mode::Split && source_latest;
+        match mode {
+            Mode::Source => self.focus_editor(window, cx),
+            Mode::Split if was == Mode::Source => self.focus_editor(window, cx),
+            _ if self.rich_active() => self.focus_rich(window, cx),
+            _ => {}
+        }
         cx.notify();
     }
 
-    fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
-        if self.mode != mode {
-            self.toggle_mode(window, cx);
+    /// A source edit in Split: the rich pane shows it, keeping its scroll.
+    fn split_rich_follow(&mut self, text: &str, cx: &mut Context<Self>) {
+        let parsed = markie_rich::editor::Editor::parse(text);
+        self.rich.update(cx, |r, cx| {
+            r.editor = parsed;
+            r.remote_changed(cx);
+        });
+    }
+
+    /// A rich edit in Split: the source pane shows it.
+    pub(super) fn split_source_follow(&mut self, text: String) {
+        if self.mode != Mode::Split {
+            return;
         }
+        self.split_source_latest = false;
+        self.split_echo = Some(text.clone());
+        self.pending_editor_text = Some(text);
     }
 
     fn on_open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
@@ -850,6 +968,34 @@ impl Workspace {
 
     // ---------------------------------------------------------------- render
 
+    /// Split: the source pane at 0.96fr with its hairline on the right, the
+    /// rich pane at 1.04fr, as `markie-document-area--split` lays them out.
+    fn render_split(&self, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_rich_appearance(cx);
+        let theme = cx.theme();
+        h_flex()
+            .size_full()
+            .bg(theme.background)
+            .child(
+                div()
+                    .h_full()
+                    .min_w_0()
+                    .w(relative(0.48))
+                    .border_r_1()
+                    .border_color(theme.border)
+                    .overflow_hidden()
+                    .child(
+                        Editor::new(&self.editor)
+                            .bordered(false)
+                            .h(relative(1.))
+                            .font_family(markie_editor::MONO)
+                            .text_size(px(14. * self.zoom)),
+                    ),
+            )
+            .child(div().h_full().min_w_0().w(relative(0.52)).overflow_hidden().child(self.rich.clone()))
+            .into_any_element()
+    }
+
     fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
@@ -923,8 +1069,8 @@ impl Workspace {
                     )
                     .into_any_element()
             }
-            (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Csv => self.render_csv(cx),
-            (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown && !doc.large => {
+            (DocKind::Text { .. }, Mode::Split) if matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && !doc.large => self.render_split(cx),
+            (DocKind::Text { .. }, Mode::View) if matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && !doc.large => {
                 self.sync_rich_appearance(cx);
                 div().size_full().child(self.rich.clone()).into_any_element()
             }
@@ -980,6 +1126,46 @@ impl Workspace {
 
 }
 
+/// May `format` show in `mode`? Electron's `requestMode`: large and literal
+/// text documents only edit as source; Markdown and CSV also split.
+fn mode_allowed(format: FormatKind, large: bool, mode: Mode) -> bool {
+    match mode {
+        Mode::Source => true,
+        Mode::View => !large && matches!(format, FormatKind::Markdown | FormatKind::Csv),
+        Mode::Split => !large && matches!(format, FormatKind::Markdown | FormatKind::Csv),
+    }
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::{FormatKind, Mode, mode_allowed};
+
+    #[test]
+    fn markdown_takes_every_mode() {
+        for mode in [Mode::View, Mode::Source, Mode::Split] {
+            assert!(mode_allowed(FormatKind::Markdown, false, mode), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn large_and_literal_text_stay_in_source() {
+        for format in [FormatKind::Markdown, FormatKind::Csv] {
+            assert!(!mode_allowed(format, true, Mode::View));
+            assert!(!mode_allowed(format, true, Mode::Split));
+            assert!(mode_allowed(format, true, Mode::Source));
+        }
+        assert!(!mode_allowed(FormatKind::Text, false, Mode::View));
+        assert!(!mode_allowed(FormatKind::Json, false, Mode::Split));
+    }
+
+    #[test]
+    fn csv_views_and_splits_like_markdown() {
+        // Electron edits a CSV as its Markdown table, so it is not plain text.
+        assert!(mode_allowed(FormatKind::Csv, false, Mode::View));
+        assert!(mode_allowed(FormatKind::Csv, false, Mode::Split));
+    }
+}
+
 impl Focusable for Workspace {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -997,6 +1183,7 @@ impl Render for Workspace {
         self.ensure_browse_rows();
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
+        self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
         let history = match self.side {
@@ -1045,6 +1232,25 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_export_pdf_dark))
             .on_action(cx.listener(Self::on_export_pdf_light))
             .on_action(cx.listener(Self::on_export_html))
+            // The Library panel's resizer drag follows the pointer anywhere.
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                if this.shell.panel_drag.is_some() {
+                    this.panel_drag_move(f32::from(ev.position.x), window, cx);
+                }
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.panel_drag_end(cx)))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.panel_drag_end(cx)))
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                if ev.keystroke.key == "escape" && this.panel_drag_cancel(cx) {
+                    cx.stop_propagation();
+                } else if ev.keystroke.key == "escape" && this.live_docs.preview.is_some() && !this.dialogs.open.is_open() && !this.shell.search_open {
+                    this.close_live_preview(cx);
+                    cx.stop_propagation();
+                } else if ev.keystroke.key == "escape" && this.shell.row_menu.take().is_some() {
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
             .relative()
             .size_full()
             .bg(cx.theme().background)
@@ -1084,6 +1290,8 @@ impl Render for Workspace {
                         }
                     }),
             )
+            .children(self.render_live_preview(cx))
+            .children(self.render_row_menu(cx))
             .children(self.render_search(cx))
             .children(self.render_share(window, cx));
         self.dialog_actions(root, cx).children(dialogs)

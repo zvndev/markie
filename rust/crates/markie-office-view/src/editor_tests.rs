@@ -472,3 +472,11 @@ fn multibyte_offsets_stay_on_character_boundaries() {
     assert_eq!(texts(editor.rich()), ["日と本語"]);
     assert_eq!(editor.focus.offset, 6);
 }
+
+#[test]
+fn a_restored_revision_opens_unsaved_until_saved() {
+    let mut editor = WordEditor::new_unsaved(create_rich_document(Format::Docx, "restored").unwrap());
+    assert!(editor.is_dirty(), "Save must write a restored revision");
+    editor.mark_saved();
+    assert!(!editor.is_dirty());
+}

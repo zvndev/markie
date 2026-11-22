@@ -2,12 +2,9 @@
 //! the open document into it, autosaving its edits through `write_text`,
 //! and keeping Source mode's text in step.
 
-use std::cell::RefCell;
-use std::sync::OnceLock;
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
-use serde::Deserialize;
 
 use markie_core::formats::FormatKind;
 use markie_editor::style::{DocStyle, WIDTH_STEPS, step_width, width_index};
@@ -36,21 +33,21 @@ impl Workspace {
             RichEvent::Zoom(z) => this.set_zoom(*z, cx),
             RichEvent::PageWidth(w) => this.set_width_step(*w, cx),
             RichEvent::History => this.on_show_history(&crate::actions::ShowHistory, window, cx),
-            RichEvent::Print => {}
+            RichEvent::Print => this.on_print(&crate::actions::Print, window, cx),
         });
         (rich, sub)
     }
 
     /// Is View mode showing the rich editor for the open document?
     pub(super) fn rich_active(&self) -> bool {
-        self.mode == Mode::View
-            && matches!(self.doc.as_ref(), Some(OpenDoc { format: FormatKind::Markdown, large: false, kind: DocKind::Text { .. }, .. }))
+        matches!(self.mode, Mode::View | Mode::Split)
+            && matches!(self.doc.as_ref(), Some(OpenDoc { format: FormatKind::Markdown | FormatKind::Csv, large: false, kind: DocKind::Text { .. }, .. }))
     }
 
     /// The document's text as it would be saved, from whichever editor
     /// holds the latest edits.
     pub(super) fn current_text(&self, cx: &App) -> String {
-        if self.rich_active() {
+        if self.rich_active() && !(self.mode == Mode::Split && self.split_source_latest) {
             self.rich.read(cx).markdown()
         } else {
             self.editor.read(cx).value().to_string()
@@ -69,6 +66,7 @@ impl Workspace {
         let text = self.rich.read(cx).markdown();
         self.dirty = &text != saved;
         self.update_stats(&text);
+        self.split_source_follow(text);
         // A live room that cannot carry this file leaves the file alone.
         if self.live_holds_file() {
             cx.notify();
@@ -125,7 +123,7 @@ impl Workspace {
     /// workspace's settings and theme.
     pub(super) fn sync_rich_appearance(&self, cx: &mut Context<Self>) {
         let (z, w) = (self.zoom, self.page_width);
-        let style = doc_style(cx.theme().background);
+        let style = doc_style(cx);
         self.rich.update(cx, |r, cx| {
             if (r.zoom - z).abs() > f32::EPSILON || (r.page_width - w).abs() > f32::EPSILON {
                 r.set_appearance(z, w, cx);
@@ -177,60 +175,27 @@ impl Workspace {
     }
 }
 
-/// One variant's typography in `themes/templates.json`.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Typography {
-    background: String,
-    doc_rule: Option<String>,
-    border: String,
-    link: String,
-    body_font: Option<String>,
-    heading_font: Option<String>,
-    line_height: Option<f32>,
-    paragraph_gap: Option<f32>,
-    font_size: Option<f32>,
-    content_width: Option<f32>,
-}
-
-#[derive(Deserialize)]
-struct TemplateTypography {
-    light: Typography,
-    dark: Typography,
-}
-
 fn hex(s: &str) -> Option<Hsla> {
     let h = s.trim().trim_start_matches('#');
     (h.len() == 6).then(|| u32::from_str_radix(h, 16).ok().map(|v| rgb(v).into())).flatten()
 }
 
-/// The page's look for the theme in use, found by its background colour
-/// (every template variant has its own), and kept until that changes.
-fn doc_style(background: Hsla) -> DocStyle {
-    static ALL: OnceLock<Vec<TemplateTypography>> = OnceLock::new();
-    thread_local! {
-        static LAST: RefCell<Option<(Hsla, DocStyle)>> = const { RefCell::new(None) };
+/// The page's look: the typography and document colours of the preset the
+/// theme store paints in this tone (`typographyVars`), custom presets and the
+/// person's typography tweaks included.
+pub(super) fn doc_style(cx: &App) -> DocStyle {
+    let dark = cx.theme().mode.is_dark();
+    let (preset, t) = crate::themes::painted(cx, dark);
+    let d = DocStyle::default();
+    let k = &preset.tokens;
+    DocStyle {
+        body_font: t.body_font,
+        heading_font: t.heading_font,
+        line_height: t.line_height as f32,
+        paragraph_gap: t.paragraph_gap as f32,
+        font_size: t.font_size as f32,
+        content_width: t.content_width as f32,
+        doc_rule: k.doc_rule.as_deref().and_then(hex).or_else(|| hex(&k.border)).unwrap_or(d.doc_rule),
+        link: hex(&k.link).unwrap_or(d.link),
     }
-    if let Some(style) = LAST.with(|l| l.borrow().as_ref().filter(|(bg, _)| *bg == background).map(|(_, s)| s.clone())) {
-        return style;
-    }
-    let all = ALL.get_or_init(|| serde_json::from_str(include_str!("../../themes/templates.json")).unwrap_or_default());
-    let found = all.iter().flat_map(|t| [&t.light, &t.dark]).find(|v| hex(&v.background) == Some(background));
-    let style = found
-        .map(|v| {
-            let d = DocStyle::default();
-            DocStyle {
-                body_font: v.body_font.clone().unwrap_or(d.body_font),
-                heading_font: v.heading_font.clone().unwrap_or(d.heading_font),
-                line_height: v.line_height.unwrap_or(d.line_height),
-                paragraph_gap: v.paragraph_gap.unwrap_or(d.paragraph_gap),
-                font_size: v.font_size.unwrap_or(d.font_size),
-                content_width: v.content_width.unwrap_or(d.content_width),
-                doc_rule: v.doc_rule.as_deref().and_then(hex).or_else(|| hex(&v.border)).unwrap_or(d.doc_rule),
-                link: hex(&v.link).unwrap_or(d.link),
-            }
-        })
-        .unwrap_or_default();
-    LAST.with(|l| *l.borrow_mut() = Some((background, style.clone())));
-    style
 }

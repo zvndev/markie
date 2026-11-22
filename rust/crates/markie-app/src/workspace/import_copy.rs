@@ -16,7 +16,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 
 use markie_office::document_import::{AdditionalDocumentFormat, AdditionalDocumentInput, DocumentImportLimits, convert_additional_document};
-use markie_office::legacy_doc::{DocImportOptions, LEGACY_DOC_MAX_INPUT, LegacyDocText, extract_legacy_doc_text_off_thread};
+use markie_office::legacy_doc::{LEGACY_DOC_MAX_INPUT, LegacyDocText};
 
 use super::dialog_chrome::{Tokens, fade, shadow};
 use super::overlay::Overlay;
@@ -80,6 +80,9 @@ fn doc_copy(extracted: LegacyDocText) -> Result<(String, Vec<String>), String> {
 
 impl Workspace {
     pub(super) fn invalidate_import(&mut self) {
+        if let Some(cancel) = self.import_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.import_epoch = self.import_epoch.wrapping_add(1);
     }
 
@@ -103,10 +106,12 @@ impl Workspace {
     fn open_doc_copy(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let name = doc_copy_name(&file_name(&path));
         let epoch = self.import_epoch;
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.import_cancel = Some(cancel.clone());
         let reader = cx.background_spawn(async move {
             let file = std::fs::File::open(path).map_err(|e| format!("Markie could not read this file: {e}"))?;
             let bytes = read_import(file, LEGACY_DOC_MAX_INPUT, "Legacy DOC exceeds the 32 MiB import limit.")?;
-            let extracted = extract_legacy_doc_text_off_thread(&bytes, DocImportOptions::default()).map_err(|e| e.to_string())?;
+            let extracted = crate::doc_worker::read(bytes, &cancel)?;
             doc_copy(extracted)
         });
         cx.spawn_in(window, async move |this, cx| {

@@ -92,7 +92,7 @@ impl CloudClient {
         tokens::set_token(self.tokens.as_ref(), &self.origin, token)
     }
 
-    fn trusted(&self) -> bool {
+    pub(crate) fn trusted(&self) -> bool {
         self.trust.read().unwrap().is_allowed_server_origin(&self.origin)
     }
 

@@ -7,6 +7,7 @@
 
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::*;
+use std::{cell::RefCell, fs::File, path::PathBuf, rc::Rc};
 
 use super::RichView;
 
@@ -16,6 +17,42 @@ pub(crate) struct VideoViewer {
     /// window changed size.
     placed: (f32, f32, f32, f32),
     hidden: bool,
+}
+
+pub(crate) struct InlineVideo {
+    player: markie_web::island::VideoPlayer,
+    pub(crate) key: crate::element::LeafKey,
+    pub(crate) version: u64,
+    hidden: bool,
+    placed: markie_web::island::Bounds,
+}
+
+fn fully_visible(bounds: Bounds<Pixels>, viewport: Bounds<Pixels>) -> bool {
+    bounds.size.width > px(0.) && bounds.size.height > px(0.)
+        && bounds.left() >= viewport.left() && bounds.right() <= viewport.right()
+        && bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom()
+}
+
+fn absolute_bounds(bounds: Bounds<Pixels>) -> markie_web::island::Bounds {
+    island((bounds.origin.x.into(), bounds.origin.y.into(), bounds.size.width.into(), bounds.size.height.into()))
+}
+
+impl InlineVideo {
+    pub(crate) fn place(&mut self, bounds: Option<Bounds<Pixels>>, viewport: Bounds<Pixels>, covered: bool) {
+        let valid = bounds.filter(|bounds| !covered && fully_visible(*bounds, viewport));
+        if let Some(bounds) = valid {
+            let placed = absolute_bounds(bounds);
+            if placed != self.placed {
+                let _ = self.player.set_bounds(placed);
+                self.placed = placed;
+            }
+        }
+        let hidden = valid.is_none();
+        if hidden != self.hidden {
+            let _ = self.player.set_visible(!hidden);
+            self.hidden = hidden;
+        }
+    }
 }
 
 /// The player's rectangle in a window `w` by `h` points: the iframe's
@@ -32,10 +69,46 @@ fn island((x, y, width, height): (f32, f32, f32, f32)) -> markie_web::island::Bo
 }
 
 impl RichView {
+    pub(crate) fn inline_mp4(&self, src: &str) -> Option<PathBuf> {
+        let reference = crate::media::reference_key(src);
+        if !reference.to_ascii_lowercase().ends_with(".mp4") { return None; }
+        if let Some(path) = self.cloud_media.get(&reference) {
+            return Some(path.clone());
+        }
+        if markie_core::links::local_link_target(src).is_none() { return None; }
+        let dir = self.base_dir.as_deref()?;
+        let candidate = markie_core::links::candidate_path(src, dir)?;
+        if self.restrict_local_media {
+            let real = candidate.canonicalize().ok()?;
+            return real.starts_with(dir.canonicalize().ok()?).then_some(real);
+        }
+        self.media_grants.asset_path(&candidate, &self.media_roots)
+    }
+
+    pub(crate) fn open_inline_mp4(&mut self, key: crate::element::LeafKey, src: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.inline_mp4(src) else { return };
+        let Some(bounds) = self.store.borrow().atoms.get(&key).copied() else { return };
+        let file = File::open(&path).ok().and_then(|file| {
+            let meta = file.metadata().ok()?;
+            (meta.is_file() && (1..=95_000_000).contains(&meta.len())).then_some((file, meta.len()))
+        });
+        let placed = absolute_bounds(bounds);
+        self.video = None;
+        if let Some(player) = file.and_then(|(file, len)| markie_web::island::VideoPlayer::from_local_mp4(window, placed, file, len).ok()) {
+            let mut video = InlineVideo { player, key, version: self.editor.version, hidden: false, placed };
+            video.place(Some(bounds), self.scroll.bounds(), self.web_views_covered);
+            self.inline_video = Some(Rc::new(RefCell::new(video)));
+            cx.notify();
+        } else {
+            self.show_notice("Markie couldn't play that video.", cx);
+        }
+    }
+
     /// The card was clicked: play its video, as `requestVideoViewer` does.
     pub(crate) fn open_video(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(embed) = markie_export::embeds::parse_embed(url) else { return };
         self.video = None;
+        self.inline_video = None;
         let size = window.viewport_size();
         let placed = player_bounds(f32::from(size.width), f32::from(size.height));
         match markie_web::island::VideoPlayer::new(window, island(placed), &embed) {
@@ -52,6 +125,10 @@ impl RichView {
     /// everything GPUI draws, so it hides while a dialog, menu or another
     /// page sits where it is, and while the rich pane is not shown.
     pub fn set_web_views_covered(&mut self, covered: bool) {
+        self.web_views_covered = covered;
+        if covered && let Some(inline) = &self.inline_video {
+            inline.borrow_mut().place(None, self.scroll.bounds(), true);
+        }
         if let Some(v) = &mut self.video {
             if v.hidden != covered {
                 let _ = v.player.set_visible(!covered);
@@ -61,7 +138,7 @@ impl RichView {
     }
 
     pub(crate) fn close_video(&mut self, cx: &mut Context<Self>) -> bool {
-        let open = self.video.take().is_some();
+        let open = self.video.take().is_some() | self.inline_video.take().is_some();
         if open {
             cx.notify();
         }

@@ -38,6 +38,7 @@ mod collab;
 mod comments;
 mod share;
 mod dialog_chrome;
+mod document_failure;
 mod file_ops;
 mod first_run;
 mod folder_tree;
@@ -134,7 +135,9 @@ pub struct Workspace {
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
     rich: Entity<markie_editor::RichView>,
+    file_grants: markie_core::links::FileGrants,
     doc: Option<OpenDoc>,
+    document_failure: Option<document_failure::DocumentFailure>,
     mode: Mode,
     /// In Split, the pane whose text is newest: the source editor (true) or
     /// the rich editor (false). Electron's `lastPane`.
@@ -146,6 +149,7 @@ pub struct Workspace {
     /// Warnings shown above a converted copy (Electron's `session.warnings`).
     doc_notes: Vec<String>,
     import_epoch: u64,
+    import_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
@@ -160,6 +164,7 @@ pub struct Workspace {
     pinch_clock: Instant,
     /// Office documents' recovery history (Electron's document library).
     recovery: markie_core::office_recovery::RecoveryStore,
+    pending_office: Option<(PathBuf, u64)>,
     _recovery_task: Task<()>,
     _poll_task: Task<()>,
     /// What the file says on disk when it changed under unsaved edits.
@@ -260,6 +265,9 @@ impl Workspace {
         let data_dir = paths::data_dir();
         let drafts = Drafts::new(&data_dir);
         let recovered = drafts.pending();
+        let recovery = markie_core::office_recovery::RecoveryStore::new(&data_dir);
+        let pending_office = recovery.pending_untitled(&data_dir.join("unsaved-office"))
+            .map(|(path, revision)| (path, revision.revision));
         let cloud = cloud::CloudWorkspace::new(&data_dir, registry.as_deref());
         let mut this = Self {
             agents: agents::AgentState::new(&data_dir),
@@ -278,13 +286,16 @@ impl Workspace {
             editor,
             preview,
             rich,
+            file_grants: Default::default(),
             doc: None,
+            document_failure: None,
             mode: Mode::View,
             split_source_latest: false,
             split_echo: None,
             dirty: false,
             doc_notes: Vec::new(),
             import_epoch: 0,
+            import_cancel: None,
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
@@ -296,7 +307,8 @@ impl Workspace {
             _journal_task: Task::ready(()),
             pinch: Default::default(),
             pinch_clock: Instant::now(),
-            recovery: markie_core::office_recovery::RecoveryStore::new(&data_dir),
+            recovery,
+            pending_office,
             _recovery_task: Task::ready(()),
             _poll_task: Task::ready(()),
             disk_conflict: None,
@@ -520,6 +532,8 @@ impl Workspace {
         self.doc_notes.clear();
         match document::open(path) {
             Ok(doc) => {
+                self.document_failure = None;
+                self.file_grants.grant_document(&doc.path);
                 let large = doc.is_large();
                 let kind = match doc.content {
                     Content::Text { text: raw, encoding, bom } => {
@@ -714,6 +728,7 @@ impl Workspace {
 
     /// Write whatever autosave still owes, now. Never a dialog.
     fn flush_pending(&mut self, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
             return self.office_flush_recovery(cx);
         }
@@ -839,6 +854,7 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
         if self.workspace_page_open() && self.live_docs_open() {
             return self.live_save(cx);
         }
@@ -1132,7 +1148,26 @@ impl Workspace {
         v_flex().size_full().bg(theme.background).child(toolbar).child(panes).into_any_element()
     }
 
-    fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_document(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if self.document_failure.is_none() {
+            match markie_core::render_boundary::project(|| self.project_document(cx)) {
+                Ok(document) => return document,
+                Err(detail) => self.show_document_failure(&detail, cx),
+            }
+        }
+        self.render_document_failure(cx)
+    }
+
+    fn project_document(&self, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(debug_assertions)]
+        if self.doc.is_some()
+            && std::env::var_os("MARKIE_RS_DATA_DIR").is_some()
+            && std::env::var_os("MARKIE_RS_RENDER_PROBE").is_some()
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static FIRED: AtomicBool = AtomicBool::new(false);
+            assert!(FIRED.swap(true, Ordering::Relaxed), "Scratch document render probe");
+        }
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
             return v_flex()
@@ -1321,8 +1356,17 @@ impl Render for Workspace {
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
         // A video card's player is a web view too: hidden under any layer.
-        let hide_video = self.web_views_covered(window, cx) || !self.rich_active();
+        let hide_video = self.document_failure.is_some() || self.web_views_covered(window, cx) || !self.rich_active();
         self.rich.update(cx, |r, _| r.set_web_views_covered(hide_video));
+        let document_actions = self.doc.is_some() && self.document_failure.is_none()
+            && !self.workspace_page_open() && !self.dialogs.open.is_open();
+        let output_actions = document_actions && match self.doc.as_ref().map(|d| &d.kind) {
+            Some(DocKind::Office(office)) => markie_export::office_pdf::can_print(office.view.read(cx).editor.rich()),
+            _ => true,
+        };
+        if let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc {
+            office.view.update(cx, |view, cx| view.set_menu_suspended(!document_actions, cx));
+        }
         self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
@@ -1363,6 +1407,11 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))
+            .on_action(cx.listener(|this, _: &NewMarkdownDocument, window, cx| this.create_document("md", window, cx)))
+            .on_action(cx.listener(|this, _: &NewWordDocument, window, cx| this.create_document("docx", window, cx)))
+            .on_action(cx.listener(|this, _: &NewTextDocument, window, cx| this.create_document("txt", window, cx)))
+            .on_action(cx.listener(|this, _: &NewDarkmownDocument, window, cx| this.create_document("wd", window, cx)))
+            .when(document_actions, |root| root.on_action(cx.listener(Self::on_document_details)))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_toggle_mode))
             .on_action(cx.listener(Self::on_focus_search))
@@ -1389,9 +1438,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
             .on_action(cx.listener(Self::on_toggle_vault))
-            .on_action(cx.listener(Self::on_print))
+            .when(output_actions, |root| root.on_action(cx.listener(Self::on_print)).on_action(cx.listener(Self::on_export_pdf_light)))
             .on_action(cx.listener(Self::on_export_pdf_dark))
-            .on_action(cx.listener(Self::on_export_pdf_light))
             .on_action(cx.listener(Self::on_export_html))
             // The Library panel's resizer drag follows the pointer anywhere.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
@@ -1435,6 +1483,7 @@ impl Render for Workspace {
                                     .h_full()
                                     .overflow_hidden()
                                     .children(banner)
+                                    .children(self.render_untitled_office_offer(cx))
                                     .children(cloud_banner)
                                     .children(self.render_live_banner(cx))
                                     .child(

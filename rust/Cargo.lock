@@ -5329,7 +5329,12 @@ dependencies = [
 name = "markie-office"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
+ "html5ever 0.27.0",
+ "markup5ever_rcdom",
  "miniz_oxide 0.8.9",
+ "unicode-segmentation",
+ "url",
 ]
 
 [[package]]
@@ -5337,6 +5342,7 @@ name = "markie-office-view"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "markie-core",
  "markie-office",
  "miniz_oxide 0.8.9",
 ]

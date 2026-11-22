@@ -224,7 +224,12 @@ impl Workspace {
         self.export_document(ExportKind::PdfDark, window, cx);
     }
     pub(super) fn on_export_pdf_light(&mut self, _: &crate::actions::ExportPdfLight, window: &mut Window, cx: &mut Context<Self>) {
-        self.export_document(ExportKind::PdfLight, window, cx);
+        let kind = if matches!(self.doc.as_ref().map(|doc| &doc.kind), Some(DocKind::Office(_))) {
+            ExportKind::OfficePdf
+        } else {
+            ExportKind::PdfLight
+        };
+        self.export_document(kind, window, cx);
     }
     pub(super) fn on_export_html(&mut self, _: &crate::actions::ExportHtml, window: &mut Window, cx: &mut Context<Self>) {
         self.export_document(ExportKind::Html, window, cx);

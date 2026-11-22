@@ -109,6 +109,26 @@ impl RecoveryStore {
         v
     }
 
+    /// Most recent not-yet-exported Office session under the app's untitled
+    /// directory. Ordinary files still use their own Recovery history.
+    pub fn pending_untitled(&self, untitled_root: &Path) -> Option<(PathBuf, Revision)> {
+        fs::read_dir(&self.root).ok()?.flatten().filter_map(|entry| {
+            if !entry.file_type().ok()?.is_dir() { return None; }
+            let bytes = fs::read(entry.path().join("index.json")).ok()?;
+            let index: RecoveryIndex = serde_json::from_slice(&bytes).ok()?;
+            let file = PathBuf::from(&index.path);
+            let relative = file.strip_prefix(untitled_root).ok()?;
+            let parts = relative.components().collect::<Vec<_>>();
+            if parts.len() != 2 || !parts.iter().all(|part| matches!(part, std::path::Component::Normal(_)))
+                || self.dir(&file) != entry.path()
+            {
+                return None;
+            }
+            let revision = index.revisions.last()?;
+            (index.exported_revision != Some(revision.revision)).then(|| (file, revision.clone()))
+        }).max_by_key(|(_, revision)| (revision.saved_at, revision.revision))
+    }
+
     pub fn read(&self, file: &Path, revision: u64) -> Option<Vec<u8>> {
         let idx = self.index(file)?;
         idx.revisions.iter().any(|r| r.revision == revision).then_some(())?;
@@ -267,6 +287,20 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI64, Ordering};
+
+    #[test]
+    fn pending_untitled_ignores_normal_files_and_exported_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, clock) = store(dir.path());
+        let root = dir.path().join("unsaved-office");
+        let draft = root.join("session-a/Untitled.docx");
+        let rev = s.put(&draft, "docx", b"unsaved bytes").unwrap();
+        clock.fetch_add(10, Ordering::SeqCst);
+        s.put(&dir.path().join("ordinary.odt"), "odt", b"newer").unwrap();
+        assert_eq!(s.pending_untitled(&root), Some((draft.clone(), rev.clone())));
+        s.mark_exported(&draft, rev.revision).unwrap();
+        assert!(s.pending_untitled(&root).is_none());
+    }
 
     fn store(dir: &Path) -> (RecoveryStore, Arc<AtomicI64>) {
         let clock = Arc::new(AtomicI64::new(1_000));

@@ -121,7 +121,7 @@ fn set_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Save", Save),
                 MenuItem::action("Make Interactive", MakeInteractive),
-                MenuItem::action("Version History", ShowHistory),
+                MenuItem::action("History…", ShowHistory),
                 MenuItem::separator(),
                 MenuItem::action("Rename…", RenameDocument),
                 MenuItem::action("Duplicate", DuplicateDocument),
@@ -143,6 +143,7 @@ fn set_menus(cx: &mut App) {
             ],
             disabled: false,
         },
+        workspace::source::edit_menu(),
         Menu {
             name: "View".into(),
             items: vec![

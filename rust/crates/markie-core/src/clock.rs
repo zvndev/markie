@@ -50,10 +50,28 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Node's `path.resolve`: absolute, with `.` and `..` folded away by name
+/// (no symlinks are followed), so `a/b/../c.md` hashes as `a/c.md`.
+pub fn resolve(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut out = std::path::PathBuf::new();
+    for c in abs.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 /// `<sha256(abs path)[:8]>-<basename>`: the per-document folder name used by
 /// snapshots, drafts and doc-meta in the Electron app.
 pub fn slug_for(path: &std::path::Path) -> String {
-    let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let abs = resolve(path);
     let hash = sha256_hex(abs.to_string_lossy().as_bytes());
     let base: String = abs
         .file_name()

@@ -1,0 +1,535 @@
+{
+ "meta": [
+  {
+   "html": "<head><title>Plain</title></head>",
+   "out": {
+    "title": "Plain",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"og:title\" content=\"OG\"><meta name=\"twitter:title\" content=\"TW\"><title>T</title>",
+   "out": {
+    "title": "OG",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta name=\"description\" property=\"og:title\" content=\"property wins\">",
+   "out": {
+    "title": "property wins",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"\" name=\"description\" content=\"empty property falls to name\">",
+   "out": {
+    "title": null,
+    "description": "empty property falls to name",
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"og:title\" property=\"og:description\" content=\"last property wins\">",
+   "out": {
+    "title": null,
+    "description": "last property wins",
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"og:title\" content=\"first\" content=\"second\">",
+   "out": {
+    "title": "second",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"og:title\" content=\"one\"><meta property=\"og:title\" content=\"two\">",
+   "out": {
+    "title": "one",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"og:title\" content=\"\">  <meta property=\"og:title\" content=\"after empty\">",
+   "out": {
+    "title": "after empty",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<META PROPERTY='og:site_name' CONTENT='Single &amp; quoted'>",
+   "out": {
+    "title": null,
+    "description": null,
+    "siteName": "Single & quoted",
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta name=description content=unquoted>",
+   "out": {
+    "title": null,
+    "description": "unquoted",
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>  Spaced\n\t out   title </title>",
+   "out": {
+    "title": "Spaced out title",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>&lt;b&gt; &quot;q&quot; &#39;a&#x27; &nbsp;x&nbsp; &#233; &#xe9; &#12a; &bogus; &#x110000;</title>",
+   "out": {
+    "title": "<b> \"q\" 'a' x é é &bogus; &#x110000;",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word </title>",
+   "out": {
+    "title": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀</title>",
+   "out": {
+    "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀�…",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀😀</title>",
+   "out": {
+    "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa�…",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"og:image\" content=\"https://x.example/a.png\"><meta name=\"twitter:image\" content=\"https://x.example/b.png\">",
+   "out": {
+    "title": null,
+    "description": null,
+    "siteName": null,
+    "imageUrl": "https://x.example/a.png"
+   }
+  },
+  {
+   "html": "<meta property=\"og:image:url\" content=\"https://x.example/c.png\">",
+   "out": {
+    "title": null,
+    "description": null,
+    "siteName": null,
+    "imageUrl": "https://x.example/c.png"
+   }
+  },
+  {
+   "html": "<meta name=\"twitter:description\" content=\"tw desc\"><meta name=\"description\" content=\"desc\">",
+   "out": {
+    "title": null,
+    "description": "tw desc",
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta name=\"application-name\" content=\"App\">",
+   "out": {
+    "title": null,
+    "description": null,
+    "siteName": "App",
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<head></head><body><meta property=\"og:title\" content=\"in body\"><title>body</title></body>",
+   "out": {
+    "title": null,
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<HEAD><TITLE>Upper</TITLE></HEAD>",
+   "out": {
+    "title": "Upper",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>a﻿b c</title>",
+   "out": {
+    "title": "a b c",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta property=\"og:title\" content=\"   \">  <title>fallback</title>",
+   "out": {
+    "title": "fallback",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<meta/><meta><meta property=\"og:title\"/>",
+   "out": {
+    "title": null,
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>never closed",
+   "out": {
+    "title": null,
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>   </title>",
+   "out": {
+    "title": "",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  },
+  {
+   "html": "<title>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀</title>",
+   "out": {
+    "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…",
+    "description": null,
+    "siteName": null,
+    "imageUrl": null
+   }
+  }
+ ],
+ "targets": [
+  {
+   "url": "https://example.com/page",
+   "out": "https://example.com/page"
+  },
+  {
+   "url": "http://example.com/a?b=1#frag",
+   "out": "http://example.com/a?b=1"
+  },
+  {
+   "url": "https://example.com:8443/",
+   "out": null
+  },
+  {
+   "url": "https://user:pw@example.com/",
+   "out": null
+  },
+  {
+   "url": "ftp://example.com/",
+   "out": null
+  },
+  {
+   "url": "javascript:alert(1)",
+   "out": null
+  },
+  {
+   "url": "https://localhost/",
+   "out": null
+  },
+  {
+   "url": "https://foo.localhost/",
+   "out": null
+  },
+  {
+   "url": "https://printer.local/",
+   "out": null
+  },
+  {
+   "url": "https://example.com./x",
+   "out": "https://example.com./x"
+  },
+  {
+   "url": "https://EXAMPLE.com/Path",
+   "out": "https://example.com/Path"
+  },
+  {
+   "url": "https://example.com/?token=1",
+   "out": null
+  },
+  {
+   "url": "https://example.com/?api_key=1",
+   "out": null
+  },
+  {
+   "url": "https://example.com/?apiKey=1",
+   "out": null
+  },
+  {
+   "url": "https://example.com/?monkey=1",
+   "out": "https://example.com/?monkey=1"
+  },
+  {
+   "url": "https://example.com/?code=1",
+   "out": null
+  },
+  {
+   "url": "https://example.com/?zipcode=1",
+   "out": "https://example.com/?zipcode=1"
+  },
+  {
+   "url": "https://example.com/?x-sig=1",
+   "out": null
+  },
+  {
+   "url": "https://example.com/#access_token=abc",
+   "out": null
+  },
+  {
+   "url": "https://example.com/#section",
+   "out": "https://example.com/"
+  },
+  {
+   "url": "https://example.com/reset-password/abc",
+   "out": null
+  },
+  {
+   "url": "https://example.com/auth/callback",
+   "out": null
+  },
+  {
+   "url": "https://example.com/auth/callbacks",
+   "out": "https://example.com/auth/callbacks"
+  },
+  {
+   "url": "https://127.0.0.1/",
+   "out": null
+  },
+  {
+   "url": "https://10.1.2.3/",
+   "out": null
+  },
+  {
+   "url": "https://8.8.8.8/",
+   "out": "https://8.8.8.8/"
+  },
+  {
+   "url": "https://[::1]/",
+   "out": null
+  },
+  {
+   "url": "https://[2606:4700::1111]/",
+   "out": "https://[2606:4700::1111]/"
+  },
+  {
+   "url": "https://[2001:db8::1]/",
+   "out": null
+  },
+  {
+   "url": "https://[::ffff:8.8.8.8]/",
+   "out": null
+  },
+  {
+   "url": "https://169.254.169.254/latest",
+   "out": null
+  },
+  {
+   "url": "https://例え.jp/パス",
+   "out": "https://xn--r8jz45g.jp/%E3%83%91%E3%82%B9"
+  },
+  {
+   "url": "https://example.com/a b",
+   "out": "https://example.com/a%20b"
+  },
+  {
+   "url": "not a url",
+   "out": null
+  },
+  {
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/",
+   "out": null
+  }
+ ],
+ "private": [
+  {
+   "address": "0.0.0.0",
+   "out": true
+  },
+  {
+   "address": "10.0.0.1",
+   "out": true
+  },
+  {
+   "address": "100.64.0.1",
+   "out": true
+  },
+  {
+   "address": "100.128.0.1",
+   "out": false
+  },
+  {
+   "address": "127.0.0.1",
+   "out": true
+  },
+  {
+   "address": "169.254.1.1",
+   "out": true
+  },
+  {
+   "address": "172.15.0.1",
+   "out": false
+  },
+  {
+   "address": "172.16.0.1",
+   "out": true
+  },
+  {
+   "address": "172.31.255.255",
+   "out": true
+  },
+  {
+   "address": "172.32.0.1",
+   "out": false
+  },
+  {
+   "address": "192.0.0.1",
+   "out": true
+  },
+  {
+   "address": "192.0.2.1",
+   "out": true
+  },
+  {
+   "address": "192.88.99.1",
+   "out": true
+  },
+  {
+   "address": "192.168.1.1",
+   "out": true
+  },
+  {
+   "address": "198.18.0.1",
+   "out": true
+  },
+  {
+   "address": "198.51.100.1",
+   "out": true
+  },
+  {
+   "address": "203.0.113.1",
+   "out": true
+  },
+  {
+   "address": "203.0.114.1",
+   "out": false
+  },
+  {
+   "address": "224.0.0.1",
+   "out": true
+  },
+  {
+   "address": "255.255.255.255",
+   "out": true
+  },
+  {
+   "address": "8.8.8.8",
+   "out": false
+  },
+  {
+   "address": "1.1.1.1",
+   "out": false
+  },
+  {
+   "address": "::",
+   "out": true
+  },
+  {
+   "address": "::1",
+   "out": true
+  },
+  {
+   "address": "fe80::1",
+   "out": true
+  },
+  {
+   "address": "fc00::1",
+   "out": true
+  },
+  {
+   "address": "2000::1",
+   "out": false
+  },
+  {
+   "address": "2001:db8::1",
+   "out": true
+  },
+  {
+   "address": "2001:100::1",
+   "out": true
+  },
+  {
+   "address": "2001:200::1",
+   "out": false
+  },
+  {
+   "address": "2002::1",
+   "out": true
+  },
+  {
+   "address": "2606:4700::1111",
+   "out": false
+  },
+  {
+   "address": "3fff::1",
+   "out": false
+  },
+  {
+   "address": "3fff:1000::1",
+   "out": false
+  },
+  {
+   "address": "4000::1",
+   "out": true
+  },
+  {
+   "address": "::ffff:8.8.8.8",
+   "out": true
+  }
+ ]
+}

@@ -156,7 +156,7 @@ fn block(n: &Node, esc: Escape, alt: bool) -> String {
         }
         Node::Paragraph { content, .. } => inline_md(&collapse(content), esc, false),
         Node::Heading { level, content, .. } => {
-            format!("{} {}", "#".repeat(*level as usize), inline_md(&heading_content(content), esc, false))
+            format!("{} {}", "#".repeat(*level as usize), inline_md_after(&heading_content(content), esc, false, true))
         }
         Node::Blockquote(children) => prefix_lines(&write_nodes(children, esc), "> ", ">"),
         Node::BulletList { tight, items } => list(items.iter().map(|c| (bullet.to_string(), c)), *tight, esc),
@@ -520,6 +520,13 @@ fn expel_whitespace(inlines: &[Inline]) -> Vec<Inline> {
 }
 
 fn inline_md(inlines: &[Inline], esc: Escape, in_table: bool) -> String {
+    inline_md_after(inlines, esc, in_table, false)
+}
+
+/// `after_prefix`: the text follows a marker on its line (a heading's `### `),
+/// so its first characters are not at the start of a line and need no
+/// line-start escape, as prosemirror-markdown writes `### 1. Title`.
+fn inline_md_after(inlines: &[Inline], esc: Escape, in_table: bool, after_prefix: bool) -> String {
     let inlines = expel_whitespace(inlines);
     let mut out = String::new();
     // Open marks, each with the marks of the run that opened it.
@@ -551,8 +558,8 @@ fn inline_md(inlines: &[Inline], esc: Escape, in_table: bool) -> String {
                 } else if bare(marks.link.as_ref(), esc) {
                     out.push_str(text);
                 } else {
-                    let at_start = out.is_empty() || out.ends_with('\n');
-                    out.push_str(&escape(text, esc, at_start, in_table));
+                    let at_start = (out.is_empty() && !after_prefix) || out.ends_with('\n');
+                    out.push_str(&escape(text, esc, at_start, out.is_empty(), in_table));
                 }
             }
             Inline::Math { source } => out.push_str(source),
@@ -576,7 +583,7 @@ fn code_span(text: &str) -> String {
     }
 }
 
-fn escape(text: &str, esc: Escape, at_line_start: bool, in_table: bool) -> String {
+fn escape(text: &str, esc: Escape, at_line_start: bool, first_line: bool, in_table: bool) -> String {
     let mut out = String::with_capacity(text.len() + 8);
     let chars: Vec<char> = text.chars().collect();
     // `[^label]` is a footnote reference; escaped it would stop being one.
@@ -624,24 +631,39 @@ fn escape(text: &str, esc: Escape, at_line_start: bool, in_table: bool) -> Strin
         out.push(c);
     }
     if !esc.all && at_line_start {
-        out = escape_line_start(&out);
+        out = escape_line_start(&out, first_line);
     }
     out
 }
 
-fn escape_line_start(s: &str) -> String {
+/// prosemirror-markdown's `esc(str, startOfLine)` line-start rules:
+/// `-`, `*`, `>` always; `+` before white space; one to six `#` before white
+/// space or the end; digits before `. ` and white space. Markie RS adds the
+/// two cases where that rule lets a line read back differently: a number
+/// before `)` and white space, or before `.` or `)` at the very end (both
+/// start an ordered list), and `=` on a line after a break (a setext
+/// underline). Neither ever occurs in what TipTap writes byte for byte.
+fn escape_line_start(s: &str, first_line: bool) -> String {
     let b = s.as_bytes();
-    if b.is_empty() {
-        return s.to_string();
-    }
-    match b[0] {
-        b'#' | b'>' | b'+' | b'-' | b'=' => format!("\\{s}"),
-        b'0'..=b'9' => {
+    let space_or_end = |i: usize| b.get(i).is_none_or(|c| c.is_ascii_whitespace());
+    let space = |i: usize| b.get(i).is_some_and(|c| c.is_ascii_whitespace());
+    match b.first() {
+        None => s.to_string(),
+        Some(b'-' | b'*' | b'>') => format!("\\{s}"),
+        Some(b'+') if space_or_end(1) => format!("\\{s}"),
+        Some(b'=') if !first_line => format!("\\{s}"),
+        Some(b'#') => {
+            let hashes = s.bytes().take_while(|c| *c == b'#').count();
+            if hashes <= 6 && space_or_end(hashes) { format!("\\{s}") } else { s.to_string() }
+        }
+        Some(b'0'..=b'9') => {
             let digits = s.bytes().take_while(|c| c.is_ascii_digit()).count();
-            match b.get(digits) {
-                Some(b'.') | Some(b')') => format!("{}\\{}", &s[..digits], &s[digits..]),
-                _ => s.to_string(),
-            }
+            let escape = match b.get(digits) {
+                Some(b'.') => space_or_end(digits + 1),
+                Some(b')') => space_or_end(digits + 1) && (space(digits + 1) || digits + 1 == b.len()),
+                _ => false,
+            };
+            if escape { format!("{}\\{}", &s[..digits], &s[digits..]) } else { s.to_string() }
         }
         _ => s.to_string(),
     }

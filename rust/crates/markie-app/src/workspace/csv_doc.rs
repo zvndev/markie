@@ -119,7 +119,54 @@ pub(super) fn to_disk(format: FormatKind, text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{csv_save_note, csv_to_markdown_table, markdown_table_to_csv};
+    use super::{csv_drops_content, csv_save_note, csv_to_markdown_table, markdown_table_to_csv};
+
+    /// Electron's own outputs on the same inputs
+    /// (`rust/scripts/parity/source-cases.mjs`).
+    #[test]
+    fn source_conversions_match_electron() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/source_electron.json")).unwrap();
+        let mut bad = Vec::new();
+        for c in fixture["formatTables"].as_array().unwrap() {
+            let (i, o) = (c["in"].as_str().unwrap(), c["out"].as_str().unwrap());
+            let mine = markie_core::format_tables::format_markdown_tables(i);
+            if mine != o {
+                bad.push(format!("formatMarkdownTables {i:?}\n  electron {o:?}\n  rs       {mine:?}"));
+            }
+        }
+        for c in fixture["csvToMarkdown"].as_array().unwrap() {
+            let (i, o) = (c["in"].as_str().unwrap(), c["out"].as_str().unwrap());
+            let mine = csv_to_markdown_table(i);
+            if mine != o {
+                bad.push(format!("csvToMarkdownTable {i:?}\n  electron {o:?}\n  rs       {mine:?}"));
+            }
+        }
+        for c in fixture["markdownToCsv"].as_array().unwrap() {
+            let (i, o) = (c["in"].as_str().unwrap(), c["out"].as_str().unwrap());
+            let mine = markdown_table_to_csv(i);
+            if mine != o {
+                bad.push(format!("markdownTableToCSV {i:?}\n  electron {o:?}\n  rs       {mine:?}"));
+            }
+            let d = &c["drops"];
+            let (lines, table) = csv_drops_content(i);
+            if (lines as u64, table) != (d["droppedLines"].as_u64().unwrap(), d["hasTable"].as_bool().unwrap()) {
+                bad.push(format!("csvDropsContent {i:?}: electron {d}, rs ({lines}, {table})"));
+            }
+        }
+        for c in fixture["stats"].as_array().unwrap() {
+            let i = c["in"].as_str().unwrap();
+            let o = &c["out"];
+            let s = markie_core::stats::compute(i);
+            let mine = [s.words, s.chars, s.chars_no_spaces, s.lines, s.headings, s.code_blocks, s.links, s.reading_minutes];
+            let theirs = ["words", "chars", "charsNoSpaces", "lines", "headings", "codeBlocks", "links", "readingTimeMin"]
+                .map(|k| o[k].as_u64().unwrap() as usize);
+            if mine != theirs {
+                bad.push(format!("computeStats {i:?}: electron {theirs:?}, rs {mine:?}"));
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
 
     #[test]
     fn csv_becomes_a_pipe_table() {

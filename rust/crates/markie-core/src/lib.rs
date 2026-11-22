@@ -31,6 +31,7 @@ pub mod formats;
 pub mod history;
 pub mod import;
 pub mod link_preview;
+pub mod line_diff;
 pub mod links;
 pub mod index;
 pub mod office_recovery;

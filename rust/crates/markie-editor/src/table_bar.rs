@@ -10,8 +10,12 @@ use markie_rich::editor::Editor;
 
 type Run = fn(&mut Editor);
 
-/// (label, title, command). `None` is the header toggle, which Markdown
-/// cannot express (a table keeps its first row as the header).
+/// (label, title, command). `None` is the header toggle. Electron's runs
+/// TipTap's toggleHeaderRow, and a table without a header row then has no
+/// Markdown form: `isMarkdownTable` fails and `writeTableHTML` saves it as
+/// an HTML `<table>`. Markie RS reads an HTML table as source, not as a
+/// table, so the toggle would turn the table into raw HTML the next time
+/// the file opens. It stays disabled, and its title says why.
 const ACTIONS: &[(&str, &str, Option<Run>)] = &[
     ("+ Row ↑", "Add row above", Some(|e| e.add_row(false))),
     ("+ Row ↓", "Add row below", Some(|e| e.add_row(true))),
@@ -19,9 +23,12 @@ const ACTIONS: &[(&str, &str, Option<Run>)] = &[
     ("+ Col →", "Add column right", Some(|e| e.add_column(true))),
     ("− Row", "Delete row", Some(|e| e.delete_row())),
     ("− Col", "Delete column", Some(|e| e.delete_column())),
-    ("Header", "Toggle header row (a Markdown table always has one)", None),
+    ("Header", HEADER_TITLE, None),
     ("✕ Table", "Delete table", Some(|e| e.delete_table())),
 ];
+
+/// The disabled toggle's title: Electron's own title, then the reason.
+pub(crate) const HEADER_TITLE: &str = "Toggle header row - A table without a header row can only be saved as HTML, so Markdown tables keep theirs";
 
 impl RichView {
     pub(crate) fn render_table_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -64,5 +71,19 @@ impl RichView {
             bar = bar.child(b);
         }
         Some(bar.into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ACTIONS, HEADER_TITLE};
+
+    #[test]
+    fn the_bar_has_electrons_eight_buttons_with_the_header_toggle_disabled() {
+        let labels: Vec<&str> = ACTIONS.iter().map(|(l, _, _)| *l).collect();
+        assert_eq!(labels, ["+ Row ↑", "+ Row ↓", "+ Col ←", "+ Col →", "− Row", "− Col", "Header", "✕ Table"]);
+        let header = ACTIONS.iter().find(|(l, _, _)| *l == "Header").unwrap();
+        assert!(header.2.is_none());
+        assert!(HEADER_TITLE.starts_with("Toggle header row"));
     }
 }

@@ -5,6 +5,7 @@
 
 mod actions;
 mod deeplinks;
+mod doc_worker;
 mod default_apps;
 mod icons;
 mod instance;
@@ -215,6 +216,9 @@ fn main() {
     app.on_open_urls(move |urls| {
         let _ = open_tx.unbounded_send(urls);
     });
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(doc_worker::ARG)) {
+        std::process::exit(if doc_worker::serve() { 0 } else { 1 });
+    }
     // Second launches arrive on their own thread; an empty list only raises.
     std::thread::spawn(move || {
         while let Ok(args) = second_launches.recv() {

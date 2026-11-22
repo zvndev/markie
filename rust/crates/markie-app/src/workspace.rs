@@ -147,6 +147,7 @@ pub struct Workspace {
     /// Warnings shown above a converted copy (Electron's `session.warnings`).
     doc_notes: Vec<String>,
     import_epoch: u64,
+    import_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
@@ -287,6 +288,7 @@ impl Workspace {
             reading_minutes: 0,
             sections: Vec::new(),
             history: History::new(&data_dir),
+            import_cancel: None,
             drafts,
             disk: DiskMemory::default(),
             autosave: Autosave::default(),

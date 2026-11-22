@@ -316,10 +316,7 @@ impl Workspace {
                 .py(px(4.))
                 .cursor_pointer()
                 .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(12.))
-                        .text_color(t.muted)
+                    setting_text(t)
                         .child("Preview links on hover")
                         .child(
                             div()
@@ -336,6 +333,13 @@ impl Workspace {
     }
 }
 
+/// The words beside a checkbox in Advanced: the span in Electron's
+/// `label.flex.justify-between`. It may shrink below its text's width, so
+/// the description wraps inside the panel and the checkbox stays on it.
+fn setting_text(t: &Tokens) -> Div {
+    div().flex_1().min_w_0().text_size(px(12.)).text_color(t.muted)
+}
+
 /// A labelled checkbox row in Advanced (`label.flex.items-start`), greyed
 /// with the tag because Markie RS has no switch behind it yet.
 fn setting_block(section: &str, label: &str, detail: &str, checked: bool, t: &Tokens) -> Div {
@@ -347,10 +351,7 @@ fn setting_block(section: &str, label: &str, detail: &str, checked: bool, t: &To
             .gap(px(12.))
             .py(px(4.))
             .child(
-                div()
-                    .flex_1()
-                    .text_size(px(12.))
-                    .text_color(t.muted)
+                setting_text(t)
                     .child(div().flex().items_center().gap(px(8.)).child(label.to_string()).child(badge(t)))
                     .child(
                         div()
@@ -656,6 +657,19 @@ pub(super) fn specimen(body: &'static str, heading: &'static str, size: f32, lh:
 #[cfg(test)]
 mod link_preview_tests {
     use super::link_previews_enabled;
+
+    /// Without a zero minimum width the description kept its one-line width,
+    /// ran past the panel and pushed the checkbox out of sight.
+    #[test]
+    fn setting_text_may_shrink_so_its_checkbox_stays_on_the_panel() {
+        use gpui_kit::Styled as _;
+        let c = gpui_kit::black();
+        let t = super::super::dialog_chrome::Tokens { dark: true, background: c, surface: c, surface2: c, foreground: c, muted: c, border: c, accent: c, blue: c, red: c };
+        let mut text = super::setting_text(&t);
+        let style = text.style();
+        assert_eq!(style.flex_grow, Some(1.));
+        assert_eq!(style.min_size.width, Some(gpui_kit::px(0.).into()));
+    }
 
     #[test]
     fn only_an_explicit_zero_turns_previews_off() {

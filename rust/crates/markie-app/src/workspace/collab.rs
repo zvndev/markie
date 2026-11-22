@@ -270,6 +270,16 @@ impl Workspace {
         self.collab_check(cx);
     }
 
+    /// Sync turned on or off for `path` (cloud.rs). When it is the open
+    /// document, ask the server at once, so a shared document goes live as
+    /// soon as it has a cloud copy, as Electron's refreshCollab does.
+    pub(super) fn collab_after_sync_change(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if self.doc.as_ref().is_some_and(|d| d.path == path) {
+            debug(|| "sync changed: re-checking access".into());
+            self.collab_recheck(cx);
+        }
+    }
+
     fn collab_check(&mut self, cx: &mut Context<Self>) {
         self.collab.run += 1;
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
@@ -282,6 +292,17 @@ impl Workspace {
             .map(|d| (d.account.client.clone(), d.doc_id.clone(), d.account.user.id.clone(), Some(d.account.user.clone())))
             .or_else(|| self.cloud.bound_scope(&path).map(|(scope, id)| (Arc::new(scope.client), id, scope.user, None)));
         let Some((client, doc_id, user_id, known_user)) = source else {
+            // No cloud copy any more (sync turned off, or signed out): a plain
+            // local file, with nothing to enforce and no live session.
+            if self.collab.cloud.is_some() || self.collab.live.is_some() || self.collab.role.is_some() {
+                self.stop_live(cx);
+                self.collab.role = None;
+                self.collab.access = None;
+                self.collab.members = 0;
+                self.collab.shared_by = None;
+                self.collab.note = None;
+                self.comments_reset(cx);
+            }
             self.collab.cloud = None;
             self.apply_lock(cx);
             self.local_comments_open(cx);

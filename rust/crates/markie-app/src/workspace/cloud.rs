@@ -288,6 +288,12 @@ pub(super) enum TextAction {
 }
 
 impl TextAction {
+    /// Whether the action turns sync on or off, after which the document's
+    /// role and live session are asked for again.
+    pub(super) fn changes_sync(self) -> bool {
+        matches!(self, Self::Enable | Self::Pause | Self::Delete)
+    }
+
     fn sends_text(self) -> bool {
         matches!(
             self,
@@ -345,10 +351,28 @@ fn landing_dir_at(mut dir: PathBuf) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CloudWorkspace, landing_dir_at, path_occupied};
+    use super::{CloudWorkspace, TextAction, landing_dir_at, path_occupied};
     use markie_cloud::tokens::{self, MemoryTokenStore, TokenStore};
     use markie_cloud::{assets, sync};
     use std::sync::Arc;
+
+    /// Turning sync on or off re-checks the open document's access and live
+    /// session (refreshCollab); a push, retry or pull does not.
+    #[test]
+    fn only_sync_on_and_off_recheck_collaboration() {
+        let all = [
+            TextAction::Enable,
+            TextAction::Push,
+            TextAction::Repair,
+            TextAction::Pause,
+            TextAction::Delete,
+            TextAction::Pull,
+            TextAction::KeepBoth,
+            TextAction::Overwrite,
+        ];
+        let rechecks: Vec<_> = all.into_iter().filter(|a| a.changes_sync()).collect();
+        assert_eq!(rechecks, [TextAction::Enable, TextAction::Pause, TextAction::Delete]);
+    }
 
     /// What the sign-in sheet writes is what the sync workspace reads: a
     /// confirmed session on the local test server becomes a scope at once.
@@ -791,6 +815,12 @@ impl Workspace {
                     {
                         workspace.refresh_cloud_resources(cx);
                     }
+                    // Turning sync on or off changes who the server says this
+                    // person is to the document, and whether it goes live:
+                    // the Library's onSyncChanged runs refreshCollab (page.tsx).
+                    if action.changes_sync() {
+                        workspace.collab_after_sync_change(&path, cx);
+                    }
                 }
                 if workspace.cloud.queued.remove(&path) {
                     workspace.cloud_after_save(&path, cx);
@@ -842,11 +872,16 @@ impl Workspace {
         Ok(())
     }
 
-    /// Someone signed in or out in the sheet: list that account's cloud.
+    /// Someone signed in or out in the sheet: list that account's cloud, and
+    /// ask again who this person is to the open document ("sign-in/out
+    /// changes live eligibility", page.tsx).
     pub(super) fn on_account_changed(&mut self, cx: &mut Context<Self>) {
         self.cloud.selection = None;
         self.cloud.area = None;
         self.refresh_cloud(false, cx);
+        if self.doc.is_some() {
+            self.collab_on_open(cx);
+        }
     }
 
     pub(super) fn start_cloud_poll(&mut self, cx: &mut Context<Self>) {

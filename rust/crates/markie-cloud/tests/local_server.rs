@@ -67,15 +67,88 @@ fn device(env: &Env, store: &ServerStore) -> CloudClient {
 
 async fn sign_up(env: &Env, store: &ServerStore, name: &str) -> (CloudClient, String, String) {
     let email = address(&name.to_lowercase());
+    let (client, id) = sign_up_at(env, store, name, &email).await;
+    (client, email, id)
+}
+
+async fn sign_up_at(env: &Env, store: &ServerStore, name: &str, email: &str) -> (CloudClient, String) {
     let c = device(env, store);
     let auth = AuthClient::new(&c);
-    assert_eq!(auth.sign_up_email(&email, "correct horse battery", name).await.unwrap(), SignInOutcome::NeedsVerification);
+    assert_eq!(auth.sign_up_email(email, "correct horse battery", name).await.unwrap(), SignInOutcome::NeedsVerification);
     // An unproven address cannot sign in.
-    assert_eq!(auth.sign_in_email(&email, "correct horse battery").await.unwrap(), SignInOutcome::NeedsVerification);
-    let code = code_for(env, &email, "verification code", 0).await;
-    let user = auth.verify_email(&email, &code).await.unwrap().expect("verify signs in");
+    assert_eq!(auth.sign_in_email(email, "correct horse battery").await.unwrap(), SignInOutcome::NeedsVerification);
+    let code = code_for(env, email, "verification code", 0).await;
+    let user = auth.verify_email(email, &code).await.unwrap().expect("verify signs in");
     assert_eq!(c.session().unwrap().user_id.as_deref(), Some(user.id.as_str()));
-    (c, email, user.id)
+    (c, user.id)
+}
+
+#[tokio::test]
+async fn cloud_sync_assets_links_and_office_bytes() {
+    use markie_cloud::platform::PlatformClient;
+    use markie_cloud::{assets, links};
+    let Some(env) = env() else { return; };
+    let mut store = ServerStore::open(None, true);
+    let probe = store.probe(&Transport::new(), &env.base).await.unwrap();
+    store.add(&probe.probe_id).unwrap();
+    let (client, uid) = sign_up_at(&env, &store, "Sync proof", "success@simulator.amazonses.com").await;
+    let client = client.for_user(&uid);
+    let docs = DocsClient::new(&client);
+    let engine = SyncEngine::new(&client, false);
+    let dir = tempfile::tempdir().unwrap();
+    let note = dir.path().join("source.md");
+    let content = "![Test](media/test.png)\n\n[Target](target.md)\n";
+    std::fs::write(&note, content).unwrap();
+    std::fs::create_dir(dir.path().join("media")).unwrap();
+    let png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+    std::fs::write(dir.path().join("media/test.png"), png).unwrap();
+    let (first, result) = engine.sync_on(&SyncRecord::default(), "source.md", content, false).await;
+    assert_eq!(result, PushResult::Ok { version: 1 });
+    let (target, _) = engine.sync_on(&SyncRecord::default(), "target.md", "# Target\n", false).await;
+    let id = first.cloud_doc_id.as_deref().unwrap();
+    let target_id = target.cloud_doc_id.unwrap();
+    let assets = assets::reconcile(&docs, id, 1, &note, content, &[], false, &Default::default()).await.unwrap();
+    assert!(assets.fingerprint.is_some() && assets.refused.is_none() && assets.skipped.is_empty());
+    let cache = dir.path().join("cache");
+    for _ in 0..2 {
+        let media = assets::revalidate(&docs, &cache, &uid, &env.base, id, "media/test.png").await.unwrap();
+        assert_eq!(std::fs::read(media).unwrap(), png);
+    }
+    let pointers = links::resolve(&note, content, |p| p.ends_with("target.md").then(|| target_id.clone()));
+    let posted = links::reconcile(&docs, id, 1, &pointers, &Default::default()).await.unwrap();
+    assert!(posted.refused.is_none());
+    assert_eq!(links::fetch(&docs, id).await.unwrap(), pointers);
+    let (second, status) = engine.push(&first, "source.md", "# newer\n", false).await;
+    assert_eq!(status, PushResult::Ok { version: 2 });
+    let (conflict, status) = engine.push(&first, "source.md", "# mine\n", false).await;
+    assert_eq!(status, PushResult::Conflict { server_version: Some(2) });
+    assert_eq!(engine.resolve_take_cloud(&conflict, "source.md").await.unwrap().write.as_deref(), Some("# newer\n"));
+    assert_eq!(engine.resolve_overwrite(&conflict, "source.md", "# mine\n").await.unwrap().version, 3);
+    assert_eq!(engine.sync_off(&second, false).await.unwrap().state, SyncState::Paused);
+    eprintln!("text sync, conflict, asset conditional download and document link round trips passed");
+
+    let office = PlatformClient(&client);
+    let bytes = include_bytes!("../../markie-office/tests/fixtures/textedit-report.rtf");
+    let original = office.upload("report.rtf", bytes, None, None).await.unwrap();
+    let id = &original.meta.id;
+    assert_eq!(office.snapshot(id, None).await.unwrap().bytes, bytes);
+    assert!(office.list().await.unwrap().iter().any(|m| m.id == *id && m.byte_length == bytes.len()));
+    assert!(office.members(id).await.unwrap().is_empty());
+    let updated = b"{\\rtf1 Updated}";
+    assert_eq!(office.upload("report.rtf", updated, Some((id, 1)), None).await.unwrap().meta.version, 2);
+    let stale = office.upload("report.rtf", bytes, Some((id, 1)), None).await.unwrap_err();
+    assert_eq!(stale.status(), Some(409));
+    assert_eq!(office.snapshot(id, Some(1)).await.unwrap().bytes, bytes);
+    assert_eq!(office.snapshot(id, None).await.unwrap().bytes, updated);
+    let link = office.create_link(id).await.unwrap();
+    let response = client.call(markie_cloud::client::Call::new(markie_cloud::http::Method::Get,
+        &format!("/api/document-platform/links/{}/download", link.token)).anonymous()).await.unwrap();
+    assert!(response.ok());
+    assert_eq!(response.bytes, updated);
+    office.revoke_link(id, &link.id).await.unwrap();
+    let links = office.links(id).await.unwrap();
+    assert!(links["links"][0]["revokedAt"].is_number());
+    eprintln!("office create, list, replace, history, stale version, download and revoke passed");
 }
 
 struct DocsIo<'a> {

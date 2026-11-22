@@ -97,6 +97,10 @@ impl Registry {
              CREATE TABLE IF NOT EXISTS rs_settings (
                key TEXT PRIMARY KEY,
                value TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS rs_cloud_sync (
+               path TEXT PRIMARY KEY,
+               record TEXT NOT NULL
              );",
         )?;
         Ok(Self { db })
@@ -235,6 +239,33 @@ impl Registry {
             "INSERT INTO rs_settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [name, value],
+        )?;
+        Ok(())
+    }
+
+    /// Cloud records live beside the local registry, with no networking dependency.
+    pub fn cloud_record<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<Option<T>> {
+        let record: Option<String> = self.db
+            .query_row("SELECT record FROM rs_cloud_sync WHERE path = ?1", [key(path)], |r| r.get(0))
+            .optional()?;
+        record.map(|json| serde_json::from_str(&json).map_err(Into::into)).transpose()
+    }
+
+    pub fn cloud_records<T: serde::de::DeserializeOwned>(&self) -> Result<Vec<(PathBuf, T)>> {
+        let mut stmt = self.db.prepare("SELECT path, record FROM rs_cloud_sync ORDER BY path")?;
+        stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .map(|row| {
+                let (path, json) = row?;
+                Ok((PathBuf::from(path), serde_json::from_str(&json)?))
+            })
+            .collect()
+    }
+
+    pub fn set_cloud_record(&self, path: &Path, record: &impl serde::Serialize) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO rs_cloud_sync (path, record) VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET record = excluded.record",
+            params![key(path), serde_json::to_string(record)?],
         )?;
         Ok(())
     }

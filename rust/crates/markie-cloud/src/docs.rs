@@ -30,11 +30,13 @@ pub struct DocMeta {
     pub shared: bool,
     #[serde(default)]
     pub role: Option<Role>,
-    #[serde(default)]
+    #[serde(default, alias = "sharedBy")]
     pub shared_by: Option<String>,
     /// On owned documents: whether anybody else can read it.
     #[serde(default, rename = "sharedOut")]
     pub shared_out: Option<bool>,
+    #[serde(default, rename = "areaId")]
+    pub area_id: Option<String>,
 }
 
 /// `GET /api/docs/:id`.
@@ -103,7 +105,9 @@ impl<'a> DocsClient<'a> {
         let path = format!("/api/docs/{}", seg(id));
         let v = self.client.call(Call::new(Method::Get, &path).max_bytes(MAX_DOC_RESPONSE_BYTES)).await?.json()?;
         let doc = v.get("doc").cloned().ok_or(CloudError::Unreadable)?;
-        serde_json::from_value(doc).map_err(|_| CloudError::Unreadable)
+        let doc: Doc = serde_json::from_value(doc).map_err(|_| CloudError::Unreadable)?;
+        if doc.id != id || doc.version < 1 { return Err(CloudError::Unreadable); }
+        Ok(doc)
     }
 
     pub async fn put(&self, id: &str, body: &PutDoc) -> PutOutcome {
@@ -157,7 +161,7 @@ impl<'a> DocsClient<'a> {
     /// One asset of a document. 304 with `if_none_match` means the cached copy stands.
     pub async fn fetch_asset(&self, id: &str, reference: &str, if_none_match: Option<&str>) -> Result<Answer> {
         let path = format!("/api/docs/{}/assets/file?ref={}", seg(id), seg(reference));
-        let mut call = Call::new(Method::Get, &path).max_bytes(MAX_DOC_RESPONSE_BYTES);
+        let mut call = Call::new(Method::Get, &path).max_bytes(crate::assets::MAX_ASSET_BYTES);
         call.timeout = TRANSFER_TIMEOUT;
         call.if_none_match = if_none_match;
         self.client.call(call).await

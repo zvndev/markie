@@ -372,11 +372,15 @@ impl<'a> SyncEngine<'a> {
 
     /// Turn syncing on: create the cloud doc, or push a new snapshot of a linked one.
     pub async fn sync_on(&self, record: &SyncRecord, name: &str, content: &str, viewer: bool) -> (SyncRecord, PushResult) {
+        self.sync_on_in_area(record, name, content, viewer, None).await
+    }
+
+    pub async fn sync_on_in_area(&self, record: &SyncRecord, name: &str, content: &str, viewer: bool, area: Option<&str>) -> (SyncRecord, PushResult) {
         let plan = match plan_sync_on(record, viewer, || uuid::Uuid::new_v4().to_string()) {
             Ok(p) => p,
             Err(refused) => return refused,
         };
-        let (hash, out) = self.put(&plan, name, content, None).await;
+        let (hash, out) = self.put(&plan, name, content, if plan.linked { None } else { area }).await;
         after_put(record, &plan, self.record_origin.as_deref(), &hash, &out, &crate::registry::iso_now_system())
     }
 
@@ -434,7 +438,7 @@ impl<'a> SyncEngine<'a> {
     /// whatever version the server holds now.
     pub async fn resolve_overwrite(&self, record: &SyncRecord, name: &str, local: &str) -> Result<Resolved, String> {
         let id = record.cloud_doc_id.clone().ok_or("not resolvable")?;
-        let base = self.docs.get(&id).await.map(|d| d.version).unwrap_or(0);
+        let base = self.fetch(&id).await?.version;
         let plan = PushPlan { cloud_id: id, base_version: base, linked: true };
         let (hash, out) = self.put(&plan, name, local, None).await;
         match after_put(record, &plan, None, &hash, &out, &crate::registry::iso_now_system()) {
@@ -594,7 +598,7 @@ mod tests {
     }
 
     fn meta(id: &str, v: i64, shared: bool, out: Option<bool>) -> DocMeta {
-        DocMeta { id: id.into(), name: id.into(), version: v, hash: None, updated_at: None, shared, role: shared.then_some(Role::Editor), shared_by: None, shared_out: out }
+        DocMeta { id: id.into(), name: id.into(), version: v, hash: None, updated_at: None, shared, role: shared.then_some(Role::Editor), shared_by: None, shared_out: out, area_id: None }
     }
 
     #[test]

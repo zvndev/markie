@@ -21,6 +21,7 @@ pub struct CloudClient {
     trust: TrustHandle,
     tokens: Arc<dyn TokenStore>,
     transport: Transport,
+    expected_user: Option<String>,
 }
 
 /// Options for one call.
@@ -60,7 +61,7 @@ impl CloudClient {
         if !trust.read().unwrap().is_allowed_server_origin(&origin) {
             return Err(CloudError::NotTrusted);
         }
-        Ok(Self { origin, trust, tokens, transport })
+        Ok(Self { origin, trust, tokens, transport, expected_user: None })
     }
 
     pub fn origin(&self) -> &str {
@@ -72,7 +73,15 @@ impl CloudClient {
     }
 
     pub fn session(&self) -> Option<Session> {
-        tokens::session_for(self.tokens.as_ref(), &self.origin)
+        tokens::session_for(self.tokens.as_ref(), &self.origin).filter(|session| {
+            self.expected_user.as_ref().is_none_or(|user| session.user_id.as_ref() == Some(user))
+        })
+    }
+
+    /// Bind a multi-request operation to the confirmed account it started in.
+    pub fn for_user(mut self, user: &str) -> Self {
+        self.expected_user = Some(user.into());
+        self
     }
 
     pub fn token(&self) -> Option<String> {
@@ -94,21 +103,21 @@ impl CloudClient {
         if !self.trusted() {
             return Err(CloudError::NotTrusted);
         }
-        let token = if call.auth { Some(self.token().ok_or(CloudError::NotSignedIn)?) } else { None };
+        let session = if call.auth { Some(self.session().ok_or(CloudError::NotSignedIn)?) } else { None };
         let mut req = Request::new(&self.origin, call.method, call.path);
         req.body = call.body;
-        req.bearer = token.as_deref();
+        req.bearer = session.as_ref().map(|s| s.token.as_str());
         req.max_bytes = call.max_bytes;
         req.timeout = call.timeout;
         req.if_none_match = call.if_none_match;
         let answer = self.transport.send(req).await?;
-        if let Some(sent) = token.as_deref() {
-            if self.token().as_deref() != Some(sent) {
+        if let Some(sent) = session {
+            if !self.trusted() || self.session().as_ref() != Some(&sent) {
                 return Err(CloudError::StaleSession);
             }
             if answer.ok()
                 && let Some(fresh) = answer.set_auth_token.as_deref()
-                && fresh != sent
+                && fresh != sent.token
             {
                 self.set_token(Some(fresh))?;
             }

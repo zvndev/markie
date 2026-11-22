@@ -2,7 +2,6 @@
 //! Ported from `src/lib/document-import`. The source is never written or relabeled.
 
 mod html;
-mod html_entities;
 mod odt;
 mod rtf;
 

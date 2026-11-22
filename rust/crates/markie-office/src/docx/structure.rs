@@ -15,39 +15,10 @@ fn fail(message: &str) -> OfficeError {
     invalid("unsupported-structure", message)
 }
 
-/// Whether `offset` (a byte offset on a char boundary) is a grapheme boundary.
-/// Approximates UAX #29 extended grapheme clusters without a Unicode data
-/// dependency: combining marks, variation selectors, ZWJ sequences, emoji
-/// modifiers, regional-indicator pairs, Hangul syllable jamo and CRLF.
+/// Whether a byte offset is on a UAX #29 extended grapheme boundary.
 pub fn grapheme_boundary(text: &str, offset: usize) -> bool {
-    if offset == 0 || offset >= text.len() {
-        return offset <= text.len() && text.is_char_boundary(offset);
-    }
-    if !text.is_char_boundary(offset) {
-        return false;
-    }
-    let before = text[..offset].chars().next_back().unwrap_or(' ');
-    let after = text[offset..].chars().next().unwrap_or(' ');
-    if before == '\r' && after == '\n' {
-        return false;
-    }
-    let extend = |c: char| {
-        let u = c as u32;
-        matches!(u, 0x0300..=0x036f | 0x0483..=0x0489 | 0x0591..=0x05bd | 0x0610..=0x061a | 0x064b..=0x065f | 0x0670 | 0x06d6..=0x06dc
-            | 0x0900..=0x0903 | 0x093a..=0x094f | 0x0e31 | 0x0e34..=0x0e3a | 0x0e47..=0x0e4e | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff
-            | 0x200c | 0x200d | 0x20d0..=0x20ff | 0xfe00..=0xfe0f | 0xfe20..=0xfe2f | 0x1f3fb..=0x1f3ff | 0xe0020..=0xe007f | 0xe0100..=0xe01ef)
-    };
-    if extend(after) || before == '\u{200d}' {
-        return false;
-    }
-    let regional = |c: char| (0x1f1e6..=0x1f1ff).contains(&(c as u32));
-    if regional(before) && regional(after) {
-        let run = text[..offset].chars().rev().take_while(|c| regional(*c)).count();
-        return run % 2 == 0;
-    }
-    let jamo = |c: char| matches!(c as u32, 0x1100..=0x11ff | 0xac00..=0xd7a3);
-    let trailing = |c: char| matches!(c as u32, 0x1160..=0x11ff);
-    !(jamo(before) && trailing(after))
+    use unicode_segmentation::UnicodeSegmentation as _;
+    offset == text.len() || text.grapheme_indices(true).any(|(start, _)| start == offset)
 }
 
 pub(crate) fn normalize_docx_range(paragraphs: &[Paragraph], range: &TextRange) -> Result<(TextPosition, TextPosition)> {

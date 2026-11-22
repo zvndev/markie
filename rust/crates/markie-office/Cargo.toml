@@ -7,10 +7,14 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Raw DEFLATE only. This is the generic platform primitive the decision record
-# allows (the TypeScript uses the browser's DecompressionStream). It is not a
-# ZIP, XML or Office engine: archive framing and every limit are our own code.
+# Browser-equivalent primitives already used by Markie RS. No Office parser
+# is supplied by these: archive framing and document limits are ours.
 miniz_oxide = "0.8"
+encoding_rs = "0.8"
+unicode-segmentation = "1.13"
+url = "2"
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
 
 [dev-dependencies]
 miniz_oxide = "0.8"

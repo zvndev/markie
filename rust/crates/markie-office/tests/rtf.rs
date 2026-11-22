@@ -183,9 +183,16 @@ fn counts_escaped_bytes_controls_and_binary_as_unicode_fallback() {
 #[test]
 fn decodes_bytes_with_document_and_font_codepage_authority() {
     assert_eq!(open(r"\ansicpg1251\'cf\'f0").text, "Пр");
-    // Shift_JIS (code page 932) is a documented gap: it decodes to U+FFFD and opens read-only.
     let jis = open(r"{\fonttbl{\f0\fnil\fcharset128 Japanese;}}\f0\'82\'a0");
-    assert!(!jis.can_edit); assert!(jis.diagnostics[0].message.contains("codepage-932"));
+    assert!(jis.can_edit);
+    assert_eq!(jis.text, "あ");
+    let run = &jis.paragraphs[0].runs[0].id;
+    let edited = replace_rtf_text(&jis, &edit(run, "日本語")).unwrap();
+    assert_eq!(open_rtf(&export_rtf(&edited).unwrap()).unwrap().text, "日本語");
+    assert_eq!(open(r"\ansicpg936\'d6\'d0").text, "中");
+    assert_eq!(open(r"\ansicpg949\'b0\'a1").text, "가");
+    assert_eq!(open(r"\ansicpg950\'a4\'a4").text, "中");
+    assert!(!open(r"\ansicpg932\'82").can_edit);
     assert_eq!(open(r"{\fonttbl{\f0\fnil\fcharset128\cpg1251 Russian;}}\f0\'cf\'f0").text, "Пр");
     let mut raw = b"{\\rtf1\\ansi ".to_vec(); raw.push(0xe9); raw.push(b'}');
     assert_eq!(open_rtf(&raw).unwrap().text, "é");
@@ -215,8 +222,8 @@ fn preserves_common_passive_information_without_blocking_body_editing() {
 }
 #[test]
 fn canonicalizes_metadata_with_captured_charset_and_unicode_fallback_context() {
-    // The Shift_JIS row of the TypeScript table is skipped: code page 932 is a documented gap.
     for (context, field, expected) in [
+        (r"\ansicpg932", r"{\author \'82\'a0}", r"{\author\uc1 \u12354?}"),
         (r"\ansicpg1251", r"{\author \'cf\'f0}", r"{\author\uc1 \u1055?\u1088?}"),
         (r"\uc2", r"{\author \u233?? and \uc0\u26085}", r"{\author\uc1 \u233? and \u26085?}"),
         (r"\uc0", r"{\title \u-10179\u-8704}", r"{\title\uc1 \u-10179?\u-8704?}"),

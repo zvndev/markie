@@ -241,6 +241,6 @@ fn normalizes_link_targets_like_the_url_serializer() {
     assert_eq!(safe_docx_hyperlink_target("http://example.com:8080?q=1").unwrap(), "http://example.com:8080/?q=1");
     assert_eq!(safe_docx_hyperlink_target("https://example.com/caf\u{e9}?x=\"y\"#\u{e9}").unwrap(), "https://example.com/caf%C3%A9?x=%22y%22#%C3%A9");
     assert_eq!(safe_docx_hyperlink_target("MAILTO:writer@example.com").unwrap(), "mailto:writer@example.com");
-    // Internationalized host names need IDNA mapping, which this port refuses rather than guesses.
-    assert!(safe_docx_hyperlink_target("https://ex\u{e4}mple.com/").is_err());
+    assert_eq!(safe_docx_hyperlink_target("https://ex\u{e4}mple.com/").unwrap(), "https://xn--exmple-cua.com/");
+    assert_eq!(safe_docx_hyperlink_target("https://example.org/a/../b").unwrap(), "https://example.org/b");
 }

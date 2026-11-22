@@ -111,62 +111,6 @@ pub fn default_handler(_uti: &str) -> Option<String> {
     None
 }
 
-pub fn supported() -> bool {
-    cfg!(target_os = "macos")
-}
-
-/// The section, for Settings › Files.
-pub fn render_section(cx: &gpui_kit::App) -> gpui_kit::AnyElement {
-    use gpui_kit::component::button::Button;
-    use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, h_flex, v_flex};
-    use gpui_kit::prelude::FluentBuilder as _;
-    use gpui_kit::*;
-    let theme = cx.theme();
-    let muted = theme.muted_foreground;
-    let border = theme.border;
-    if !supported() {
-        return div().text_size(px(12.)).text_color(muted).child("Default apps can be chosen in the Markie desktop app on macOS.").into_any_element();
-    }
-    let statuses = status();
-    let green = theme.success;
-    v_flex()
-        .gap_3()
-        .child(
-            h_flex()
-                .items_start()
-                .justify_between()
-                .gap_4()
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(muted).child("OPEN WITH MARKIE"))
-                        .child(div().max_w(px(380.)).text_size(px(11.5)).text_color(muted).child(SIDE_BUILD_NOTE)),
-                )
-                .child(Button::new("default-apps-all").small().label("Use Markie RS for all").disabled(true)),
-        )
-        .child(v_flex().rounded_lg().border_1().border_color(border).children(FORMATS.iter().zip(statuses).enumerate().map(|(i, (f, s))| {
-            h_flex()
-                .gap_3()
-                .px_3()
-                .py_2()
-                .when(i > 0, |el| el.border_t_1().border_color(border))
-                .child(div().text_color(muted).child(Icon::new(IconName::File).small()))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().text_size(px(12.5)).child(f.label))
-                        .child(div().text_size(px(10.5)).font_family("Menlo").text_color(muted).child(f.extensions.join("  ")))
-                        .children(f.note.map(|n| div().text_size(px(11.)).text_color(muted).child(n))),
-                )
-                .child(if s.markie {
-                    h_flex().gap_1().text_size(px(11.5)).text_color(green).child(Icon::new(IconName::Check).xsmall()).child("Markie").into_any_element()
-                } else {
-                    Button::new(SharedString::from(format!("default-app-{}", f.id))).xsmall().label("Use Markie RS").disabled(true).into_any_element()
-                })
-        })))
-        .into_any_element()
-}
 
 #[cfg(test)]
 mod tests {

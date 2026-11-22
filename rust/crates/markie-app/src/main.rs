@@ -47,6 +47,10 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-0", ZoomReset, None),
         KeyBinding::new("cmd-alt-]", PageWider, None),
         KeyBinding::new("cmd-alt-[", PageNarrower, None),
+        // Electron's mode and help shortcuts (src/app/page.tsx).
+        KeyBinding::new("cmd-1", RichMode, None),
+        KeyBinding::new("cmd-2", SourceMode, None),
+        KeyBinding::new("cmd-/", ShowShortcuts, None),
     ]);
     markie_office_view::actions::bind_keys(cx);
 }
@@ -56,6 +60,8 @@ fn set_menus(cx: &mut App) {
         Menu {
             name: "Markie RS".into(),
             items: vec![
+                MenuItem::action("About Markie RS", ShowAbout),
+                MenuItem::separator(),
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::action("Sign In…", OpenAccount),
                 MenuItem::separator(),
@@ -77,6 +83,7 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Duplicate", DuplicateDocument),
                 MenuItem::action("Reveal in Finder", RevealDocument),
                 MenuItem::action("Copy Path", CopyPath),
+                MenuItem::action("Move To…", MoveDocument),
                 MenuItem::action("Move to Trash", TrashDocument),
             ],
             disabled: false,
@@ -113,7 +120,11 @@ fn set_menus(cx: &mut App) {
     menus.extend(markie_office_view::actions::menus());
     menus.push(Menu {
         name: "Help".into(),
-        items: vec![MenuItem::action(logs::reveal_menu_label(), logs::RevealCrashLog)],
+        items: vec![
+            MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
+            MenuItem::separator(),
+            MenuItem::action(logs::reveal_menu_label(), logs::RevealCrashLog),
+        ],
         disabled: false,
     });
     cx.set_menus(menus);

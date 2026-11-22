@@ -33,5 +33,10 @@ actions!(
         PageNarrower,
         ToggleLibrary,
         Quit,
+        ShowShortcuts,
+        ShowAbout,
+        RichMode,
+        SourceMode,
+        MoveDocument,
     ]
 );

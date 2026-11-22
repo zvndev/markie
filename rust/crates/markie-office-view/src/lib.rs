@@ -11,6 +11,8 @@ pub mod actions;
 pub mod colors;
 pub mod commands;
 pub mod editor;
+pub mod flow;
+pub mod icons;
 pub mod layout;
 pub mod text;
 mod tools;

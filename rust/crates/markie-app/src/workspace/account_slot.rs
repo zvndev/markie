@@ -3,8 +3,8 @@
 //! signed-out form (`src/components/sign-in.tsx`) so the tab looks right
 //! today, and every control in it calls `Workspace::open_account`.
 //!
-//! When the cloud work lands, it replaces `open_account` below with its own
-//! and may replace `render_account_section` with the live account view.
+//! `open_account` lives in account.rs. When the cloud work lands it may
+//! replace `render_account_section` with the live account view.
 
 use gpui_kit::*;
 
@@ -12,12 +12,6 @@ use super::Workspace;
 use super::dialog_chrome::Tokens;
 
 impl Workspace {
-    /// Start sign-in. Placeholder until the cloud sign-in agent provides it.
-    pub(super) fn open_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_kit::component::WindowExt as _;
-        window.push_notification("Signing in to Markie Cloud is not in Markie RS yet.", cx);
-    }
-
     pub(super) fn render_account_section(&mut self, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
         let primary = |id: &'static str, label: &'static str, cx: &mut Context<Self>| {
             div()

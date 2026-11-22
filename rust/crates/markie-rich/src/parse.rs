@@ -123,7 +123,7 @@ impl<'s, 'e> Conv<'s, 'e> {
                         self.fail(Opaque::Unsupported);
                     }
                     let content = finish_inlines(pieces);
-                    out.push(Node::Heading { level, content });
+                    out.push(Node::heading(level, content));
                 }
                 Event::Start(Tag::BlockQuote(_)) => {
                     self.i += 1;
@@ -167,8 +167,28 @@ impl<'s, 'e> Conv<'s, 'e> {
                     out.push(Node::HorizontalRule);
                 }
                 Event::Start(Tag::HtmlBlock) => {
-                    self.fail(Opaque::Html);
-                    self.skip_container();
+                    // The HTML the editor writes itself reads back as its own
+                    // node (isEditorOwnHtmlBlock in rich-media-html.ts).
+                    let mut html = String::new();
+                    let mut j = self.i + 1;
+                    while let Some((ev, _)) = self.ev.get(j) {
+                        match ev {
+                            Event::Html(t) | Event::Text(t) => html.push_str(t),
+                            Event::End(TagEnd::HtmlBlock) => break,
+                            _ => {}
+                        }
+                        j += 1;
+                    }
+                    match crate::html::lone_media_tag(&html).or_else(|| crate::html::aligned_block(&html)) {
+                        Some(node) => {
+                            self.i = j + 1;
+                            out.push(node);
+                        }
+                        None => {
+                            self.fail(Opaque::Html);
+                            self.skip_container();
+                        }
+                    }
                 }
                 Event::Start(Tag::FootnoteDefinition(_)) => {
                     self.fail(Opaque::FootnoteDefinition);
@@ -307,7 +327,7 @@ impl<'s, 'e> Conv<'s, 'e> {
                         Some(pulldown_cmark::Alignment::Right) => Some(Align::Right),
                         _ => None,
                     };
-                    row.push(Cell { header, align, content: vec![Node::Paragraph(finish_inlines(pieces))] });
+                    row.push(Cell { header, align, content: vec![Node::para(finish_inlines(pieces))] });
                 }
                 Event::End(TagEnd::Table) => break,
                 _ => {}
@@ -472,6 +492,7 @@ impl<'s, 'e> Conv<'s, 'e> {
                     src: normalize_href(dest_url),
                     alt: Some(alt),
                     title,
+                    width: None,
                 }));
                 // Not an element for the line-break rule: tiptap-markdown's
                 // normalizeBlocks lifts the picture out of its paragraph first,
@@ -521,6 +542,9 @@ struct InlineState {
     marks: Marks,
     after_element: bool,
     after_math: bool,
+    /// Open inline HTML tags and the marks before each, so a closing tag
+    /// restores what its opening tag changed.
+    html_stack: Vec<(String, Marks)>,
 }
 
 impl InlineState {
@@ -531,22 +555,44 @@ impl InlineState {
 }
 
 /// The inline tags ProseMirror maps to marks; others keep only their text.
+/// A picture or clip tag becomes an image node, which splits the paragraph.
 fn inline_html(h: &str, st: &mut InlineState) {
     let t = h.trim();
-    let lower = t.to_ascii_lowercase();
-    let (closing, name) = match lower.strip_prefix("</") {
-        Some(rest) => (true, rest),
-        None => (false, lower.strip_prefix('<').unwrap_or("")),
-    };
-    let name: String = name.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
-    let on = !closing;
-    match name.as_str() {
-        "b" | "strong" => st.marks.bold = on,
-        "i" | "em" => st.marks.italic = on,
-        "s" | "del" | "strike" => st.marks.strike = on,
-        "u" => st.marks.underline = on,
-        "code" => st.marks.code = on,
-        "br" => st.pieces.push(Piece::HardBreak),
+    let Some((tag, _)) = crate::html::parse_tag(t) else { return };
+    if tag.name == "br" {
+        st.pieces.push(Piece::HardBreak);
+        return;
+    }
+    if let Some(node) = crate::html::media_node(&tag) {
+        st.pieces.push(Piece::Image(node));
+        return;
+    }
+    if tag.closing {
+        if let Some(k) = st.html_stack.iter().rposition(|(n, _)| *n == tag.name) {
+            let saved = st.html_stack[k].1.clone();
+            st.html_stack.truncate(k);
+            restore_field(&tag.name, &saved, &mut st.marks);
+        }
+        return;
+    }
+    let saved = st.marks.clone();
+    if crate::html::apply_tag(&tag, &mut st.marks) {
+        st.html_stack.push((tag.name.clone(), saved));
+    }
+}
+
+/// Undo what an opening tag set, and only that: Markdown emphasis may have
+/// opened or closed in between.
+fn restore_field(name: &str, saved: &Marks, m: &mut Marks) {
+    match name {
+        "b" | "strong" => m.bold = saved.bold,
+        "i" | "em" => m.italic = saved.italic,
+        "s" | "del" | "strike" => m.strike = saved.strike,
+        "u" => m.underline = saved.underline,
+        "code" => m.code = saved.code,
+        "mark" => m.highlight = saved.highlight.clone(),
+        "span" => m.text_style = saved.text_style.clone(),
+        "a" => m.link = saved.link.clone(),
         _ => {}
     }
 }
@@ -598,7 +644,7 @@ fn finish_inlines(pieces: Vec<Piece>) -> Vec<Inline> {
 
 /// ProseMirror's DOM parser: whitespace runs fold to one space, none at the
 /// start of the block, after a break, or at the end.
-fn collapse_whitespace(inlines: Vec<Inline>) -> Vec<Inline> {
+pub(crate) fn collapse_whitespace(inlines: Vec<Inline>) -> Vec<Inline> {
     let mut out: Vec<Inline> = Vec::new();
     // True when the last emitted character was whitespace or a block/line start.
     let mut prev_space = true;
@@ -670,18 +716,25 @@ fn paragraph_nodes(pieces: Vec<Piece>, raw: &str) -> Vec<Node> {
     for p in pieces {
         match p {
             Piece::Image(img) => {
-                if !seg.is_empty() {
-                    out.push(Node::Paragraph(finish_inlines(std::mem::take(&mut seg))));
+                if !only_tags(&seg) {
+                    out.push(Node::para(finish_inlines(std::mem::take(&mut seg))));
                 }
+                seg.clear();
                 out.push(img);
             }
             other => seg.push(other),
         }
     }
-    if !seg.is_empty() {
-        out.push(Node::Paragraph(finish_inlines(seg)));
+    if !only_tags(&seg) {
+        out.push(Node::para(finish_inlines(seg)));
     }
     out
+}
+
+/// Nothing but tag boundaries (the `</video>` after a clip): no paragraph.
+/// Spaces between two pictures do make one, empty, as normalizeBlocks does.
+fn only_tags(seg: &[Piece]) -> bool {
+    seg.iter().all(|p| matches!(p, Piece::Text(t, _) if t.chars().all(|c| c == TOKEN_BREAK)))
 }
 
 fn special_paragraph(content: Vec<Inline>, raw: &str) -> Node {
@@ -699,7 +752,7 @@ fn special_paragraph(content: Vec<Inline>, raw: &str) -> Node {
             }
         }
     }
-    Node::Paragraph(content)
+    Node::para(content)
 }
 
 /// markdown-it's linkify, the cases Markie documents hit: scheme URLs,

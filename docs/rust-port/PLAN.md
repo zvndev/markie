@@ -27,7 +27,7 @@ Each phase has a closed list and a finish line. Estimates are agentic wall-clock
 | 0. Foundation | Workspace, core crate, device index, View and Source, save, search, type filters, themes, local app bundle | **Done 2026-11-21.** 20 core tests pass; app opens, edits, saves byte-exact, indexes 107k files. | Done |
 | 1. Local parity | See list below | Every [stable] local feature in PARITY.md sections 1 to 7, 9, 13, 24, 28, 29 works, with tests. | 3 to 4 days |
 | 2a. Rich editor spike | Block editor prototype on GPUI | Passes the round-trip corpus from `src/lib/rich-roundtrip.corpus.test.tsx` byte for byte, and shares a live room with the web app. | 2 days, then a go or no-go call |
-| 2b. Rich editor | Full View mode | Headings, lists, tasks, tables, images, math, embed cards, highlight and colour marks, section rail, zoom. Corpus and collab tests pass. | 1.5 to 2.5 weeks, the longest serial track |
+| 2b. Rich editor | Full View mode | Headings, lists, tasks, tables, images, math, embed cards, highlight and colour marks, section rail, zoom. Corpus and collab tests pass. **Built 2026-11-21** (`RICH-EDITOR.md`); open items listed there. | 1.5 to 2.5 weeks, the longest serial track |
 | 3. Cloud | Sign-in, sync, sharing, comments, collaboration | Sign in with Google, Apple, email; sync, share and comment on a document that web and phone users see live. | 1 to 1.5 weeks, parallel with 2b |
 | 4. Office engine | DOCX, RTF, ODT, DOC, HTML import | Port our TypeScript codecs; native Word page view; unchanged files keep their bytes. | 1.5 to 2 weeks, parallel with 2b |
 | 5. Web islands and export | `.wd` preview, Live Docs, embeds, PDF, print, HTML export | Darkmown preview runs sandboxed in `wry`; PDF and print through `typst`. | 4 to 5 days |

@@ -5,6 +5,8 @@ members = [
   "crates/markie-app",
   "crates/markie-cloud",
   "crates/markie-rich",
+  "crates/markie-math",
+  "crates/markie-editor",
   "crates/markie-office",
   "crates/markie-office-view",
   "crates/markie-vault",

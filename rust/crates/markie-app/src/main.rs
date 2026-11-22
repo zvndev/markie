@@ -108,10 +108,11 @@ fn main() {
         .collect();
 
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
             bind_keys(cx);
+            markie_editor::bind_keys(cx);
             set_menus(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.activate(true);
@@ -126,7 +127,7 @@ fn main() {
                 Theme::sync_system_appearance(Some(window), cx);
                 window.set_window_title(markie_core::paths::APP_NAME);
                 let view = cx.new(|cx| Workspace::new(initial, window, cx));
-                let focus = view.read(cx).focus_handle.clone();
+                let focus = view.read(cx).startup_focus(cx);
                 window.defer(cx, move |window, cx| focus.focus(window, cx));
                 view
             })

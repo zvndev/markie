@@ -8,8 +8,10 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    Paragraph(Vec<Inline>),
-    Heading { level: u8, content: Vec<Inline> },
+    /// `align` is TipTap's `textAlign` (left, center, right, justify), or
+    /// None when the paragraph has none. An aligned block is written as HTML.
+    Paragraph { content: Vec<Inline>, align: Option<String> },
+    Heading { level: u8, content: Vec<Inline>, align: Option<String> },
     Blockquote(Vec<Node>),
     BulletList { tight: bool, items: Vec<Vec<Node>> },
     OrderedList { tight: bool, start: u64, items: Vec<Vec<Node>> },
@@ -17,9 +19,23 @@ pub enum Node {
     CodeBlock { language: Option<String>, code: String },
     HorizontalRule,
     Table { rows: Vec<Vec<Cell>> },
-    Image { src: String, alt: Option<String>, title: Option<String> },
+    /// A picture or clip (TipTap's LocalImage). `width` is the pixel width
+    /// the author chose, written as an `<img width>` (or `<video>`) tag.
+    Image { src: String, alt: Option<String>, title: Option<String>, width: Option<u32> },
     MathBlock { source: String },
     Embed { url: String },
+}
+
+impl Node {
+    pub fn para(content: Vec<Inline>) -> Node {
+        Node::Paragraph { content, align: None }
+    }
+    pub fn heading(level: u8, content: Vec<Inline>) -> Node {
+        Node::Heading { level, content, align: None }
+    }
+    pub fn image(src: impl Into<String>) -> Node {
+        Node::Image { src: src.into(), alt: None, title: None, width: None }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +101,33 @@ pub struct Marks {
     pub underline: bool,
     pub code: bool,
     pub link: Option<Link>,
+    /// TipTap `highlight` (multicolor). `color` None is the plain highlight.
+    pub highlight: Option<Highlight>,
+    /// TipTap `textStyle` with its Color, FontFamily and FontSize attributes.
+    pub text_style: Option<TextStyle>,
+}
+
+/// The `highlight` mark's attributes. TipTap reads a plain `<mark>` as the
+/// empty string and a toolbar highlight without a colour as null, so both
+/// are kept apart for the room.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Highlight {
+    pub color: Option<String>,
+}
+
+/// The `textStyle` mark's attributes, each as TipTap holds it: null when the
+/// toolbar never set it, the empty string when parsed from a span without it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TextStyle {
+    pub color: Option<String>,
+    pub font_family: Option<String>,
+    pub font_size: Option<String>,
+}
+
+impl TextStyle {
+    pub fn is_empty(&self) -> bool {
+        [&self.color, &self.font_family, &self.font_size].iter().all(|v| v.as_deref().unwrap_or("").is_empty())
+    }
 }
 
 impl Marks {

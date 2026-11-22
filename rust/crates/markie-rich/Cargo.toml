@@ -15,6 +15,7 @@ pulldown-cmark.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 yrs = "=0.28.2"
+unicode-segmentation = "1"
 gpui-kit = { version = "=0.10.0", optional = true }
 
 [[example]]

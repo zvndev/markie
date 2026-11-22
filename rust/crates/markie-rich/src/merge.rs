@@ -19,7 +19,7 @@ impl Document {
         // TipTap's TrailingNode keeps an empty paragraph at the end of the
         // document. It belongs to the editor, not to the file.
         let mut incoming = incoming;
-        while let Some((Node::Paragraph(c), rest)) = incoming.split_last() {
+        while let Some((Node::Paragraph { content: c, .. }, rest)) = incoming.split_last() {
             if !c.is_empty() {
                 break;
             }
@@ -87,7 +87,13 @@ impl Document {
             }
         }
 
-        let mut out = Document { front_matter: self.front_matter.clone(), leading: self.leading.clone(), blocks: vec![] };
+        let mut out = Document {
+            front_matter: self.front_matter.clone(),
+            leading: self.leading.clone(),
+            blocks: vec![],
+            ending: self.ending.clone(),
+            end_origin: self.end_origin,
+        };
         for step in plan {
             match step {
                 Step::Keep(i) => out.blocks.push(base[i].clone()),

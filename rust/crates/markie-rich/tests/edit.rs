@@ -58,7 +58,7 @@ fn enter_splits_and_backspace_joins() {
     ed.move_vertical(1);
     ed.activate(ed.active, Some(5));
     ed.split();
-    assert_eq!(ed.to_markdown(), "# T\n\nHello\n\n world.\n");
+    assert_eq!(ed.to_markdown(), "# T\n\nHello\n\nworld.\n");
     ed.backspace();
     assert_eq!(ed.to_markdown(), "# T\n\nHello world.\n");
 }
@@ -72,5 +72,5 @@ fn unicode_and_math_atoms() {
     // The formula is one unit: one backspace from after it removes it whole.
     ed.activate(0, Some("Euler: ".chars().count() + 1));
     ed.backspace();
-    assert_eq!(ed.to_markdown(), "Euler:  ok 🎉 café\n");
+    assert_eq!(ed.to_markdown(), "Euler: ok 🎉 café\n");
 }

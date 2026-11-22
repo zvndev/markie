@@ -36,10 +36,14 @@ pub fn to_room(nodes: &[Node]) -> Vec<RoomNode> {
 
 fn node_to_room(n: &Node) -> RoomNode {
     match n {
-        Node::Paragraph(c) => el("paragraph", Attrs::new(), inlines_to_room(c)),
-        Node::Heading { level, content } => {
-            el("heading", attrs([("level", json!(level))]), inlines_to_room(content))
+        Node::Paragraph { content, align } => {
+            el("paragraph", attrs([("textAlign", json!(align))]), inlines_to_room(content))
         }
+        Node::Heading { level, content, align } => el(
+            "heading",
+            attrs([("level", json!(level)), ("textAlign", json!(align))]),
+            inlines_to_room(content),
+        ),
         Node::Blockquote(c) => el("blockquote", Attrs::new(), to_room(c)),
         Node::BulletList { tight, items } => el(
             "bulletList",
@@ -90,9 +94,9 @@ fn node_to_room(n: &Node) -> RoomNode {
                 })
                 .collect(),
         ),
-        Node::Image { src, alt, title } => el(
+        Node::Image { src, alt, title, width } => el(
             "image",
-            attrs([("src", json!(src)), ("alt", json!(alt)), ("title", json!(title))]),
+            attrs([("src", json!(src)), ("alt", json!(alt)), ("title", json!(title)), ("width", json!(width))]),
             vec![],
         ),
         Node::MathBlock { source } => el("mathBlock", attrs([("source", json!(source))]), vec![]),
@@ -129,6 +133,15 @@ pub fn marks_to_attrs(m: &Marks) -> Attrs {
                 "class": null,
                 "title": l.title,
             }),
+        );
+    }
+    if let Some(h) = &m.highlight {
+        a.insert("highlight".into(), json!({ "color": h.color }));
+    }
+    if let Some(t) = &m.text_style {
+        a.insert(
+            "textStyle".into(),
+            json!({ "color": t.color, "fontFamily": t.font_family, "fontSize": t.font_size }),
         );
     }
     a
@@ -187,10 +200,11 @@ fn room_to_node(r: &RoomNode) -> Result<Node, RoomError> {
         return err("text where a block was expected");
     };
     Ok(match name.as_str() {
-        "paragraph" => Node::Paragraph(room_inlines(children)?),
+        "paragraph" => Node::Paragraph { content: room_inlines(children)?, align: s(a, "textAlign") },
         "heading" => Node::Heading {
             level: a.get("level").and_then(|v| v.as_u64()).unwrap_or(1) as u8,
             content: room_inlines(children)?,
+            align: s(a, "textAlign"),
         },
         "blockquote" => Node::Blockquote(from_room(children)?),
         "bulletList" => Node::BulletList {
@@ -248,7 +262,14 @@ fn room_to_node(r: &RoomNode) -> Result<Node, RoomError> {
                 })
                 .collect::<Result<_, _>>()?,
         },
-        "image" => Node::Image { src: s(a, "src").unwrap_or_default(), alt: s(a, "alt"), title: s(a, "title") },
+        "image" => Node::Image {
+            src: s(a, "src").unwrap_or_default(),
+            alt: s(a, "alt"),
+            title: s(a, "title"),
+            width: a.get("width").and_then(|v| {
+                v.as_u64().map(|n| n as u32).or_else(|| v.as_str().and_then(crate::html::normalize_width))
+            }),
+        },
         "mathBlock" => Node::MathBlock { source: s(a, "source").unwrap_or_default() },
         "embed" => Node::Embed { url: s(a, "url").unwrap_or_default() },
         other => return err(format!("node `{other}` is not in the Markie RS model yet")),
@@ -280,6 +301,13 @@ pub fn attrs_to_marks(a: &Attrs) -> Result<Marks, RoomError> {
                     title: v.get("title").and_then(|h| h.as_str()).map(|s| s.to_string()),
                     style: LinkStyle::Inline,
                 })
+            }
+            "highlight" => {
+                m.highlight = Some(Highlight { color: v.get("color").and_then(|c| c.as_str()).map(|s| s.to_string()) })
+            }
+            "textStyle" => {
+                let f = |k: &str| v.get(k).and_then(|c| c.as_str()).map(|s| s.to_string());
+                m.text_style = Some(TextStyle { color: f("color"), font_family: f("fontFamily"), font_size: f("fontSize") })
             }
             other => return err(format!("mark `{other}` is not in the Markie RS model yet")),
         }

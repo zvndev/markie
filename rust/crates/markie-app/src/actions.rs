@@ -29,6 +29,7 @@ actions!(
         ZoomReset,
         PageWider,
         PageNarrower,
+        ToggleLibrary,
         Quit,
     ]
 );

@@ -12,7 +12,6 @@
 //! editor as unsaved, so looking through history cannot cost anything.
 
 use std::collections::HashMap;
-use std::time::Instant;
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -96,9 +95,7 @@ pub(crate) fn line_diff(old: &str, new: &str) -> Option<Vec<Line>> {
 
 /// `+N  -M`, or nothing when the texts match: the row's line counts.
 pub(crate) fn diff_counts(old: &str, new: &str) -> String {
-    let Some(lines) = line_diff(old, new) else { return String::new() };
-    let added = lines.iter().filter(|l| matches!(l, Line::Added(_))).count();
-    let removed = lines.iter().filter(|l| matches!(l, Line::Removed(_))).count();
+    let markie_core::line_diff::LineDiff { added, removed, .. } = markie_core::line_diff::line_diff(old, new);
     if added == 0 && removed == 0 { String::new() } else { format!("+{added}  -{removed}") }
 }
 
@@ -215,10 +212,10 @@ impl Workspace {
         }
         self.update_stats(&text);
         self.dirty = true;
-        if self.disk_conflict.is_none() {
-            self.autosave.note_change(Instant::now());
-            self.schedule_autosave(cx);
-        }
+        // Loaded as unsaved, never written (`onRestore`): reading history
+        // must not cost anyone the document. The journal keeps it.
+        self.autosave.cancel();
+        self.schedule_journal(&text, cx);
         cx.notify();
     }
 

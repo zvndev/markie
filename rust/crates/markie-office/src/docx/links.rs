@@ -25,98 +25,27 @@ pub fn safe_docx_hyperlink_target(value: &str) -> Result<String> {
     if value.is_empty() || units > 4096 || bad_char || bad_escape {
         return Err(unsafe_link("Link destination contains unsupported whitespace or control characters."));
     }
-    let Some(colon) = value.find(':') else {
-        return Err(unsafe_link("Link must be an explicit HTTP, HTTPS or simple mailto URL."));
-    };
-    let scheme = &value[..colon];
-    let valid_scheme = scheme.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && scheme.bytes().all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(&b));
-    if !valid_scheme {
-        return Err(unsafe_link("Link must be an explicit HTTP, HTTPS or simple mailto URL."));
+    let invalid_url = || unsafe_link("Link must be an explicit HTTP, HTTPS or simple mailto URL.");
+    let parsed = url::Url::parse(value).map_err(|_| invalid_url())?;
+    if matches!(parsed.scheme(), "http" | "https")
+        && (lower.starts_with("http://") || lower.starts_with("https://"))
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty() && parsed.password().is_none()
+    {
+        return Ok(parsed.to_string());
     }
-    let scheme_lower = scheme.to_ascii_lowercase();
-    let rest = &value[colon + 1..];
-    if scheme_lower == "http" || scheme_lower == "https" {
-        let Some(after) = rest.strip_prefix("//") else {
-            return Err(unsafe_link("Only credential-free HTTP/HTTPS and simple mailto destinations are supported."));
-        };
-        let authority_end = after.find(['/', '?', '#']).unwrap_or(after.len());
-        let authority = &after[..authority_end];
-        let tail = &after[authority_end..];
-        if authority.contains('@') || authority.is_empty() {
-            return Err(unsafe_link("Only credential-free HTTP/HTTPS and simple mailto destinations are supported."));
-        }
-        let (host, port) = match authority.rfind(':') {
-            Some(i) if !authority.starts_with('[') || authority[..i].ends_with(']') => (&authority[..i], Some(&authority[i + 1..])),
-            _ => (authority, None),
-        };
-        let host_ok = !host.is_empty()
-            && (host.starts_with('[') && host.ends_with(']')
-                // Internationalized hosts would need IDNA (punycode) mapping; they are refused, not guessed.
-                || host.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~'))
-            && !host.contains(['<', '>', '"', '^', '|', '`', '{', '}']);
-        let port_ok = port.is_none_or(|p| p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u32>().map_or(p.is_empty(), |n| n <= 65535));
-        if !host_ok || !port_ok {
-            return Err(unsafe_link("Link must be an explicit HTTP, HTTPS or simple mailto URL."));
-        }
-        let default_port = if scheme_lower == "http" { "80" } else { "443" };
-        let port_text = match port {
-            Some(p) if !p.is_empty() && p.trim_start_matches('0') != default_port && !(p.trim_start_matches('0').is_empty() && default_port.is_empty()) => {
-                let n: u32 = p.parse().unwrap_or(0);
-                format!(":{n}")
-            }
-            _ => String::new(),
-        };
-        let path = if tail.is_empty() || tail.starts_with('?') || tail.starts_with('#') { format!("/{tail}") } else { tail.to_string() };
-        return Ok(format!("{scheme_lower}://{}{port_text}{}", host.to_lowercase(), percent_encode_tail(&path)));
-    }
-    if scheme_lower == "mailto" {
-        let at = rest.find('@');
-        let simple = !rest.contains(['?', '#', '%'])
-            && at.is_some_and(|at| {
-                let (local, domain) = (&rest[..at], &rest[at + 1..]);
-                !local.is_empty()
-                    && local.bytes().all(|b| b.is_ascii_alphanumeric() || b".!$&'*+/=^_`{|}~-".contains(&b))
-                    && valid_mail_domain(domain)
-            });
-        if simple {
-            return Ok(format!("mailto:{rest}"));
-        }
+    if parsed.scheme() == "mailto" && parsed.query().is_none() && parsed.fragment().is_none()
+        && !value.contains('%')
+    {
+        let address = value.get(7..).unwrap_or("");
+        let simple = address.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty()
+                && local.bytes().all(|b| b".!$&'*+/=^_`{|}~-".contains(&b) || b.is_ascii_alphanumeric())
+                && valid_mail_domain(domain)
+        });
+        if simple { return Ok(parsed.to_string()); }
     }
     Err(unsafe_link("Only credential-free HTTP/HTTPS and simple mailto destinations are supported."))
-}
-
-/// WHATWG URL serializer percent-encoding for path, query and fragment:
-/// non-ASCII is UTF-8 percent-encoded, plus the per-component special sets.
-fn percent_encode_tail(tail: &str) -> String {
-    let mut out = String::with_capacity(tail.len());
-    let mut component = 0; // 0 path, 1 query, 2 fragment
-    for c in tail.chars() {
-        if c == '?' && component == 0 {
-            component = 1;
-            out.push(c);
-            continue;
-        }
-        if c == '#' && component < 2 {
-            component = 2;
-            out.push(c);
-            continue;
-        }
-        let encode = !c.is_ascii()
-            || match component {
-                0 => matches!(c, '"' | '<' | '>' | '`' | '{' | '}'),
-                1 => matches!(c, '"' | '<' | '>' | '\''),
-                _ => matches!(c, '"' | '<' | '>' | '`'),
-            };
-        if encode {
-            let mut buf = [0u8; 4];
-            for b in c.encode_utf8(&mut buf).bytes() {
-                out.push_str(&format!("%{b:02X}"));
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// `(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}`

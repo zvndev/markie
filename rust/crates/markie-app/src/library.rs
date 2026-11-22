@@ -304,6 +304,10 @@ impl PreparedSnapshot {
     pub fn len(&self) -> usize {
         self.snapshot.files.len()
     }
+
+    pub fn files(&self) -> &[IndexedDoc] {
+        &self.snapshot.files
+    }
 }
 
 impl From<IndexSnapshot> for PreparedSnapshot {

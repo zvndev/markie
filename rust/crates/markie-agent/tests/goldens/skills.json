@@ -1,0 +1,338 @@
+{
+ "files": [
+  [
+   ".claude/skills/alpha/SKILL.md",
+   "---\ndescription: Alpha does things\n---\n"
+  ],
+  [
+   ".claude/skills/alpha/refs/README.md",
+   "refs"
+  ],
+  [
+   ".claude/skills/beta/README.md",
+   "no SKILL.md here"
+  ],
+  [
+   ".claude/skills/beta/deep/notes.md",
+   "deeper"
+  ],
+  [
+   ".claude/skills/loose.md",
+   "a file directly in skills"
+  ],
+  [
+   ".claude/skills/Gamma/SKILL.md",
+   "---\ndescription: >\n  Folded\n  text\n---\n"
+  ],
+  [
+   ".claude/CLAUDE.md",
+   "global instructions"
+  ],
+  [
+   ".claude/commands/ship.md",
+   "command"
+  ],
+  [
+   ".claude/agents/reviewer.md",
+   "subagent"
+  ],
+  [
+   ".claude/projects/x/memory/note.md",
+   "memory"
+  ],
+  [
+   ".claude/plugins/cache/p/skills/c/SKILL.md",
+   "cached"
+  ],
+  [
+   ".claude/plugins/mine/skills/plug/SKILL.md",
+   "---\ndescription: plugin skill\n---\n"
+  ],
+  [
+   ".claude/misc/SKILL.md",
+   "---\ndescription: not under skills\n---\n"
+  ],
+  [
+   ".codex/AGENTS.md",
+   "codex"
+  ],
+  [
+   ".codex/skills/tool/SKILL.md",
+   "---\ndescription: \"Quoted: codex\"\n---\n"
+  ],
+  [
+   ".codex/prompts/fix.md",
+   "prompt"
+  ],
+  [
+   ".cursor/rules/style.mdc",
+   "rule"
+  ],
+  [
+   ".cursor/skills/cur/SKILL.md",
+   "---\ndescription: cursor skill\n---\n"
+  ],
+  [
+   ".cursorrules",
+   "legacy"
+  ],
+  [
+   ".gemini/GEMINI.md",
+   "gemini"
+  ],
+  [
+   ".gemini/skills/gem/SKILL.md",
+   "gem"
+  ],
+  [
+   ".agents/skills/uni/SKILL.md",
+   "---\ndescription: universal\n---\n"
+  ],
+  [
+   ".agents/notes.md",
+   "universal other"
+  ],
+  [
+   "work/app/CLAUDE.md",
+   "project instructions"
+  ],
+  [
+   "work/app/AGENTS.md",
+   "project agents"
+  ],
+  [
+   "work/app/.claude/skills/proj/SKILL.md",
+   "---\ndescription: project skill\n---\n"
+  ],
+  [
+   "work/app/.claude/settings.md",
+   "project claude other"
+  ],
+  [
+   "work/app/README.md",
+   "not an agent file"
+  ],
+  [
+   "work/app/node_modules/x/CLAUDE.md",
+   "ignored"
+  ]
+ ],
+ "rows": [
+  {
+   "tool": "claude",
+   "kind": "skill",
+   "label": "alpha",
+   "path": ".claude/skills/alpha/SKILL.md",
+   "folder": ".claude/skills/alpha",
+   "removable": true,
+   "description": "Alpha does things"
+  },
+  {
+   "tool": "claude",
+   "kind": "skill",
+   "label": "beta",
+   "path": ".claude/skills/beta/README.md",
+   "folder": ".claude/skills/beta",
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "skill",
+   "label": "Gamma",
+   "path": ".claude/skills/Gamma/SKILL.md",
+   "folder": ".claude/skills/Gamma",
+   "removable": true,
+   "description": "Folded text"
+  },
+  {
+   "tool": "claude",
+   "kind": "skill",
+   "label": "loose.md",
+   "path": ".claude/skills/loose.md",
+   "folder": ".claude/skills",
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "skill",
+   "label": "plug",
+   "path": ".claude/plugins/mine/skills/plug/SKILL.md",
+   "folder": ".claude/plugins/mine/skills/plug",
+   "removable": true,
+   "description": "plugin skill"
+  },
+  {
+   "tool": "claude",
+   "kind": "skill",
+   "label": "proj",
+   "path": "work/app/.claude/skills/proj/SKILL.md",
+   "folder": "work/app/.claude/skills/proj",
+   "removable": false,
+   "description": "project skill"
+  },
+  {
+   "tool": "claude",
+   "kind": "instructions",
+   "label": "CLAUDE.md",
+   "path": ".claude/CLAUDE.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "instructions",
+   "label": "CLAUDE.md",
+   "path": "work/app/CLAUDE.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "command",
+   "label": "ship.md",
+   "path": ".claude/commands/ship.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "agent",
+   "label": "reviewer.md",
+   "path": ".claude/agents/reviewer.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "memory",
+   "label": "note.md",
+   "path": ".claude/projects/x/memory/note.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "other",
+   "label": "misc/SKILL.md",
+   "path": ".claude/misc/SKILL.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "claude",
+   "kind": "other",
+   "label": "settings.md",
+   "path": "work/app/.claude/settings.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "codex",
+   "kind": "skill",
+   "label": "tool",
+   "path": ".codex/skills/tool/SKILL.md",
+   "folder": ".codex/skills/tool",
+   "removable": true,
+   "description": "Quoted: codex"
+  },
+  {
+   "tool": "codex",
+   "kind": "instructions",
+   "label": "AGENTS.md",
+   "path": ".codex/AGENTS.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "codex",
+   "kind": "instructions",
+   "label": "AGENTS.md",
+   "path": "work/app/AGENTS.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "codex",
+   "kind": "command",
+   "label": "fix.md",
+   "path": ".codex/prompts/fix.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "cursor",
+   "kind": "skill",
+   "label": "cur",
+   "path": ".cursor/skills/cur/SKILL.md",
+   "folder": ".cursor/skills/cur",
+   "removable": true,
+   "description": "cursor skill"
+  },
+  {
+   "tool": "cursor",
+   "kind": "instructions",
+   "label": ".cursorrules",
+   "path": ".cursorrules",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "cursor",
+   "kind": "instructions",
+   "label": "style.mdc",
+   "path": ".cursor/rules/style.mdc",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "gemini",
+   "kind": "skill",
+   "label": "gem",
+   "path": ".gemini/skills/gem/SKILL.md",
+   "folder": ".gemini/skills/gem",
+   "removable": true,
+   "description": null
+  },
+  {
+   "tool": "gemini",
+   "kind": "instructions",
+   "label": "GEMINI.md",
+   "path": ".gemini/GEMINI.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  },
+  {
+   "tool": "universal",
+   "kind": "skill",
+   "label": "uni",
+   "path": ".agents/skills/uni/SKILL.md",
+   "folder": ".agents/skills/uni",
+   "removable": true,
+   "description": "universal"
+  },
+  {
+   "tool": "universal",
+   "kind": "other",
+   "label": "notes.md",
+   "path": ".agents/notes.md",
+   "folder": null,
+   "removable": false,
+   "description": null
+  }
+ ]
+}

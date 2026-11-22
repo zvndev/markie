@@ -25,6 +25,16 @@ fn quoted_strings(s: &str) -> Vec<&str> {
     out
 }
 
+/// preview.ts `compileDarkmownPreview`'s first check, ahead of the worker's
+/// own limits: a source past 200,000 UTF-16 units is refused in these words.
+pub fn check_preview_size(source: &str) -> Result<(), String> {
+    if js_len(source) > 200_000 {
+        Err("Darkmown preview is limited to 200,000 characters".into())
+    } else {
+        Ok(())
+    }
+}
+
 pub fn validate_preview_source(source: &str) -> Result<(), String> {
     let length = js_len(source);
     if length > DARKMOWN_SOURCE_LIMIT {
@@ -149,4 +159,19 @@ pub fn validate_preview_source(source: &str) -> Result<(), String> {
         return Err("These loops could draw too many rows for an interactive preview. Your source remains available to edit and save.".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod size_tests {
+    #[test]
+    fn past_200000_characters_the_preview_says_so_first() {
+        let long = "a".repeat(200_001);
+        assert_eq!(super::check_preview_size(&long).unwrap_err(), "Darkmown preview is limited to 200,000 characters");
+        // 150,000 passes this check and meets the worker's 128,000 limit.
+        let mid = "a".repeat(150_000);
+        assert!(super::check_preview_size(&mid).is_ok());
+        assert!(super::validate_preview_source(&mid).unwrap_err().starts_with("Interactive preview supports up to 128,000"));
+        // UTF-16 units, as JavaScript's length counts them.
+        assert!(super::check_preview_size(&"😀".repeat(100_001)).is_err());
+    }
 }

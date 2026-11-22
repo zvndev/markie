@@ -156,7 +156,7 @@ impl RichView {
     }
 
     fn on_drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
-        let (docs, files): (Vec<PathBuf>, Vec<PathBuf>) = paths
+        let (docs, mut files): (Vec<PathBuf>, Vec<PathBuf>) = paths
             .paths()
             .iter()
             .cloned()
@@ -164,15 +164,17 @@ impl RichView {
         if !docs.is_empty() {
             cx.emit(RichEvent::OpenPaths(docs));
         }
+        files.retain(|f| f.exists());
         if files.is_empty() || self.read_only {
             return;
         }
+        cx.emit(RichEvent::GrantAttachments(files.clone()));
         if let Some(p) = self.hit(window.mouse_position()) {
             self.editor.set_caret(p, false);
         }
         let dir = self.base_dir.clone();
         self.edit(cx, |e| {
-            for f in files.iter().filter(|f| f.exists()) {
+            for f in &files {
                 let a = attach::attachment_for(f, dir.as_deref());
                 match a.kind {
                     AttachmentKind::Media => e.insert_image(&a.href, Some(&a.label)),

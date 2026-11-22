@@ -48,6 +48,11 @@ impl Workspace {
     /// Before another document replaces this one. A file saves as before; an
     /// untitled buffer goes to the journal, the only copy there will be.
     pub(super) fn settle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            self.office_flush_recovery(cx);
+            return;
+        }
         // An edit still inside its settle delay: make `dirty` exact first.
         self.settle_edit_now(cx);
         if self.is_untitled() {
@@ -57,7 +62,7 @@ impl Workspace {
             }
             return;
         }
-        if self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)) {
+        if self.dirty {
             self.save(window, cx);
         }
     }
@@ -74,6 +79,7 @@ impl Workspace {
     fn open_untitled_with_baseline(&mut self, name: String, text: String, clean: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.invalidate_import();
         self.settle(window, cx);
+        self.document_failure = None;
         self.doc_notes.clear();
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
         let format = kind_for_extension(&ext);
@@ -127,6 +133,9 @@ impl Workspace {
     /// document, and the journal entry is spent.
     pub(super) fn save_untitled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
+        if let DocKind::Office(office) = &doc.kind {
+            return self.save_untitled_office(doc.path.clone(), doc.format, office.view.clone(), window, cx);
+        }
         let name = doc.path.to_string_lossy().into_owned();
         let text = self.current_text(cx);
         let dir = self.default_dir();

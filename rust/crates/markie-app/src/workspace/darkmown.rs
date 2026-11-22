@@ -240,9 +240,37 @@ impl Workspace {
         .detach();
     }
 
+    /// The document menu's `view-darkmown-*` commands, enabled for a .wd only.
     pub(super) fn darkmown_command(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        if !self.is_darkmown_doc() {
+            return;
+        }
         self.darkmown.mode = mode;
         cx.notify();
+    }
+
+    pub(super) fn on_darkmown_source_view(&mut self, _: &crate::actions::DarkmownSourceView, _: &mut Window, cx: &mut Context<Self>) {
+        self.darkmown_command(Mode::Source, cx);
+    }
+
+    pub(super) fn on_darkmown_preview_view(&mut self, _: &crate::actions::DarkmownPreviewView, _: &mut Window, cx: &mut Context<Self>) {
+        self.darkmown_command(Mode::Preview, cx);
+    }
+
+    pub(super) fn on_darkmown_split_view(&mut self, _: &crate::actions::DarkmownSplitView, _: &mut Window, cx: &mut Context<Self>) {
+        self.darkmown_command(Mode::Split, cx);
+    }
+
+    /// page.tsx lists an enabled document command as "View: <label>".
+    pub(super) fn darkmown_palette(&self) -> Vec<(&'static str, Mode)> {
+        if !self.is_darkmown_doc() {
+            return Vec::new();
+        }
+        vec![
+            ("View: Darkmown Source", Mode::Source),
+            ("View: Darkmown Preview", Mode::Preview),
+            ("View: Darkmown Source and Preview", Mode::Split),
+        ]
     }
 
     fn darkmown_trust(&mut self, cx: &mut Context<Self>) {
@@ -292,20 +320,6 @@ impl Workspace {
                 .when(!primary, |d| d.bg(p.surface2).text_color(p.foreground).hover(|s| s.bg(p.accent)))
                 .child(label)
         };
-        let mode_button = |id: &'static str, label: &'static str, mode: Mode| {
-            let on = state.mode == mode;
-            div()
-                .id(id)
-                .px(px(7.))
-                .py(px(3.))
-                .rounded(px(5.))
-                .text_size(px(10.))
-                .cursor_pointer()
-                .text_color(if on { p.foreground } else { p.muted })
-                .when(on, |d| d.bg(p.surface2))
-                .child(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.darkmown_command(mode, cx)))
-        };
         let actions = if trusted {
             h_flex()
                 .gap(px(4.))
@@ -327,13 +341,6 @@ impl Workspace {
                     .min_w_0()
                     .child(div().text_size(px(11.)).line_height(px(17.6)).font_weight(FontWeight::BOLD).text_color(p.foreground).child("Document preview"))
                     .child(div().text_size(px(10.)).line_height(px(16.)).text_color(p.muted).child(if trusted { "Trusted · Edits revoke trust" } else { "Controls inactive" })),
-            )
-            .child(
-                h_flex()
-                    .gap(px(2.))
-                    .child(mode_button("wd-mode-source", "Source", Mode::Source))
-                    .child(mode_button("wd-mode-split", "Split", Mode::Split))
-                    .child(mode_button("wd-mode-preview", "Preview", Mode::Preview)),
             )
             .child(actions);
         let security = div()
@@ -402,21 +409,7 @@ impl Workspace {
             })
             .child(body);
         match state.mode {
-            Mode::Source => h_flex().size_full().child(source).child(
-                // The way back to the preview while the source fills the window.
-                div().absolute().top(px(8.)).right(px(12.)).child(
-                    h_flex()
-                        .gap(px(2.))
-                        .p(px(2.))
-                        .rounded(px(6.))
-                        .bg(p.surface)
-                        .border_1()
-                        .border_color(p.border)
-                        .child(mode_button("wd-mode-source", "Source", Mode::Source))
-                        .child(mode_button("wd-mode-split", "Split", Mode::Split))
-                        .child(mode_button("wd-mode-preview", "Preview", Mode::Preview)),
-                ),
-            ),
+            Mode::Source => h_flex().size_full().child(source),
             Mode::Preview => h_flex().size_full().child(preview),
             Mode::Split => h_flex().size_full().child(source).child(preview),
         }

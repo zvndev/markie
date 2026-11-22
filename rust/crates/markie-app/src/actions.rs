@@ -6,6 +6,11 @@ actions!(
         Open,
         OpenFolder,
         NewDocument,
+        NewMarkdownDocument,
+        NewWordDocument,
+        NewTextDocument,
+        NewDarkmownDocument,
+        DocumentDetails,
         Save,
         ToggleMode,
         FocusSearch,
@@ -44,5 +49,8 @@ actions!(
         ExportPdfDark,
         ExportPdfLight,
         ExportHtml,
+        DarkmownSourceView,
+        DarkmownPreviewView,
+        DarkmownSplitView,
     ]
 );

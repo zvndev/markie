@@ -29,6 +29,8 @@ pub mod link_preview;
 mod link_card;
 mod rail;
 mod video;
+mod lightbox;
+mod format_rail;
 pub mod style;
 
 use std::cell::RefCell;
@@ -204,6 +206,7 @@ pub fn bind_keys(cx: &mut App) {
 /// takes back only this person's edits.
 #[derive(Debug, Clone)]
 pub enum RichEvent {
+    RenderFailed(String),
     Changed,
     Undo,
     Redo,
@@ -211,6 +214,8 @@ pub enum RichEvent {
     /// Documents dropped on the editor, to open (attach.ts leaves them to
     /// the window's open path).
     OpenPaths(Vec<PathBuf>),
+    /// Exact, user-selected attachment grants, without granting their folders.
+    GrantAttachments(Vec<PathBuf>),
     /// A local link click. The host applies its own workspace grants.
     OpenLocal(String),
     /// The toolbar asked for a zoom (a `ZOOM_STEPS` value) or a page width
@@ -356,6 +361,16 @@ pub struct RichView {
     pub(crate) notice: Option<(SharedString, u64)>,
     /// A video card's player, while it plays (`video.rs`).
     pub(crate) video: Option<video::VideoViewer>,
+    /// The picture viewer (`image-lightbox.tsx`), when open.
+    pub(crate) lightbox: Option<lightbox::Lightbox>,
+    /// The formatting rail is shown (the host's `showFormatRail`), and its
+    /// advanced tools are open.
+    pub(crate) format_rail: bool,
+    pub(crate) rail_advanced: bool,
+    pub(crate) inline_video: Option<Rc<RefCell<video::InlineVideo>>>,
+    web_views_covered: bool,
+    media_grants: markie_core::links::FileGrants,
+    media_roots: Vec<PathBuf>,
     /// The toolbar's "more" popover is open.
     pub(crate) more_open: bool,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
@@ -441,6 +456,13 @@ impl RichView {
             size_field: None,
             notice: None,
             video: None,
+            lightbox: None,
+            format_rail: false,
+            rail_advanced: false,
+            inline_video: None,
+            web_views_covered: false,
+            media_grants: Default::default(),
+            media_roots: Vec::new(),
             more_open: false,
             rail_hover: Default::default(),
             source_mode: false,
@@ -456,6 +478,7 @@ impl RichView {
     pub fn load(&mut self, markdown: &str, base_dir: Option<PathBuf>, cx: &mut Context<Self>) {
         self.editor = Editor::parse(markdown);
         self.video = None;
+        self.inline_video = None;
         self.heights.clear();
         self.emitted = self.editor.version;
         self.base_dir = base_dir;
@@ -496,6 +519,14 @@ impl RichView {
     }
 
     /// The document as it would be saved.
+    /// Show the formatting rail on the pane's left edge (the pencil view).
+    pub fn set_format_rail(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.format_rail != on {
+            self.format_rail = on;
+            cx.notify();
+        }
+    }
+
     pub fn markdown(&self) -> String {
         self.editor.to_markdown()
     }
@@ -503,9 +534,16 @@ impl RichView {
     /// Install per-document resources without modifying its Markdown.
     pub fn set_cloud_resources(&mut self, media: HashMap<String, PathBuf>, links: HashSet<String>,
         restrict_local: bool, cx: &mut Context<Self>) {
+        self.inline_video = None;
         self.cloud_media = media;
         self.cloud_links = links;
         self.restrict_local_media = restrict_local;
+        cx.notify();
+    }
+
+    pub fn set_media_grants(&mut self, grants: markie_core::links::FileGrants, roots: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.media_grants = grants;
+        self.media_roots = roots;
         cx.notify();
     }
 
@@ -606,7 +644,8 @@ impl RichView {
     }
 
     fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Editor)) {
-        if self.read_only {
+        // The viewer holds the keyboard while it is open, as Electron's dialog does.
+        if self.read_only || self.lightbox.is_some() {
             return;
         }
         self.marked = None;
@@ -615,6 +654,9 @@ impl RichView {
     }
 
     fn mv(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Editor)) {
+        if self.lightbox.is_some() {
+            return;
+        }
         self.marked = None;
         f(&mut self.editor);
         self.autoscroll = true;
@@ -658,9 +700,15 @@ impl RichView {
         self.edit(cx, |e| e.outdent());
     }
     fn on_left(&mut self, _: &MoveLeft, _: &mut Window, cx: &mut Context<Self>) {
+        if self.lightbox_key(-1, cx) {
+            return;
+        }
         self.mv(cx, |e| e.move_left(false, false));
     }
     fn on_right(&mut self, _: &MoveRight, _: &mut Window, cx: &mut Context<Self>) {
+        if self.lightbox_key(1, cx) {
+            return;
+        }
         self.mv(cx, |e| e.move_right(false, false));
     }
     fn on_select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -682,9 +730,15 @@ impl RichView {
         self.mv(cx, |e| e.move_right(true, true));
     }
     fn on_up(&mut self, _: &MoveUp, _: &mut Window, cx: &mut Context<Self>) {
+        if self.lightbox_key(-1, cx) {
+            return;
+        }
         self.vertical(false, false, cx);
     }
     fn on_down(&mut self, _: &MoveDown, _: &mut Window, cx: &mut Context<Self>) {
+        if self.lightbox_key(1, cx) {
+            return;
+        }
         // CodeBlock's exitOnArrowDown, at the very end of a code block.
         if !self.read_only && self.editor.kind(self.editor.head) == Some(LeafKind::Code) && !self.editor.has_selection() {
             let h = self.editor.head;
@@ -862,7 +916,7 @@ impl RichView {
         self.find_step(false, cx);
     }
     fn on_escape(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
-        if self.close_video(cx) {
+        if self.close_lightbox(cx) || self.close_video(cx) {
             return;
         }
         if self.cancel_math_field(window, cx) {
@@ -1024,6 +1078,14 @@ impl RichView {
         }
         // A click on a link follows it on release (behaviour.rs); a link
         // to a cloud document goes to the host.
+        // A double-click on a picture opens the viewer; a single click when
+        // the document is read-only, where a click has nothing else to mean.
+        let m = ev.modifiers;
+        let plain = !(m.platform || m.control || m.alt || m.shift);
+        let opens = if self.read_only { ev.click_count == 1 } else { ev.click_count == 2 };
+        if plain && opens && self.editor.kind(p) == Some(LeafKind::Atom) && self.open_lightbox_at(p, cx) {
+            return;
+        }
         self.note_link_click(p, ev.click_count, ev.modifiers.shift);
         let units = self.editor.units(p.block, p.leaf);
         match ev.click_count {
@@ -1437,7 +1499,7 @@ impl EntityInputHandler for RichView {
         if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
             eprintln!("insert {text:?} at {range:?}");
         }
-        if self.read_only {
+        if self.read_only || self.lightbox.is_some() {
             return;
         }
         self.select_utf16(range);

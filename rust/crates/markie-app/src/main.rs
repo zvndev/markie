@@ -5,6 +5,7 @@
 
 mod actions;
 mod deeplinks;
+mod doc_worker;
 mod default_apps;
 mod icons;
 mod instance;
@@ -97,9 +98,29 @@ mod key_tests {
     fn cmd_p_prints() {
         assert!(bound("cmd-p").iter().any(|(a, _)| a.ends_with("Print")));
     }
+
+    #[test]
+    fn office_commands_are_directly_in_the_reference_file_and_view_groups() {
+        use gpui_kit::MenuItem;
+        let menus = super::application_menus();
+        let group = |group: &str| {
+            menus.iter().find(|menu| menu.name.as_ref() == group).unwrap().items.iter()
+                .filter_map(|item| if let MenuItem::Action { name, .. } = item { Some(name.to_string()) } else { None })
+                .collect::<Vec<_>>()
+        };
+        let file = group("File");
+        for name in ["New Markdown Document", "New Word Document", "New Text Document",
+            "New Darkmown Document", "Document Details…", "History…", "Print…", "Export PDF…"] {
+            assert!(file.iter().any(|label| label == name), "{name}");
+        }
+        let view = group("View");
+        for name in ["Page Layout", "Continuous Layout", "Document Outline", "Actual Size"] {
+            assert_eq!(view.iter().filter(|label| label.as_str() == name).count(), 1, "{name}");
+        }
+    }
 }
 
-fn set_menus(cx: &mut App) {
+fn application_menus() -> Vec<Menu> {
     let mut menus = vec![
         Menu {
             name: "Markie RS".into(),
@@ -117,12 +138,17 @@ fn set_menus(cx: &mut App) {
             name: "File".into(),
             items: vec![
                 MenuItem::action("New Document", NewDocument),
+                MenuItem::action("New Markdown Document", NewMarkdownDocument),
+                MenuItem::action("New Word Document", NewWordDocument),
+                MenuItem::action("New Text Document", NewTextDocument),
+                MenuItem::action("New Darkmown Document", NewDarkmownDocument),
                 MenuItem::action("Open…", Open),
                 MenuItem::action("Open Folder…", OpenFolder),
                 MenuItem::separator(),
                 MenuItem::action("Save", Save),
                 MenuItem::action("Make Interactive", MakeInteractive),
-                MenuItem::action("Version History", ShowHistory),
+                MenuItem::action("Document Details…", DocumentDetails),
+                MenuItem::action("History…", ShowHistory),
                 MenuItem::separator(),
                 MenuItem::action("Rename…", RenameDocument),
                 MenuItem::action("Duplicate", DuplicateDocument),
@@ -132,11 +158,11 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Move to Trash", TrashDocument),
                 MenuItem::separator(),
                 MenuItem::action("Print…", Print),
+                MenuItem::action("Export PDF…", ExportPdfLight),
                 MenuItem::submenu(Menu {
                     name: "Export".into(),
                     items: vec![
                         MenuItem::action("PDF (Dark)…", ExportPdfDark),
-                        MenuItem::action("PDF (Light)…", ExportPdfLight),
                         MenuItem::action("HTML…", ExportHtml),
                     ],
                     disabled: false,
@@ -144,6 +170,7 @@ fn set_menus(cx: &mut App) {
             ],
             disabled: false,
         },
+        workspace::source::edit_menu(),
         Menu {
             name: "View".into(),
             items: vec![
@@ -169,8 +196,12 @@ fn set_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Vault", workspace::vault::ToggleVault),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu { name: "Word Layout".into(), items: markie_office_view::actions::view_menu_items(), disabled: false }),
-            ],
+                // electron/document-menu-commands.json: on for a .wd only.
+                MenuItem::action("Darkmown Source", DarkmownSourceView),
+                MenuItem::action("Darkmown Preview", DarkmownPreviewView),
+                MenuItem::action("Darkmown Source and Preview", DarkmownSplitView),
+                MenuItem::separator(),
+            ].into_iter().chain(markie_office_view::actions::view_menu_items()).collect(),
             disabled: false,
         },
     ];
@@ -183,13 +214,18 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
             MenuItem::separator(),
             MenuItem::action(logs::reveal_menu_label(), logs::RevealCrashLog),
+            #[cfg(target_os = "macos")]
+            MenuItem::action("Reveal Native Crash Report", logs::RevealNativeCrashReport),
         ],
         disabled: false,
     });
-    cx.set_menus(menus);
+    menus
 }
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(doc_worker::ARG)) {
+        std::process::exit(if doc_worker::serve() { 0 } else { 1 });
+    }
     logs::install_panic_hook();
     let args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
 
@@ -267,13 +303,17 @@ fn main() {
                 // The menu bar after the first frame: building it took 50 to
                 // 80 ms of the launch. Shortcuts are bound above and work
                 // from the start.
-                window.on_next_frame(|_, cx| set_menus(cx));
+                window.on_next_frame(|_, cx| cx.set_menus(application_menus()));
                 view
             })
             .expect("failed to open the Markie RS window");
 
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {
                 let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
+            });
+            #[cfg(target_os = "macos")]
+            cx.on_action(move |_: &logs::RevealNativeCrashReport, cx| {
+                let _ = window_handle.update(cx, |_, window, cx| logs::reveal_native_crash_report(window, cx));
             });
             workspace::account::handle_open_urls(open_urls::hand_back_links(&launch_links), cx);
             for link in open_urls::deep_links(&launch_links) {

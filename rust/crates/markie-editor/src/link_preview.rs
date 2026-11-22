@@ -137,7 +137,9 @@ fn load(key: &str, allow_private: bool) -> Option<LinkPreview> {
     if !ty.is_empty() && !ty.contains("html") && !ty.contains("xml") {
         return None;
     }
-    let meta = lp::parse_meta(&String::from_utf8_lossy(&body));
+    let mut meta = lp::parse_meta(&String::from_utf8_lossy(&body));
+    // An empty title tag reads as no title (`!meta.title`).
+    meta.title = meta.title.filter(|t| !t.is_empty());
     if meta.title.is_none() && meta.description.is_none() {
         return None;
     }

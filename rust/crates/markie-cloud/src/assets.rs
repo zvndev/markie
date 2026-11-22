@@ -369,146 +369,77 @@ pub async fn reconcile(
     })
 }
 
-/// asset-cache.js: 2 GiB of cloud media, the least recently used going first.
-pub const CACHE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-/// A copy checked with the server this recently is served without asking
-/// again (`VALID_FOR_MS`).
-pub const CACHE_VALID_FOR: std::time::Duration = std::time::Duration::from_secs(60);
-const SESSION_FILE: &str = "session";
-
-fn touch(path: &Path) {
-    if let Ok(f) = fs::OpenOptions::new().append(true).open(path) {
-        let _ = f.set_modified(std::time::SystemTime::now());
-    }
-}
-
-/// `evict`: drop the least recently used files until the cache fits.
-/// A bucket that loses its file loses its ETag too, so the next look
-/// fetches in full.
-pub fn evict(dir: &Path, limit: u64) {
-    let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
-    let Ok(buckets) = fs::read_dir(dir) else { return };
-    for bucket in buckets.flatten().filter(|b| b.file_type().is_ok_and(|t| t.is_dir())) {
-        let Ok(entries) = fs::read_dir(bucket.path()) else { continue };
-        for e in entries.flatten() {
-            if e.file_name() == "etag" {
-                continue;
-            }
-            if let Some(meta) = e.metadata().ok().filter(|m| m.is_file()) {
-                files.push((e.path(), meta.len(), meta.modified().unwrap_or(std::time::UNIX_EPOCH)));
-            }
-        }
-    }
-    let mut total: u64 = files.iter().map(|f| f.1).sum();
-    files.sort_by_key(|f| f.2);
-    for (path, size, _) in files {
-        if total <= limit {
-            break;
-        }
-        if fs::remove_file(&path).is_ok() {
-            if let Some(bucket) = path.parent() {
-                let _ = fs::remove_file(bucket.join("etag"));
-            }
-            total = total.saturating_sub(size);
-        }
-    }
-}
-
-/// `bindSession`: whose pictures the cache holds. A different session, or
-/// none (a sign-out), empties it; the same session keeps what it fetched
-/// across relaunches.
-pub fn bind_session(dir: &Path, session: Option<&str>) -> std::io::Result<()> {
-    let recorded = fs::read_to_string(dir.join(SESSION_FILE)).ok();
-    let wanted = session.map(hash_content);
-    if recorded.is_some() && recorded == wanted {
-        return Ok(());
-    }
-    if dir.exists() {
-        for e in fs::read_dir(dir)?.flatten() {
-            let path = e.path();
-            let _ = if e.file_type().is_ok_and(|t| t.is_dir()) { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
-        }
-    }
-    if let Some(key) = wanted {
-        fs::create_dir_all(dir)?;
-        markie_core::save::atomic_write(&dir.join(SESSION_FILE), key.as_bytes())?;
-    }
-    Ok(())
-}
-
-/// Cache an asset under the RS data directory. A cached byte stream is never
-/// returned until this exact account and reference has been reauthorized
-/// within the last minute.
+/// Downloads and revalidates references in the single shared media cache.
 pub async fn revalidate(
     docs: &DocsClient<'_>,
-    dir: &Path,
+    cache: &crate::asset_cache::AssetCache,
     account: &str,
     origin: &str,
     id: &str,
     reference: &str,
 ) -> Result<PathBuf> {
     let expected = mime(reference).ok_or(CloudError::Refused)?;
-    let scope = hash_content(&serde_json::to_string(&(account, origin, id, reference)).unwrap());
-    let bucket = dir.join(scope);
-    let tag = fs::read_to_string(bucket.join("etag"))
-        .ok()
-        .filter(|s| parse_etag(s).is_some());
-    let ext = Path::new(reference)
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or(CloudError::Refused)?;
-    let path_for = |hash: &str| bucket.join(format!("{hash}.{ext}"));
-    let previous = tag
-        .as_deref()
-        .and_then(parse_etag)
-        .map(path_for)
-        .filter(|p| p.is_file());
-    let checked_recently = fs::metadata(bucket.join("etag"))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.elapsed().ok())
-        .is_some_and(|ago| ago < CACHE_VALID_FOR);
-    if let Some(path) = previous.as_ref().filter(|_| checked_recently) {
-        touch(path);
-        return Ok(path.clone());
+    let key = cache.key(account, origin, id, reference).ok_or(CloudError::StaleSession)?;
+    let lock = cache.request(&key);
+    let mut request = lock.lock().await;
+    docs.check_asset_scope(account, origin)?;
+    let now = markie_core::clock::now_ms();
+    let bad_cache = |error: std::io::Error| {
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            CloudError::StaleSession
+        } else {
+            CloudError::Unreadable
+        }
+    };
+    let previous = cache.lookup(&key, now, false).map_err(bad_cache)?;
+    if let Some(result) = request.as_ref() {
+        return match result {
+            Ok(_) => previous.map(|(path, _)| path).ok_or(CloudError::Unreadable),
+            Err(error) => Err(error.clone()),
+        };
     }
-    let answer = docs
-        .fetch_asset(id, reference, tag.as_deref().filter(|_| previous.is_some()))
-        .await?;
-    if answer.status == 304 {
-        let path = previous.ok_or(CloudError::Unreadable)?;
-        touch(&path);
-        touch(&bucket.join("etag"));
-        return Ok(path);
-    }
-    let answer = answer.into_ok()?;
-    let tag = answer.etag.as_deref().ok_or(CloudError::Unreadable)?;
-    let hash = parse_etag(tag).ok_or(CloudError::Unreadable)?;
-    if answer.content_type.as_deref() != Some(expected)
-        || answer.bytes.len() > MAX_ASSET_BYTES
-        || hex::encode(Sha256::digest(&answer.bytes)) != hash
-    {
-        return Err(CloudError::Unreadable);
-    }
-    let write = |e: std::io::Error| CloudError::Invalid(format!("Couldn't cache cloud media: {e}"));
-    fs::create_dir_all(&bucket).map_err(write)?;
-    let path = path_for(hash);
-    markie_core::save::atomic_write(&path, &answer.bytes).map_err(write)?;
-    markie_core::save::atomic_write(&bucket.join("etag"), tag.as_bytes()).map_err(write)?;
-    if let Some(old) = previous.filter(|p| p != &path) {
-        let _ = fs::remove_file(old);
-    }
-    evict(dir, CACHE_LIMIT_BYTES);
-    Ok(path)
+    let result = async {
+        if let Some((path, entry)) = &previous && entry.fresh(now) { return Ok(path.clone()); }
+        let tag = previous.as_ref().map(|(_, entry)| format!("\"{}\"", entry.hash));
+        let retain = |failure| {
+            docs.check_asset_scope(account, origin)?;
+            cache.lookup(&key, markie_core::clock::now_ms(), false).map_err(bad_cache)?
+                .map(|(path, _)| path).ok_or(failure)
+        };
+        let answer = match docs.fetch_asset(id, reference, tag.as_deref()).await {
+            Ok(answer) => answer,
+            Err(error @ (CloudError::Offline | CloudError::TooLarge)) => return retain(error),
+            Err(error) => return Err(error),
+        };
+        if answer.status == 304 {
+            return cache.lookup(&key, markie_core::clock::now_ms(), true).map_err(bad_cache)?
+                .map(|(path, _)| path).ok_or(CloudError::Unreadable);
+        }
+        if matches!(answer.status, 401 | 403 | 404 | 410) {
+            cache.forget(&key).map_err(bad_cache)?;
+        } else if answer.status >= 500 {
+            return retain(answer.into_ok().unwrap_err());
+        }
+
+        let answer = answer.into_ok()?;
+        let Some(hash) = answer.etag.as_deref().and_then(parse_etag) else { return retain(CloudError::Unreadable) };
+        if answer.content_type.as_deref() != Some(expected) || answer.bytes.len() > MAX_ASSET_BYTES {
+            return retain(CloudError::Unreadable);
+        }
+        // A failed replacement does not displace a good retained copy. The cache
+        // checks the session generation before serving or committing either one.
+        match cache.store(key.clone(), expected, hash, &answer.bytes, markie_core::clock::now_ms()).map_err(bad_cache) {
+            Err(CloudError::Unreadable) => retain(CloudError::Unreadable),
+            result => result,
+        }
+    }.await;
+    *request = Some(result.clone());
+    result
 }
 
 fn parse_etag(tag: &str) -> Option<&str> {
     let value = tag.strip_prefix('"')?.strip_suffix('"')?;
-    (value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-    .then_some(value)
+    crate::asset_cache::valid_hash(value).then_some(value)
 }
 
 /// Never overwrite a pre-existing name, including an unresolvable symlink.
@@ -536,38 +467,91 @@ mod tests {
         assert_eq!(references(&src), ["clip.mp4", "a b.png", "other.svg"]);
     }
 
-    #[test]
-    fn the_cache_drops_the_least_recently_used_first() {
+    #[tokio::test]
+    async fn asset_cache_revalidates_retains_and_forgets_like_electron() {
+        use crate::asset_cache::{AssetCache, CACHE_VALID_FOR};
+        use crate::client::CloudClient;
+        use crate::origin::Trust;
+        use crate::tokens::{MemoryTokenStore, Session, TokenStore};
+        use std::sync::{Arc, RwLock};
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let origin = server.uri();
+        let tokens = Arc::new(MemoryTokenStore::new());
+        tokens.put(&origin, Some(&Session { token: "synthetic".into(), user_id: Some("alice".into()) })).unwrap();
+        let trust = Arc::new(RwLock::new(Trust::new([], true)));
+        let client = CloudClient::new(&origin, trust, tokens, crate::http::Transport::new()).unwrap();
+        let docs = DocsClient::new(&client);
         let dir = tempfile::tempdir().unwrap();
-        let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000 + secs);
-        for (bucket, secs) in [("a", 1), ("b", 3), ("c", 2)] {
-            let b = dir.path().join(bucket);
-            fs::create_dir(&b).unwrap();
-            fs::write(b.join("etag"), "\"x\"").unwrap();
-            let f = b.join("file.png");
-            fs::write(&f, vec![0u8; 10]).unwrap();
-            fs::OpenOptions::new().append(true).open(&f).unwrap().set_modified(at(secs)).unwrap();
+        let cache = AssetCache::for_account(dir.path(), "alice", &origin).unwrap();
+        let key = cache.key("alice", &origin, "doc_1", "pic.png").unwrap();
+        let hash = hash_content("synthetic asset");
+        let tag = format!("\"{hash}\"");
+        let stale_at = || markie_core::clock::now_ms() - CACHE_VALID_FOR.as_millis() as i64 - 1;
+        let seed = || cache.store(key.clone(), "image/png", &hash, b"synthetic asset", stale_at()).unwrap();
+        let retained = seed();
+        Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+            .respond_with(ResponseTemplate::new(304)).expect(1).mount(&server).await;
+        for _ in 0..2 {
+            assert_eq!(revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png").await.unwrap(), retained);
         }
-        evict(dir.path(), 20);
-        assert!(!dir.path().join("a/file.png").exists(), "oldest goes first");
-        assert!(!dir.path().join("a/etag").exists(), "its ETag goes with it");
-        assert!(dir.path().join("b/file.png").exists() && dir.path().join("c/file.png").exists());
+        server.verify().await;
+        server.reset().await;
+        seed();
+        Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+            .respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_millis(25)))
+            .expect(1).mount(&server).await;
+        let fetch = || revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png");
+        let (first, second) = tokio::join!(fetch(), fetch());
+        assert_eq!(first.unwrap(), retained);
+        assert_eq!(second.unwrap(), retained);
+        assert!(!cache.lookup(&key, markie_core::clock::now_ms(), false).unwrap().unwrap().1.fresh(markie_core::clock::now_ms()));
+        server.verify().await;
+        server.reset().await;
+        Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+            .respond_with(ResponseTemplate::new(200).insert_header("content-type", "image/png")
+                .insert_header("etag", tag.as_str()).set_body_bytes(b"wrong bytes".to_vec()))
+            .expect(1).mount(&server).await;
+        assert_eq!(revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png").await.unwrap(), retained);
+        assert_eq!(fs::read(&retained).unwrap(), b"synthetic asset");
+        server.verify().await;
+        for status in [401, 403, 404, 410] {
+            server.reset().await;
+            seed();
+            Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+                .respond_with(ResponseTemplate::new(status)).expect(1).mount(&server).await;
+            assert_eq!(revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png").await.unwrap_err().status(), Some(status));
+            assert!(!retained.exists());
+            server.verify().await;
+        }
     }
 
-    #[test]
-    fn a_different_session_or_a_sign_out_empties_the_cache() {
+    #[tokio::test]
+    async fn an_offline_copy_still_requires_an_active_account() {
+        use crate::asset_cache::{AssetCache, CACHE_VALID_FOR};
+        use crate::client::CloudClient;
+        use crate::origin::Trust;
+        use crate::tokens::{MemoryTokenStore, Session, TokenStore};
+        use std::sync::{Arc, RwLock};
+
+        let origin = "http://127.0.0.1:0";
+        let tokens = Arc::new(MemoryTokenStore::new());
+        tokens.put(origin, Some(&Session { token: "synthetic".into(), user_id: Some("alice".into()) })).unwrap();
+        let trust = Arc::new(RwLock::new(Trust::new([], true)));
+        let client = CloudClient::new(origin, trust, tokens.clone(), crate::http::Transport::new()).unwrap();
+        let docs = DocsClient::new(&client);
         let dir = tempfile::tempdir().unwrap();
-        let cache = dir.path().join("cloud-media");
-        bind_session(&cache, Some("alice")).unwrap();
-        fs::create_dir_all(cache.join("bucket")).unwrap();
-        fs::write(cache.join("bucket/x.png"), b"x").unwrap();
-        bind_session(&cache, Some("alice")).unwrap();
-        assert!(cache.join("bucket/x.png").exists(), "same session keeps its pictures");
-        bind_session(&cache, Some("bob")).unwrap();
-        assert!(!cache.join("bucket").exists(), "another account starts empty");
-        fs::create_dir_all(cache.join("bucket")).unwrap();
-        bind_session(&cache, None).unwrap();
-        assert!(!cache.join("bucket").exists() && !cache.join("session").exists(), "signing out empties it");
+        let cache = AssetCache::for_account(dir.path(), "alice", origin).unwrap();
+        let key = cache.key("alice", origin, "doc_1", "pic.png").unwrap();
+        let cached = cache.store(
+            key, "image/png", &hash_content("synthetic asset"), b"synthetic asset",
+            markie_core::clock::now_ms() - CACHE_VALID_FOR.as_millis() as i64 - 1,
+        ).unwrap();
+        assert_eq!(revalidate(&docs, &cache, "alice", origin, "doc_1", "pic.png").await.unwrap(), cached);
+        tokens.put(origin, None).unwrap();
+        assert_eq!(revalidate(&docs, &cache, "alice", origin, "doc_1", "pic.png").await.unwrap_err(), CloudError::NotSignedIn);
     }
 
     #[test]

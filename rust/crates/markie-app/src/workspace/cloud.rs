@@ -146,6 +146,8 @@ pub(super) struct CloudWorkspace {
     pub enable_area: Option<Option<String>>,
     /// Settings > Advanced > Servers (`servers_setting.rs`).
     pub servers_ui: super::servers_setting::ServersUi,
+    /// Origins closing a session but still holding the token for the final request.
+    pub media_signing_out: HashSet<String>,
     /// The area picker's "New area" field, its request and its error.
     pub area_input: Option<Entity<gpui_kit::component::input::InputState>>,
     pub area_busy: bool,
@@ -217,6 +219,7 @@ impl CloudWorkspace {
             window_visible: true,
             enable_area: None,
             servers_ui: Default::default(),
+            media_signing_out: HashSet::new(),
             area_input: None,
             area_busy: false,
             area_error: None,
@@ -1030,10 +1033,7 @@ impl Workspace {
         self.cloud.area = None;
         // Whose pictures the media cache holds (asset-cache.js bindSession):
         // another account, or none, starts it empty.
-        let mut who: Vec<String> = self.cloud.scopes().iter().map(|s| format!("{}\t{}", s.origin(), s.user)).collect();
-        who.sort();
-        let key = (!who.is_empty()).then(|| who.join("\n"));
-        let _ = markie_cloud::assets::bind_session(&paths::data_dir().join("cloud-media"), key.as_deref());
+        self.refresh_cloud_resources(cx);
         // main.js runs reconcileIfDue when a session arrives, within its
         // ten-minute cooldown.
         self.refresh_cloud(true, cx);

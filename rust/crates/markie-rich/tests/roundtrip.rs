@@ -191,3 +191,27 @@ fn every_fixture_block_serializes_stably() {
     println!("stable edited-block serialization: {}/{total}", total - unstable.len());
     assert!(unstable.is_empty(), "{unstable:#?}");
 }
+
+/// What TipTap's block normalizer writes for these blocks (run in Node on
+/// `rich-roundtrip.ts`), byte for byte: no line-start escape after a
+/// heading's `### `, a cell's `#` escaped but not its `59.90`, and only the
+/// line starts prosemirror-markdown's `esc` escapes.
+#[test]
+fn edited_blocks_escape_line_starts_as_tiptap_does() {
+    let cases = [
+        ("### 1. Homepage Issues", "### 1. Homepage Issues"),
+        ("## #1 ranked", "## #1 ranked"),
+        ("| # | Price |\n|---|---|\n| 1 | 59.90 |", "| \\#  | Price |\n| --- | ----- |\n| 1   | 59.90 |"),
+        ("| a |\n|---|\n| - x |", "| a    |\n| ---- |\n| \\- x |"),
+        ("\\#tag and \\+1", "#tag and +1"),
+        ("\\+ plus", "\\+ plus"),
+        ("Total: 3.5", "Total: 3.5"),
+    ];
+    for (src, tiptap) in cases {
+        let out = format_markdown_tables(&nodes_to_markdown(&parse_nodes(src)));
+        assert_eq!(out.trim_end_matches('\n'), tiptap, "{src:?}");
+    }
+    // TipTap writes `2) second`, which reads back as a list; Markie RS keeps
+    // the escape so the edit reads back as what was shown.
+    assert_eq!(nodes_to_markdown(&parse_nodes("2\\) second")).trim_end(), "2\\) second");
+}

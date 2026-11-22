@@ -93,6 +93,8 @@ Merging the parity audit (1ef4318) brought features that need the whole text on 
 | A live collaboration room | Source edits go to the room with the full text; rich edits serialize the document | Same as split view, while a room is live |
 | Everything else | Only the edited marker; the full-text work runs 150 ms after typing pauses | As fixed |
 
+The crash journal never waits for the deferred work. An edit on the deferred path schedules the journal at once, 250 ms after the last edit (2 s past 256 K characters), as Electron does, timed from the length counted at the last pause. The journal reads the current text when it fires and stays off for large documents. `markie_core::drafts::JournalPacer` holds that timing; its tests show the journal written with no settle run.
+
 Two smaller notes:
 
 - With a scratch `MARKIE_RS_DATA_DIR`, the app now scans the data folder instead of the home folder (from the audit). The benchmark's launches therefore index only scratch files; its scratch `HOME` is a second guard.

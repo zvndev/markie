@@ -5,6 +5,7 @@
 //! comments,live-snapshot}.ts). Pure rules live in their own functions so they
 //! unit-test without a network; the HTTP and websocket layers sit on top.
 pub mod account;
+pub mod asset_cache;
 pub mod assets;
 pub mod auth;
 pub mod auth_errors;

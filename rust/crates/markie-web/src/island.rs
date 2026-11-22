@@ -21,6 +21,8 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -273,6 +275,7 @@ impl Compiler {
     /// Starts compiling `source`. Poll [`Compiler::result`]; drop the compiler
     /// after 10 s without one (the same budget as Electron's worker).
     pub fn start<W: HasWindowHandle>(window: &W, source: &str) -> Result<Self, String> {
+        crate::darkmown::limits::check_preview_size(source)?;
         crate::darkmown::limits::validate_preview_source(source)?;
         let (compiler, driver) = compiler_scripts().ok_or("The bundled Darkmown compiler is not the expected build.")?;
         if compiler.to_ascii_lowercase().contains("</script") || driver.contains("</script") {
@@ -403,6 +406,47 @@ pub struct VideoPlayer {
 }
 
 impl VideoPlayer {
+    /// Play just the file selected by the document's asset gate. This
+    /// protocol has one URL and holds an open file, not a filesystem root.
+    pub fn from_local_mp4<W: HasWindowHandle>(window: &W, bounds: Bounds, file: File, len: u64) -> Result<Self, Error> {
+        const HTML: &str = "<!doctype html><meta charset=utf-8><meta http-equiv=Content-Security-Policy content=\"default-src 'none'; media-src markie-video:; style-src 'unsafe-inline'\"><style>html,body,video{width:100%;height:100%;margin:0;background:#000}</style><video controls autoplay playsinline preload=metadata src=markie-video://asset/clip.mp4></video>";
+        let file = Mutex::new(file);
+        let webview = WebViewBuilder::new()
+            .with_html(HTML)
+            .with_bounds(rect(bounds))
+            .with_incognito(true)
+            .with_devtools(false)
+            .with_clipboard(false)
+            .with_autoplay(true)
+            .with_navigation_handler(|url| url == "about:blank")
+            .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
+            .with_custom_protocol("markie-video".into(), move |_, request| {
+                if request.uri().host() != Some("asset") || request.uri().path_and_query().map(|p| p.as_str()) != Some("/clip.mp4") {
+                    return not_found();
+                }
+                let head = request.method() == "HEAD";
+                if !head && request.method() != "GET" { return not_found(); }
+                let header = request.headers().get("Range").and_then(|h| h.to_str().ok());
+                let Some((start, end)) = mp4_range(header, len) else {
+                    return Response::builder().status(416).header("Content-Range", format!("bytes */{len}"))
+                        .body(Cow::Borrowed(&[][..])).unwrap();
+                };
+                let count = end - start + 1;
+                let mut response = Response::builder().status(if header.is_some() { 206 } else { 200 })
+                    .header("Content-Type", "video/mp4").header("Accept-Ranges", "bytes")
+                    .header("Cache-Control", "no-store").header("Content-Length", count.to_string());
+                if header.is_some() {
+                    response = response.header("Content-Range", format!("bytes {start}-{end}/{len}"));
+                }
+                if head { return response.body(Cow::Borrowed(&[][..])).unwrap(); }
+                let Ok(mut file) = file.lock() else { return not_found() };
+                let mut body = vec![0; count as usize];
+                if file.seek(SeekFrom::Start(start)).and_then(|_| file.read_exact(&mut body)).is_err() { return not_found(); }
+                response.body(Cow::Owned(body)).unwrap()
+            })
+            .build_as_child(window)?;
+        Ok(Self { webview })
+    }
     /// Plays a YouTube or Vimeo embed in place. Only the provider's player
     /// origin may load in the frame; links out of it open in the browser.
     pub fn new<W: HasWindowHandle>(window: &W, bounds: Bounds, embed: &markie_export::embeds::Embed) -> Result<Self, Error> {
@@ -449,8 +493,34 @@ impl VideoPlayer {
     }
 }
 
+// One HTTP range, as used by WebKit's media loader. Bound allocations even
+// if a maliciously large file is substituted after the asset lookup.
+fn mp4_range(header: Option<&str>, len: u64) -> Option<(u64, u64)> {
+    if len == 0 || len > 95_000_000 { return None; }
+    let Some(header) = header else { return Some((0, len - 1)); };
+    let (start, end) = header.strip_prefix("bytes=")?.split_once('-')?;
+    if start.is_empty() {
+        let suffix: u64 = end.parse().ok()?;
+        return (suffix != 0).then(|| (len.saturating_sub(suffix), len - 1));
+    }
+    let start: u64 = start.parse().ok()?;
+    let end = if end.is_empty() { len - 1 } else { end.parse::<u64>().ok()?.min(len - 1) };
+    (start <= end).then_some((start, end))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mp4_seeking_accepts_a_bounded_range_only() {
+        use super::mp4_range;
+        assert_eq!(mp4_range(None, 40), Some((0, 39)));
+        assert_eq!(mp4_range(Some("bytes=5-8"), 40), Some((5, 8)));
+        assert_eq!(mp4_range(Some("bytes=5-"), 40), Some((5, 39)));
+        assert_eq!(mp4_range(Some("bytes=-8"), 40), Some((32, 39)));
+        assert_eq!(mp4_range(Some("bytes=40-"), 40), None);
+        assert_eq!(mp4_range(Some("bytes=0-5,6-8"), 40), None);
+        assert_eq!(mp4_range(None, 95_000_001), None);
+    }
     use super::*;
 
     #[test]

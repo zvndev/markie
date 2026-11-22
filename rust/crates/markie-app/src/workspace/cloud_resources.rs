@@ -1,7 +1,9 @@
 //! Resolve remote images and document pointers without rewriting user files.
 use super::Workspace;
+use super::account::AccountStore;
 use super::cloud::{landing_base, network};
 use gpui_kit::*;
+use markie_cloud::asset_cache::{AssetCache, CACHE_DIRECTORY};
 use markie_cloud::docs::DocsClient;
 use markie_cloud::sync::SyncEngine;
 use markie_cloud::{DEFAULT_SERVER, assets, links};
@@ -15,6 +17,13 @@ impl Workspace {
     pub(super) fn refresh_cloud_resources(&mut self, cx: &mut Context<Self>) {
         self.cloud.resource_epoch = self.cloud.resource_epoch.wrapping_add(1);
         let epoch = self.cloud.resource_epoch;
+        let account = AccountStore::global(cx);
+        let excluded = account.as_ref().and_then(|account| account.read(cx).cache_excluded_origin()).map(str::to_owned);
+        let scopes = self.cloud.scopes().into_iter()
+            .filter(|scope| Some(scope.origin()) != excluded.as_deref() && !self.cloud.media_signing_out.contains(scope.origin()))
+            .map(|scope| (scope.user.clone(), scope.origin().to_string()))
+            .collect();
+        let cache = AssetCache::bind_sessions(&paths::data_dir().join(CACHE_DIRECTORY), scopes).ok().flatten();
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else {
             return;
         };
@@ -28,6 +37,9 @@ impl Workspace {
         let Some((scope, id)) = self.cloud.bound_scope(&path) else {
             return;
         };
+        if Some(scope.origin()) == excluded.as_deref() || self.cloud.media_signing_out.contains(scope.origin()) {
+            return;
+        }
         let Some(super::OpenDoc {
             kind: super::DocKind::Text { saved, .. },
             ..
@@ -38,7 +50,6 @@ impl Workspace {
         let references = assets::references(saved);
         let doc_dir = path.parent().map(std::path::Path::to_path_buf);
         let request = scope.clone();
-        let cache = paths::data_dir().join("cloud-media");
         cx.spawn(async move |weak, cx| {
             let response = network(async move {
                 let docs = DocsClient::new(&request.client);
@@ -51,22 +62,14 @@ impl Workspace {
                     .filter(|r| doc_dir.as_ref().is_none_or(|d| !d.join(r).exists()))
                     .collect();
                 let mut media = HashMap::new();
-                for reference in references
-                    .into_iter()
-                    .filter(|r| assets::mime(r).is_some_and(|mime| ["image/", "video/", "audio/"].iter().any(|kind| mime.starts_with(kind))))
-                    .take(64)
-                {
-                    if let Ok(path) = assets::revalidate(
-                        &docs,
-                        &cache,
-                        &request.user,
-                        request.origin(),
-                        &id,
-                        &reference,
-                    )
-                    .await
+                if let Some(cache) = cache {
+                    for reference in references.into_iter()
+                        .filter(|r| assets::mime(r).is_some_and(|mime| ["image/", "video/", "audio/"].iter().any(|kind| mime.starts_with(kind))))
+                        .take(64)
                     {
-                        media.insert(reference, path);
+                        if let Ok(path) = assets::revalidate(&docs, &cache, &request.user, request.origin(), &id, &reference).await {
+                            media.insert(reference, path);
+                        }
                     }
                 }
                 (media, links, refused)

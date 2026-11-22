@@ -19,7 +19,7 @@ use gpui_kit::component::{ActiveTheme, Icon, Sizable as _, WindowExt as _, h_fle
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use markie_cloud::account::{Identities, IdentitiesError};
+use markie_cloud::account::{self as identities_api, AccountIdentity, AccountProvider, Identities, IdentitiesError, LinkProvider, LinkStatus, StepUp};
 use markie_cloud::auth::{AuthClient, AuthStates, CodeFlow, DeepLinkRefusal, MarkieUser, Provider, SignInOutcome, resolve_auth_deep_link};
 use markie_cloud::auth_errors::{self, AuthContext, SignInReason};
 use markie_cloud::client::Call;
@@ -150,9 +150,17 @@ pub struct AccountStore {
     identities: Option<(String, Load<Identities>)>,
     docs: Option<(String, Load<Vec<DocMeta>>)>,
     people: Option<(String, Load<People>)>,
+    /// Remove, Block and Unblock in the account sheet (`SharePeopleSettings`).
+    pub people_busy: bool,
+    pub people_error: Option<String>,
+    pub people_notice: Option<String>,
     /// The last hand-back problem, shown on the sign-in form.
     pub hand_back_error: Option<String>,
 }
+
+/// The registry setting behind "Sync my documents to the cloud"
+/// (Electron's `markie.sync.v1`). Off unless switched on.
+pub const SYNC_SETTING: &str = "cloud_sync_enabled";
 
 impl EventEmitter<AccountEvent> for AccountStore {}
 
@@ -223,8 +231,52 @@ impl AccountStore {
             identities: None,
             docs: None,
             people: None,
+            people_busy: false,
+            people_error: None,
+            people_notice: None,
             hand_back_error: None,
         }
+    }
+
+    /// "Sync my documents to the cloud", as stored (`getSyncEnabled`).
+    pub fn sync_enabled(&self) -> bool {
+        self.registry.as_ref().and_then(|r| r.setting(SYNC_SETTING).ok().flatten()).as_deref() == Some("true")
+    }
+
+    pub fn set_sync_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
+        if let Some(r) = &self.registry {
+            let _ = r.set_setting(SYNC_SETTING, if on { "true" } else { "false" });
+        }
+        cx.notify();
+    }
+
+    /// Remove, Block or Unblock someone, then read the lists again.
+    pub fn people_act(&mut self, kind: &'static str, person: String, done: String, failed: &'static str, cx: &mut Context<Self>) {
+        let Some((rt, client)) = self.backend() else { return };
+        self.people_busy = true;
+        self.people_error = None;
+        self.people_notice = None;
+        cx.notify();
+        run_bg(
+            &rt,
+            cx,
+            async move {
+                let people = PeopleClient::new(&client);
+                match kind {
+                    "block" => people.block(&person).await,
+                    "unblock" => people.unblock(&person).await,
+                    _ => people.remove(&person).await,
+                }
+            },
+            move |this: &mut Self, result, cx| {
+                this.people_busy = false;
+                match result {
+                    Ok(()) => this.people_notice = Some(done),
+                    Err(_) => this.people_error = Some(failed.into()),
+                }
+                this.load_people(cx);
+            },
+        );
     }
 
     fn backend(&self) -> Option<(Arc<tokio::runtime::Runtime>, CloudClient)> {
@@ -1149,11 +1201,72 @@ impl Render for SignInForm {
 
 // ------------------------------------------------------------------ account
 
+/// The steps of a linked sign-in change (`IdentityPanel`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    Idle,
+    PrimaryCode,
+    Email,
+    EmailCode,
+    ProviderWait,
+}
+
+/// One change to the account's linked sign-ins, in progress.
+struct IdentityFlow {
+    step: Step,
+    linking: Option<LinkProvider>,
+    intent: Option<String>,
+    browser_url: Option<String>,
+    challenge: Option<String>,
+    proof: Option<String>,
+    remove: Option<AccountIdentity>,
+    remove_provider: Option<(LinkProvider, AccountProvider)>,
+    busy: bool,
+    /// The message, and whether it is the muted "not on this server" one.
+    error: Option<(String, bool)>,
+    notice: Option<String>,
+    generation: u64,
+    _poll: Option<Task<()>>,
+}
+
+impl IdentityFlow {
+    fn new() -> Self {
+        Self {
+            step: Step::Idle,
+            linking: None,
+            intent: None,
+            browser_url: None,
+            challenge: None,
+            proof: None,
+            remove: None,
+            remove_provider: None,
+            busy: false,
+            error: None,
+            notice: None,
+            generation: 0,
+            _poll: None,
+        }
+    }
+}
+
+/// What confirming the primary email led to.
+enum Confirmed {
+    SignedOut,
+    Unlinked,
+    Linking(identities_api::ProviderLink),
+    Proof(String),
+}
+
 /// The Account tab of Settings: who is signed in, or the sign-in form.
 pub struct AccountSection {
     store: Entity<AccountStore>,
     form: Entity<SignInForm>,
     identities_open: bool,
+    flow: IdentityFlow,
+    code: Entity<InputState>,
+    new_email: Entity<InputState>,
+    /// Fields to empty at the next render, which has the window.
+    clear: Vec<Entity<InputState>>,
     _subs: Vec<Subscription>,
 }
 
@@ -1162,81 +1275,480 @@ impl AccountSection {
     /// directly instead of opening the sheet.
     pub fn new(store: Entity<AccountStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let form = cx.new(|cx| SignInForm::new(store.clone(), SignInReason::Account, window, cx));
-        let subs = vec![cx.observe(&store, |_, _, cx| cx.notify())];
-        Self { store, form, identities_open: false, _subs: subs }
+        let code = cx.new(|cx| InputState::new(window, cx));
+        let new_email = cx.new(|cx| InputState::new(window, cx));
+        let subs = vec![
+            cx.observe(&store, |_, _, cx| cx.notify()),
+            cx.subscribe(&code, |_, _, _: &InputEvent, cx| cx.notify()),
+            cx.subscribe(&new_email, |_, _, _: &InputEvent, cx| cx.notify()),
+        ];
+        Self { store, form, identities_open: false, flow: IdentityFlow::new(), code, new_email, clear: Vec::new(), _subs: subs }
     }
 
-    fn render_identities(&self, l: Look, cx: &mut Context<Self>) -> Div {
+    fn input_value(input: &Entity<InputState>, cx: &App) -> String {
+        input.read(cx).value().trim().to_string()
+    }
+
+    /// Every change goes through here: one at a time, the last error cleared,
+    /// and an answer for an account no longer signed in dropped.
+    fn identity_run<T: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(CloudClient) -> std::pin::Pin<Box<dyn Future<Output = Result<T, identities_api::AccountError>> + Send>>,
+        done: impl FnOnce(&mut Self, T, &mut Context<Self>) + 'static,
+    ) {
+        let Some((rt, client)) = self.store.read(cx).backend() else { return };
+        let user = self.store.read(cx).user().map(|u| u.id.clone());
+        self.flow.generation += 1;
+        let ticket = self.flow.generation;
+        self.flow.busy = true;
+        self.flow.error = None;
+        self.flow.notice = None;
+        cx.notify();
+        run_bg(&rt, cx, work(client), move |this: &mut Self, result, cx| {
+            if ticket != this.flow.generation || this.store.read(cx).user().map(|u| u.id.clone()) != user {
+                return;
+            }
+            this.flow.busy = false;
+            match result {
+                Ok(value) => done(this, value, cx),
+                Err(e) => this.flow.error = Some((e.message.clone(), e.unsupported())),
+            }
+        });
+    }
+
+    /// Ask the primary email for a code, for this one change (`begin`).
+    fn identity_begin(&mut self, remove: Option<AccountIdentity>, link: Option<LinkProvider>, provider: Option<(LinkProvider, AccountProvider)>, cx: &mut Context<Self>) {
+        let scope = match (&provider, link, &remove) {
+            (Some((p, _)), _, _) => StepUp::Remove(*p),
+            (None, Some(p), _) => StepUp::Link(p),
+            (None, None, Some(_)) => StepUp::EmailRemove,
+            (None, None, None) => StepUp::EmailAdd,
+        };
+        self.identity_run(cx, move |c| Box::pin(async move { identities_api::start_step_up(&c, scope).await }), move |this, challenge, cx| {
+            this.flow.linking = link;
+            this.flow.remove = remove;
+            this.flow.remove_provider = provider;
+            this.flow.challenge = Some(challenge.challenge_id);
+            this.flow.step = Step::PrimaryCode;
+            this.flow.notice = Some("A code was sent to your primary email. Confirm it before changing linked sign-ins.".into());
+            this.clear_code(cx);
+        });
+    }
+
+    fn clear_code(&mut self, cx: &mut Context<Self>) {
+        self.clear.push(self.code.clone());
+        cx.notify();
+    }
+
+    /// `confirmPrimary`: the proof, then the change it was asked for.
+    fn identity_confirm(&mut self, cx: &mut Context<Self>) {
+        let Some(challenge) = self.flow.challenge.clone() else { return };
+        let code = Self::input_value(&self.code, cx);
+        let remove = self.flow.remove.clone();
+        let remove_provider = self.flow.remove_provider.clone();
+        let linking = self.flow.linking;
+        self.identity_run(
+            cx,
+            move |c| {
+                Box::pin(async move {
+                    let proof = identities_api::verify_step_up(&c, &challenge, &code).await?;
+                    if let Some((p, row)) = remove_provider {
+                        identities_api::unlink_provider(&c, p, &row.id, &proof).await?;
+                        return Ok(Confirmed::SignedOut);
+                    }
+                    if let Some(identity) = remove {
+                        identities_api::unlink(&c, &identity.id, &proof).await?;
+                        return Ok(Confirmed::Unlinked);
+                    }
+                    if let Some(p) = linking {
+                        return Ok(Confirmed::Linking(identities_api::start_provider_link(&c, p, &proof).await?));
+                    }
+                    Ok(Confirmed::Proof(proof))
+                })
+            },
+            |this, outcome, cx| {
+                this.clear_code(cx);
+                match outcome {
+                    Confirmed::SignedOut => {
+                        this.flow = IdentityFlow::new();
+                        this.identities_open = false;
+                        this.store.update(cx, |s, cx| s.sign_out(cx));
+                    }
+                    Confirmed::Unlinked => {
+                        this.flow.step = Step::Idle;
+                        this.flow.remove = None;
+                        this.flow.notice = Some("Sign-in unlinked. Existing documents and cloud areas were kept.".into());
+                        this.store.update(cx, |s, cx| s.load_identities(cx));
+                    }
+                    Confirmed::Linking(link) => {
+                        this.flow.intent = Some(link.intent_id);
+                        this.flow.browser_url = Some(link.browser_url);
+                        this.flow.step = Step::ProviderWait;
+                        this.flow.notice = Some("Complete the explicit link in your browser. This does not replace your current Markie sign-in.".into());
+                        this.open_link_page(cx);
+                        this.watch_link(cx);
+                    }
+                    Confirmed::Proof(proof) => {
+                        this.flow.proof = Some(proof);
+                        this.flow.step = Step::Email;
+                    }
+                }
+            },
+        );
+    }
+
+    /// Open the server's linking page in the browser. Against a local test
+    /// server, MARKIE_RS_NO_BROWSER logs it instead, for scripted tests.
+    fn open_link_page(&mut self, cx: &mut Context<Self>) {
+        let Some(url) = self.flow.browser_url.clone() else { return };
+        let quiet = self.store.read(cx).config.dev && std::env::var_os("MARKIE_RS_NO_BROWSER").is_some();
+        if quiet {
+            eprintln!("markie-rs: linking page (not opened): {}", url.split('#').next().unwrap_or_default());
+        } else {
+            cx.open_url(&url);
+        }
+    }
+
+    /// Check the browser link every 5 s until it completes or expires.
+    fn watch_link(&mut self, cx: &mut Context<Self>) {
+        let (Some(provider), Some(intent)) = (self.flow.linking, self.flow.intent.clone()) else { return };
+        let Some((rt, client)) = self.store.read(cx).backend() else { return };
+        let generation = self.flow.generation;
+        self.flow._poll = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let (c, i) = (client.clone(), intent.clone());
+                let status = rt.spawn(async move { identities_api::provider_link_status(&c, provider, &i).await }).await;
+                let keep = this
+                    .update(cx, |this, cx| {
+                        if this.flow.generation != generation || this.flow.step != Step::ProviderWait {
+                            return false;
+                        }
+                        let label = provider.label();
+                        match status {
+                            Ok(Ok(LinkStatus::Complete)) => {
+                                this.flow = IdentityFlow::new();
+                                this.flow.notice = Some(format!("{label} sign-in linked to this account. Your primary account and document access are unchanged."));
+                                this.store.update(cx, |s, cx| s.load_identities(cx));
+                                cx.notify();
+                                false
+                            }
+                            Ok(Ok(LinkStatus::Expired)) => {
+                                this.flow = IdentityFlow::new();
+                                this.flow.error = Some((format!("The {label} linking request expired. Confirm your primary email to start again."), false));
+                                cx.notify();
+                                false
+                            }
+                            Ok(Ok(LinkStatus::Pending)) => true,
+                            _ => {
+                                this.flow.error = Some((format!("{label} linking status could not be checked. Your current sign-in has not changed."), false));
+                                cx.notify();
+                                true
+                            }
+                        }
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    return;
+                }
+                cx.background_executor().timer(std::time::Duration::from_secs(5)).await;
+            }
+        }));
+    }
+
+    fn identity_send_email(&mut self, cx: &mut Context<Self>) {
+        let Some(proof) = self.flow.proof.clone() else { return };
+        let email = Self::input_value(&self.new_email, cx);
+        self.identity_run(cx, move |c| Box::pin(async move { identities_api::start_email(&c, &email, &proof).await }), |this, challenge, cx| {
+            this.flow.challenge = Some(challenge.challenge_id);
+            this.flow.step = Step::EmailCode;
+            this.flow.notice = Some("Enter the code sent to the new email. It is not linked until verified.".into());
+            this.clear_code(cx);
+        });
+    }
+
+    fn identity_verify_email(&mut self, cx: &mut Context<Self>) {
+        let Some(challenge) = self.flow.challenge.clone() else { return };
+        let code = Self::input_value(&self.code, cx);
+        self.identity_run(cx, move |c| Box::pin(async move { identities_api::verify_email(&c, &challenge, &code).await }), |this, _, cx| {
+            this.flow.step = Step::Idle;
+            this.flow.proof = None;
+            this.flow.notice = Some("Verified email linked to this account. No accounts were merged.".into());
+            this.clear_code(cx);
+            this.clear.push(this.new_email.clone());
+            this.store.update(cx, |s, cx| s.load_identities(cx));
+        });
+    }
+
+    fn identity_cancel(&mut self, cx: &mut Context<Self>) {
+        let waiting = self.flow.step == Step::ProviderWait && self.flow.linking.is_some();
+        self.flow = IdentityFlow { generation: self.flow.generation + 1, ..IdentityFlow::new() };
+        self.flow.notice = waiting.then(|| "Stopped checking. A browser flow already started may still complete before it expires.".into());
+        self.clear_code(cx);
+        cx.notify();
+    }
+
+    /// `IdentityPanel` in linked-identities.tsx.
+    fn render_identities(&self, l: Look, window: &Window, cx: &mut Context<Self>) -> Div {
         let store = self.store.read(cx);
+        let flow = &self.flow;
+        let busy = flow.busy;
+        let button = |id: &'static str, label: String, disabled: bool| {
+            small_button(id, label, 8., 4., 12., l).when(disabled, |el| el.opacity(0.4).cursor_default())
+        };
         let mut panel = v_flex().mt(px(8.)).gap(px(8.)).text_size(px(12.)).text_color(l.fg).child(
             div().text_color(l.muted).child("Verified sign-ins reach this same account. Linking never merges another account or changes document access."),
         );
-        match store.identities() {
-            None | Some(Load::Loading) => panel = panel.child(muted_line("Checking account…", 12., l)),
-            Some(Load::Failed { message, muted }) => {
-                panel = panel.child(div().text_color(if *muted { l.muted } else { l.red }).child(message.clone()));
+        let (identities, providers, available, listing_error) = match store.identities() {
+            Some(Load::Ready(list)) => (list.identities.clone(), list.providers.clone(), (list.google_available, list.apple_available), None),
+            Some(Load::Failed { message, muted }) => (Vec::new(), Vec::new(), (false, false), Some((message.clone(), *muted))),
+            _ => (Vec::new(), Vec::new(), (false, false), None),
+        };
+        let loading = matches!(store.identities(), None | Some(Load::Loading));
+        let unsupported = listing_error.as_ref().is_some_and(|(_, muted)| *muted) || flow.error.as_ref().is_some_and(|(_, muted)| *muted);
+        for (i, identity) in identities.iter().enumerate() {
+            let target = identity.clone();
+            panel = panel.child(
+                h_flex()
+                    .flex_wrap()
+                    .justify_between()
+                    .gap(px(8.))
+                    .child(div().child(format!("{} · {}", identity.email, if identity.primary { "Primary" } else { "Verified" })))
+                    .when(!identity.primary, |row| {
+                        row.child(
+                            small_button(SharedString::from(format!("unlink-email-{i}")), "Unlink", 8., 4., 12., l)
+                                .when(busy, |el| el.opacity(0.4))
+                                .when(!busy, |el| el.on_click(cx.listener(move |this, _, _, cx| this.identity_begin(Some(target.clone()), None, None, cx)))),
+                        )
+                    }),
+            );
+        }
+        for provider in [LinkProvider::Google, LinkProvider::Apple] {
+            for (index, row) in providers.iter().filter(|p| p.provider_id == provider.id()).enumerate() {
+                let name = match &row.email {
+                    Some(email) => format!("{}: {email}", provider.label()),
+                    None => format!("{} sign-in {}", provider.label(), index + 1),
+                };
+                let target = (provider, row.clone());
+                panel = panel.child(
+                    h_flex()
+                        .flex_wrap()
+                        .justify_between()
+                        .gap(px(8.))
+                        .child(div().child(name))
+                        .child(
+                            small_button(SharedString::from(format!("unlink-{}-{index}", provider.id())), "Unlink", 8., 4., 12., l)
+                                .when(busy, |el| el.opacity(0.4))
+                                .when(!busy, |el| el.on_click(cx.listener(move |this, _, _, cx| this.identity_begin(None, None, Some(target.clone()), cx)))),
+                        ),
+                );
             }
-            Some(Load::Ready(list)) => {
-                for identity in &list.identities {
-                    panel = panel.child(div().child(format!("{} · {}", identity.email, if identity.primary { "Primary" } else { "Verified" })));
+        }
+        if let Some((p, _)) = &flow.remove_provider {
+            panel = panel.child(div().child(format!(
+                "Removing this {} sign-in signs out every active session, including this one. Documents and your primary account are kept. Confirm with the code sent to your primary email.",
+                p.label()
+            )));
+        }
+        let no_identities = identities.is_empty();
+        if flow.step == Step::Idle && !unsupported && !loading {
+            let disabled = busy || no_identities;
+            let mut row = h_flex().flex_wrap().gap(px(8.)).child(
+                button("link-email", "Link another email".into(), disabled)
+                    .when(!disabled, |el| el.on_click(cx.listener(|this, _, _, cx| this.identity_begin(None, None, None, cx)))),
+            );
+            for (provider, on) in [(LinkProvider::Google, available.0), (LinkProvider::Apple, available.1)] {
+                if on {
+                    let id = if provider == LinkProvider::Google { "link-google" } else { "link-apple" };
+                    row = row.child(
+                        button(id, format!("Link {} sign-in", provider.label()), disabled)
+                            .when(!disabled, |el| el.on_click(cx.listener(move |this, _, _, cx| this.identity_begin(None, Some(provider), None, cx)))),
+                    );
                 }
-                for (id, label) in [("google", "Google"), ("apple", "Apple")] {
-                    for (index, provider) in list.providers.iter().filter(|p| p.provider_id == id).enumerate() {
-                        let name = match &provider.email {
-                            Some(email) => format!("{label}: {email}"),
-                            None => format!("{label} sign-in {}", index + 1),
-                        };
-                        panel = panel.child(div().child(name));
-                    }
-                }
-                panel = panel.child(muted_line("Linking and unlinking sign-ins stays in Markie for now.", 12., l));
             }
+            panel = panel.child(row);
+        }
+        let code_value = Self::input_value(&self.code, cx);
+        let focused = |input: &Entity<InputState>| input.read(cx).focus_handle(cx).is_focused(window);
+        match flow.step {
+            Step::PrimaryCode => {
+                let label = if flow.remove_provider.is_some() {
+                    "Confirm unlink and sign out"
+                } else if flow.remove.is_some() {
+                    "Confirm and unlink"
+                } else {
+                    "Confirm primary email"
+                };
+                let disabled = busy || code_value.is_empty();
+                let (remove, linking, provider) = (flow.remove.clone(), flow.linking, flow.remove_provider.clone());
+                panel = panel
+                    .child(v_flex().gap(px(4.)).child("Primary email confirmation code").child(field(&self.code, focused(&self.code), l)))
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(button("confirm-primary", label.into(), disabled).when(!disabled, |el| el.on_click(cx.listener(|this, _, _, cx| this.identity_confirm(cx)))))
+                            .child(
+                                button("resend-primary", "Send a new primary code".into(), busy)
+                                    .when(!busy, |el| el.on_click(cx.listener(move |this, _, _, cx| this.identity_begin(remove.clone(), linking, provider.clone(), cx)))),
+                            ),
+                    );
+            }
+            Step::Email => {
+                let disabled = busy || Self::input_value(&self.new_email, cx).is_empty();
+                panel = panel
+                    .child(v_flex().gap(px(4.)).child("New sign-in email").child(field(&self.new_email, focused(&self.new_email), l)))
+                    .child(h_flex().child(
+                        button("send-new-email", "Send verification code".into(), disabled).when(!disabled, |el| el.on_click(cx.listener(|this, _, _, cx| this.identity_send_email(cx)))),
+                    ));
+            }
+            Step::EmailCode => {
+                let disabled = busy || code_value.is_empty();
+                panel = panel
+                    .child(v_flex().gap(px(4.)).child("New email verification code").child(field(&self.code, focused(&self.code), l)))
+                    .child(h_flex().child(
+                        button("verify-new-email", "Verify and link email".into(), disabled).when(!disabled, |el| el.on_click(cx.listener(|this, _, _, cx| this.identity_verify_email(cx)))),
+                    ));
+            }
+            Step::ProviderWait => {
+                if let Some(p) = flow.linking {
+                    panel = panel.child(h_flex().child(
+                        button("open-link-page", format!("Open {} linking page", p.label()), false).on_click(cx.listener(|this, _, _, cx| this.open_link_page(cx))),
+                    ));
+                }
+            }
+            Step::Idle => {}
+        }
+        if flow.step != Step::Idle {
+            let label = match (flow.step, flow.linking) {
+                (Step::ProviderWait, Some(p)) => format!("Stop checking {} link", p.label()),
+                _ => "Cancel linking change".into(),
+            };
+            panel = panel.child(h_flex().child(button("cancel-linking", label, busy).when(!busy, |el| el.on_click(cx.listener(|this, _, _, cx| this.identity_cancel(cx))))));
+        }
+        if busy || loading {
+            panel = panel.child(muted_line("Checking account…", 12., l));
+        } else if let Some(n) = &flow.notice {
+            panel = panel.child(muted_line(n.clone(), 12., l));
+        }
+        if let Some((message, muted)) = flow.error.clone().or(listing_error) {
+            panel = panel.child(div().text_color(if muted { l.muted } else { l.red }).child(message));
         }
         panel
     }
-}
 
-/// "Accepted people" from `SharePeopleSettings` in share-people.tsx, read only.
-fn people_section(people: Option<&Load<People>>, l: Look) -> Div {
-    let heading = |text: &'static str| div().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(l.muted).child(text);
-    let row = |p: &Person| {
-        let who = p.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| p.email.clone());
-        v_flex()
-            .py(px(2.))
-            .child(div().truncate().text_size(px(12.)).text_color(l.fg).child(who))
-            .when(p.name.as_deref().is_some_and(|n| !n.is_empty()), |el| el.child(div().truncate().text_size(px(10.5)).text_color(l.muted).child(p.email.clone())))
-    };
-    let mut section = v_flex()
-        .mt(px(16.))
-        .pt(px(12.))
-        .border_t_1()
-        .border_color(l.border)
-        .child(heading("ACCEPTED PEOPLE").mb(px(4.)))
-        .child(
-            div()
-                .mb(px(8.))
-                .text_size(px(11.))
-                .text_color(l.muted)
-                .child("What these people share lands in your Markie. Removing someone takes everything they shared out of your Markie at once."),
-        );
-    match people {
-        Some(Load::Failed { message, .. }) => section = section.child(muted_line(message.clone(), 11.5, l)),
-        Some(Load::Ready(p)) => {
-            if p.accepted.is_empty() {
-                section = section.child(muted_line("Nobody yet. When someone shares with you, accept them in Requests.", 11.5, l));
+    /// `SharePeopleSettings`: the people whose shares land (Remove, Block)
+    /// and the people this account blocked (Unblock).
+    fn render_people(&self, l: Look, cx: &mut Context<Self>) -> Div {
+        let store = self.store.read(cx);
+        let busy = store.people_busy;
+        let heading = |text: &'static str| div().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(l.muted).child(text);
+        let who = |p: &Person| p.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| p.email.clone());
+        let row = |p: &Person| {
+            h_flex().gap(px(8.)).py(px(2.)).child(
+                v_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .child(div().truncate().text_size(px(12.)).text_color(l.fg).child(who(p)))
+                    .when(p.name.as_deref().is_some_and(|n| !n.is_empty()), |el| el.child(div().truncate().text_size(px(10.5)).text_color(l.muted).child(p.email.clone()))),
+            )
+        };
+        let button = |id: String, label: &'static str| {
+            small_button(SharedString::from(id), label, 8., 4., 11.5, l).when(busy, |el| el.opacity(0.4).cursor_default())
+        };
+        let mut section = v_flex()
+            .mt(px(16.))
+            .pt(px(12.))
+            .border_t_1()
+            .border_color(l.border)
+            .child(heading("ACCEPTED PEOPLE").mb(px(4.)))
+            .child(
+                div()
+                    .mb(px(8.))
+                    .text_size(px(11.))
+                    .text_color(l.muted)
+                    .child("What these people share lands in your Markie. Removing someone takes everything they shared out of your Markie at once."),
+            );
+        match store.people() {
+            Some(Load::Failed { message, .. }) => section = section.child(muted_line(message.clone(), 11.5, l)),
+            Some(Load::Ready(people)) => {
+                if people.accepted.is_empty() {
+                    section = section.child(muted_line("Nobody yet. When someone shares with you, accept them in Requests.", 11.5, l));
+                }
+                for person in &people.accepted {
+                    let name = who(person);
+                    let (id1, id2) = (person.id.clone(), person.id.clone());
+                    let (n1, n2) = (name.clone(), name.clone());
+                    section = section.child(
+                        row(person)
+                            .child(button(format!("ppl-remove-{}", person.id), "Remove").when(!busy, |el| {
+                                el.on_click(cx.listener(move |this, _, window, cx| {
+                                    this.confirm_people(
+                                        "remove",
+                                        id1.clone(),
+                                        format!("Remove {n1}? Everything they shared leaves your Markie now."),
+                                        format!("Removed {n1}."),
+                                        "Couldn't remove them. Try again.",
+                                        window,
+                                        cx,
+                                    )
+                                }))
+                            }))
+                            .child(button(format!("ppl-block-{}", person.id), "Block").when(!busy, |el| {
+                                el.tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Remove them and hide anything they share later. They are not told.").build(window, cx))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.confirm_people(
+                                            "block",
+                                            id2.clone(),
+                                            format!("Block {n2}? Everything they shared leaves your Markie now, and you won't see their requests."),
+                                            format!("Blocked {n2}."),
+                                            "Couldn't block them. Try again.",
+                                            window,
+                                            cx,
+                                        )
+                                    }))
+                            })),
+                    );
+                }
+                if !people.blocked.is_empty() {
+                    section = section.child(heading("BLOCKED").mt(px(12.)).mb(px(4.)));
+                    for person in &people.blocked {
+                        let name = who(person);
+                        let id = person.id.clone();
+                        section = section.child(row(person).child(button(format!("ppl-unblock-{}", person.id), "Unblock").when(!busy, |el| {
+                            el.on_click(cx.listener(move |this, _, _, cx| {
+                                let done = format!("Unblocked {name}. What they share shows up in Requests.");
+                                this.store.update(cx, |s, cx| s.people_act("unblock", id.clone(), done, "Couldn't unblock them. Try again.", cx));
+                            }))
+                        })));
+                    }
+                }
             }
-            section = section.children(p.accepted.iter().map(row));
-            if !p.blocked.is_empty() {
-                section = section.child(heading("BLOCKED").mt(px(12.)).mb(px(4.))).children(p.blocked.iter().map(row));
-            }
+            _ => {}
         }
-        _ => {}
+        section
+            .when_some(store.people_error.clone(), |el, e| el.child(div().mt(px(6.)).text_size(px(11.)).text_color(l.red).child(e)))
+            .when_some(store.people_notice.clone(), |el, n| el.child(div().mt(px(6.)).text_size(px(11.)).text_color(l.muted).child(n)))
     }
-    section
+
+    /// `window.confirm` before Remove and Block, then the change.
+    #[allow(clippy::too_many_arguments)]
+    fn confirm_people(&mut self, kind: &'static str, id: String, question: String, done: String, failed: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        let answer = window.prompt(PromptLevel::Warning, &question, None, &["OK", "Cancel"], cx);
+        let store = self.store.clone();
+        cx.spawn(async move |_, cx| {
+            if answer.await.ok() == Some(0) {
+                store.update(cx, |s, cx| s.people_act(kind, id, done, failed, cx));
+            }
+        })
+        .detach();
+    }
 }
 
 impl Render for AccountSection {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        for input in std::mem::take(&mut self.clear) {
+            input.update(cx, |s, cx| s.set_value("", window, cx));
+        }
         let l = look(cx);
         let status = self.store.read(cx).status.clone();
         match status {
@@ -1258,21 +1770,37 @@ impl Render for AccountSection {
                             )
                             .child(small_button("sign-out", "Sign out", 12., 6., 12., l).on_click(cx.listener(|this, _, _, cx| {
                                 this.identities_open = false;
+                                this.flow = IdentityFlow { generation: this.flow.generation + 1, ..IdentityFlow::new() };
                                 this.store.update(cx, |s, cx| s.sign_out(cx));
                             }))),
                     )
-                    .child(
-                        // Sync arrives with a later build; the row is shown, switched off.
+                    .child({
+                        // A stored preference, as Electron's `markie.sync.v1` is.
+                        let on = self.store.read(cx).sync_enabled();
                         h_flex()
+                            .id("sync-switch")
                             .py(px(4.))
                             .justify_between()
                             .items_center()
                             .text_size(px(12.))
                             .text_color(l.muted)
+                            .cursor_pointer()
                             .child("Sync my documents to the cloud")
-                            .child(div().size(px(13.)).rounded(px(3.)).border_1().border_color(l.border).opacity(0.5)),
-                    )
-                    .child(people_section(self.store.read(cx).people(), l))
+                            .child(
+                                div()
+                                    .size(px(13.))
+                                    .rounded(px(3.))
+                                    .border_1()
+                                    .border_color(if on { l.blue } else { l.border })
+                                    .when(on, |el| el.bg(l.blue))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .when(on, |el| el.child(super::chrome::icon("markie/check.svg", 10., gpui_kit::white()))),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| this.store.update(cx, |s, cx| s.set_sync_enabled(!on, cx))))
+                    })
+                    .child(self.render_people(l, cx))
                     .child(
                         v_flex()
                             .mt(px(16.))
@@ -1281,12 +1809,13 @@ impl Render for AccountSection {
                             .border_color(l.border)
                             .child(h_flex().child(small_button("linked", "Manage linked sign-ins", 8., 4., 12., l).on_click(cx.listener(|this, _, _, cx| {
                                 this.identities_open = !this.identities_open;
+                                this.flow = IdentityFlow { generation: this.flow.generation + 1, ..IdentityFlow::new() };
                                 if this.identities_open {
                                     this.store.update(cx, |s, cx| s.load_identities(cx));
                                 }
                                 cx.notify();
                             }))))
-                            .when(self.identities_open, |el| el.child(self.render_identities(l, cx))),
+                            .when(self.identities_open, |el| el.child(self.render_identities(l, window, cx))),
                     )
             }
         }

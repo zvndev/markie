@@ -1206,57 +1206,8 @@ impl Workspace {
                 .into_any_element(),
         )
     }
-
-    /// Accepted people (Remove, Block) and blocked people (Unblock).
-    #[allow(dead_code)]
-    pub fn render_people_settings(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = themes::palette(cx);
-        let st = self.collab.people.as_ref();
-        let busy = st.is_some_and(|s| s.busy);
-        let people = st.and_then(|s| s.people.clone());
-        v_flex()
-            .mt(px(16.))
-            .border_t_1()
-            .border_color(p.border)
-            .pt(px(12.))
-            .child(div().mb(px(4.)).text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Accepted people"))
-            .child(div().mb(px(8.)).text_size(px(11.)).text_color(p.muted).child(sv::PEOPLE_INTRO))
-            .when(people.is_none(), |el| el.child(div().text_size(px(11.5)).text_color(p.muted).child("Couldn't load the people you accepted.")))
-            .when_some(people.clone(), |el, ppl| {
-                el.when(ppl.accepted.is_empty(), |el| el.child(div().text_size(px(11.5)).text_color(p.muted).child(sv::PEOPLE_EMPTY)))
-                    .children(ppl.accepted.iter().enumerate().map(|(i, person)| {
-                        let who = sv::who(person.name.as_deref(), &person.email);
-                        let (id1, id2, w1, w2) = (person.id.clone(), person.id.clone(), who.clone(), who.clone());
-                        person_row(&who, person.name.as_ref().map(|_| person.email.as_str()), &p)
-                            .child(people_button(&format!("ppl-remove-{i}"), "Remove", false, busy, &p).on_click(cx.listener(move |w, _, _, cx| w.people_act("remove", id1.clone(), format!("Removed {w1}."), "Couldn't remove them. Try again.", cx))))
-                            .child(people_button(&format!("ppl-block-{i}"), "Block", false, busy, &p).on_click(cx.listener(move |w, _, _, cx| w.people_act("block", id2.clone(), format!("Blocked {w2}."), "Couldn't block them. Try again.", cx))))
-                    }))
-                    .when(!ppl.blocked.is_empty(), |el| {
-                        el.child(div().mt(px(12.)).mb(px(4.)).text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Blocked")).children(ppl.blocked.iter().enumerate().map(|(i, person)| {
-                            let who = sv::who(person.name.as_deref(), &person.email);
-                            let (id, w1) = (person.id.clone(), who.clone());
-                            person_row(&who, person.name.as_ref().map(|_| person.email.as_str()), &p).child(
-                                people_button(&format!("ppl-unblock-{i}"), "Unblock", false, busy, &p)
-                                    .on_click(cx.listener(move |w, _, _, cx| w.people_act("unblock", id.clone(), format!("Unblocked {w1}. What they share shows up in Requests."), "Couldn't unblock them. Try again.", cx))),
-                            )
-                        }))
-                    })
-            })
-            .when_some(st.and_then(|s| s.error.clone()), |el, e| el.child(div().mt(px(6.)).text_size(px(11.)).text_color(p.red).child(e)))
-            .when_some(st.and_then(|s| s.notice.clone()), |el, n| el.child(div().mt(px(6.)).text_size(px(11.)).text_color(p.muted).child(n)))
-            .into_any_element()
-    }
 }
 
-#[allow(dead_code)]
-fn person_row(who: &str, email: Option<&str>, p: &Palette) -> Div {
-    h_flex()
-        .gap(px(8.))
-        .py(px(2.))
-        .child(v_flex().min_w_0().flex_1().child(div().truncate().text_size(px(12.)).text_color(p.foreground).child(who.to_string())).when_some(email, |el, e| el.child(div().truncate().text_size(px(10.5)).text_color(p.muted).child(e.to_string()))))
-}
-
-#[allow(dead_code)]
 fn people_button(id: &str, label: &'static str, primary: bool, busy: bool, p: &Palette) -> Stateful<Div> {
     div()
         .id(SharedString::from(id.to_string()))

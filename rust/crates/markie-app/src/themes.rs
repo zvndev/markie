@@ -81,8 +81,23 @@ fn config(name: &str, mode: &str, t: &Tokens) -> serde_json::Value {
             "warning.background": or(&t.status_yellow, "#ca8a04"),
             "danger.background": or(&t.status_red, "#dc2626"),
             "info.background": or(&t.status_blue, "#2563eb"),
+            // `.markie-scrim` behind every dialog: the page dimmed. Chromium
+            // also blurs it; GPUI has no backdrop blur, so the dim is the
+            // stronger 72% that dialog_chrome's scrim uses.
+            "overlay": scrim(&t.background),
         }
     })
+}
+
+/// The background at 72% opacity, as `#rrggbbaa`.
+fn scrim(background: &str) -> String {
+    let hex = background.trim().trim_start_matches('#');
+    let full = match hex.len() {
+        3 => hex.chars().flat_map(|c| [c, c]).collect::<String>(),
+        6 => hex.to_string(),
+        _ => return "#000000b8".into(),
+    };
+    format!("#{full}b8")
 }
 
 /// Make `id` the template GPUI Kit uses for light and dark, keeping the
@@ -222,6 +237,18 @@ mod tests {
         assert!((white.r - 1.0).abs() < 1e-3 && (white.b - 1.0).abs() < 1e-3);
         let grey = super::mix(super::hex("#000000"), super::hex("#ffffff"), 0.5).to_rgb();
         assert!((grey.g - 0.5).abs() < 1e-2);
+    }
+
+    /// Every dialog gets `.markie-scrim`: the template's background, dimmed.
+    #[test]
+    fn dialogs_get_a_dimmed_backdrop() {
+        assert_eq!(super::scrim("#0b0b0c"), "#0b0b0cb8");
+        assert_eq!(super::scrim("#fff"), "#ffffffb8");
+        for t in super::templates() {
+            let colors = super::config("x", "dark", &t.dark)["colors"]["overlay"].as_str().unwrap().to_string();
+            assert!(colors.starts_with('#') && colors.len() == 9, "{}: {colors}", t.id);
+            assert!(colors.ends_with("b8"));
+        }
     }
 
     #[test]

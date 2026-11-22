@@ -107,6 +107,7 @@ pub fn apply(id: &str, window: Option<&mut Window>, cx: &mut App) {
             light = Some(Rc::new(cfg));
         }
     }
+    cx.set_global(Palettes { light: Palette::from_tokens(&t.light, false), dark: Palette::from_tokens(&t.dark, true) });
     let mode = cx.theme_mode();
     {
         let theme = Theme::global_mut(cx);
@@ -118,6 +119,89 @@ pub fn apply(id: &str, window: Option<&mut Window>, cx: &mut App) {
         }
     }
     Theme::change(mode, window, cx);
+}
+
+/// Markie's own tokens for the current template, parsed once when the
+/// template changes, so the chrome reads exact Electron colours (surface,
+/// surface-2, accent, status blue) that GPUI Kit's theme keys do not carry.
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    pub dark: bool,
+    pub background: Hsla,
+    pub surface: Hsla,
+    pub surface2: Hsla,
+    pub foreground: Hsla,
+    pub muted: Hsla,
+    pub border: Hsla,
+    pub accent: Hsla,
+    pub blue: Hsla,
+    pub green: Hsla,
+    pub yellow: Hsla,
+    #[allow(dead_code)]
+    pub red: Hsla,
+}
+
+struct Palettes {
+    light: Palette,
+    dark: Palette,
+}
+
+impl Global for Palettes {}
+
+pub fn hex(s: &str) -> Hsla {
+    let s = s.trim().trim_start_matches('#');
+    let v = u32::from_str_radix(s, 16).unwrap_or(0);
+    let v = if s.len() == 3 {
+        let (r, g, b) = ((v >> 8) & 0xf, (v >> 4) & 0xf, v & 0xf);
+        (r * 17) << 16 | (g * 17) << 8 | b * 17
+    } else {
+        v
+    };
+    rgb(v).into()
+}
+
+/// CSS `color-mix(in srgb, a p%, b)`.
+pub fn mix(a: Hsla, b: Hsla, p: f32) -> Hsla {
+    let (a, b) = (a.to_rgb(), b.to_rgb());
+    let q = 1.0 - p;
+    Rgba { r: a.r * p + b.r * q, g: a.g * p + b.g * q, b: a.b * p + b.b * q, a: a.a * p + b.a * q }.into()
+}
+
+impl Palette {
+    fn from_tokens(t: &Tokens, dark: bool) -> Self {
+        let or = |v: &Option<String>, d: &str| hex(v.as_deref().unwrap_or(d));
+        Self {
+            dark,
+            background: hex(&t.background),
+            surface: hex(&t.surface),
+            surface2: hex(&t.surface2),
+            foreground: hex(&t.foreground),
+            muted: hex(&t.muted),
+            border: hex(&t.border),
+            accent: hex(&t.accent),
+            blue: or(&t.status_blue, if dark { "#60a5fa" } else { "#1d4ed8" }),
+            green: or(&t.status_green, if dark { "#4ade80" } else { "#166534" }),
+            yellow: or(&t.status_yellow, if dark { "#fde047" } else { "#92400e" }),
+            red: or(&t.status_red, if dark { "#f87171" } else { "#991b1b" }),
+        }
+    }
+
+    /// `foreground` at `p` opacity: Tailwind's `text-foreground/80`.
+    pub fn fg(&self, p: f32) -> Hsla {
+        self.foreground.opacity(p)
+    }
+}
+
+/// The palette for the mode on screen.
+pub fn palette(cx: &App) -> Palette {
+    let dark = Theme::global(cx).mode.is_dark();
+    match cx.try_global::<Palettes>() {
+        Some(p) => if dark { p.dark } else { p.light },
+        None => {
+            let t = templates().into_iter().next().expect("one template");
+            if dark { Palette::from_tokens(&t.dark, true) } else { Palette::from_tokens(&t.light, false) }
+        }
+    }
 }
 
 trait ModeExt {
@@ -132,6 +216,14 @@ impl ModeExt for App {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hex_and_mix_match_css() {
+        let white = super::hex("#fff").to_rgb();
+        assert!((white.r - 1.0).abs() < 1e-3 && (white.b - 1.0).abs() < 1e-3);
+        let grey = super::mix(super::hex("#000000"), super::hex("#ffffff"), 0.5).to_rgb();
+        assert!((grey.g - 0.5).abs() < 1e-2);
+    }
+
     #[test]
     fn all_eight_templates_parse() {
         let all = super::templates();

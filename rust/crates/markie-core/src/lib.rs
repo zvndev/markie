@@ -40,3 +40,4 @@ pub mod registry;
 pub mod save;
 pub mod search;
 pub mod stats;
+pub mod theme;

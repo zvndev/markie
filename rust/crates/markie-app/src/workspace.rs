@@ -1082,9 +1082,13 @@ impl Workspace {
                 div().size_full().child(self.rich.clone()).into_any_element()
             }
             (DocKind::Html, _) | (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown || matches!(doc.kind, DocKind::Html) => {
-                div()
+                let background = theme.background;
+                let name = doc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let banner = matches!(doc.kind, DocKind::Html).then(|| office::html_banner(&name, cx));
+                v_flex()
                     .size_full()
-                    .bg(theme.background)
+                    .children(banner)
+                    .bg(background)
                     .child(
                         h_flex().size_full().justify_center().child(
                             TextView::new(&self.preview)

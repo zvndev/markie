@@ -315,7 +315,73 @@ fn copy_path(original: &Path) -> PathBuf {
     (2..).map(|n| dir.join(format!("{stem} (converted {n}).txt"))).find(|p| !p.exists()).expect("an unused name exists")
 }
 
+/// `<stem> converted.txt` next to the source, never over another file.
+fn unused(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let stem = name.strip_suffix(".txt").unwrap_or(name);
+    (2..).map(|n| dir.join(format!("{stem} {n}.txt"))).find(|p| !p.exists()).expect("an unused name exists")
+}
+
+/// Electron's "Import a text copy?" for HTML, as a banner over the preview.
+pub(super) fn html_banner(name: &str, cx: &mut Context<Workspace>) -> AnyElement {
+    let theme = cx.theme().clone();
+    h_flex()
+        .px_4()
+        .py_2()
+        .gap_3()
+        .border_b_1()
+        .border_color(theme.border)
+        .bg(theme.info.opacity(0.12))
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .text_xs()
+                .child(format!("{name} is a HTML document. Markie can create a new, editable TXT copy of its supported text."))
+                .child("This is not native HTML editing. Formatting, pictures, comments and other document features may be omitted. Nothing in the original file will be changed."),
+        )
+        .child(
+            Button::new("html-txt-copy")
+                .small()
+                .primary()
+                .flex_none()
+                .label("Create text copy")
+                .on_click(cx.listener(|this, _, window, cx| this.save_html_copy(window, cx))),
+        )
+        .into_any_element()
+}
+
 impl Workspace {
+    /// Convert the open HTML file with the office engine's importer and open
+    /// the TXT copy. The original is never written.
+    fn save_html_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use markie_office::document_import::{AdditionalDocumentFormat, AdditionalDocumentInput, DocumentImportLimits, convert_additional_document};
+        let Some(OpenDoc { path, kind: DocKind::Html, .. }) = &self.doc else { return };
+        let path = path.clone();
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let result = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| {
+            convert_additional_document(
+                &AdditionalDocumentInput { name: &name, bytes: &bytes, format: AdditionalDocumentFormat::Html },
+                DocumentImportLimits::default(),
+            )
+            .map_err(|e| e.message.clone())
+        });
+        match result {
+            Ok(copy) => {
+                let target = unused(path.parent().unwrap_or(Path::new(".")), &copy.name);
+                match markie_core::save::atomic_write(&target, &copy.bytes) {
+                    Ok(()) => self.open_path(&target, window, cx),
+                    Err(e) => window.push_notification(format!("Markie could not write the TXT copy: {e}"), cx),
+                }
+            }
+            Err(message) => window.push_notification(message, cx),
+        }
+    }
+
     fn save_doc_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(OpenDoc { path, kind: DocKind::Office(office), .. }) = &self.doc else { return };
         let Source::LegacyDoc { text: Some(text), .. } = &office.source else { return };

@@ -79,6 +79,13 @@ impl Workspace {
             .join("unsaved-office")
             .join(format!("{}-{}", markie_core::clock::now_ms(), self.import_epoch))
             .join(&name);
+        let key = markie_core::paths::data_dir().join("unsaved-office")
+            .join(format!("{}-{}", markie_core::clock::now_ms(), self.import_epoch.saturating_add(1)))
+            .join(name);
+        self.resume_untitled_office(key, format, bytes, window, cx);
+    }
+
+    fn resume_untitled_office(&mut self, key: PathBuf, format: FormatKind, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) {
         self.doc = Some(OpenDoc { path: key, format, large: false, kind: DocKind::Office(office), untitled: true });
         self.mode = Mode::View;
         self.dirty = false;
@@ -107,6 +114,23 @@ impl Workspace {
                 let bytes = match view.read(cx).editor.export() {
                     Ok(bytes) => bytes,
                     Err(error) => return window.push_notification(error.to_string(), cx),
+    pub(super) fn render_untitled_office_offer(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (path, revision) = self.pending_office.as_ref()?;
+        let (path, revision) = (path.clone(), *revision);
+        Some(h_flex().gap_3().p_2()
+            .child("Markie recovered unsaved changes to an Office document.")
+            .child(Button::new("reopen-office-draft").small().label("Restore")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.pending_office = None;
+                    if let Some(bytes) = this.recovery.read(&path, revision) {
+                        let format = markie_core::formats::classify(&path.to_string_lossy());
+                        this.resume_untitled_office(path.clone(), format, &bytes, window, cx);
+                    }
+                    cx.notify();
+                })))
+            .into_any_element())
+    }
+
                 };
                 if let Err(error) = markie_core::save::atomic_write(&path, &bytes) {
                     window.push_notification(format!("Markie could not save: {error}"), cx);
@@ -126,6 +150,7 @@ impl Workspace {
 #[cfg(test)]
 mod first_save_tests {
     use super::*;
+                this.keep_office_bytes(&key, format, &bytes, true);
     use ::core::prelude::v1::test;
 
     #[test]

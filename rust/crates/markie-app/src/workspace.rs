@@ -158,6 +158,7 @@ pub struct Workspace {
     _autosave_task: Task<()>,
     /// Office documents' recovery history (Electron's document library).
     recovery: markie_core::office_recovery::RecoveryStore,
+    pending_office: Option<(PathBuf, u64)>,
     _recovery_task: Task<()>,
     _poll_task: Task<()>,
     /// What the file says on disk when it changed under unsaved edits.
@@ -257,6 +258,9 @@ impl Workspace {
         let data_dir = paths::data_dir();
         let drafts = Drafts::new(&data_dir);
         let recovered = drafts.pending();
+        let recovery = markie_core::office_recovery::RecoveryStore::new(&data_dir);
+        let pending_office = recovery.pending_untitled(&data_dir.join("unsaved-office"))
+            .map(|(path, revision)| (path, revision.revision));
         let cloud = cloud::CloudWorkspace::new(&data_dir, registry.as_deref());
         let mut this = Self {
             agents: agents::AgentState::new(&data_dir),
@@ -293,7 +297,8 @@ impl Workspace {
             disk: DiskMemory::default(),
             autosave: Autosave::default(),
             _autosave_task: Task::ready(()),
-            recovery: markie_core::office_recovery::RecoveryStore::new(&data_dir),
+            recovery,
+            pending_office,
             _recovery_task: Task::ready(()),
             _poll_task: Task::ready(()),
             disk_conflict: None,
@@ -1339,4 +1344,5 @@ impl Render for Workspace {
             .children(self.render_share(window, cx));
         self.dialog_actions(root, cx).children(dialogs)
     }
+                                    .children(self.render_untitled_office_offer(cx))
 }

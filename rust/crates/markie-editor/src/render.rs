@@ -1161,6 +1161,12 @@ impl RichView {
         if look.focused && !self.editor.has_selection() && (h.block, h.leaf) == key && self.prompt.is_none() {
             d.caret = Some((h.offset, false));
         }
+        // While dragging the selection, the caret shows where it would land.
+        if let Some((_, Some(at))) = self.text_drag {
+            if (at.block, at.leaf) == key {
+                d.caret = Some((at.offset, false));
+            }
+        }
         if let Some(f) = &self.find {
             let _ = cx;
             for (i, m) in f.matches.iter().enumerate() {

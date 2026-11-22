@@ -294,6 +294,9 @@ pub struct RichView {
     pub page_width: f32,
     pub read_only: bool,
     drag: Option<(Granularity, Pos, Pos)>,
+    /// A press inside the selection: where it started, and once the pointer
+    /// has moved, where the selection would land (ProseMirror's drag).
+    pub(crate) text_drag: Option<(Point<Pixels>, Option<Pos>)>,
     /// The IME's marked (composing) text: its start and length in units.
     marked: Option<(Pos, usize)>,
     pub(crate) find: Option<FindBar>,
@@ -385,6 +388,7 @@ impl RichView {
             page_width: 0.0,
             read_only: false,
             drag: None,
+            text_drag: None,
             marked: None,
             find: None,
             prompt: None,
@@ -963,6 +967,13 @@ impl RichView {
                 self.editor.set_selection(Pos { offset: 0, ..p }, Pos { offset: len, ..p });
                 self.drag = Some((Granularity::Leaf, Pos { offset: 0, ..p }, Pos { offset: len, ..p }));
             }
+            1 if self.starts_text_drag(p, ev.modifiers.shift) => {
+                // A press inside the selection may be a drag of it; the
+                // caret moves only if it turns out to be a click.
+                self.link_click = None;
+                self.drag = None;
+                self.text_drag = Some((ev.position, None));
+            }
             _ => {
                 if self.editor.kind(p) == Some(LeafKind::Atom) {
                     self.editor.set_caret(p, false);
@@ -982,6 +993,22 @@ impl RichView {
             let w = (w0 + (f32::from(ev.position.x) - x0) / self.zoom).max(48.);
             self.live_width = Some((start, w));
             cx.notify();
+            return;
+        }
+        if let Some((origin, drop)) = self.text_drag {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.text_drag = None;
+                cx.notify();
+                return;
+            }
+            let moved = (ev.position.x - origin.x).abs() > px(4.) || (ev.position.y - origin.y).abs() > px(4.);
+            if moved || drop.is_some() {
+                let next = self.hit(ev.position);
+                if next != drop {
+                    self.text_drag = Some((origin, next));
+                    cx.notify();
+                }
+            }
             return;
         }
         let Some((g, a0, a1)) = self.drag else { return };
@@ -1008,13 +1035,38 @@ impl RichView {
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, ev: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.drag = None;
+        if let Some((origin, drop)) = self.text_drag.take() {
+            match drop {
+                // ⌥ copies, as ProseMirror's `dragCopyModifier` on macOS.
+                Some(at) => self.edit(cx, |e| {
+                    e.move_selection_to(at, ev.modifiers.alt);
+                }),
+                // No drag: a click inside the selection puts the caret there.
+                None => {
+                    if let Some(p) = self.hit(origin) {
+                        self.editor.set_caret(p, false);
+                    }
+                    cx.notify();
+                }
+            }
+            return;
+        }
         if let Some((p, w)) = self.live_width.take() {
             self.resize = None;
             self.edit(cx, |e| e.set_image_width(p, Some(w.round() as u32)));
         }
         self.resize = None;
+    }
+
+    /// A plain press inside a text selection, in an editable document.
+    fn starts_text_drag(&self, p: Pos, shift: bool) -> bool {
+        if shift || self.read_only || !self.editor.has_selection() || self.editor.selected_atom().is_some() {
+            return false;
+        }
+        let (from, to) = self.editor.range();
+        from <= p && p <= to
     }
 
     // ---- find ----

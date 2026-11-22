@@ -27,6 +27,7 @@ pub mod spell;
 pub mod link_preview;
 mod link_card;
 mod rail;
+mod video;
 pub mod style;
 
 use std::cell::RefCell;
@@ -294,6 +295,9 @@ pub struct RichView {
     pub page_width: f32,
     pub read_only: bool,
     drag: Option<(Granularity, Pos, Pos)>,
+    /// A press inside the selection: where it started, and once the pointer
+    /// has moved, where the selection would land (ProseMirror's drag).
+    pub(crate) text_drag: Option<(Point<Pixels>, Option<Pos>)>,
     /// The IME's marked (composing) text: its start and length in units.
     marked: Option<(Pos, usize)>,
     pub(crate) find: Option<FindBar>,
@@ -340,25 +344,48 @@ pub struct RichView {
     pub(crate) outline: (u64, Vec<markie_rich::editor::OutlineEntry>),
     /// The toolbar's width last frame, to fit its groups.
     pub(crate) toolbar_width: Pixels,
+    /// The typed font size box (`chrome.rs`), made on the first frame.
+    pub(crate) size_field: Option<chrome::SizeField>,
+    /// The pointer on the section rail, and its card (`rail.rs`).
+    pub(crate) rail_hover: rail::RailHover,
+    /// A message over the page (a refused link), and its generation, so a
+    /// newer one keeps its own six seconds (`linkError` in rich-view.tsx).
+    pub(crate) notice: Option<(SharedString, u64)>,
+    /// A video card's player, while it plays (`video.rs`).
+    pub(crate) video: Option<video::VideoViewer>,
+    /// The toolbar's "more" popover is open.
+    pub(crate) more_open: bool,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
     /// does nothing there, as in Electron, where the rich editor is gone.
     pub(crate) source_mode: bool,
     source_toolbar: Option<Entity<SourceToolbar>>,
+    split_toolbar: Option<Entity<SourceToolbar>>,
+    /// Set by the host each frame its Split layout draws the row above both
+    /// panes; the rich pane then draws none of its own.
+    toolbar_outside: bool,
 }
 
 /// The formatting row above the Source pane. Electron keeps its toolbar
 /// when Source shows: zoom, page width and history still work, the
 /// formatting buttons have no editor to act on.
+///
+/// In Split it is the one row above both panes, and it formats the rich
+/// pane, as Electron's single DocToolbar does (`split`).
 pub struct SourceToolbar {
     rich: WeakEntity<RichView>,
+    split: bool,
     _observe: Subscription,
 }
 
 impl Render for SourceToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(rich) = self.rich.upgrade() else { return div().into_any_element() };
+        let split = self.split;
         rich.update(cx, |r, cx| {
-            r.source_mode = true;
+            if split && r.read_only {
+                return div().into_any_element();
+            }
+            r.source_mode = !split;
             r.render_toolbar(window, cx)
         })
     }
@@ -379,6 +406,7 @@ impl RichView {
             page_width: 0.0,
             read_only: false,
             drag: None,
+            text_drag: None,
             marked: None,
             find: None,
             prompt: None,
@@ -406,8 +434,15 @@ impl RichView {
             content_height: px(0.),
             outline: (u64::MAX, Vec::new()),
             toolbar_width: px(0.),
+            size_field: None,
+            notice: None,
+            video: None,
+            more_open: false,
+            rail_hover: Default::default(),
             source_mode: false,
             source_toolbar: None,
+            split_toolbar: None,
+            toolbar_outside: false,
         }
     }
 
@@ -416,6 +451,7 @@ impl RichView {
     /// pictures.
     pub fn load(&mut self, markdown: &str, base_dir: Option<PathBuf>, cx: &mut Context<Self>) {
         self.editor = Editor::parse(markdown);
+        self.video = None;
         self.heights.clear();
         self.emitted = self.editor.version;
         self.base_dir = base_dir;
@@ -483,14 +519,46 @@ impl RichView {
         cx.notify();
     }
 
+    /// Show a short message at the top of the page for six seconds, as
+    /// Electron shows a link it would not open.
+    pub fn show_notice(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let generation = self.notice.as_ref().map(|(_, g)| g + 1).unwrap_or(0);
+        self.notice = Some((message.into(), generation));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(6000)).await;
+            this.update(cx, |this, cx| {
+                if this.notice.as_ref().is_some_and(|(_, g)| *g == generation) {
+                    this.notice = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// The toolbar to draw above the Source pane.
     pub fn source_toolbar(&mut self, cx: &mut Context<Self>) -> Entity<SourceToolbar> {
         if let Some(t) = &self.source_toolbar {
             return t.clone();
         }
         let rich = cx.entity();
-        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), split: false, _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
         self.source_toolbar = Some(t.clone());
+        t
+    }
+
+    /// The row to draw above both panes in Split. Call it on every frame the
+    /// Split layout draws: that frame, the rich pane leaves its own row out.
+    pub fn split_toolbar(&mut self, cx: &mut Context<Self>) -> Entity<SourceToolbar> {
+        self.toolbar_outside = true;
+        if let Some(t) = &self.split_toolbar {
+            return t.clone();
+        }
+        let rich = cx.entity();
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), split: true, _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        self.split_toolbar = Some(t.clone());
         t
     }
 
@@ -782,11 +850,18 @@ impl RichView {
         self.find_step(false, cx);
     }
     fn on_escape(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_video(cx) {
+            return;
+        }
         if self.cancel_math_field(window, cx) {
             return;
         }
         if self.link_hover_visible() {
             self.hide_link_card(cx);
+            return;
+        }
+        if std::mem::take(&mut self.more_open) {
+            cx.notify();
             return;
         }
         if self.prompt.take().is_some() || self.find.take().is_some() {
@@ -950,6 +1025,13 @@ impl RichView {
                 self.editor.set_selection(Pos { offset: 0, ..p }, Pos { offset: len, ..p });
                 self.drag = Some((Granularity::Leaf, Pos { offset: 0, ..p }, Pos { offset: len, ..p }));
             }
+            1 if self.starts_text_drag(p, ev.modifiers.shift) => {
+                // A press inside the selection may be a drag of it; the
+                // caret moves only if it turns out to be a click.
+                self.link_click = None;
+                self.drag = None;
+                self.text_drag = Some((ev.position, None));
+            }
             _ => {
                 if self.editor.kind(p) == Some(LeafKind::Atom) {
                     self.editor.set_caret(p, false);
@@ -969,6 +1051,22 @@ impl RichView {
             let w = (w0 + (f32::from(ev.position.x) - x0) / self.zoom).max(48.);
             self.live_width = Some((start, w));
             cx.notify();
+            return;
+        }
+        if let Some((origin, drop)) = self.text_drag {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.text_drag = None;
+                cx.notify();
+                return;
+            }
+            let moved = (ev.position.x - origin.x).abs() > px(4.) || (ev.position.y - origin.y).abs() > px(4.);
+            if moved || drop.is_some() {
+                let next = self.hit(ev.position);
+                if next != drop {
+                    self.text_drag = Some((origin, next));
+                    cx.notify();
+                }
+            }
             return;
         }
         let Some((g, a0, a1)) = self.drag else { return };
@@ -995,13 +1093,38 @@ impl RichView {
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, ev: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.drag = None;
+        if let Some((origin, drop)) = self.text_drag.take() {
+            match drop {
+                // ⌥ copies, as ProseMirror's `dragCopyModifier` on macOS.
+                Some(at) => self.edit(cx, |e| {
+                    e.move_selection_to(at, ev.modifiers.alt);
+                }),
+                // No drag: a click inside the selection puts the caret there.
+                None => {
+                    if let Some(p) = self.hit(origin) {
+                        self.editor.set_caret(p, false);
+                    }
+                    cx.notify();
+                }
+            }
+            return;
+        }
         if let Some((p, w)) = self.live_width.take() {
             self.resize = None;
             self.edit(cx, |e| e.set_image_width(p, Some(w.round() as u32)));
         }
         self.resize = None;
+    }
+
+    /// A plain press inside a text selection, in an editable document.
+    fn starts_text_drag(&self, p: Pos, shift: bool) -> bool {
+        if shift || self.read_only || !self.editor.has_selection() || self.editor.selected_atom().is_some() {
+            return false;
+        }
+        let (from, to) = self.editor.range();
+        from <= p && p <= to
     }
 
     // ---- find ----

@@ -483,7 +483,7 @@ impl RichView {
         let block = &self.editor.doc.blocks[b];
         if block.is_opaque() {
             // Kept as source: shown as written, and edited as written.
-            let leaf = self.plain_leaf((b, 0), look, look.size * 0.85, 1.6, look.muted, window, cx);
+            let leaf = self.plain_leaf((b, 0), look, look.size * 0.85, 1.6, look.muted, false, window, cx);
             return div().pl(px(10.)).border_l_2().border_color(look.rule).child(leaf).into_any_element();
         }
         let nodes = block.nodes().to_vec();
@@ -552,7 +552,7 @@ impl RichView {
                 // template's line height), which is what sets the spacing.
                 let code = look.size * 0.87;
                 let lh = (look.size * look.line_height).max(code * 1.6) / code;
-                let el = self.plain_leaf(key, look, code, lh, look.fg, window, cx);
+                let el = self.plain_leaf(key, look, code, lh, look.fg, true, window, cx);
                 let pos = Pos::new(b, key.1, 0);
                 // TipTap shows no language: the label appears only while the
                 // caret is in the block, so it can still be changed.
@@ -609,7 +609,7 @@ impl RichView {
                         .into_any_element(),
                 };
                 if editing {
-                    let el = self.plain_leaf(key, look, look.size * 0.9, 1.5, look.fg, window, cx);
+                    let el = self.plain_leaf(key, look, look.size * 0.9, 1.5, look.fg, false, window, cx);
                     v_flex()
                         .gap(px(8.))
                         .child(div().px(px(8.)).py(px(6.)).rounded(px(6.)).border_1().border_color(look.rule).bg(look.surface).child(el))
@@ -1059,8 +1059,8 @@ impl RichView {
             .map(|i| img(i).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).into_any_element());
         let hover_url = url.to_string();
         // `.markie-embed-card`: the thumbnail at 16:9 with a play button
-        // and a strip carrying the address and the site. Playback is phase 5,
-        // so a click on the card opens the video in the browser.
+        // and a strip carrying the address and the site. A click plays it
+        // (video.rs).
         let open_url = url.to_string();
         let width = self.store.borrow().atoms.get(&key).map(|b| b.size.width);
         let height = width.map(|w| w * (9. / 16.)).unwrap_or(px(360.));
@@ -1131,14 +1131,9 @@ impl RichView {
             .when(selected, |d| d.border_2().border_color(look.link))
             .child(track(self.store.clone(), key))
             .on_hover(cx.listener(move |this, over: &bool, _, cx| this.embed_hover(hover_url.clone(), *over, cx)))
-            .on_mouse_down(MouseButton::Left, move |ev: &MouseDownEvent, _, cx| {
-                // Only a plain web address reaches the browser.
-                if ev.click_count >= 2 {
-                    if let markie_core::links::LinkClick::Web(u) = markie_core::links::classify_click(&open_url, None) {
-                        cx.open_url(&u);
-                    }
-                }
-            })
+            // The press selects the card, as on any block; the click plays
+            // it in the video viewer (`requestVideoViewer`).
+            .on_click(cx.listener(move |this, _, window, cx| this.open_video(&open_url, window, cx)))
             .into_any_element()
     }
 
@@ -1160,6 +1155,12 @@ impl RichView {
         let h = self.editor.head;
         if look.focused && !self.editor.has_selection() && (h.block, h.leaf) == key && self.prompt.is_none() {
             d.caret = Some((h.offset, false));
+        }
+        // While dragging the selection, the caret shows where it would land.
+        if let Some((_, Some(at))) = self.text_drag {
+            if (at.block, at.leaf) == key {
+                d.caret = Some((at.offset, false));
+            }
         }
         if let Some(f) = &self.find {
             let _ = cx;
@@ -1294,9 +1295,11 @@ impl RichView {
     }
 
     /// Code, display math source or a raw block: plain text in mono. Code
-    /// blocks are drawn in one ink, as TipTap draws them.
+    /// blocks are drawn in one ink, as TipTap draws them. `spell` checks
+    /// spelling: Chromium checks a code block in the contenteditable like any
+    /// other text; the formula field turns it off (`rich-math.ts`).
     #[allow(clippy::too_many_arguments)]
-    fn plain_leaf(&mut self, key: LeafKey, look: &Look, size: f32, line_height: f32, color: Hsla, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn plain_leaf(&mut self, key: LeafKey, look: &Look, size: f32, line_height: f32, color: Hsla, spell: bool, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let units = self.editor.units(key.0, key.1);
         let text: String = units.iter().map(|u| u.display()).collect();
         let mut base = look.base(size);
@@ -1320,7 +1323,10 @@ impl RichView {
             segs.push(Seg { kind: SegKind::Text(s, base.clone()), units: start..i });
         }
         let len = units.len();
-        let deco = self.deco(key, len, look, cx);
+        let mut deco = self.deco(key, len, look, cx);
+        if spell && !self.read_only {
+            deco.misspelled = self.misspelled(key, &units, cx);
+        }
         let spec = LeafSpec { segs, base, line_height, align: Align::Left, len };
         div().w_full().child(LeafElement::new(key, spec, deco, self.store.clone())).into_any_element()
     }

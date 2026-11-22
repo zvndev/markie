@@ -68,6 +68,16 @@ impl RichView {
         self.link_hover.shown.is_some()
     }
 
+    /// Settings › Advanced › "Preview links on hover". Off hides a card that
+    /// is up and stops any fetch still waiting.
+    pub fn set_link_previews(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.link_previews = on;
+        if !on {
+            self.hide_link_card(cx);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn hide_link_card(&mut self, cx: &mut Context<Self>) {
         let h = &mut self.link_hover;
         if h.wanted.is_some() || h.shown.is_some() {

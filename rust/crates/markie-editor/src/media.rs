@@ -280,10 +280,15 @@ pub fn font_family(stack: &str) -> Option<SharedString> {
     if first.is_empty() || first.starts_with("var(") {
         return None;
     }
+    // Names CoreText cannot find by family, as Chromium resolves them on
+    // macOS: SF Mono and New York are the system's monospaced and serif
+    // designs, the system sans is the theme's own face.
     let generic = match first {
         "serif" => "Times New Roman",
-        "sans-serif" | "system-ui" => return None,
+        "sans-serif" | "system-ui" | "ui-sans-serif" | "-apple-system" | "BlinkMacSystemFont" => return None,
         "monospace" => "Menlo",
+        "SF Mono" | "SFMono-Regular" | "ui-monospace" => super::render::MONO,
+        "New York" | "ui-serif" => super::style::SYSTEM_SERIF,
         other => other,
     };
     Some(SharedString::from(generic.to_string()))
@@ -333,5 +338,22 @@ impl Media {
         }
         self.math.insert(key, out.clone());
         out
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::font_family;
+
+    #[test]
+    fn font_stacks_resolve_to_families_coretext_can_load() {
+        // The toolbar's stacks (`DOC_FONTS`), first family first.
+        assert_eq!(font_family("Charter, Georgia, 'Times New Roman', serif").as_deref(), Some("Charter"));
+        assert_eq!(font_family("'Iowan Old Style', Palatino, Georgia, serif").as_deref(), Some("Iowan Old Style"));
+        // Hidden from font lists: the system designs stand in, as in Chromium.
+        assert_eq!(font_family("'SF Mono', ui-monospace, Menlo, monospace").as_deref(), Some(".AppleSystemUIFontMonospaced"));
+        assert_eq!(font_family("ui-serif, 'New York', 'Iowan Old Style', Charter, Georgia, serif").as_deref(), Some(".AppleSystemUIFontSerif"));
+        assert_eq!(font_family("-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"), None);
+        assert_eq!(font_family("var(--font-geist-sans)"), None);
     }
 }

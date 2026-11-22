@@ -443,6 +443,10 @@ impl VideoPlayer {
     pub fn set_bounds(&self, bounds: Bounds) -> Result<(), Error> {
         self.webview.set_bounds(rect(bounds))
     }
+
+    pub fn set_visible(&self, visible: bool) -> Result<(), Error> {
+        self.webview.set_visible(visible)
+    }
 }
 
 #[cfg(test)]

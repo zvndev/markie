@@ -23,6 +23,7 @@ mod clip;
 mod rules;
 mod keys;
 mod table;
+mod drag;
 
 use std::ops::Range;
 

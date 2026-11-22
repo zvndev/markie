@@ -314,6 +314,7 @@ impl Workspace {
                 this.page_width = w;
             }
         }
+        this.load_link_previews(cx);
         this.refresh_lists();
         this.restore_browse_open();
         this.restore_panel_width(window);
@@ -972,9 +973,21 @@ impl Workspace {
     /// rich pane at 1.04fr, as `markie-document-area--split` lays them out.
     fn render_split(&self, cx: &mut Context<Self>) -> AnyElement {
         self.sync_rich_appearance(cx);
+        // One formatting row above both panes, as Electron's DocToolbar.
+        let toolbar = self.rich.update(cx, |r, cx| r.split_toolbar(cx));
+        let source = self.source_mouse(
+            Editor::new(&self.editor)
+                .bordered(false)
+                .h(relative(1.))
+                .font_family(markie_editor::MONO)
+                .text_size(px(14. * self.zoom)),
+            cx,
+        );
         let theme = cx.theme();
-        h_flex()
-            .size_full()
+        let panes = h_flex()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .bg(theme.background)
             .child(
                 div()
@@ -984,16 +997,10 @@ impl Workspace {
                     .border_r_1()
                     .border_color(theme.border)
                     .overflow_hidden()
-                    .child(
-                        Editor::new(&self.editor)
-                            .bordered(false)
-                            .h(relative(1.))
-                            .font_family(markie_editor::MONO)
-                            .text_size(px(14. * self.zoom)),
-                    ),
+                    .child(source),
             )
-            .child(div().h_full().min_w_0().w(relative(0.52)).overflow_hidden().child(self.rich.clone()))
-            .into_any_element()
+            .child(div().h_full().min_w_0().w(relative(0.52)).overflow_hidden().child(self.rich.clone()));
+        v_flex().size_full().bg(theme.background).child(toolbar).child(panes).into_any_element()
     }
 
     fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1113,13 +1120,14 @@ impl Workspace {
                     |d, bytes| d.child(text_view::large_strip(bytes, cx)),
                 )
                 .when(matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown), |d| d.child(self.source_toolbar(cx)))
-                .child(
+                .child(self.source_mouse(
                     Editor::new(&self.editor)
                         .bordered(false)
                         .h(relative(1.))
                         .font_family(markie_editor::MONO)
                         .text_size(px(14. * self.zoom)),
-                )
+                    cx,
+                ))
                 .into_any_element(),
         }
     }
@@ -1183,6 +1191,9 @@ impl Render for Workspace {
         self.ensure_browse_rows();
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
+        // A video card's player is a web view too: hidden under any layer.
+        let hide_video = self.web_views_covered(window, cx) || !self.rich_active();
+        self.rich.update(cx, |r, _| r.set_web_views_covered(hide_video));
         self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);

@@ -43,6 +43,11 @@ impl Default for DocStyle {
     }
 }
 
+/// The system serif design, New York. macOS hides it from font lists, so
+/// "New York" finds no family; Electron's stack reaches it through
+/// `ui-serif`, which is this family.
+pub const SYSTEM_SERIF: &str = ".AppleSystemUIFontSerif";
+
 /// `TYPEFACES` as macOS family names. `system` and `mono` are the app's
 /// own faces, so they are left to the caller (None).
 pub fn typeface(id: &str) -> Option<&'static str> {
@@ -52,7 +57,7 @@ pub fn typeface(id: &str) -> Option<&'static str> {
         "optima" => "Optima",
         "charter" => "Charter",
         "iowan" => "Iowan Old Style",
-        "newyork" => "New York",
+        "newyork" => SYSTEM_SERIF,
         "georgia" => "Georgia",
         _ => return None,
     })

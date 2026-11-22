@@ -178,7 +178,7 @@ impl Editor {
         self.insert_pasted_nodes(nodes);
     }
 
-    fn insert_plain(&mut self, text: &str) {
+    pub(super) fn insert_plain(&mut self, text: &str) {
         let (from, to) = self.range();
         let text = text.to_string();
         self.transact(from.block..to.block + 1, EditKind::Other, |ed| {

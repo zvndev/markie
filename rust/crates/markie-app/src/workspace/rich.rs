@@ -147,8 +147,13 @@ impl Workspace {
                     cx.open_with_system(path);
                 }
             }
-            LinkClick::Reveal(path) => cx.reveal_path(path),
-            LinkClick::Refuse(why) => eprintln!("markie-rs: link not opened: {why}"),
+            // Programs and installers are shown in Finder, not run, and the
+            // page says so (`openAsLocalFile`).
+            LinkClick::Reveal(path) => {
+                cx.reveal_path(path);
+                self.rich.update(cx, |r, cx| r.show_notice("Shown in Finder. Markie doesn't run programs or installers from a document link.", cx));
+            }
+            LinkClick::Refuse(why) => self.rich.update(cx, |r, cx| r.show_notice(*why, cx)),
             LinkClick::Web(_) | LinkClick::Ignore => {}
         }
     }

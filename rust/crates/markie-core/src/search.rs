@@ -84,6 +84,8 @@ pub struct Hit {
     pub score: u32,
     /// A one-line excerpt around the first body match, when the body matched.
     pub excerpt: Option<String>,
+    /// Byte ranges of the query terms inside `excerpt`, for highlighting.
+    pub marks: Vec<(usize, usize)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -130,7 +132,7 @@ pub fn search_library(docs: &[IndexedDoc], query: &LibraryQuery) -> Vec<Hit> {
         .filter(|(_, d)| query.formats.is_empty() || query.formats.contains(&d.format))
         .filter_map(|(index, doc)| {
             if terms.is_empty() {
-                return Some((Hit { index, score: 0, excerpt: None }, doc.mtime_ms));
+                return Some((Hit { index, score: 0, excerpt: None, marks: Vec::new() }, doc.mtime_ms));
             }
             let name = doc.name.to_lowercase();
             let path = doc.path.to_string_lossy().to_lowercase();
@@ -154,7 +156,7 @@ pub fn search_library(docs: &[IndexedDoc], query: &LibraryQuery) -> Vec<Hit> {
                     return None;
                 }
             }
-            Some((Hit { index, score, excerpt }, doc.mtime_ms))
+            Some((Hit { index, score, excerpt, marks: Vec::new() }, doc.mtime_ms))
         })
         .collect();
     hits.sort_by(|a, b| {

@@ -5148,7 +5148,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs 7.0.0",
  "futures",
+ "getrandom 0.3.4",
  "gpui-kit",
  "markie-agent",
  "markie-cloud",
@@ -5157,6 +5159,7 @@ dependencies = [
  "markie-export",
  "markie-office",
  "markie-office-view",
+ "markie-vault",
  "markie-web",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -5164,6 +5167,7 @@ dependencies = [
  "objc2-pdf-kit",
  "pulldown-cmark",
  "raw-window-handle",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -5171,6 +5175,7 @@ dependencies = [
  "tokio",
  "trash",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -5208,11 +5213,13 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs 7.0.0",
+ "miniz_oxide 0.8.9",
  "pulldown-cmark",
  "regex",
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2 0.10.9",
  "tempfile",
  "trash",
@@ -5225,9 +5232,14 @@ name = "markie-editor"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "markie-core",
  "markie-math",
  "markie-rich",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "reqwest",
+ "tempfile",
+ "url",
 ]
 
 [[package]]

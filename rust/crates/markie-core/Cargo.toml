@@ -18,6 +18,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 trash = "5"
 regex = "1"
 url = "2"
+miniz_oxide = "0.8"
+serde_yaml = "0.9"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

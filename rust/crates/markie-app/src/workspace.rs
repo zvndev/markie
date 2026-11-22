@@ -984,13 +984,14 @@ impl Workspace {
                     |d, bytes| d.child(text_view::large_strip(bytes, cx)),
                 )
                 .when(matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown), |d| d.child(self.source_toolbar(cx)))
-                .child(
+                .child(self.source_mouse(
                     Editor::new(&self.editor)
                         .bordered(false)
                         .h(relative(1.))
                         .font_family(markie_editor::MONO)
                         .text_size(px(14. * self.zoom)),
-                )
+                    cx,
+                ))
                 .into_any_element(),
         }
     }

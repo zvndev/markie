@@ -489,7 +489,13 @@ impl Workspace {
                 self.disk_missing = false;
                 self.viewing_version = None;
                 // The opened bytes are the first recovery revision, as in
-                // Electron's import, and they match the file.
+                // Electron's import, and they match the file. Unsaved edits
+                // from an earlier session stay in Recovery history.
+                if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+                    if let Some(notice) = self.office_unsaved_notice(&doc.path) {
+                        window.push_notification(notice, cx);
+                    }
+                }
                 self.keep_office_revision(true, cx);
                 if self.side == SidePanel::History {
                     self.refresh_versions();
@@ -578,8 +584,10 @@ impl Workspace {
 
     /// Write whatever autosave still owes, now. Never a dialog.
     fn flush_pending(&mut self, cx: &mut Context<Self>) {
-        let office_dirty = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
-        if self.autosave.is_pending() || self.dirty || office_dirty {
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            return self.office_flush_recovery(cx);
+        }
+        if self.autosave.is_pending() || self.dirty {
             self.autosave.cancel();
             self.autosave_now(cx);
         }
@@ -589,7 +597,8 @@ impl Workspace {
     /// edited marker, and the next save tries again.
     fn autosave_now(&mut self, cx: &mut Context<Self>) {
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
-            return self.office_autosave(cx);
+            // Office files are never written on a timer.
+            return;
         }
         let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };

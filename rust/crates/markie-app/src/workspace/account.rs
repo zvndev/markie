@@ -1335,7 +1335,7 @@ impl Workspace {
 
     /// The Cloud page, for the rail's workspace page.
     pub(super) fn render_cloud_page(&self) -> AnyElement {
-        div().size_full().child(self.cloud.clone()).into_any_element()
+        div().size_full().child(self.cloud_panel.clone()).into_any_element()
     }
 }
 

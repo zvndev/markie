@@ -215,6 +215,9 @@ impl Workspace {
             s.panel_open = !closing;
         }
         s.filter_menu = None;
+        if self.shell.view == LeftView::Cloud && self.shell.panel_open {
+            self.refresh_cloud(false, cx);
+        }
         if self.shell.view == LeftView::Browse && self.shell.panel_open && self.library.total() == 0 && !self.library.scanning {
             self.rescan(cx);
         }
@@ -1010,6 +1013,7 @@ impl Workspace {
                     .child(format_icon(doc.format, 15., p))
                     .child(div().flex_1().min_w_0().truncate().text_size(px(12.5)).text_color(p.foreground).child(doc.name.clone()))
                     .child(format_badge(doc.format, p))
+                    .children(self.cloud.badge(&doc.path).map(|badge| div().text_size(px(10.)).text_color(p.muted).child(badge)))
                     .child(
                         div()
                             .size(px(16.))
@@ -1314,10 +1318,13 @@ impl Workspace {
 
     /// The Cloud or Vault page, in place of the document.
     pub(super) fn render_workspace_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.shell.view == LeftView::Cloud {
+        // Signed out, the account's own Cloud page asks to sign in; signed in,
+        // the sync library below takes over with the same session.
+        if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
             return self.render_cloud_page();
         }
         let p = themes::palette(cx);
+        let signed_in_cloud = self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_some();
         let (title, glyph, body) = match self.shell.view {
             LeftView::Vault => (
                 "Vault",
@@ -1367,7 +1374,7 @@ impl Workspace {
                                             .cursor_pointer()
                                             .hover(|s| s.text_color(p.foreground))
                                             .child(div().size(px(6.)).rounded_full().bg(p.yellow))
-                                            .child("Sign in")
+                                            .child(if signed_in_cloud { "Signed in" } else { "Sign in" })
                                             .on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx))),
                                     ),
                             ),
@@ -1387,7 +1394,9 @@ impl Workspace {
                             .on_click(|_, w, cx| w.dispatch_action(Box::new(Open), cx)),
                     ),
             )
-            .child(
+            .child(if signed_in_cloud {
+                self.render_cloud_library(cx)
+            } else {
                 v_flex()
                     .flex_1()
                     .items_center()
@@ -1399,8 +1408,9 @@ impl Workspace {
                     } else {
                         "Nothing in the cloud yet"
                     }))
-                    .child(div().max_w(px(420.)).text_center().text_size(px(12.)).text_color(p.muted).child(body)),
-            )
+                    .child(div().max_w(px(420.)).text_center().text_size(px(12.)).text_color(p.muted).child(body))
+                    .into_any_element()
+            })
             .into_any_element()
     }
 

@@ -78,6 +78,8 @@ Evidence, in `.autoloop/runs/cloud-sign-in/` (gitignored). Library lists are blu
 - A browser sign-in does not survive quitting Markie RS before it comes back. The nonce is in memory.
 - With several Markie RS builds on one Mac, macOS hands `markie-rs://` to the copy that launched last.
 
+The later desktop file-sync and byte-snapshot work is tracked in [CLOUD-SYNC.md](CLOUD-SYNC.md).
+
 ## What is done
 
 | Module | What it does | Ported from |
@@ -137,8 +139,8 @@ It passed three runs in a row. Each run checks these steps:
 | Work | Notes |
 |---|---|
 | Google and Apple live | `markie-rs://` is built and tested locally. Turn it on after the PR #136 deploy (steps above). |
-| UI wiring | Done: sign-in sheet, account, Cloud list and read-only open. Left: Settings > Servers, Library cloud states, conflict strip and dialog, share dialog, people requests, comments panel, presence avatars, view-only banner. |
-| Registry integration | Store `SyncRecord` fields in the markie-core registry. Push after save, background update checks, and landing cloud documents in `~/Documents/Markie/Cloud`. |
+| UI wiring | Done: sign-in sheet, account, Cloud list and read-only open. Left: Settings > Servers, share dialog, people requests, comments panel, presence avatars, view-only banner. |
+| Registry integration | Done in CLOUD-SYNC.md: sync records in the registry, push after save, background checks, conflict strip, cloud documents land in `~/Documents/Markie RS/Cloud`. |
 | Assets and links | Port `asset-sync.js`, `asset-cache.js` and `link-sync.js` on top of the `docs` calls. |
 | Room supervisor | Reconnect with backoff and refresh the ticket in place every 2 minutes, using the rules in `collab/ticket.rs`. |
 | Rich rooms | XmlFragment rooms and comment anchors (Y.RelativePosition). Waits on the Phase 2a spike. |

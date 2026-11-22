@@ -80,7 +80,15 @@ impl Answer {
 /// path the URL parser makes of it against the origin. A percent-encoded dot,
 /// slash or backslash is refused outright.
 pub fn checked_path(origin: &str, p: &str) -> Option<String> {
-    if p.len() > 4096 {
+    let (route, query) = p.split_once('?').unwrap_or((p, ""));
+    // A media ref is opaque query data, not a URL or a route. Embedded
+    // directories and percent-decoded spaces must round-trip to the server.
+    let asset_ref = route.strip_prefix("/api/docs/")
+        .and_then(|tail| tail.split_once('/'))
+        .is_some_and(|(id, ending)| !id.is_empty() && ending == "assets/file")
+        && query.strip_prefix("ref=").is_some_and(|r| !r.is_empty() && !r.contains(['&', '=', '?']));
+    let checked = if asset_ref { route } else { p };
+    if p.len() > if asset_ref { 8192 } else { 4096 } {
         return None;
     }
     let allowed_raw = |c: char| c.is_ascii_alphanumeric() || "/_-.~%?=&".contains(c);
@@ -88,8 +96,8 @@ pub fn checked_path(origin: &str, p: &str) -> Option<String> {
     if !rest.chars().all(allowed_raw) {
         return None;
     }
-    let lower = p.to_ascii_lowercase();
-    if p.contains("..") || lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") {
+    let lower = checked.to_ascii_lowercase();
+    if checked.contains("..") || lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") {
         return None;
     }
     let base = Url::parse(origin).ok()?;
@@ -178,7 +186,7 @@ impl Transport {
         // A 3xx is never followed. It reads as the status it is.
         let header = |name: &str| res.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
         let set_auth_token = header("set-auth-token").filter(|t| !t.is_empty() && t.len() <= 4096);
-        let etag = header("etag").map(|t| t.replace('"', ""));
+        let etag = header("etag");
         let content_type = header("content-type");
         if let Some(len) = res.content_length()
             && len as usize > req.max_bytes
@@ -213,6 +221,9 @@ mod tests {
         assert_eq!(checked_path(SELF, "/api/docs/abc/shares?x=1&y=2").as_deref(), Some("/api/docs/abc/shares?x=1&y=2"));
         assert_eq!(checked_path(SELF, "/auth/sign-in/email").as_deref(), Some("/auth/sign-in/email"));
         assert_eq!(checked_path(SELF, "/api/./me").as_deref(), Some("/api/me"));
+        let asset = "/api/docs/item/assets/file?ref=shots%2Fa%20b.png";
+        assert_eq!(checked_path(SELF, asset).as_deref(), Some(asset));
+        assert_eq!(checked_path(SELF, "/api/docs/item/assets/file?ref=shots%2Fa.png&next=%2Ffoo"), None);
     }
 
     #[test]

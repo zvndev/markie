@@ -187,10 +187,14 @@ impl Workspace {
         }
     }
 
-    /// The Share button. Markie RS has no cloud session yet; the cloud work
-    /// replaces this body with the share sheet.
+    /// The Share button also offers opt-in sync or an Office snapshot.
     pub(crate) fn open_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.push_notification("Sharing arrives with Markie Cloud sign-in.", cx);
+        let Some(doc) = &self.doc else { return; };
+        if matches!(doc.kind, DocKind::Text { .. }) {
+            self.show_text_sync(window, cx);
+        } else if markie_cloud::platform::supported_name(&super::cloud::name(&doc.path)).is_some() {
+            self.show_office_upload(window, cx);
+        }
     }
 
     fn copy_all(&mut self, cx: &mut Context<Self>) {

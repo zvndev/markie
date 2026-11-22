@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState, InputEvent};
+use gpui_kit::component::input::{Editor, EditorState, InputEvent, InputState};
 use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::component::{
     ActiveTheme, IconName, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -32,6 +32,10 @@ pub(crate) mod account;
 mod agents;
 mod chrome;
 mod file_ops;
+mod cloud;
+mod cloud_office;
+mod cloud_resources;
+mod cloud_ui;
 mod office;
 mod palette;
 mod panels;
@@ -79,6 +83,9 @@ pub struct Workspace {
     skills: Option<Entity<skills::SkillsPanel>>,
     pub focus_handle: FocusHandle,
     registry: Option<Rc<Registry>>,
+    cloud: cloud::CloudWorkspace,
+    cloud_office: cloud_office::OfficeCloud,
+    cloud_search: Entity<InputState>,
     /// The Browse panel's view of the device index.
     library: Library,
     /// Title bar, rail and side panel state.
@@ -117,7 +124,7 @@ pub struct Workspace {
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
     /// The Cloud page the rail's Cloud destination shows (account.rs).
-    cloud: Entity<account::CloudPanel>,
+    cloud_panel: Entity<account::CloudPanel>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -136,6 +143,7 @@ impl Workspace {
                 .searchable(true)
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
+        let cloud_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search cloud documents"));
         let (rich, rich_sub) = Self::new_rich(cx);
 
         let mut subscriptions = vec![
@@ -145,6 +153,7 @@ impl Workspace {
                 }
             }),
             rich_sub,
+            cx.subscribe(&cloud_search, |_, _, _: &InputEvent, cx| cx.notify()),
         ];
         subscriptions.extend(Self::watch_account(window, cx));
 
@@ -170,11 +179,15 @@ impl Workspace {
         let data_dir = paths::data_dir();
         let drafts = Drafts::new(&data_dir);
         let recovered = drafts.pending();
+        let cloud = cloud::CloudWorkspace::new(&data_dir, registry.as_deref());
         let mut this = Self {
             agents: agents::AgentState::new(&data_dir),
             skills: None,
             focus_handle: cx.focus_handle(),
             registry,
+            cloud,
+            cloud_office: Default::default(),
+            cloud_search,
             library,
             shell,
             editor,
@@ -200,13 +213,14 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
-            cloud: cx.new(|cx| account::CloudPanel::new(window, cx)),
+            cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
             zoom: 1.0,
             page_width: 768.0,
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
         this.start_agent_bridge(window, cx);
+        this.start_cloud_poll(cx);
         if let Some(reg) = &this.registry {
             if let Some(z) = reg.setting("zoom").ok().flatten().and_then(|v| v.parse().ok()) {
                 this.zoom = z;
@@ -243,42 +257,6 @@ impl Workspace {
         self.shell.invalidate_browse();
     }
 
-    fn import_from_markie(&mut self, cx: &mut Context<Self>) {
-        // Accept a user-staged copy, not the live Electron profile.
-        let source = paths::data_dir().join("electron-registry-snapshot.db");
-        if !std::fs::symlink_metadata(&source).is_ok_and(|meta| meta.file_type().is_file()) {
-            return;
-        }
-        let db_path = paths::data_dir().join("registry.db");
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    let reg = Registry::open(&db_path)?;
-                    markie_core::import::import_from_electron(&source, &reg)
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(summary) => {
-                        if let Some(reg) = &this.registry {
-                            let _ = reg.set_setting(
-                                "electron_import",
-                                &format!("{} recents, {} folders, {} stars", summary.recents, summary.roots, summary.stars),
-                            );
-                        }
-                        this.refresh_lists();
-                        if summary.roots > 0 {
-                            this.rescan(cx);
-                        }
-                    }
-                    Err(e) => eprintln!("markie-rs: import from Markie failed: {e:#}"),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
 
     fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
         self.zoom = (zoom * 10.0).round().clamp(5.0, 30.0) / 10.0;
@@ -316,8 +294,8 @@ impl Workspace {
         self.set_page_width(self.page_width - 96.0, cx);
     }
 
-    fn on_import(&mut self, _: &ImportFromMarkie, _: &mut Window, cx: &mut Context<Self>) {
-        self.import_from_markie(cx);
+    fn on_import(&mut self, _: &ImportFromMarkie, window: &mut Window, cx: &mut Context<Self>) {
+        window.push_notification("Markie RS does not read the installed Markie profile.", cx);
     }
 
     fn on_toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
@@ -347,7 +325,11 @@ impl Workspace {
             .as_ref()
             .and_then(|r| r.roots().ok())
             .unwrap_or_default();
-        let opts = ScanOptions::from_env(paths::home_dir(), roots);
+        let opts = if std::env::var_os("MARKIE_RS_DATA_DIR").is_some() {
+            ScanOptions { roots, ..ScanOptions::for_home(paths::data_dir()) }
+        } else {
+            ScanOptions::from_env(paths::home_dir(), roots)
+        };
         cx.spawn(async move |this, cx| {
             let snapshot = cx.background_spawn(async move { scan(&opts) }).await;
             this.update(cx, |this, cx| {
@@ -454,6 +436,9 @@ impl Workspace {
                     self.disk.forget(&old.path);
                 }
                 self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind });
+                if self.shell.view == rail::LeftView::Cloud {
+                    self.shell.panel_open = false;
+                }
                 self.dirty = false;
                 self.autosave.cancel();
                 self.disk_conflict = None;
@@ -478,6 +463,7 @@ impl Workspace {
                     let _ = reg.track_opened(&doc.path);
                 }
                 self.refresh_lists();
+                self.refresh_cloud_resources(cx);
                 let title = doc
                     .path
                     .file_name()
@@ -549,7 +535,7 @@ impl Workspace {
         let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
-        if self.write_text(&text).is_ok() {
+        if self.write_text(&text, cx).is_ok() {
             let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
         }
         cx.notify();
@@ -557,17 +543,19 @@ impl Workspace {
 
     /// Keep the previous text as a version, write the new text, and remember
     /// that this write was ours.
-    fn write_text(&mut self, text: &str) -> anyhow::Result<()> {
+    fn write_text(&mut self, text: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
         let Some(doc) = self.doc.as_mut() else { return Ok(()) };
         let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return Ok(()) };
         let _ = self.history.capture(&doc.path, text, Writer::User);
         document::save_text(&doc.path, text, *encoding, *bom)?;
         *saved = text.to_string();
         self.disk.remember(&doc.path, text, true);
+        let path = doc.path.clone();
         self.dirty = false;
         if self.side == SidePanel::History {
             self.refresh_versions();
         }
+        self.cloud_after_save(&path, cx);
         Ok(())
     }
 
@@ -636,7 +624,7 @@ impl Workspace {
         }
         let text = self.current_text(cx);
         self.autosave.cancel();
-        if let Err(err) = self.write_text(&text) {
+        if let Err(err) = self.write_text(&text, cx) {
             window.push_notification(format!("Markie could not save: {err:#}"), cx);
         } else if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
             let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
@@ -783,7 +771,7 @@ impl Workspace {
     /// version too and nothing is lost.
     fn restore_version(&mut self, cx: &mut Context<Self>) {
         let Some((_, text)) = self.viewing_version.take() else { return };
-        if self.write_text(&text).is_ok() {
+        if self.write_text(&text, cx).is_ok() {
             if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
                 self.load_text(&path, text, cx);
             }
@@ -804,7 +792,7 @@ impl Workspace {
         self.disk_conflict = None;
         let text = self.editor.read(cx).value().to_string();
         // History keeps the outside version first, so overwriting loses nothing.
-        let _ = self.write_text(&text);
+        let _ = self.write_text(&text, cx);
         cx.notify();
     }
 
@@ -1099,11 +1087,15 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(path) = self.cloud.pending_link.take() {
+            self.open_path(&path, window, cx);
+        }
         if let Some(text) = self.pending_editor_text.take() {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         self.ensure_browse_rows();
         let banner = self.render_banner(cx);
+        let cloud_banner = self.render_cloud_banner(cx);
         let history = match self.side {
             SidePanel::History => Some(self.render_history(cx).into_any_element()),
             SidePanel::Outline => Some(self.render_outline(cx).into_any_element()),
@@ -1165,6 +1157,7 @@ impl Render for Workspace {
                                     .h_full()
                                     .overflow_hidden()
                                     .children(banner)
+                                    .children(cloud_banner)
                                     .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_document(cx))),
                             )
                             .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))

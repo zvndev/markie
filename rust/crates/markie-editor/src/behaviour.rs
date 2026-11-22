@@ -144,7 +144,9 @@ impl RichView {
         match activation(&href, &self.cloud_links, self.base_dir.as_deref()) {
             Activation::Web(url) => cx.open_url(&url),
             Activation::Cloud(reference) => cx.emit(RichEvent::DocumentLink(reference)),
-            Activation::Local(click) => cx.emit(RichEvent::OpenLocal(click)),
+            // Preserve the existing local bound in restricted cloud copies.
+            Activation::Local(markie_core::links::LinkClick::Refuse(why)) if self.restrict_local_media => self.show_notice(why, cx),
+            Activation::Local(_) => cx.emit(RichEvent::OpenLocal(href)),
             Activation::Ignore => {}
         }
     }

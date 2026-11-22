@@ -3,6 +3,7 @@
 #[cfg(unix)]
 pub mod bridge;
 pub mod cloud;
+pub mod comments;
 pub mod permissions;
 pub mod skills;
 pub mod tokens;

@@ -84,7 +84,7 @@ impl Document {
         })
     }
 
-    fn linked<'a>(&self, record: &'a SyncRecord) -> Result<&'a str, String> {
+    pub fn linked<'a>(&self, record: &'a SyncRecord) -> Result<&'a str, String> {
         record
             .cloud_doc_id
             .as_deref()

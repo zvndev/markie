@@ -19,21 +19,28 @@ use markie_agent::{
     guarded_path, sanitize_agent,
 };
 use markie_agent::{cloud, permissions, tokens};
-use markie_cloud::sync::SyncRecord;
-use markie_cloud::tokens::TokenStore;
-use markie_cloud::{CloudClient, DEFAULT_SERVER, http::Transport, registry::ServerStore};
+use markie_cloud::CloudClient;
+use markie_cloud::sync::{SyncRecord, SyncState};
 use markie_core::paths;
 use serde_json::json;
 use tokio::runtime::Runtime;
 
+/// The agent bridge's state. Its Cloud requests use the window's own Cloud
+/// workspace: the signed-in account (`account::shared_tokens`), the trusted
+/// servers, and the sync records in Markie RS's registry, so a file an agent
+/// syncs is the same synced file the Cloud page and the editor see.
 pub(super) struct AgentState {
     data: PathBuf,
     runtime: Option<Arc<Runtime>>,
-    tokens: Arc<dyn TokenStore>,
     #[cfg(unix)]
     bridge: Option<Bridge>,
     busy: bool,
 }
+
+/// Before the bridge used the window's sync records it kept its own, under
+/// this settings prefix. One is moved into the registry the first time an
+/// agent asks about that file again.
+const LEGACY_AGENT_RECORD: &str = "agent-cloud:";
 
 impl AgentState {
     pub(super) fn new(data: &Path) -> Self {
@@ -45,22 +52,10 @@ impl AgentState {
                 .build()
                 .ok()
                 .map(Arc::new),
-            tokens: super::account::shared_tokens(),
             #[cfg(unix)]
             bridge: None,
             busy: false,
         }
-    }
-
-    fn client(&self, origin: &str) -> Result<CloudClient, String> {
-        let servers = ServerStore::open(Some(self.data.join("servers.json")), false);
-        CloudClient::new(
-            origin,
-            servers.trust_handle(),
-            self.tokens.clone(),
-            Transport::new(),
-        )
-        .map_err(|e| e.to_string())
     }
 }
 
@@ -130,21 +125,24 @@ impl Workspace {
                     .map_err(|e| e.to_string())?;
                 Ok(json!({"noted": true}))
             }),
-            method if method.starts_with("comments_") => {
-                Err(markie_agent::COMMENTS_UNAVAILABLE.into())
-            }
+            method if method.starts_with("comments_") => markie_agent::comments::handle(
+                method,
+                &req.params,
+                &self.agents.data,
+                &paths::home_dir(),
+                super::comments::nightly(self.registry.as_deref()),
+            ),
             method => {
                 let prepared = (|| {
                     let doc = cloud::Document::resolve(path, &paths::home_dir())?;
-                    let key = format!("agent-cloud:{}", doc.path.display());
-                    let record: SyncRecord = self
-                        .registry
-                        .as_ref()
-                        .and_then(|r| r.setting(&key).ok().flatten())
-                        .and_then(|s| serde_json::from_str(&s).ok())
-                        .unwrap_or_default();
+                    let key = self.agent_binding_key(&doc.path);
+                    let binding = self.cloud.bindings.get(&key).cloned();
+                    let record = binding.as_ref().map(|b| b.record.clone()).unwrap_or_default();
                     if method == "cloud_status" {
                         return Ok((doc, key, record, None));
+                    }
+                    if matches!(method, "cloud_public_link" | "cloud_revoke_public_link") {
+                        doc.linked(&record)?;
                     }
                     if self.agents.busy {
                         return Err("Another agent Cloud request is in progress. Try again.".into());
@@ -153,6 +151,9 @@ impl Workspace {
                         if self.registry.is_none() {
                             return Err("Markie RS could not open its document registry.".into());
                         }
+                        if self.cloud.busy.contains(&key) {
+                            return Err(format!("{} is syncing in Markie RS right now. Try again.", doc.name));
+                        }
                         doc.check_size()?;
                     }
                     let runtime = self
@@ -160,8 +161,17 @@ impl Workspace {
                         .runtime
                         .clone()
                         .ok_or("Markie Cloud is not available.")?;
-                    let client = self.agents.client(cloud::record_origin(&record))?;
-                    Ok((doc, key, record, Some((runtime, client))))
+                    // A file in the cloud keeps its own server and account; a
+                    // new one goes to the primary server, as Electron's syncOn.
+                    let linked = binding
+                        .as_ref()
+                        .filter(|b| b.record.cloud_doc_id.is_some() && b.record.state != SyncState::LocalOnly);
+                    let scope = match linked {
+                        Some(b) => self.cloud.scope(b.origin()).filter(|s| s.matches(b)),
+                        None => self.cloud.primary_scope(),
+                    }
+                    .ok_or(cloud::SIGN_IN)?;
+                    Ok((doc, key, record, Some((runtime, scope))))
                 })();
                 let (doc, key, record, context) = match prepared {
                     Ok(p) => p,
@@ -170,35 +180,35 @@ impl Workspace {
                         return;
                     }
                 };
-                let Some((runtime, client)) = context else {
+                let Some((runtime, scope)) = context else {
                     let _ = reply.send(Ok(doc.describe(&record)));
                     return;
                 };
+                let syncing = req.method == "cloud_sync";
                 self.agents.busy = true;
+                if syncing {
+                    self.cloud.set_busy(&key, true);
+                }
                 let data = self.agents.data.clone();
+                let client = scope.client.clone();
                 cx.spawn_in(window, async move |ws, cx| {
                     let (next, response) =
                         cloud_request(req, data, runtime, client, doc, record, cx).await;
                     let result = cx
                         .update(|_, cx| {
-                            ws.update(cx, |ws, _| {
+                            ws.update(cx, |ws, cx| {
                                 ws.agents.busy = false;
-                                if let Some(next) = next {
-                                    let saved = ws.registry.as_ref().is_some_and(|r| {
-                                        r.set_setting(
-                                            &key,
-                                            &serde_json::to_string(&next).expect("sync record"),
-                                        )
-                                        .is_ok()
-                                    });
-                                    if !saved {
-                                        return Err(
-                                            "Markie RS could not save the Cloud link locally."
-                                                .into(),
-                                        );
-                                    }
+                                if syncing {
+                                    ws.cloud.set_busy(&key, false);
                                 }
-                                response
+                                let outcome = match next {
+                                    Some(next) => ws.agent_synced(&key, &scope, next, cx).and(response),
+                                    None => response,
+                                };
+                                if syncing && ws.cloud.take_queued(&key) {
+                                    ws.cloud_after_save(&key, cx);
+                                }
+                                outcome
                             })
                         })
                         .ok()
@@ -213,16 +223,78 @@ impl Workspace {
         let _ = reply.send(result);
     }
 
+    /// The registry key for an agent's file: an existing binding's own path,
+    /// else the file's. A record the bridge kept on its own before this
+    /// integration moves into the registry here, once.
+    fn agent_binding_key(&mut self, path: &Path) -> PathBuf {
+        if let Some(key) = self.cloud.binding_key(path) {
+            return key;
+        }
+        let legacy = format!("{LEGACY_AGENT_RECORD}{}", path.display());
+        let record: Option<SyncRecord> = self
+            .registry
+            .as_ref()
+            .and_then(|r| r.setting(&legacy).ok().flatten())
+            .filter(|s| !s.is_empty())
+            .and_then(|s| serde_json::from_str(&s).ok());
+        if let Some(record) = record.filter(|r| r.cloud_doc_id.is_some())
+            && let Some(scope) = self.cloud.scope(cloud::record_origin(&record))
+            && self.store_binding(path, super::cloud::Binding::new(&scope.user, record)).is_ok()
+            && let Some(reg) = &self.registry
+        {
+            let _ = reg.set_setting(&legacy, "");
+        }
+        path.to_owned()
+    }
+
+    /// An agent's sync answered: keep the record in the registry the window
+    /// uses, put the file in Recent, list the cloud again, and re-check the
+    /// open document's access when this was its first cloud copy.
+    fn agent_synced(
+        &mut self,
+        key: &Path,
+        scope: &super::cloud::Scope,
+        next: SyncRecord,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let current = self.cloud.scope(scope.origin());
+        if current.is_none_or(|s| s.user != scope.user) {
+            return Err("The Markie Cloud account changed. Nothing was saved in Markie RS.".into());
+        }
+        let mut binding = self
+            .cloud
+            .bindings
+            .get(key)
+            .cloned()
+            .filter(|b| b.user == scope.user)
+            .unwrap_or_else(|| super::cloud::Binding::new(&scope.user, next.clone()));
+        let first = binding.record.cloud_doc_id.is_none() || binding.record.state == SyncState::LocalOnly;
+        binding.record = next;
+        self.store_binding(key, binding)
+            .map_err(|_| "Markie RS could not save the Cloud link locally.".to_string())?;
+        if let Some(reg) = &self.registry {
+            let _ = reg.track_opened(key);
+        }
+        self.refresh_lists();
+        self.refresh_cloud(false, cx);
+        if first {
+            self.collab_after_sync_change(key, cx);
+        }
+        cx.notify();
+        Ok(())
+    }
+
     pub(crate) fn open_agents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Name it after the agent, such as Claude on my phone")
         });
         let server = adapter_path();
+        // Remote agent tokens belong to the primary server's account, the
+        // same session the sign-in sheet keeps.
         let client = self
-            .agents
-            .client(DEFAULT_SERVER)
-            .ok()
+            .cloud
+            .client(&self.cloud.primary_origin())
             .zip(self.agents.runtime.clone());
         let data = self.agents.data.clone();
         #[cfg(unix)]
@@ -648,7 +720,7 @@ impl AgentsPanel {
         let url = tokens::url(
             self.client
                 .as_ref()
-                .map_or(DEFAULT_SERVER, |(client, _)| client.origin()),
+                .map_or(markie_cloud::DEFAULT_SERVER, |(client, _)| client.origin()),
         );
         let secret = self
             .fresh

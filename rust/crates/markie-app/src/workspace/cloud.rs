@@ -51,7 +51,7 @@ pub(super) struct Binding {
 }
 
 impl Binding {
-    fn new(user: &str, record: SyncRecord) -> Self {
+    pub(super) fn new(user: &str, record: SyncRecord) -> Self {
         Self {
             user: user.into(),
             record,
@@ -61,7 +61,7 @@ impl Binding {
         }
     }
 
-    fn origin(&self) -> &str {
+    pub(super) fn origin(&self) -> &str {
         self.record
             .cloud_origin
             .as_deref()
@@ -82,7 +82,7 @@ impl Scope {
     pub fn active(&self) -> bool {
         self.client.session().is_some()
     }
-    fn matches(&self, binding: &Binding) -> bool {
+    pub(super) fn matches(&self, binding: &Binding) -> bool {
         self.user == binding.user && self.origin() == binding.origin()
     }
     fn engine(&self) -> SyncEngine<'_> {
@@ -195,6 +195,49 @@ impl CloudWorkspace {
             .iter()
             .filter_map(|origin| self.scope(origin))
             .collect()
+    }
+
+    /// Where a new cloud copy goes when nothing chose a server: Markie
+    /// Cloud, or the local test server `MARKIE_RS_CLOUD_SERVER` names
+    /// (Electron's primary server).
+    pub fn primary_origin(&self) -> String {
+        super::account::server_config().origin
+    }
+
+    pub fn primary_scope(&self) -> Option<Scope> {
+        self.scope(&self.primary_origin())
+    }
+
+    /// A client for `origin` whether or not anyone is signed in there.
+    pub fn client(&self, origin: &str) -> Option<CloudClient> {
+        CloudClient::new(origin, self.servers.trust_handle(), self.tokens.clone(), self.transport.clone()).ok()
+    }
+
+    /// The key a file's binding is stored under: the path itself, or the
+    /// binding whose path resolves to the same file.
+    pub fn binding_key(&self, path: &Path) -> Option<PathBuf> {
+        if self.bindings.contains_key(path) {
+            return Some(path.to_owned());
+        }
+        let real = path.canonicalize().ok()?;
+        self.bindings
+            .keys()
+            .find(|k| k.canonicalize().ok().as_deref() == Some(real.as_path()))
+            .cloned()
+    }
+
+    /// Mark or clear a file as having a cloud request in flight. A request
+    /// that finds it busy waits its turn (`cloud_text`) or is refused.
+    pub fn set_busy(&mut self, path: &Path, busy: bool) {
+        if busy {
+            self.busy.insert(path.to_owned());
+        } else {
+            self.busy.remove(path);
+        }
+    }
+
+    pub fn take_queued(&mut self, path: &Path) -> bool {
+        self.queued.remove(path)
     }
 
     pub fn selected_scope(&self) -> Option<Scope> {
@@ -633,7 +676,7 @@ impl TextWork {
 }
 
 impl Workspace {
-    fn store_binding(&mut self, path: &Path, binding: Binding) -> Result<(), String> {
+    pub(super) fn store_binding(&mut self, path: &Path, binding: Binding) -> Result<(), String> {
         let registry = self
             .registry
             .as_ref()

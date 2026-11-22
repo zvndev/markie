@@ -97,6 +97,9 @@ pub struct Workspace {
     disk: DiskMemory,
     autosave: Autosave,
     _autosave_task: Task<()>,
+    /// Office documents' recovery history (Electron's document library).
+    recovery: markie_core::office_recovery::RecoveryStore,
+    _recovery_task: Task<()>,
     _poll_task: Task<()>,
     /// What the file says on disk when it changed under unsaved edits.
     disk_conflict: Option<String>,
@@ -188,6 +191,8 @@ impl Workspace {
             disk: DiskMemory::default(),
             autosave: Autosave::default(),
             _autosave_task: Task::ready(()),
+            recovery: markie_core::office_recovery::RecoveryStore::new(&data_dir),
+            _recovery_task: Task::ready(()),
             _poll_task: Task::ready(()),
             disk_conflict: None,
             disk_missing: false,
@@ -465,6 +470,9 @@ impl Workspace {
                 self.disk_conflict = None;
                 self.disk_missing = false;
                 self.viewing_version = None;
+                // The opened bytes are the first recovery revision, as in
+                // Electron's import, and they match the file.
+                self.keep_office_revision(true, cx);
                 if self.side == SidePanel::History {
                     self.refresh_versions();
                 }
@@ -552,6 +560,9 @@ impl Workspace {
     /// Autosave never opens a dialog: a failure leaves a crash draft and the
     /// edited marker, and the next save tries again.
     fn autosave_now(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            return self.office_autosave(cx);
+        }
         let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
@@ -635,8 +646,15 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(OpenDoc { path, kind: DocKind::Office(office), .. }) = &self.doc {
-            office::save(office, path, window, cx);
+        if let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc {
+            let (path, format) = (path.clone(), *format);
+            self.autosave.cancel();
+            if let Some(bytes) = office::save(office, &path, window, cx) {
+                self.keep_office_bytes(&path, format, &bytes, true);
+                if self.side == SidePanel::History {
+                    self.refresh_versions();
+                }
+            }
             cx.notify();
             return;
         }
@@ -746,6 +764,7 @@ impl Workspace {
 
     fn refresh_versions(&mut self) {
         self.versions = match &self.doc {
+            Some(doc) if matches!(doc.kind, DocKind::Office(_)) => self.office_versions(&doc.path),
             Some(doc) => {
                 let mut v = self.history.list(&doc.path);
                 v.reverse();
@@ -779,7 +798,12 @@ impl Workspace {
 
     fn view_version(&mut self, stamp: String, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        if let Some(text) = self.history.read(&doc.path, &stamp) {
+        let text = if matches!(doc.kind, DocKind::Office(_)) {
+            self.office_version_text(&doc.path, doc.format, &stamp)
+        } else {
+            self.history.read(&doc.path, &stamp)
+        };
+        if let Some(text) = text {
             self.viewing_version = Some((stamp, text));
         }
         cx.notify();
@@ -787,7 +811,13 @@ impl Workspace {
 
     /// Restoring is a save like any other, so the text it replaces becomes a
     /// version too and nothing is lost.
-    fn restore_version(&mut self, cx: &mut Context<Self>) {
+    fn restore_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            if let Some((stamp, _)) = self.viewing_version.take() {
+                self.restore_office_version(&stamp, window, cx);
+            }
+            return;
+        }
         let Some((_, text)) = self.viewing_version.take() else { return };
         if self.write_text(&text).is_ok() {
             if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
@@ -965,7 +995,7 @@ impl Workspace {
                             .small()
                             .primary()
                             .label("Restore this version")
-                            .on_click(cx.listener(|this, _, _, cx| this.restore_version(cx))),
+                            .on_click(cx.listener(|this, _, window, cx| this.restore_version(window, cx))),
                     ),
                 )
             })

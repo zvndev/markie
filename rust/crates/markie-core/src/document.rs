@@ -128,6 +128,27 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 
+    /// `electron/doc-tiers.js`: both limits are "at or above".
+    #[test]
+    fn size_tiers_match_doc_tiers() {
+        let dir = tempfile::tempdir().unwrap();
+        // Sparse, for the sizes only the size check reads.
+        let sized = |name: &str, len: u64| {
+            let p = dir.path().join(name);
+            std::fs::File::create(&p).unwrap().set_len(len).unwrap();
+            p
+        };
+        let text = |name: &str, len: u64| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, vec![b'a'; len as usize]).unwrap();
+            p
+        };
+        assert!(!open(&text("under.md", LARGE_DOC_BYTES - 1)).unwrap().is_large());
+        assert!(open(&text("large.md", LARGE_DOC_BYTES)).unwrap().is_large());
+        assert!(matches!(open(&sized("huge.md", MAX_DOC_BYTES)), Err(OpenError::TooLarge(n)) if n == MAX_DOC_BYTES));
+        assert!(!matches!(open(&sized("just-under.txt", MAX_DOC_BYTES - 1)), Err(OpenError::TooLarge(_))));
+    }
+
     #[test]
     fn office_and_unknown_files() {
         let dir = tempfile::tempdir().unwrap();

@@ -123,6 +123,10 @@ pub(super) struct Shell {
     pub panel_drag: Option<(f32, f32)>,
     resizer_hover: bool,
     lib_tab: LibTab,
+    /// library.tsx `uploadArea`: where Sync to cloud from a row puts a new
+    /// cloud document. None is the default cloud.
+    pub upload_area: Option<String>,
+    pub upload_area_open: bool,
     filter_menu: Option<FilterMenu>,
     filter_closed: Option<(FilterMenu, Instant)>,
     pub recent: Library,
@@ -206,6 +210,8 @@ impl Shell {
             panel_drag: None,
             resizer_hover: false,
             lib_tab: LibTab::Recent,
+            upload_area: None,
+            upload_area_open: false,
             filter_menu: None,
             filter_closed: None,
             recent,
@@ -1089,6 +1095,10 @@ impl Workspace {
                         )
                     }),
             );
+        }
+        // library.tsx: signed in, the Recent tab offers "Upload destination".
+        if super::account::signed_in_user(cx).is_some() {
+            col = col.child(self.render_library_area_picker(&p, cx));
         }
         col = col.child(
             h_flex()

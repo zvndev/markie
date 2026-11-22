@@ -295,9 +295,11 @@ impl Workspace {
             RowAction::RetryBackup => self.cloud_text(path, super::cloud::TextAction::Push, None, cx),
             RowAction::SyncOn | RowAction::Resume => {
                 let has_id = self.cloud.bindings.get(&path).is_some_and(|b| b.record.cloud_doc_id.is_some());
-                if self.cloud.area.is_some() && has_id {
+                if self.shell.upload_area.is_some() && has_id {
                     self.cloud.notice = Some("Existing cloud files keep their area. Move the cloud document separately before changing its destination.".into());
                 } else {
+                    // The Library's "Upload destination" (library.tsx `areaId`).
+                    self.cloud.enable_area = Some(self.shell.upload_area.clone());
                     self.cloud_text(path, super::cloud::TextAction::Enable, None, cx);
                 }
             }

@@ -1043,6 +1043,9 @@ impl Workspace {
         }
         // Themes follow the account (`pullCloudThemes`).
         self.pull_cloud_themes(cx);
+        // The Library's upload destination belongs to the account that chose it.
+        self.shell.upload_area = None;
+        self.shell.upload_area_open = false;
     }
 
     /// Copy or open a cloud `.wd`'s hosted Live Doc address

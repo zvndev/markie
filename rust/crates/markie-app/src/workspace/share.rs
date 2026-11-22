@@ -779,7 +779,7 @@ impl Workspace {
                                 })),
                         )
                         .when(area_open, |el| {
-                            let create = self.render_area_create(true, &p, cx);
+                            let create = self.render_area_create(super::cloud_page::AreaTarget::Share, &p, cx);
                             el.child(
                                 v_flex().mt(px(6.)).p(px(8.)).rounded(px(10.)).border_1().border_color(p.border).bg(p.surface2).child(h_flex().gap(px(4.)).flex_wrap().children(chips.into_iter().map(|(id, area, label)| {
                                     let on = area == upload_area;

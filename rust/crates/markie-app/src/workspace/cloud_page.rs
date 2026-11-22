@@ -471,7 +471,7 @@ fn source_badge(source: Source, text: String, p: &Palette) -> Div {
 }
 
 /// `.markie-select-button`, with an optional kicker before the value.
-fn select_button(id: impl Into<ElementId>, kicker: Option<&str>, label: &str, open: bool, p: &Palette) -> Stateful<Div> {
+pub(super) fn select_button(id: impl Into<ElementId>, kicker: Option<&str>, label: &str, open: bool, p: &Palette) -> Stateful<Div> {
     let bg = mix(p.background, p.surface2, 0.72);
     div()
         .id(id)
@@ -759,7 +759,7 @@ impl Workspace {
                     .w(px(300.))
                     .p(px(8.))
                     .child(h_flex().flex_wrap().gap(px(4.)).children(chips))
-                    .children(self.render_area_create(false, &p, cx))
+                    .children(self.render_area_create(AreaTarget::Page, &p, cx))
                     .on_mouse_down_out(close)
                     .into_any_element()
             }
@@ -783,13 +783,13 @@ impl Workspace {
 
     /// `createArea` then `areas` (cloud-area-picker.tsx): the new area is
     /// listed and selected in the picker that made it.
-    pub(super) fn create_cloud_area(&mut self, for_share: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn create_cloud_area(&mut self, target: AreaTarget, window: &mut Window, cx: &mut Context<Self>) {
         let Some(input) = self.cloud.area_input.clone() else { return };
         let label = input.read(cx).value().to_string();
         if self.cloud.area_busy || label.trim().is_empty() {
             return;
         }
-        let Some(scope) = (if for_share { self.cloud.primary_scope() } else { self.cloud.selected_scope() }) else { return };
+        let Some(scope) = (if target == AreaTarget::Page { self.cloud.selected_scope() } else { self.cloud.primary_scope() }) else { return };
         self.cloud.area_busy = true;
         self.cloud.area_error = None;
         let request = scope.clone();
@@ -808,13 +808,20 @@ impl Workspace {
                         if let Some(listing) = this.cloud.listings.get_mut(scope.origin()).filter(|l| l.user == scope.user) {
                             listing.areas = areas;
                         }
-                        if for_share {
-                            if let Some(sheet) = this.collab.share.as_mut() {
-                                sheet.set_upload_area(Some(area.id));
+                        match target {
+                            AreaTarget::Share => {
+                                if let Some(sheet) = this.collab.share.as_mut() {
+                                    sheet.set_upload_area(Some(area.id));
+                                }
                             }
-                        } else {
-                            this.cloud.area = Some(area.id);
-                            this.cloud.menu = None;
+                            AreaTarget::Page => {
+                                this.cloud.area = Some(area.id);
+                                this.cloud.menu = None;
+                            }
+                            AreaTarget::Library => {
+                                this.shell.upload_area = Some(area.id);
+                                this.shell.upload_area_open = false;
+                            }
                         }
                         input.update(cx, |s, cx| s.set_value("", window, cx));
                     }
@@ -829,7 +836,7 @@ impl Workspace {
     }
 
     /// The form row: field and Create, then the busy and error lines.
-    pub(super) fn render_area_create(&self, for_share: bool, p: &Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_area_create(&self, target: AreaTarget, p: &Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
         let input = self.cloud.area_input.clone()?;
         let p = *p;
         let empty = input.read(cx).value().trim().is_empty();
@@ -860,7 +867,11 @@ impl Workspace {
                         )
                         .child(
                             div()
-                                .id(if for_share { "share-area-create" } else { "cloud-area-create" })
+                                .id(match target {
+                                    AreaTarget::Share => "share-area-create",
+                                    AreaTarget::Page => "cloud-area-create",
+                                    AreaTarget::Library => "library-area-create",
+                                })
                                 .rounded(px(6.))
                                 .border_1()
                                 .border_color(p.border)
@@ -871,7 +882,7 @@ impl Workspace {
                                 .when(busy || empty, |el| el.opacity(0.4))
                                 .when(!busy && !empty, |el| el.cursor_pointer().hover(|s| s.text_color(p.foreground)))
                                 .child("Create")
-                                .on_click(cx.listener(move |this, _, window, cx| this.create_cloud_area(for_share, window, cx))),
+                                .on_click(cx.listener(move |this, _, window, cx| this.create_cloud_area(target, window, cx))),
                         ),
                 )
                 .when(busy, |el| el.child(div().text_size(px(11.)).text_color(p.muted).child("Loading areas…")))
@@ -1438,4 +1449,13 @@ mod tests {
         assert_eq!(snapshot_error("Please sign in again").0, "Account confirmation needed");
         assert_eq!(snapshot_error("boom").1, "boom");
     }
+}
+
+/// The three area pickers: the Cloud page's filter, the share gate's and the
+/// Library's upload destination. A new area is selected in the one that made it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AreaTarget {
+    Page,
+    Share,
+    Library,
 }

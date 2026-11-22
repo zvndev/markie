@@ -45,6 +45,7 @@ mod first_run;
 mod folder_tree;
 mod history_dialog;
 mod library_rows;
+mod library_area;
 mod live_docs;
 mod import_copy;
 mod cloud;

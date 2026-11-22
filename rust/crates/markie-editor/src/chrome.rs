@@ -130,6 +130,72 @@ const GROUPS: [(Group, f32); 12] = [
     (Group::Output, 60.),
     (Group::View, 214.),
 ];
+/// The toolbar's parts in Electron's DOM order, each one `OverflowTools`
+/// wrapper: in the row, or one row of the "more" popover.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Part {
+    History,
+    Output,
+    View,
+    Selectors,
+    SizeDown,
+    SizeBox,
+    SizeUp,
+    Primary,
+    Colour,
+    Marks,
+    Insert,
+    Lists,
+    Task,
+    Alignment,
+    Clear,
+}
+
+const PARTS: [Part; 15] = [
+    Part::History,
+    Part::Output,
+    Part::View,
+    Part::Selectors,
+    Part::SizeDown,
+    Part::SizeBox,
+    Part::SizeUp,
+    Part::Primary,
+    Part::Colour,
+    Part::Marks,
+    Part::Insert,
+    Part::Lists,
+    Part::Task,
+    Part::Alignment,
+    Part::Clear,
+];
+
+impl Part {
+    /// The fitting group it leaves with; None for the primary row.
+    fn group(self) -> Option<Group> {
+        Some(match self {
+            Part::History => Group::History,
+            Part::Output => Group::Output,
+            Part::View => Group::View,
+            Part::Selectors => Group::Selectors,
+            Part::SizeDown | Part::SizeUp => Group::Size,
+            Part::SizeBox | Part::Primary => return None,
+            Part::Colour => Group::Colour,
+            Part::Marks => Group::Marks,
+            Part::Insert => Group::Insert,
+            Part::Lists => Group::Lists,
+            Part::Task => Group::Task,
+            Part::Alignment => Group::Alignment,
+            Part::Clear => Group::Clear,
+        })
+    }
+
+    /// The full row's dividers: after history and print, around zoom and
+    /// width, after size, before insert, before lists and before clear.
+    fn divider_before(self) -> bool {
+        matches!(self, Part::View | Part::Selectors | Part::Primary | Part::Insert | Part::Lists | Part::Clear)
+    }
+}
+
 /// Bold, italic and underline, which leave last.
 const PRIMARY: f32 = 130.;
 
@@ -179,6 +245,11 @@ pub(crate) fn typed_size(text: &str) -> Option<f32> {
 fn typing_size(text: &str) -> Option<f32> {
     let v: f32 = text.trim().parse().ok()?;
     (v.is_finite() && (11.0..=32.0).contains(&v)).then(|| clamp_font_size(v))
+}
+
+/// Whether a part sits in the "more" popover rather than the row.
+fn part_in_menu(p: Part, compact: bool, primary_out: bool, out: &[Group]) -> bool {
+    compact && p.group().map_or(primary_out, |g| out.contains(&g))
 }
 
 impl RichView {
@@ -267,6 +338,7 @@ impl RichView {
 
     /// Run an editor command from the toolbar and give the document focus.
     fn tool_edit(&mut self, window: &mut Window, cx: &mut Context<Self>, f: impl FnOnce(&mut Editor)) {
+        self.more_open = false;
         if self.source_mode {
             return;
         }
@@ -281,11 +353,13 @@ impl RichView {
         id: &'static str,
         icon: &'static str,
         tip: &'static str,
+        label: &'static str,
+        menu: bool,
         active: bool,
         disabled: bool,
         cx: &mut Context<Self>,
         f: impl Fn(&mut RichView, &mut Window, &mut Context<RichView>) + 'static,
-    ) -> Stateful<Div> {
+    ) -> AnyElement {
         // GPUI draws an SVG in its own colour, not its parent's: give it the
         // button's, and the hover colour through the button's group.
         let theme = cx.theme();
@@ -295,7 +369,7 @@ impl RichView {
             .size(px(15.))
             .text_color(if active { fg } else { muted })
             .when(!disabled, |s| s.group_hover(id, move |s| s.text_color(fg)));
-        self.tool_with(id, icon.into_any_element(), tip, active, disabled, cx, f)
+        self.tool_with(id, icon.into_any_element(), tip, label, menu, active, disabled, cx, f)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -304,11 +378,20 @@ impl RichView {
         id: &'static str,
         content: AnyElement,
         tip: &'static str,
+        label: &'static str,
+        menu: bool,
         active: bool,
         disabled: bool,
         cx: &mut Context<Self>,
         f: impl Fn(&mut RichView, &mut Window, &mut Context<RichView>) + 'static,
-    ) -> Stateful<Div> {
+    ) -> AnyElement {
+        // In the "more" popover a button also shows its name after the icon
+        // (`[&_button]:after:content-[attr(aria-label)]`, 11 px, 8 px gap).
+        let content = if menu {
+            h_flex().gap(px(8.)).child(content).child(div().text_size(px(11.)).child(label)).into_any_element()
+        } else {
+            content
+        };
         let theme = cx.theme();
         let (fg, muted, accent) = (theme.foreground, theme.muted_foreground, theme.accent);
         div()
@@ -329,7 +412,13 @@ impl RichView {
             .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
             .child(content)
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .when(!disabled, |d| d.on_click(cx.listener(move |this, _, window, cx| f(this, window, cx))))
+            .when(!disabled, |d| {
+                d.on_click(cx.listener(move |this, _, window, cx| {
+                    this.more_open = false;
+                    f(this, window, cx)
+                }))
+            })
+            .into_any_element()
     }
 
     /// `.markie-overlay-field`: the select and number boxes.
@@ -375,7 +464,6 @@ impl RichView {
         let source = self.source_mode;
         let selecting = self.editor.has_selection() && can_edit && !source;
         let (compact, primary_out, out) = fit(f32::from(self.toolbar_width));
-        let shows = |g: Group| !out.contains(&g);
         let divider = || div().w(px(1.)).h(px(20.)).mx(px(4.)).bg(theme.border).flex_none();
 
         // Paragraph style.
@@ -414,6 +502,7 @@ impl RichView {
                             let v = (!stack.is_empty()).then(|| stack.to_string());
                             this.tool_edit(window, cx, |e| e.set_text_style(None, Some(v), None));
                         } else {
+                            this.more_open = false;
                             this.doc_font = id;
                             this.heights.iter_mut().for_each(|h| *h = None);
                             cx.notify();
@@ -512,101 +601,113 @@ impl RichView {
                 menu
             });
 
+        let mut style_menu = Some(style_menu.into_any_element());
+        let mut font_menu = Some(font_menu.into_any_element());
+        let mut size_field = Some(size_field.into_any_element());
+        let mut colour_menu = Some(colour_menu.into_any_element());
+        let mut highlight_menu = Some(highlight_menu.into_any_element());
         let zoom = self.zoom;
         let width = self.page_width;
         let align = t.align.clone().unwrap_or_default();
-        let label = |text: String, w: f32| div().w(px(w)).flex_none().text_center().text_size(px(11.)).text_color(muted).child(text);
+        let label = |text: String, w: f32| div().w(px(w)).flex_none().text_center().text_size(px(11.)).text_color(muted).child(text).into_any_element();
+        // A part goes to the "more" popover when its group does not fit
+        // (`OverflowTools`); the size box and B I U go with the primary row.
+        let in_menu = |p: Part| part_in_menu(p, compact, primary_out, &out);
+        let off = !can_edit || source;
+
+        let mut parts: Vec<(Part, Vec<AnyElement>)> = Vec::with_capacity(PARTS.len());
+        for part in PARTS {
+            let m = in_menu(part);
+            let els: Vec<AnyElement> = match part {
+                Part::History => vec![
+                    self.tool("rt-undo", "icons/undo-2.svg", "Undo (⌘Z)", "Undo", m, false, off || !t.can_undo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
+                        e.undo();
+                    })),
+                    self.tool("rt-redo", "icons/redo-2.svg", "Redo (⇧⌘Z)", "Redo", m, false, off || !t.can_redo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
+                        e.redo();
+                    })),
+                ],
+                Part::Output => vec![
+                    // Printing arrives with phase 5's PDF export; until then the
+                    // button is shown where Electron has it, and disabled.
+                    self.tool("rt-print", "icons/printer.svg", "Print (⌘P)", "Print", m, false, true, cx, |_, _, _| {}),
+                    self.tool("rt-history", "icons/clock.svg", "Version history", "History", m, false, false, cx, |_, _, cx| cx.emit(RichEvent::History)),
+                ],
+                Part::View => vec![
+                    self.tool("rt-zoom-out", "icons/zoom-out.svg", "Zoom out (⌘-)", "Zoom out", m, false, false, cx, move |_, _, cx| cx.emit(RichEvent::Zoom(step_zoom(zoom, false)))),
+                    label(zoom_label(zoom), 38.),
+                    self.tool("rt-zoom-in", "icons/zoom-in.svg", "Zoom in (⌘=)", "Zoom in", m, false, false, cx, move |_, _, cx| cx.emit(RichEvent::Zoom(step_zoom(zoom, true)))),
+                    self.tool("rt-narrower", "icons/chevrons-right-left.svg", "Narrower page (⌥⌘[)", "Narrower", m, false, false, cx, move |_, _, cx| cx.emit(RichEvent::PageWidth(step_width(width, false)))),
+                    label(width_label(width), 52.),
+                    self.tool("rt-wider", "icons/chevrons-left-right.svg", "Wider page (⌥⌘])", "Wider", m, false, false, cx, move |_, _, cx| cx.emit(RichEvent::PageWidth(step_width(width, true)))),
+                ],
+                Part::Selectors => vec![style_menu.take().unwrap(), font_menu.take().unwrap()],
+                Part::SizeDown => vec![self.tool("rt-smaller", "icons/minus.svg", if selecting { "Smaller selected text" } else { "Smaller text (whole document)" }, "Decrease font size", m, false, size <= 11., cx, move |this, w, cx| set_size(this, w, cx, size - 1.))],
+                Part::SizeBox => vec![size_field.take().unwrap()],
+                Part::SizeUp => vec![self.tool("rt-larger", "icons/plus.svg", if selecting { "Larger selected text" } else { "Larger text (whole document)" }, "Increase font size", m, false, size >= 32., cx, move |this, w, cx| set_size(this, w, cx, size + 1.))],
+                Part::Primary => {
+                    let glyph = |text: &'static str, f: fn(Div) -> Div| f(div().text_size(px(13.)).line_height(px(15.))).child(text).into_any_element();
+                    vec![
+                        self.tool_with("rt-bold", glyph("B", |d| d.font_weight(FontWeight::BOLD)), "Bold (⌘B)", "Bold", m, t.bold, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Bold))),
+                        self.tool_with("rt-italic", glyph("I", |d| d.italic().font_family("Georgia")), "Italic (⌘I)", "Italic", m, t.italic, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Italic))),
+                        self.tool_with("rt-underline", glyph("U", |d| d.underline()), "Underline (⌘U) - Saved as HTML in the file", "Underline", m, t.underline, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Underline))),
+                    ]
+                }
+                Part::Colour => vec![colour_menu.take().unwrap(), highlight_menu.take().unwrap()],
+                Part::Marks => vec![
+                    self.tool("rt-strike", "icons/strikethrough.svg", "Strikethrough (⇧⌘X)", "Strikethrough", m, t.strike, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Strike))),
+                    self.tool("rt-code", "icons/code.svg", "Inline code (⌘E)", "Inline code", m, t.code, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Code))),
+                ],
+                Part::Insert => vec![
+                    self.tool("rt-link", "icons/link.svg", "Insert link (⇧⌘K)", "Insert link", m, false, !can_edit, cx, |this, w, cx| this.open_prompt(PromptKind::Link, w, cx)),
+                    self.tool("rt-image", "icons/image.svg", "Insert image", "Insert image", m, false, !can_edit, cx, |this, w, cx| this.open_prompt(PromptKind::Image, w, cx)),
+                ],
+                Part::Lists => vec![
+                    self.tool("rt-bullet", "icons/list.svg", "Bullet list (⇧⌘8)", "Bullet list", m, t.list == Some(ListKind::Bullet), !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Bullet))),
+                    self.tool("rt-ordered", "icons/list-ordered.svg", "Numbered list (⇧⌘7)", "Numbered list", m, t.list == Some(ListKind::Ordered), !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Ordered))),
+                ],
+                Part::Task => vec![self.tool("rt-task", "icons/list-todo.svg", "Task list (⇧⌘9)", "Task list", m, t.list == Some(ListKind::Task), !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Task)))],
+                Part::Alignment => vec![
+                    self.tool("rt-left", "icons/text-align-start.svg", "Align left (⇧⌘L) - Saved as HTML in the file", "Align left", m, align == "left", !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("left")))),
+                    self.tool("rt-center", "icons/text-align-center.svg", "Align centre (⇧⌘E) - Saved as HTML in the file", "Align centre", m, align == "center", !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("center")))),
+                    self.tool("rt-right", "icons/text-align-end.svg", "Align right (⇧⌘R) - Saved as HTML in the file", "Align right", m, align == "right", !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("right")))),
+                ],
+                Part::Clear => vec![self.tool("rt-clear", "icons/remove-formatting.svg", "Clear formatting (⌘\\)", "Clear formatting", m, false, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.clear_formatting()))],
+            };
+            parts.push((part, els));
+        }
 
         let mut row: Vec<AnyElement> = Vec::new();
-        if shows(Group::History) {
-            row.push(self.tool("rt-undo", "icons/undo-2.svg", "Undo (⌘Z)", false, !can_edit || source || !t.can_undo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
-                e.undo();
-            })).into_any_element());
-            row.push(self.tool("rt-redo", "icons/redo-2.svg", "Redo (⇧⌘Z)", false, !can_edit || source || !t.can_redo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
-                e.redo();
-            })).into_any_element());
-        }
-        if shows(Group::Output) {
-            // Printing arrives with phase 5's PDF export; until then the
-            // button is shown where Electron has it, and disabled.
-            row.push(self.tool("rt-print", "icons/printer.svg", "Print (⌘P)", false, true, cx, |_, _, _| {}).into_any_element());
-            row.push(self.tool("rt-history", "icons/clock.svg", "Version history", false, false, cx, |_, _, cx| cx.emit(RichEvent::History)).into_any_element());
-        }
-        if !compact {
-            row.push(divider().into_any_element());
-        }
-        if shows(Group::View) {
-            row.push(self.tool("rt-zoom-out", "icons/zoom-out.svg", "Zoom out (⌘-)", false, false, cx, move |_, _, cx| cx.emit(RichEvent::Zoom(step_zoom(zoom, false)))).into_any_element());
-            row.push(label(zoom_label(zoom), 38.).into_any_element());
-            row.push(self.tool("rt-zoom-in", "icons/zoom-in.svg", "Zoom in (⌘=)", false, false, cx, move |_, _, cx| cx.emit(RichEvent::Zoom(step_zoom(zoom, true)))).into_any_element());
-            row.push(self.tool("rt-narrower", "icons/chevrons-right-left.svg", "Narrower page (⌥⌘[)", false, false, cx, move |_, _, cx| cx.emit(RichEvent::PageWidth(step_width(width, false)))).into_any_element());
-            row.push(label(width_label(width), 52.).into_any_element());
-            row.push(self.tool("rt-wider", "icons/chevrons-left-right.svg", "Wider page (⌥⌘])", false, false, cx, move |_, _, cx| cx.emit(RichEvent::PageWidth(step_width(width, true)))).into_any_element());
-        }
-        if !compact {
-            row.push(divider().into_any_element());
-        }
-        if shows(Group::Selectors) {
-            row.push(style_menu.into_any_element());
-            row.push(font_menu.into_any_element());
-        }
-        if shows(Group::Size) {
-            row.push(self.tool("rt-smaller", "icons/minus.svg", if selecting { "Smaller selected text" } else { "Smaller text (whole document)" }, false, size <= 11., cx, move |this, w, cx| set_size(this, w, cx, size - 1.)).into_any_element());
-        }
-        if !primary_out {
-            row.push(size_field.into_any_element());
-        }
-        if shows(Group::Size) {
-            row.push(self.tool("rt-larger", "icons/plus.svg", if selecting { "Larger selected text" } else { "Larger text (whole document)" }, false, size >= 32., cx, move |this, w, cx| set_size(this, w, cx, size + 1.)).into_any_element());
-        }
-        if !compact {
-            row.push(divider().into_any_element());
-        }
-        if !primary_out {
-            let glyph = |text: &'static str, f: fn(Div) -> Div| f(div().text_size(px(13.)).line_height(px(15.))).child(text).into_any_element();
-            row.push(self.tool_with("rt-bold", glyph("B", |d| d.font_weight(FontWeight::BOLD)), "Bold (⌘B)", t.bold, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Bold))).into_any_element());
-            row.push(self.tool_with("rt-italic", glyph("I", |d| d.italic().font_family("Georgia")), "Italic (⌘I)", t.italic, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Italic))).into_any_element());
-            row.push(self.tool_with("rt-underline", glyph("U", |d| d.underline()), "Underline (⌘U) - Saved as HTML in the file", t.underline, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Underline))).into_any_element());
-        }
-        if shows(Group::Colour) {
-            row.push(colour_menu.into_any_element());
-            row.push(highlight_menu.into_any_element());
-        }
-        if shows(Group::Marks) {
-            row.push(self.tool("rt-strike", "icons/strikethrough.svg", "Strikethrough (⇧⌘X)", t.strike, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Strike))).into_any_element());
-            row.push(self.tool("rt-code", "icons/code.svg", "Inline code (⌘E)", t.code, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Code))).into_any_element());
-        }
-        if shows(Group::Insert) {
-            if !compact {
+        let mut menu_rows: Vec<Vec<AnyElement>> = Vec::new();
+        for (part, els) in parts {
+            if in_menu(part) {
+                menu_rows.push(els);
+                continue;
+            }
+            if !compact && part.divider_before() {
                 row.push(divider().into_any_element());
             }
-            row.push(self.tool("rt-link", "icons/link.svg", "Insert link (⇧⌘K)", false, !can_edit, cx, |this, w, cx| this.open_prompt(PromptKind::Link, w, cx)).into_any_element());
-            row.push(self.tool("rt-image", "icons/image.svg", "Insert image", false, !can_edit, cx, |this, w, cx| this.open_prompt(PromptKind::Image, w, cx)).into_any_element());
+            row.extend(els);
         }
         if !compact {
-            row.push(divider().into_any_element());
-        }
-        if shows(Group::Lists) {
-            row.push(self.tool("rt-bullet", "icons/list.svg", "Bullet list (⇧⌘8)", t.list == Some(ListKind::Bullet), !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Bullet))).into_any_element());
-            row.push(self.tool("rt-ordered", "icons/list-ordered.svg", "Numbered list (⇧⌘7)", t.list == Some(ListKind::Ordered), !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Ordered))).into_any_element());
-        }
-        if shows(Group::Task) {
-            row.push(self.tool("rt-task", "icons/list-todo.svg", "Task list (⇧⌘9)", t.list == Some(ListKind::Task), !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Task))).into_any_element());
-        }
-        if shows(Group::Alignment) {
-            row.push(self.tool("rt-left", "icons/text-align-start.svg", "Align left (⇧⌘L) - Saved as HTML in the file", align == "left", !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("left")))).into_any_element());
-            row.push(self.tool("rt-center", "icons/text-align-center.svg", "Align centre (⇧⌘E) - Saved as HTML in the file", align == "center", !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("center")))).into_any_element());
-            row.push(self.tool("rt-right", "icons/text-align-end.svg", "Align right (⇧⌘R) - Saved as HTML in the file", align == "right", !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("right")))).into_any_element());
-        }
-        if shows(Group::Clear) {
-            if !compact {
-                row.push(divider().into_any_element());
-            }
-            row.push(self.tool("rt-clear", "icons/remove-formatting.svg", "Clear formatting (⌘\\)", false, !can_edit, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.clear_formatting())).into_any_element());
+            self.more_open = false;
         }
         if compact {
-            row.push(self.more_menu(&out, primary_out, cx).into_any_element());
+            row.push(self.more_button(cx).into_any_element());
         }
+        if compact && self.more_open {
+            // Formula, display formula, table and rule are Electron's format
+            // rail buttons (`format-rail.tsx`). Markie RS has no format rail
+            // yet, so they wait here, as the popover's last row.
+            let m = true;
+            menu_rows.push(vec![
+                self.tool("rt-formula", "icons/sigma.svg", "Insert formula", "Formula", m, false, !can_edit || source, cx, |this, w, cx| this.open_prompt(PromptKind::InlineMath { at: None }, w, cx)),
+                self.tool("rt-math-block", "icons/sigma.svg", "Insert display formula", "Display formula", m, false, !can_edit || source, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.insert_math_block("x^2"))),
+                self.tool("rt-table", "icons/table.svg", "Insert table", "Table", m, false, !can_edit || source, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.insert_table(3, 3))),
+                self.tool("rt-rule", "icons/minus.svg", "Horizontal rule", "Horizontal rule", m, false, !can_edit || source, cx, |this, w, cx| this.tool_edit(w, cx, |e| e.insert_rule())),
+            ]);
+        }
+        let popover = (compact && self.more_open).then(|| self.more_popover(menu_rows, window, cx));
 
         let store = self.store.clone();
         let view = cx.entity().downgrade();
@@ -648,17 +749,16 @@ impl RichView {
                 .left_0()
                 .size_full(),
             )
+            .children(popover)
             .into_any_element()
     }
 
-    /// The "more" button: the groups that did not fit, as a menu.
-    fn more_menu(&self, out: &[Group], primary_out: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The "more" button (`aria-haspopup="dialog"`): opens and closes the
+    /// popover that holds the controls that did not fit.
+    fn more_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, fg, hover_bg) = (theme.muted_foreground, theme.foreground, theme.accent.opacity(0.4));
-        let w = cx.entity().downgrade();
-        let out = out.to_vec();
-        let zoom = self.zoom;
-        let width = self.page_width;
+        let (muted, fg, hover_bg, accent) = (theme.muted_foreground, theme.foreground, theme.accent.opacity(0.4), theme.accent);
+        let open = self.more_open;
         div()
             .id("rich-more")
             .h(px(28.))
@@ -670,75 +770,75 @@ impl RichView {
             .justify_center()
             .rounded(px(4.))
             .text_color(muted)
+            .when(open, |d| d.bg(accent))
             .hover(move |s| s.bg(hover_bg).text_color(fg))
             .cursor_pointer()
             .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("More formatting and viewing controls").build(window, cx))
             .group("rich-more")
-            .child(svg().path("icons/ellipsis.svg").size(px(15.)).text_color(muted).group_hover("rich-more", move |s| s.text_color(fg)))
-            .popup_menu_anchored(move |menu, _, _| {
-                let mut menu = menu;
-                let act = |label: &'static str, f: Box<dyn Fn(&mut RichView, &mut Window, &mut Context<RichView>)>| {
-                    let w = w.clone();
-                    PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                        w.update(cx, |this, cx| f(this, window, cx)).ok();
-                    })
-                };
-                let has = |g: Group| out.contains(&g);
-                if has(Group::History) {
-                    menu = menu.item(act("Undo", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| { e.undo(); }))));
-                    menu = menu.item(act("Redo", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| { e.redo(); }))));
-                }
-                if has(Group::Output) {
-                    menu = menu.item(act("Version history", Box::new(|_, _, cx| cx.emit(RichEvent::History))));
-                }
-                if has(Group::View) {
-                    menu = menu.item(act("Zoom out", Box::new(move |_, _, cx| cx.emit(RichEvent::Zoom(step_zoom(zoom, false))))));
-                    menu = menu.item(act("Zoom in", Box::new(move |_, _, cx| cx.emit(RichEvent::Zoom(step_zoom(zoom, true))))));
-                    menu = menu.item(act("Narrower page", Box::new(move |_, _, cx| cx.emit(RichEvent::PageWidth(step_width(width, false))))));
-                    menu = menu.item(act("Wider page", Box::new(move |_, _, cx| cx.emit(RichEvent::PageWidth(step_width(width, true))))));
-                }
-                if has(Group::Selectors) {
-                    for (label, style) in BLOCK_STYLES {
-                        menu = menu.item(act(label, Box::new(move |this, w, cx| this.tool_edit(w, cx, |e| e.set_block_style(style)))));
-                    }
-                }
-                if primary_out {
-                    menu = menu.item(act("Bold", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Bold)))));
-                    menu = menu.item(act("Italic", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Italic)))));
-                    menu = menu.item(act("Underline", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Underline)))));
-                }
-                if has(Group::Marks) {
-                    menu = menu.item(act("Strikethrough", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Strike)))));
-                    menu = menu.item(act("Inline code", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_mark(MarkKind::Code)))));
-                }
-                if has(Group::Insert) {
-                    menu = menu.item(act("Insert link", Box::new(|this, w, cx| this.open_prompt(PromptKind::Link, w, cx))));
-                    menu = menu.item(act("Insert image", Box::new(|this, w, cx| this.open_prompt(PromptKind::Image, w, cx))));
-                }
-                if has(Group::Lists) {
-                    menu = menu.item(act("Bullet list", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Bullet)))));
-                    menu = menu.item(act("Numbered list", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Ordered)))));
-                }
-                if has(Group::Task) {
-                    menu = menu.item(act("Task list", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.toggle_list(ListKind::Task)))));
-                }
-                if has(Group::Alignment) {
-                    menu = menu.item(act("Align left", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("left"))))));
-                    menu = menu.item(act("Align centre", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("center"))))));
-                    menu = menu.item(act("Align right", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.set_align(Some("right"))))));
-                }
-                if has(Group::Clear) {
-                    menu = menu.item(act("Clear formatting", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.clear_formatting()))));
-                }
-                // Formula, display formula, table and rule have no toolbar
-                // button in Electron either; they live here.
-                menu = menu.separator();
-                menu = menu.item(act("Formula…", Box::new(|this, w, cx| this.open_prompt(PromptKind::InlineMath { at: None }, w, cx))));
-                menu = menu.item(act("Display formula", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.insert_math_block("x^2")))));
-                menu = menu.item(act("Table", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.insert_table(3, 3)))));
-                menu = menu.item(act("Horizontal rule", Box::new(|this, w, cx| this.tool_edit(w, cx, |e| e.insert_rule()))));
-                menu
-            })
+            .child(svg().path("icons/ellipsis.svg").size(px(15.)).text_color(if open { fg } else { muted }).group_hover("rich-more", move |s| s.text_color(fg)))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.more_open = !this.more_open;
+                cx.notify();
+            }))
+    }
+
+    /// `.markie-format-overflow`: 320 px, 8 px corners, surface-2, a shadow,
+    /// at the toolbar's right below it. Each part that left the row is one
+    /// wrapping row of its real controls, labelled, with a rule between.
+    /// A click outside closes it; so does any button in it.
+    fn more_popover(&self, rows: Vec<Vec<AnyElement>>, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (border, surface2) = (theme.border, theme.secondary);
+        let count = rows.len();
+        let body = div()
+            .id("rich-more-popover")
+            .absolute()
+            .top_full()
+            .right(px(8.))
+            .mt(px(4.))
+            .w(px(320.))
+            .max_h(window.viewport_size().height * 0.6)
+            .overflow_y_scroll()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(border)
+            .bg(surface2)
+            .p(px(4.))
+            .shadow_lg()
+            .occlude()
+            .children(rows.into_iter().enumerate().map(move |(i, els)| {
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(4.))
+                    .p(px(4.))
+                    .when(i + 1 < count, |d| d.border_b_1().border_color(border))
+                    .children(els)
+            }));
+        // Behind the popover, the rest of the window: a click there closes
+        // it. Menus the popover opens (style, font, colour) float above both.
+        let backdrop = div()
+            .id("rich-more-backdrop")
+            .absolute()
+            .top(px(-4000.))
+            .left(px(-4000.))
+            .w(px(12000.))
+            .h(px(12000.))
+            .occlude()
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.more_open = false;
+                cx.notify();
+            }));
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(deferred(backdrop).with_priority(1))
+            .child(deferred(body).with_priority(2))
+            .into_any_element()
     }
 
     pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -961,7 +1061,7 @@ impl Render for RichView {
 
 #[cfg(test)]
 mod tests {
-    use super::{fit, typed_size, typing_size};
+    use super::{PARTS, Part, fit, part_in_menu, typed_size, typing_size};
 
     #[test]
     fn the_size_box_takes_what_the_number_input_takes() {
@@ -987,6 +1087,24 @@ mod tests {
         assert_eq!(typing_size("14"), Some(14.));
         assert_eq!(typing_size("32"), Some(32.));
         assert_eq!(typing_size("40"), None);
+    }
+
+    #[test]
+    fn the_popover_holds_the_parts_that_left_the_row_in_electrons_order() {
+        let menu = |w: f32| {
+            let (c, p, out) = fit(w);
+            PARTS.iter().copied().filter(|x| part_in_menu(*x, c, p, &out)).collect::<Vec<_>>()
+        };
+        assert!(menu(1400.).is_empty());
+        // Groups are fitted in `groups` order, first come first placed: at
+        // 900 px size, print and history, and zoom and width are left over.
+        assert_eq!(menu(900.), vec![Part::Output, Part::View, Part::SizeDown, Part::SizeUp]);
+        // At the narrowest everything goes, the size box and B I U with the
+        // primary row, in DOM order: the minus, the box, the plus.
+        let all = menu(50.);
+        assert_eq!(all, PARTS.to_vec());
+        let i = |p: Part| all.iter().position(|x| *x == p).unwrap();
+        assert!(i(Part::SizeDown) < i(Part::SizeBox) && i(Part::SizeBox) < i(Part::SizeUp) && i(Part::SizeUp) < i(Part::Primary));
     }
 
     #[test]

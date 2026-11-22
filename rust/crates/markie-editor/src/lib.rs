@@ -342,6 +342,8 @@ pub struct RichView {
     pub(crate) toolbar_width: Pixels,
     /// The typed font size box (`chrome.rs`), made on the first frame.
     pub(crate) size_field: Option<chrome::SizeField>,
+    /// The toolbar's "more" popover is open.
+    pub(crate) more_open: bool,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
     /// does nothing there, as in Electron, where the rich editor is gone.
     pub(crate) source_mode: bool,
@@ -409,6 +411,7 @@ impl RichView {
             outline: (u64::MAX, Vec::new()),
             toolbar_width: px(0.),
             size_field: None,
+            more_open: false,
             source_mode: false,
             source_toolbar: None,
         }
@@ -790,6 +793,10 @@ impl RichView {
         }
         if self.link_hover_visible() {
             self.hide_link_card(cx);
+            return;
+        }
+        if std::mem::take(&mut self.more_open) {
+            cx.notify();
             return;
         }
         if self.prompt.take().is_some() || self.find.take().is_some() {

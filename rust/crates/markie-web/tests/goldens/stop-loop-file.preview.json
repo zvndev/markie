@@ -1,0 +1,17 @@
+{
+ "untrusted": {
+  "error": "[WD602] Could not resolve include \"/rows.json\" from /site/pages/document.wd:1. Looked in site/pages and site/_ — check the path and leading slash."
+ },
+ "trusted": {
+  "error": "[WD602] Could not resolve include \"/rows.json\" from /site/pages/document.wd:1. Looked in site/pages and site/_ — check the path and leading slash."
+ },
+ "trusted-dark": {
+  "error": "[WD602] Could not resolve include \"/rows.json\" from /site/pages/document.wd:1. Looked in site/pages and site/_ — check the path and leading slash."
+ },
+ "untrusted-links": {
+  "error": "[WD602] Could not resolve include \"/rows.json\" from /site/pages/document.wd:1. Looked in site/pages and site/_ — check the path and leading slash."
+ },
+ "trusted-links": {
+  "error": "[WD602] Could not resolve include \"/rows.json\" from /site/pages/document.wd:1. Looked in site/pages and site/_ — check the path and leading slash."
+ }
+}

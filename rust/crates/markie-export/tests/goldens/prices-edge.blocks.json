@@ -1,0 +1,34 @@
+[
+ {
+  "kind": "heading",
+  "level": 1,
+  "content": [
+   {
+    "text": "Prices"
+   }
+  ]
+ },
+ {
+  "kind": "paragraph",
+  "content": [
+   {
+    "text": "you sold, you know, "
+   },
+   {
+    "text": "6  \nand then you took a $100 worth of lemons  \n$x^2",
+    "code": true
+   },
+   {
+    "text": " is math and "
+   },
+   {
+    "text": "a+b",
+    "code": true
+   },
+   {
+    "text": " is display."
+   }
+  ],
+  "quote": false
+ }
+]

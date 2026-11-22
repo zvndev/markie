@@ -1,0 +1,3 @@
+:state u = "/a"
+
+[Docs]({ u })

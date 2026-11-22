@@ -1,0 +1,28 @@
+---
+title: Launch checklist
+---
+
+# Launch checklist
+
+Tick each item. The count and the percentage follow your boxes. Trust this document to turn the boxes on.
+
+:state design = false
+:state copy = false
+:state ship = false
+
+:checkbox design
+- Design approved
+
+:checkbox copy
+- Copy written
+
+:checkbox ship
+- Shipped
+
+:computed left = 3 - design - copy - ship
+:computed raw = (3 - left) * 100 / 3
+:computed percent = raw - raw % 1
+
+Left to do: { left } of 3. Progress: { percent }%.
+
+Ticks are temporary preview state. Saving the document saves the source, not your ticks.

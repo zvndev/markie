@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<script type=\"application/json\" data-wd-state>{\"roster\":null,\"roster_error\":null,\"roster_error_body\":null,\"roster_loading\":false,\"roster_empty\":false}</script><span data-wd-fetch data-wd-fetch-key=\"roster\" data-wd-fetch-url=\"https://example.invalid/r\"></span>\n<p><span data-wd-bind=\"roster_loading\">false</span></p>\n\n</main>\n<script type=\"module\" src=\"/__wd/runtime.js\"></script>",
+ "title": "Interactive document",
+ "warnings": [],
+ "requiresRuntime": true,
+ "hasCode": false
+}

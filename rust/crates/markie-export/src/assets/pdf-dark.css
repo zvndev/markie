@@ -1,0 +1,36 @@
+
+  body { background: #09090b; color: #fafafa; }
+  .markdown-body { color: #fafafa; }
+  .markdown-body h1 { border-bottom: 1px solid #27272a; }
+  .markdown-body h2 { border-bottom: 1px solid #27272a; }
+  .markdown-body h5, .markdown-body h6 { color: #a1a1aa; }
+  .markdown-body a { color: #60a5fa; }
+  .markdown-body strong { color: #fff; }
+  .markdown-body blockquote { border-left-color: #c084fc; background: #18181b; color: #a1a1aa; }
+  .markdown-body li::marker { color: #a1a1aa; }
+  .markdown-body code { background: #18181b; border-color: #27272a; color: #fb923c; }
+  .markdown-body pre { background: #18181b; border-color: #27272a; }
+  .markdown-body pre code { color: #fafafa; }
+  .markdown-body hr { background: #27272a; }
+  .markdown-body thead th { background: #18181b; border-bottom: 2px solid #27272a; color: #a1a1aa; }
+  .markdown-body tbody td { border-bottom: 1px solid #27272a; }
+  .markdown-body del { color: #a1a1aa; }
+  .markdown-body input[type="checkbox"] { border-color: #3f3f46; }
+  .markdown-body input[type="checkbox"]:checked { background: #60a5fa; border-color: #60a5fa; }
+  .markdown-body input[type="checkbox"]:checked::after { color: #000; }
+
+  /* highlight.js dark */
+  .hljs { color: #c9d1d9; }
+  .hljs-keyword { color: #ff7b72; }
+  .hljs-string { color: #a5d6ff; }
+  .hljs-title { color: #d2a8ff; }
+  .hljs-built_in { color: #ffa657; }
+  .hljs-comment { color: #8b949e; }
+  .hljs-number { color: #79c0ff; }
+  .hljs-attr { color: #79c0ff; }
+  .hljs-subst { color: #c9d1d9; }
+  .hljs-literal { color: #79c0ff; }
+  .hljs-type { color: #ffa657; }
+  .hljs-params { color: #c9d1d9; }
+  .hljs-variable { color: #ffa657; }
+  .hljs-function { color: #d2a8ff; }

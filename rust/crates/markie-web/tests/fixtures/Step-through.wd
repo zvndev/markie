@@ -1,0 +1,24 @@
+---
+title: Make pasta
+---
+
+# Make pasta
+
+Press a step to read it. Trust this document to turn the buttons on.
+
+:state step = 1
+:state now = "Boil salted water."
+:state hot = false
+
+:button "Step 1" -> step = 1 ; now = "Boil salted water."
+:button "Step 2" -> step = 2 ; now = "Add the pasta and cook for nine minutes."
+:button "Step 3" -> step = 3 ; now = "Drain, and keep a cup of the water."
+:button "Step 4" -> step = 4 ; now = "Toss with the sauce and serve."
+
+**Step { step } of 4:** { now }
+
+:button "Switch the stove" -> hot toggle
+
+Stove on: { hot }
+
+The current step is temporary preview state. It returns to step 1 when the document is reopened.

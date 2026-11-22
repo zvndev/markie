@@ -1,0 +1,74 @@
+---
+title: Every Darkmown feature
+---
+
+# Every Darkmown feature
+
+A paragraph with **bold**, *italic*, `code`, a [web link](https://markiedocs.com/docs?a=1) and a [mail link](mailto:hello@example.com?subject=Hi).
+
+A [relative link](notes.md) and a [script link](javascript:alert(1)) are not kept.
+
+![A picture](pic.png)
+
+![A remote picture](https://example.com/remote.png)
+
+> A quote.
+
+---
+
+:state count = 3
+:state name = "Ada"
+:state agree = false
+:state size = "M"
+:state tone = "warm"
+:state items = [{"label": "Apples", "qty": 2}, {"label": "Pears", "qty": 5}, {"label": "Figs", "qty": 1}]
+:slider level = 40 min=0 max=100 step=5
+:computed doubled = count * 2
+:computed greeting = "Hello, " + name
+:computed total = sum(items, qty)
+
+Count { count }, doubled { doubled }. { greeting }. Level { level | percent }. Total { total | number }.
+
+:button "Add" -> count++
+:button "Reset" -> count = 0
+
+:bind name
+
+:checkbox agree
+- I agree
+
+:select size
+- S
+- M
+- L
+
+:radio tone
+- warm
+- cool
+
+:if agree
+You agreed.
+:else
+You have not agreed.
+:endif
+
+@loop items into item sort by item.qty desc
+- { item.label }: { item.qty }
+@endloop
+
+| Item | Qty |
+| --- | --- |
+| Count | { count } |
+| Level | { level } |
+
+:form into profile
+:input name placeholder="Your name"
+:input email type=email placeholder="Email"
+:submit "Save"
+:endform
+
+Saved: { profile.name }.
+
+```js
+const x = 1;
+```

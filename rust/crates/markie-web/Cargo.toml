@@ -1,0 +1,22 @@
+[package]
+name = "markie-web"
+description = "Markie RS web islands: Darkmown .wd previews, Live Docs and video embeds in sandboxed system web views (wry)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+wry = ["dep:wry", "dep:raw-window-handle"]
+
+[dependencies]
+markie-export = { path = "../markie-export" }
+url = "2"
+base64 = "0.22"
+sha2 = "0.10"
+wry = { version = "0.57", optional = true, default-features = false, features = ["os-webview"] }
+raw-window-handle = { version = "0.6", optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

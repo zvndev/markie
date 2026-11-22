@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<script type=\"application/json\" data-wd-state>{\"open\":false}</script>\n<div data-wd-if=\"open\" data-wd-if-active=\"false\"><template data-wd-true><p>Yes</p></template><template data-wd-false><p>No</p></template><div data-wd-if-out><p>No</p></div></div>\n</main>\n<script type=\"module\" src=\"/__wd/runtime.js\"></script>",
+ "title": "Interactive document",
+ "warnings": [],
+ "requiresRuntime": true,
+ "hasCode": false
+}

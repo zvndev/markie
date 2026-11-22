@@ -1,0 +1,4 @@
+:state rows = [1, 2]
+@loop rows into r
+{ r }
+@endloop

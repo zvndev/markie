@@ -49,6 +49,13 @@ impl Workspace {
         }
     }
 
+    /// A theme change the person made: kept here and sent to the account
+    /// (`pushCloudThemes`, a no-op when signed out).
+    pub(super) fn theme_changed(&self, cx: &App) {
+        self.save_theme_store(cx);
+        super::theme_sync::push_cloud_themes(cx);
+    }
+
     /// Same path as the title bar's switch, so the two never disagree.
     fn set_color_mode(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.pick_color_mode(super::chrome::ColorMode::parse(Some(mode)), window, cx);
@@ -59,7 +66,7 @@ impl Workspace {
             let _ = reg.set_setting("style_template", id);
         }
         themes::apply(id, Some(window), cx);
-        self.save_theme_store(cx);
+        self.theme_changed(cx);
         self.shell.template = id.to_string();
         cx.notify();
     }
@@ -169,47 +176,74 @@ impl Workspace {
             // The working switch from logs.rs; absent, as in Electron, when no
             // report address is configured.
             .children(crate::logs::render_crash_setting(cx).map(|el| div().mb(px(20.)).child(el)))
-            .child(
-                div()
-                    .mb(px(20.))
-                    .child(section_label("Servers", t).mb(px(8.)))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(t.muted)
-                            .mb(px(8.))
-                            .child("To work on someone\u{2019}s document, sign in to the server it lives on."),
-                    )
-                    .child(
-                        div()
-                            .rounded(px(6.))
-                            .border_1()
-                            .border_color(t.border)
-                            .px(px(12.))
-                            .py(px(8.))
-                            .child(div().text_size(px(13.)).child("Markie Cloud"))
-                            .child(div().text_size(px(11.)).text_color(t.muted).child("api.markiedocs.com"))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(12.))
-                                    .mt(px(6.))
-                                    .child(div().text_size(px(11.)).text_color(t.muted).child("Not signed in"))
-                                    .child(
-                                        overlay_button("server-sign-in", "Sign in", t).on_click(cx.listener(
-                                            |this, _, window, cx| this.settings_tab_account(window, cx),
-                                        )),
-                                    ),
-                            ),
-                    ),
-            )
+            .child(self.servers_setting(t, cx))
             .into_any_element()
+    }
+
+    /// `ServersSetting`: Markie Cloud first, with the account it is signed
+    /// in as, then every server added on this computer.
+    fn servers_setting(&self, t: &Tokens, cx: &mut Context<Self>) -> Div {
+        let account = super::account::AccountStore::global(cx).map(|s| s.read(cx).status.clone());
+        let rows = self.cloud.servers.list().into_iter().map(|server| {
+            let status = if server.is_default { account.clone() } else { None };
+            let (line, button) = server_account_line(status.as_ref());
+            let host = host_of(&server.origin);
+            let id = SharedString::from(format!("server-{}", server.origin));
+            div()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(t.border)
+                .px(px(12.))
+                .py(px(8.))
+                .child(div().text_size(px(13.)).truncate().child(server.name.clone()))
+                .child(div().text_size(px(11.)).text_color(t.muted).truncate().child(host))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.))
+                        .mt(px(6.))
+                        .child(div().text_size(px(11.)).text_color(t.muted).truncate().child(line))
+                        .when_some(button.filter(|_| server.is_default), |el, label| {
+                            el.child(overlay_button_id(id, label, t).on_click(cx.listener(move |this, _, window, cx| {
+                                if label == "Sign out" {
+                                    if let Some(store) = super::account::AccountStore::global(cx) {
+                                        store.update(cx, |s, cx| s.sign_out(cx));
+                                    }
+                                    cx.notify();
+                                } else {
+                                    this.settings_tab_account(window, cx);
+                                }
+                            })))
+                        }),
+                )
+        });
+        div()
+            .mb(px(20.))
+            .child(section_label("Servers", t).mb(px(8.)))
+            .child(div().text_size(px(11.)).text_color(t.muted).mb(px(8.)).child("To work on someone\u{2019}s document, sign in to the server it lives on."))
+            .child(div().flex().flex_col().gap(px(8.)).children(rows))
     }
 
     fn settings_tab_account(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.settings_tab(SettingsSection::Account, cx);
+    }
+}
+
+/// `hostOf`: the origin's host, or the origin when it does not parse.
+pub(super) fn host_of(origin: &str) -> String {
+    origin.split_once("://").map(|(_, rest)| rest.split('/').next().unwrap_or(rest).to_string()).filter(|h| !h.is_empty()).unwrap_or_else(|| origin.to_string())
+}
+
+/// `AccountLine` and the button beside it on Markie Cloud's row.
+pub(super) fn server_account_line(status: Option<&super::account::AuthStatus>) -> (String, Option<&'static str>) {
+    use super::account::AuthStatus;
+    match status {
+        Some(AuthStatus::Checking) => ("Checking\u{2026}".into(), None),
+        Some(AuthStatus::In(user)) if !user.email.is_empty() => (format!("Signed in as {}", user.email), Some("Sign out")),
+        Some(AuthStatus::In(_)) => ("Not signed in".into(), Some("Sign out")),
+        _ => ("Not signed in".into(), Some("Sign in")),
     }
 }
 
@@ -411,7 +445,7 @@ pub(crate) fn checkbox(checked: bool, disabled: bool, t: &Tokens) -> Div {
 }
 
 /// `.markie-overlay-button` with a border: the small secondary button.
-pub(crate) fn overlay_button(id: &'static str, label: &str, t: &Tokens) -> Stateful<Div> {
+pub(crate) fn overlay_button_id(id: SharedString, label: &str, t: &Tokens) -> Stateful<Div> {
     let (fg, hover) = (t.foreground, t.hover_soft());
     div()
         .id(id)
@@ -691,5 +725,27 @@ mod link_preview_tests {
         assert!(link_previews_enabled(Some("")));
         assert!(link_previews_enabled(Some("garbage")));
         assert!(!link_previews_enabled(Some("0")));
+    }
+}
+
+#[cfg(test)]
+mod servers_tests {
+    use super::super::account::AuthStatus;
+    use super::{host_of, server_account_line};
+
+    #[test]
+    fn the_cloud_row_says_who_is_signed_in_like_account_line() {
+        assert_eq!(server_account_line(Some(&AuthStatus::Checking)), ("Checking\u{2026}".into(), None));
+        assert_eq!(server_account_line(Some(&AuthStatus::Out)), ("Not signed in".into(), Some("Sign in")));
+        assert_eq!(server_account_line(None), ("Not signed in".into(), Some("Sign in")));
+        let user = markie_cloud::auth::MarkieUser { id: "u".into(), email: "a@example.com".into(), name: None };
+        assert_eq!(server_account_line(Some(&AuthStatus::In(user))), ("Signed in as a@example.com".into(), Some("Sign out")));
+    }
+
+    #[test]
+    fn hosts_like_host_of() {
+        assert_eq!(host_of("https://api.markiedocs.com"), "api.markiedocs.com");
+        assert_eq!(host_of("http://127.0.0.1:8787/x"), "127.0.0.1:8787");
+        assert_eq!(host_of("not a url"), "not a url");
     }
 }

@@ -979,6 +979,8 @@ impl Workspace {
         if self.doc.is_some() {
             self.collab_on_open(cx);
         }
+        // Themes follow the account (`pullCloudThemes`).
+        self.pull_cloud_themes(cx);
     }
 
     /// Copy or open a cloud `.wd`'s hosted Live Doc address

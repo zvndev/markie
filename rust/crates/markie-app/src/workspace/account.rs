@@ -168,7 +168,7 @@ struct GlobalAccount(Entity<AccountStore>);
 impl Global for GlobalAccount {}
 
 /// Run `fut` on the cloud runtime and hand its output to `done` on the UI thread.
-fn run_bg<E: 'static, T: Send + 'static>(
+pub(super) fn run_bg<E: 'static, T: Send + 'static>(
     rt: &Arc<tokio::runtime::Runtime>,
     cx: &mut Context<E>,
     fut: impl Future<Output = T> + Send + 'static,
@@ -279,7 +279,7 @@ impl AccountStore {
         );
     }
 
-    fn backend(&self) -> Option<(Arc<tokio::runtime::Runtime>, CloudClient)> {
+    pub(crate) fn backend(&self) -> Option<(Arc<tokio::runtime::Runtime>, CloudClient)> {
         Some((self.rt.clone()?, self.client.clone()?))
     }
 

@@ -171,7 +171,7 @@ impl Workspace {
     fn commit_store(&mut self, store: ThemeStore, cx: &mut Context<Self>) {
         let id = store.normalized().active_template().id.clone();
         themes::apply_store(store, None, cx);
-        self.save_theme_store(cx);
+        self.theme_changed(cx);
         self.shell.template = id;
         cx.notify();
     }

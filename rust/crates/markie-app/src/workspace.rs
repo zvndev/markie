@@ -62,6 +62,7 @@ mod projects;
 mod rail;
 mod rich;
 mod text_view;
+mod theme_sync;
 mod welcome;
 mod untitled;
 mod settings;

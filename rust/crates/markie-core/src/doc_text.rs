@@ -614,6 +614,23 @@ pub struct SearchHit {
     score: u8,
 }
 
+impl SearchHit {
+    /// A hit with an excerpt, for tests in other crates.
+    pub fn for_test(path: &str, format: FormatKind, excerpt: &str) -> Self {
+        let p = PathBuf::from(path);
+        Self {
+            name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            dir: p.parent().map(Path::to_path_buf).unwrap_or_default(),
+            path: p,
+            format,
+            mtime_ms: 0.0,
+            name_hit: false,
+            excerpt: Some(Excerpt { text: excerpt.into(), marks: Vec::new() }),
+            score: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SearchResponse {
     pub results: Vec<SearchHit>,

@@ -34,6 +34,7 @@ mod file_ops;
 mod office;
 mod palette;
 mod panels;
+mod projects;
 mod rail;
 mod rich;
 mod text_view;
@@ -79,6 +80,8 @@ pub struct Workspace {
     library: Library,
     /// Title bar, rail and side panel state.
     shell: rail::Shell,
+    /// The Projects tab and the ⇧⌘F body search.
+    projects: projects::Projects,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
@@ -154,6 +157,8 @@ impl Workspace {
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| this.on_appearance_changed(window, cx)));
         let (shell, shell_subs) = rail::Shell::new(color_mode, template, window, cx);
         subscriptions.extend(shell_subs);
+        let (projects, projects_sub) = projects::Projects::new(window, cx);
+        subscriptions.push(projects_sub);
 
         let mut library = Library::default();
         if let Some(snapshot) = registry.as_ref().and_then(|r| r.load_snapshot().ok().flatten()) {
@@ -168,6 +173,7 @@ impl Workspace {
             registry,
             library,
             shell,
+            projects,
             editor,
             preview,
             rich,
@@ -205,6 +211,7 @@ impl Workspace {
             }
         }
         this.refresh_lists();
+        this.build_search_pool();
         this.import_once(cx);
 
         let mut first_file = None;
@@ -353,6 +360,8 @@ impl Workspace {
                 }
                 this.library.scanning = false;
                 this.library.set_snapshot(snapshot);
+                this.build_search_pool();
+                this.compute_projects(cx);
                 if this.shell.search_open {
                     this.shell.search.share_docs_from(&this.library);
                 }

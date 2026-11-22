@@ -1060,6 +1060,8 @@ impl Workspace {
                         }
                     }
                     this.refresh_lists();
+                    // The requests waiting for the Cloud page's account.
+                    this.people_refresh(cx);
                 }
                 cx.notify();
             });

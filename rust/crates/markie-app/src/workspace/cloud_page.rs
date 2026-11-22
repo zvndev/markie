@@ -863,6 +863,7 @@ impl Workspace {
                     .child(band),
             )
             .children(chips)
+            .when(!booting, |el| el.children(self.render_share_requests(cx)))
             .when(show_list, |el| {
                 el.child(
                     v_flex()

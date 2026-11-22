@@ -1048,11 +1048,12 @@ impl Workspace {
 
 // ------------------------------------------------------------ people
 
-/// The recipient's side of sharing, for the Cloud page and the account sheet
-/// (embedded by that work; nothing in this branch opens it yet).
+/// The recipient's side of sharing: the requests on the Cloud page
+/// (`ShareRequestsPanel`), for the account the Cloud page shows.
 #[derive(Default)]
-#[allow(dead_code)]
 pub struct PeopleState {
+    /// Whose requests these are (origin and user). A change drops them.
+    pub account: Option<(String, String)>,
     pub requests: Vec<ShareRequest>,
     pub count: usize,
     pub people: Option<People>,
@@ -1061,11 +1062,23 @@ pub struct PeopleState {
     pub notice: Option<String>,
 }
 
-#[allow(dead_code)]
 impl Workspace {
-    /// Load requests and people for the open document's account.
+    /// The account the Cloud page shows, and a client for it.
+    fn people_account(&self) -> Option<((String, String), Arc<CloudClient>)> {
+        let scope = self.cloud.selected_scope()?;
+        Some(((scope.origin().to_string(), scope.user.clone()), Arc::new(scope.client)))
+    }
+
+    /// Load the requests waiting for the Cloud page's account. A failed
+    /// request keeps what is on screen rather than calling it empty.
     pub fn people_refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(client) = self.collab.cloud.as_ref().map(|c| c.account.client.clone()) else { return };
+        let Some((account, client)) = self.people_account() else {
+            self.collab.people = None;
+            return;
+        };
+        if self.collab.people.as_ref().is_some_and(|st| st.account.as_ref() != Some(&account)) {
+            self.collab.people = None;
+        }
         let task = runtime::handle().spawn(async move {
             let people = PeopleClient::new(&client);
             (people.requests().await.ok(), people.people().await.ok())
@@ -1073,10 +1086,17 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let Ok((requests, people)) = task.await else { return };
             this.update(cx, |w, cx| {
+                if w.people_account().map(|(a, _)| a) != Some(account.clone()) {
+                    return;
+                }
                 let st = w.collab.people.get_or_insert_with(PeopleState::default);
+                st.account = Some(account);
                 if let Some((list, count)) = requests {
                     st.count = count.max(list.len());
                     st.requests = list;
+                    if std::env::var("MARKIE_RS_COLLAB_DEBUG").is_ok_and(|v| v == "1") {
+                        eprintln!("markie-rs cloud: {} share requests waiting for this account", st.count);
+                    }
                 }
                 if people.is_some() {
                     st.people = people;
@@ -1089,7 +1109,7 @@ impl Workspace {
     }
 
     fn people_act(&mut self, kind: &'static str, id: String, done: String, failed: &'static str, cx: &mut Context<Self>) {
-        let Some(client) = self.collab.cloud.as_ref().map(|c| c.account.client.clone()) else { return };
+        let Some((_, client)) = self.people_account() else { return };
         let st = self.collab.people.get_or_insert_with(PeopleState::default);
         st.busy = true;
         st.error = None;
@@ -1116,6 +1136,11 @@ impl Workspace {
                     }
                 }
                 w.people_refresh(cx);
+                // Accepting or blocking someone lands or removes their
+                // documents: list the cloud again (onPeopleChanged).
+                if ok && matches!(kind, "accept" | "block") {
+                    w.refresh_cloud(false, cx);
+                }
             })
             .ok();
         })
@@ -1127,7 +1152,8 @@ impl Workspace {
     /// Nothing while there are none.
     pub fn render_share_requests(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = themes::palette(cx);
-        let st = self.collab.people.as_ref()?;
+        let account = self.people_account().map(|(a, _)| a);
+        let st = self.collab.people.as_ref().filter(|st| account.is_some() && st.account == account)?;
         if st.requests.is_empty() {
             return st.notice.clone().map(|n| div().mb(px(8.)).px(px(8.)).text_size(px(11.)).text_color(p.muted).child(n).into_any_element());
         }
@@ -1182,6 +1208,7 @@ impl Workspace {
     }
 
     /// Accepted people (Remove, Block) and blocked people (Unblock).
+    #[allow(dead_code)]
     pub fn render_people_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = themes::palette(cx);
         let st = self.collab.people.as_ref();

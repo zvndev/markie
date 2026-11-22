@@ -143,6 +143,7 @@ impl Shell {
                 if matches!(event, InputEvent::Change) {
                     let text = state.read(cx).value().to_string();
                     this.set_search_text(&text);
+                    this.schedule_body_search(cx);
                     cx.notify();
                 }
             }),
@@ -267,6 +268,7 @@ impl Workspace {
             self.shell.search.toggle_format(*kind);
         }
         self.shell.search_selected = 0;
+        self.schedule_body_search(cx);
         cx.notify();
     }
 
@@ -809,28 +811,16 @@ impl Workspace {
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.shell.lib_tab = tab;
+                        if tab == LibTab::Projects {
+                            this.compute_projects(cx);
+                        }
                         cx.notify();
                     }))
             })),
         );
         let mut col = v_flex().flex_1().min_h_0().child(tabs);
         if s.lib_tab == LibTab::Projects {
-            return col.child(
-                v_flex().px(px(8.)).py(px(12.)).child(
-                    v_flex()
-                        .rounded(px(6.))
-                        .border_1()
-                        .border_color(p.border.opacity(0.7))
-                        .bg(p.background.opacity(0.45))
-                        .px(px(10.))
-                        .py(px(10.))
-                        .gap(px(2.))
-                        .child(div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).child("No projects yet"))
-                        .child(div().text_size(px(10.5)).text_color(p.muted).child(
-                            "Projects group your documents by front matter and folder. They are not in Markie RS yet.",
-                        )),
-                ),
-            );
+            return col.child(self.render_projects(&p, cx));
         }
         let recent = &s.recent;
         let total = recent.total();
@@ -954,6 +944,7 @@ impl Workspace {
                                         .child("Projects")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.shell.lib_tab = LibTab::Projects;
+                                            this.compute_projects(cx);
                                             cx.notify();
                                         })),
                                 ),
@@ -1459,6 +1450,7 @@ impl Workspace {
             .border_color(p.border.opacity(0.6))
             .child(chip("chip-all", "All types", !lib.has_filters()).on_click(cx.listener(|this, _, _, cx| {
                 this.shell.search.clear_formats();
+                this.schedule_body_search(cx);
                 cx.notify();
             })))
             .children(SEARCH_TYPES.iter().map(|(id, label, kinds)| {
@@ -1694,7 +1686,7 @@ fn small_icon_button(id: &'static str, glyph: &'static str, p: &Palette) -> Stat
 }
 
 /// `.markie-overlay-field` around a borderless input, with the search glyph.
-fn filter_field(state: &Entity<InputState>, size: f32, p: &Palette) -> impl IntoElement {
+pub(super) fn filter_field(state: &Entity<InputState>, size: f32, p: &Palette) -> impl IntoElement {
     let bg = if p.dark { mix(p.background, p.surface, 0.82) } else { p.background };
     let border = if p.dark { p.border } else { mix(p.foreground, p.border, 0.14) };
     h_flex()

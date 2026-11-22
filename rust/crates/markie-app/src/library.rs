@@ -1,8 +1,12 @@
 //! The Library: every document the device index found, searchable and
 //! filterable by type. Plain state owned by the workspace; no rendering here.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
+use markie_core::doc_text::{SearchResponse, SearchRow, search_pool};
 use markie_core::formats::FormatKind;
 use markie_core::index::{IndexSnapshot, IndexedDoc};
 use markie_core::search::{Hit, LibraryQuery, search_library};
@@ -38,8 +42,26 @@ impl SortOrder {
     }
 }
 
+/// What the background body search needs (Electron's `doc-search`).
+pub struct BodySearch {
+    pub pool: Arc<Vec<SearchRow>>,
+    pub text: String,
+    pub formats: Vec<FormatKind>,
+}
+
+struct BodyResults {
+    text: String,
+    formats: Vec<FormatKind>,
+    docs: Vec<IndexedDoc>,
+    hits: Vec<Hit>,
+}
+
 #[derive(Default)]
 pub struct Library {
+    /// Index rows plus recent files the walk missed, for body search. Built
+    /// once per index, shared like `docs`.
+    pool: Arc<Vec<SearchRow>>,
+    body: Option<BodyResults>,
     pub sort: SortOrder,
     pub tab: LibraryTab,
     /// Shared between the Browse panel and search, never copied.
@@ -56,13 +78,62 @@ impl Library {
     pub fn set_snapshot(&mut self, snapshot: IndexSnapshot) {
         self.truncated = snapshot.truncated.is_some();
         self.docs = Rc::new(snapshot.files);
+        self.pool = Arc::new(Vec::new());
+        self.body = None;
         self.refresh();
+    }
+
+    /// Build the body-search pool: the index plus `recent` files outside it.
+    pub fn build_pool(&mut self, recent: &[PathBuf]) {
+        self.pool = Arc::new(search_pool(&self.docs, recent));
+    }
+
+    /// The body search to run for the current text, when one is owed.
+    pub fn body_search(&self) -> Option<BodySearch> {
+        if self.tab != LibraryTab::All || self.current_body().is_some() {
+            return None;
+        }
+        Some(BodySearch { pool: self.pool.clone(), text: self.query.text.clone(), formats: self.query.formats.clone() })
+    }
+
+    /// Ranked hits from `markie_core::doc_text::search_documents`. Dropped when
+    /// the query moved on while it ran.
+    pub fn set_body_results(&mut self, text: &str, formats: &[FormatKind], resp: SearchResponse) {
+        if resp.superseded || text != self.query.text || formats != self.query.formats.as_slice() {
+            return;
+        }
+        let by_path: HashMap<&std::path::Path, &IndexedDoc> = self.docs.iter().map(|d| (d.path.as_path(), d)).collect();
+        let mut docs = Vec::with_capacity(resp.results.len());
+        let mut hits = Vec::with_capacity(resp.results.len());
+        for (index, r) in resp.results.into_iter().enumerate() {
+            docs.push(by_path.get(r.path.as_path()).map(|d| (*d).clone()).unwrap_or(IndexedDoc {
+                path: r.path,
+                name: r.name,
+                dir: r.dir,
+                mtime_ms: r.mtime_ms,
+                size: 0,
+                format: r.format,
+                snippet: None,
+            }));
+            let (excerpt, marks) = r.excerpt.map_or((None, Vec::new()), |e| (Some(e.text), e.marks));
+            hits.push(Hit { index, score: 0, excerpt, marks });
+        }
+        self.body = Some(BodyResults { text: text.into(), formats: formats.to_vec(), docs, hits });
+        self.refresh();
+    }
+
+    fn current_body(&self) -> Option<&BodyResults> {
+        self.body.as_ref().filter(|b| {
+            self.tab == LibraryTab::All && self.sort == SortOrder::Default && b.text == self.query.text && b.formats == self.query.formats
+        })
     }
 
     /// Use another Library's index without copying it.
     pub fn share_docs_from(&mut self, other: &Library) {
         self.truncated = other.truncated;
         self.docs = other.docs.clone();
+        self.pool = other.pool.clone();
+        self.body = None;
         self.refresh();
     }
 
@@ -156,10 +227,22 @@ impl Library {
     }
 
     pub fn doc(&self, hit: &Hit) -> &IndexedDoc {
-        &self.source()[hit.index]
+        match self.current_body() {
+            Some(b) => &b.docs[hit.index],
+            None => &self.source()[hit.index],
+        }
+    }
+
+    /// The index rows (for the Projects pass).
+    pub fn docs(&self) -> &[IndexedDoc] {
+        &self.docs
     }
 
     fn refresh(&mut self) {
+        if let Some(b) = self.current_body() {
+            self.hits = b.hits.clone();
+            return;
+        }
         let mut hits = search_library(self.source(), &self.query);
         if self.tab != LibraryTab::All && self.query.text.trim().is_empty() {
             // Recent keeps the registry's order (newest open first), not mtime.
@@ -233,5 +316,27 @@ mod tests {
         lib.clear_query();
         assert_eq!(lib.hits().len(), 3);
         assert!(!lib.query_active());
+    }
+
+    #[test]
+    fn body_results_replace_the_instant_filter_until_the_query_moves() {
+        let mut lib = Library::default();
+        lib.set_snapshot(IndexSnapshot { files: vec![doc("a.md", 1.0, FormatKind::Markdown)], ..Default::default() });
+        lib.set_text("zebra");
+        assert!(lib.hits().is_empty());
+        let req = lib.body_search().unwrap();
+        assert_eq!(req.text, "zebra");
+        let resp = SearchResponse {
+            results: vec![markie_core::doc_text::SearchHit::for_test("/far/away.docx", FormatKind::Docx, "…a zebra…")],
+            ..Default::default()
+        };
+        lib.set_body_results("stale", &[], resp.clone());
+        assert!(lib.hits().is_empty(), "a stale answer is dropped");
+        lib.set_body_results("zebra", &[], resp);
+        assert_eq!(lib.hits().len(), 1);
+        assert_eq!(lib.doc(&lib.hits()[0].clone()).name, "away.docx");
+        assert!(lib.body_search().is_none(), "already answered");
+        lib.set_text("zebr");
+        assert!(lib.body_search().is_some());
     }
 }

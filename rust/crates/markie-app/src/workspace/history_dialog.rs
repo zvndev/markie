@@ -155,8 +155,14 @@ impl Workspace {
             return;
         }
         let Some(doc) = &self.doc else { return };
-        let mut entries = self.history.list(&doc.path);
-        entries.reverse();
+        // Office documents keep recovery revisions (office.rs), newest first.
+        let entries = if matches!(doc.kind, DocKind::Office(_)) {
+            self.office_versions(&doc.path)
+        } else {
+            let mut entries = self.history.list(&doc.path);
+            entries.reverse();
+            entries
+        };
         let name = doc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let mut state = HistoryState { name, entries, contents: HashMap::new(), shown: INITIAL_ROWS, open_row: None };
         self.fill_history(&mut state);
@@ -166,10 +172,15 @@ impl Workspace {
     /// Read the versions the visible rows need: each shown row and the one
     /// after it, which its line counts compare against.
     fn fill_history(&self, state: &mut HistoryState) {
-        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        let Some(doc) = self.doc.as_ref() else { return };
+        let (path, format, office) = (doc.path.clone(), doc.format, matches!(doc.kind, DocKind::Office(_)));
         let stamps: Vec<String> = state.entries.iter().take(state.shown + 1).map(|v| v.stamp.clone()).collect();
         for stamp in stamps {
-            state.content(|s| self.history.read(&path, s), &stamp);
+            if office {
+                state.content(|s| self.office_version_text(&path, format, s), &stamp);
+            } else {
+                state.content(|s| self.history.read(&path, s), &stamp);
+            }
         }
     }
 
@@ -191,8 +202,12 @@ impl Workspace {
     }
 
     /// Load a version into the editor as unsaved, like Electron's restore.
-    fn history_restore(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn history_restore(&mut self, stamp: String, text: String, window: &mut Window, cx: &mut Context<Self>) {
         self.close_dialog(window, cx);
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            self.restore_office_version(&stamp, window, cx);
+            return;
+        }
         let Some(OpenDoc { kind: DocKind::Text { .. }, .. }) = &self.doc else { return };
         self.pending_editor_text = Some(text.clone());
         if self.rich_active() {
@@ -280,6 +295,7 @@ impl Workspace {
                         let is_open = open_row.as_deref() == Some(v.stamp.as_str());
                         let stamp = v.stamp.clone();
                         let restore_text = mine.clone();
+                        let restore_stamp = v.stamp.clone();
                         let can_restore = mine.is_some();
                         div()
                             .child(
@@ -330,7 +346,7 @@ impl Workspace {
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 cx.stop_propagation();
                                                 if let Some(text) = restore_text.clone() {
-                                                    this.history_restore(text, window, cx);
+                                                    this.history_restore(restore_stamp.clone(), text, window, cx);
                                                 }
                                             })),
                                     ),

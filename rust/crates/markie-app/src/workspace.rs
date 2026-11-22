@@ -43,6 +43,7 @@ mod office;
 mod overlay;
 mod palette;
 mod panels;
+mod projects;
 mod rail;
 mod rich;
 mod text_view;
@@ -98,6 +99,8 @@ pub struct Workspace {
     library: Library,
     /// Title bar, rail and side panel state.
     shell: rail::Shell,
+    /// The Projects tab and the ⇧⌘F body search.
+    projects: projects::Projects,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
@@ -113,6 +116,9 @@ pub struct Workspace {
     disk: DiskMemory,
     autosave: Autosave,
     _autosave_task: Task<()>,
+    /// Office documents' recovery history (Electron's document library).
+    recovery: markie_core::office_recovery::RecoveryStore,
+    _recovery_task: Task<()>,
     _poll_task: Task<()>,
     /// What the file says on disk when it changed under unsaved edits.
     disk_conflict: Option<String>,
@@ -182,6 +188,18 @@ impl Workspace {
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| this.on_appearance_changed(window, cx)));
         let (shell, shell_subs) = rail::Shell::new(color_mode, template, window, cx);
         subscriptions.extend(shell_subs);
+        let (projects, projects_sub) = projects::Projects::new(window, cx);
+        subscriptions.push(projects_sub);
+        // Closing flushes pending saves first (Electron's close-flush.js).
+        subscriptions.push(cx.on_app_quit(|this, cx| {
+            this.flush_pending(cx);
+            async {}
+        }));
+        let weak = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            weak.update(cx, |this, cx| this.flush_pending(cx)).ok();
+            true
+        });
 
         let mut library = Library::default();
         if let Some(snapshot) = registry.as_ref().and_then(|r| r.load_snapshot().ok().flatten()) {
@@ -202,6 +220,7 @@ impl Workspace {
             cloud_search,
             library,
             shell,
+            projects,
             editor,
             preview,
             rich,
@@ -216,6 +235,8 @@ impl Workspace {
             disk: DiskMemory::default(),
             autosave: Autosave::default(),
             _autosave_task: Task::ready(()),
+            recovery: markie_core::office_recovery::RecoveryStore::new(&data_dir),
+            _recovery_task: Task::ready(()),
             _poll_task: Task::ready(()),
             disk_conflict: None,
             disk_missing: false,
@@ -244,6 +265,7 @@ impl Workspace {
             }
         }
         this.refresh_lists();
+        this.build_search_pool();
 
         let mut first_file = None;
         for path in initial {
@@ -353,6 +375,8 @@ impl Workspace {
                 }
                 this.library.scanning = false;
                 this.library.set_snapshot(snapshot);
+                this.build_search_pool();
+                this.compute_projects(cx);
                 if this.shell.search_open {
                     this.shell.search.share_docs_from(&this.library);
                 }
@@ -464,6 +488,9 @@ impl Workspace {
                 self.disk_conflict = None;
                 self.disk_missing = false;
                 self.viewing_version = None;
+                // The opened bytes are the first recovery revision, as in
+                // Electron's import, and they match the file.
+                self.keep_office_revision(true, cx);
                 if self.side == SidePanel::History {
                     self.refresh_versions();
                 }
@@ -549,9 +576,21 @@ impl Workspace {
         });
     }
 
+    /// Write whatever autosave still owes, now. Never a dialog.
+    fn flush_pending(&mut self, cx: &mut Context<Self>) {
+        let office_dirty = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
+        if self.autosave.is_pending() || self.dirty || office_dirty {
+            self.autosave.cancel();
+            self.autosave_now(cx);
+        }
+    }
+
     /// Autosave never opens a dialog: a failure leaves a crash draft and the
     /// edited marker, and the next save tries again.
     fn autosave_now(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            return self.office_autosave(cx);
+        }
         let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
@@ -629,8 +668,15 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(OpenDoc { path, kind: DocKind::Office(office), .. }) = &self.doc {
-            office::save(office, path, window, cx);
+        if let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc {
+            let (path, format) = (path.clone(), *format);
+            self.autosave.cancel();
+            if let Some(bytes) = office::save(office, &path, window, cx) {
+                self.keep_office_bytes(&path, format, &bytes, true);
+                if self.side == SidePanel::History {
+                    self.refresh_versions();
+                }
+            }
             cx.notify();
             return;
         }
@@ -740,6 +786,7 @@ impl Workspace {
 
     fn refresh_versions(&mut self) {
         self.versions = match &self.doc {
+            Some(doc) if matches!(doc.kind, DocKind::Office(_)) => self.office_versions(&doc.path),
             Some(doc) => {
                 let mut v = self.history.list(&doc.path);
                 v.reverse();
@@ -865,9 +912,13 @@ impl Workspace {
                 div().size_full().child(self.rich.clone()).into_any_element()
             }
             (DocKind::Html, _) | (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown || matches!(doc.kind, DocKind::Html) => {
-                div()
+                let background = theme.background;
+                let name = doc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let banner = matches!(doc.kind, DocKind::Html).then(|| office::html_banner(&name, cx));
+                v_flex()
                     .size_full()
-                    .bg(theme.background)
+                    .children(banner)
+                    .bg(background)
                     .child(
                         h_flex().size_full().justify_center().child(
                             TextView::new(&self.preview)

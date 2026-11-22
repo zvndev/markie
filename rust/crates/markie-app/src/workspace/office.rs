@@ -67,7 +67,10 @@ fn doc_text(raw: &str) -> String {
 fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>) -> (Entity<WordView>, Subscription) {
     let view = cx.new(|cx| WordView::new(editor, window, cx));
     let subscription = cx.subscribe(&view, |this: &mut Workspace, view, event: &WordViewEvent, cx| match event {
-        WordViewEvent::Changed => cx.notify(),
+        WordViewEvent::Changed => {
+            this.on_office_changed(cx);
+            cx.notify();
+        }
         WordViewEvent::ZoomReset => {
             this.zoom = 1.0;
             view.update(cx, |v, _| v.set_zoom(1.0));
@@ -139,25 +142,154 @@ pub(super) fn open(path: &Path, format: FormatKind, window: &mut Window, cx: &mu
     Ok(OfficeDoc { view, source: Source::LegacyDoc { text: None, warnings: vec!["Reading text from this Word 97 document…".into()] }, _subscription: subscription })
 }
 
-/// Write the document in its own format. Untouched documents keep their bytes.
-pub(super) fn save(office: &OfficeDoc, path: &Path, window: &mut Window, cx: &mut Context<Workspace>) {
+/// Write the document in its own format through the engine. Untouched
+/// documents keep their bytes. `Ok(None)` when there was nothing to write.
+fn write(office: &OfficeDoc, path: &Path, cx: &mut Context<Workspace>) -> anyhow::Result<Option<Vec<u8>>> {
     if !matches!(office.source, Source::Rich) {
-        return;
+        return Ok(None);
     }
     let (dirty, can_edit) = {
         let editor = &office.view.read(cx).editor;
         (editor.is_dirty(), editor.rich().can_edit)
     };
     if !dirty || !can_edit {
-        return;
+        return Ok(None);
     }
-    let bytes = office.view.read(cx).editor.export();
-    match bytes.map_err(anyhow::Error::msg).and_then(|bytes| markie_core::save::atomic_write(path, &bytes).map_err(Into::into)) {
-        Ok(()) => office.view.update(cx, |view, cx| {
-            view.editor.mark_saved();
-            cx.notify();
-        }),
-        Err(error) => window.push_notification(format!("Markie could not save: {error:#}"), cx),
+    let bytes = office.view.read(cx).editor.export().map_err(anyhow::Error::msg)?;
+    markie_core::save::atomic_write(path, &bytes)?;
+    office.view.update(cx, |view, cx| {
+        view.editor.mark_saved();
+        cx.notify();
+    });
+    Ok(Some(bytes))
+}
+
+/// ⌘S. A failure says so; autosave uses `Workspace::office_autosave`, which
+/// never does.
+pub(super) fn save(office: &OfficeDoc, path: &Path, window: &mut Window, cx: &mut Context<Workspace>) -> Option<Vec<u8>> {
+    match write(office, path, cx) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            window.push_notification(format!("Markie could not save: {error:#}"), cx);
+            None
+        }
+    }
+}
+
+fn format_id(format: FormatKind) -> &'static str {
+    match format {
+        FormatKind::Docx => "docx",
+        FormatKind::Rtf => "rtf",
+        FormatKind::Odt => "odt",
+        FormatKind::Doc => "doc",
+        _ => "other",
+    }
+}
+
+impl Workspace {
+    /// An edit in the Word view: autosave on Markdown's rules (1 s idle, at
+    /// most 5 s while typing) and a recovery revision 600 ms after it, like
+    /// Electron's document library.
+    fn on_office_changed(&mut self, cx: &mut Context<Self>) {
+        let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc else { return };
+        if !office.is_dirty(cx) {
+            return;
+        }
+        self.autosave.note_change(std::time::Instant::now());
+        self.schedule_autosave(cx);
+        self._recovery_task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(markie_core::office_recovery::RECOVERY_DEBOUNCE_MS))
+                .await;
+            this.update(cx, |this, cx| this.keep_office_revision(false, cx)).ok();
+        });
+    }
+
+    /// Serialize the open office document into a recovery revision. `on_disk`
+    /// marks it as the bytes the file holds (an open or a save).
+    pub(super) fn keep_office_revision(&mut self, on_disk: bool, cx: &mut Context<Self>) {
+        let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc else { return };
+        if !matches!(office.source, Source::Rich) {
+            return;
+        }
+        let Ok(bytes) = office.view.read(cx).editor.export() else { return };
+        self.keep_office_bytes(&path.clone(), *format, &bytes, on_disk);
+        if self.side == super::SidePanel::History {
+            self.refresh_versions();
+        }
+    }
+
+    pub(super) fn keep_office_bytes(&self, path: &Path, format: FormatKind, bytes: &[u8], on_disk: bool) {
+        if let Ok(rev) = self.recovery.put(path, format_id(format), bytes)
+            && on_disk
+        {
+            let _ = self.recovery.mark_exported(path, rev.revision);
+        }
+    }
+
+    /// Autosave for office documents: written through the engine, never a
+    /// dialog. A failure leaves the document edited and the recovery revision.
+    pub(super) fn office_autosave(&mut self, cx: &mut Context<Self>) {
+        let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc else { return };
+        let (path, format) = (path.clone(), *format);
+        if let Ok(Some(bytes)) = write(office, &path, cx) {
+            self.keep_office_bytes(&path, format, &bytes, true);
+            if self.side == super::SidePanel::History {
+                self.refresh_versions();
+            }
+        }
+        cx.notify();
+    }
+
+    /// The office document's recovery revisions as history-panel rows.
+    pub(super) fn office_versions(&self, path: &Path) -> Vec<markie_core::history::Version> {
+        self.recovery
+            .list(path)
+            .into_iter()
+            .map(|r| markie_core::history::Version {
+                stamp: r.revision.to_string(),
+                ms: Some(r.saved_at),
+                bytes: r.size,
+                meta: markie_core::history::VersionMeta { author: "user".into(), ..Default::default() },
+            })
+            .collect()
+    }
+
+    /// The words of an office revision, for the read-only preview.
+    pub(super) fn office_version_text(&self, path: &Path, format: FormatKind, stamp: &str) -> Option<String> {
+        let bytes = self.recovery.read(path, stamp.parse().ok()?)?;
+        Some(markie_core::doc_text::text_from_bytes(&bytes, format).unwrap_or_default())
+    }
+
+    /// Restore a recovery revision: it becomes the newest revision and the
+    /// open document, and it is written to the file like any autosave.
+    pub(super) fn restore_office_version(&mut self, stamp: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(OpenDoc { path, format, kind: DocKind::Office(_), .. }) = &self.doc else { return };
+        let (path, format) = (path.clone(), *format);
+        let Some(revision) = stamp.parse().ok() else { return };
+        let bytes = match self.recovery.restore(&path, revision) {
+            Ok((bytes, _)) => bytes,
+            Err(e) => return window.push_notification(e.to_string(), cx),
+        };
+        let Some(engine) = engine_format(format) else { return };
+        let document = match open_rich_document(engine, &bytes) {
+            Ok(d) => d,
+            Err(e) => return window.push_notification(format!("This revision could not be opened. {}", e.message), cx),
+        };
+        if let Err(e) = markie_core::save::atomic_write(&path, &bytes) {
+            return window.push_notification(format!("Markie could not save: {e}"), cx);
+        }
+        if let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc {
+            office.view.update(cx, |view, cx| {
+                view.editor = WordEditor::new(document);
+                cx.notify();
+            });
+        }
+        if let Some(newest) = self.recovery.list(&path).first() {
+            let _ = self.recovery.mark_exported(&path, newest.revision);
+        }
+        self.refresh_versions();
+        cx.notify();
     }
 }
 
@@ -172,7 +304,73 @@ fn copy_path(original: &Path) -> PathBuf {
     (2..).map(|n| dir.join(format!("{stem} (converted {n}).txt"))).find(|p| !p.exists()).expect("an unused name exists")
 }
 
+/// `<stem> converted.txt` next to the source, never over another file.
+fn unused(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let stem = name.strip_suffix(".txt").unwrap_or(name);
+    (2..).map(|n| dir.join(format!("{stem} {n}.txt"))).find(|p| !p.exists()).expect("an unused name exists")
+}
+
+/// Electron's "Import a text copy?" for HTML, as a banner over the preview.
+pub(super) fn html_banner(name: &str, cx: &mut Context<Workspace>) -> AnyElement {
+    let theme = cx.theme().clone();
+    h_flex()
+        .px_4()
+        .py_2()
+        .gap_3()
+        .border_b_1()
+        .border_color(theme.border)
+        .bg(theme.info.opacity(0.12))
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .text_xs()
+                .child(format!("{name} is a HTML document. Markie can create a new, editable TXT copy of its supported text."))
+                .child("This is not native HTML editing. Formatting, pictures, comments and other document features may be omitted. Nothing in the original file will be changed."),
+        )
+        .child(
+            Button::new("html-txt-copy")
+                .small()
+                .primary()
+                .flex_none()
+                .label("Create text copy")
+                .on_click(cx.listener(|this, _, window, cx| this.save_html_copy(window, cx))),
+        )
+        .into_any_element()
+}
+
 impl Workspace {
+    /// Convert the open HTML file with the office engine's importer and open
+    /// the TXT copy. The original is never written.
+    fn save_html_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use markie_office::document_import::{AdditionalDocumentFormat, AdditionalDocumentInput, DocumentImportLimits, convert_additional_document};
+        let Some(OpenDoc { path, kind: DocKind::Html, .. }) = &self.doc else { return };
+        let path = path.clone();
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let result = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| {
+            convert_additional_document(
+                &AdditionalDocumentInput { name: &name, bytes: &bytes, format: AdditionalDocumentFormat::Html },
+                DocumentImportLimits::default(),
+            )
+            .map_err(|e| e.message.clone())
+        });
+        match result {
+            Ok(copy) => {
+                let target = unused(path.parent().unwrap_or(Path::new(".")), &copy.name);
+                match markie_core::save::atomic_write(&target, &copy.bytes) {
+                    Ok(()) => self.open_path(&target, window, cx),
+                    Err(e) => window.push_notification(format!("Markie could not write the TXT copy: {e}"), cx),
+                }
+            }
+            Err(message) => window.push_notification(message, cx),
+        }
+    }
+
     fn save_doc_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(OpenDoc { path, kind: DocKind::Office(office), .. }) = &self.doc else { return };
         let Source::LegacyDoc { text: Some(text), .. } = &office.source else { return };

@@ -36,7 +36,7 @@ impl Workspace {
             RichEvent::Zoom(z) => this.set_zoom(*z, cx),
             RichEvent::PageWidth(w) => this.set_width_step(*w, cx),
             RichEvent::History => this.on_show_history(&crate::actions::ShowHistory, window, cx),
-            RichEvent::Print => {}
+            RichEvent::Print => this.on_print(&crate::actions::Print, window, cx),
         });
         (rich, sub)
     }

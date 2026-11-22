@@ -1,0 +1,50 @@
+[
+ {
+  "kind": "heading",
+  "level": 1,
+  "content": [
+   {
+    "text": "Prices"
+   }
+  ]
+ },
+ {
+  "kind": "paragraph",
+  "content": [
+   {
+    "text": "A price of "
+   },
+   {
+    "text": "5 and a price of $10 stay text, $x^2",
+    "code": true
+   },
+   {
+    "text": " is math, and "
+   },
+   {
+    "text": "a+b",
+    "code": true
+   },
+   {
+    "text": " inline is math too."
+   }
+  ],
+  "quote": false
+ },
+ {
+  "kind": "paragraph",
+  "content": [
+   {
+    "text": "She paid "
+   },
+   {
+    "text": "3.50 for $E=mc^2",
+    "code": true
+   },
+   {
+    "text": "."
+   }
+  ],
+  "quote": false
+ }
+]

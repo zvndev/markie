@@ -38,5 +38,9 @@ actions!(
         RichMode,
         SourceMode,
         MoveDocument,
+        Print,
+        ExportPdfDark,
+        ExportPdfLight,
+        ExportHtml,
     ]
 );

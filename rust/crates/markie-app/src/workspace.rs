@@ -33,6 +33,9 @@ mod account_slot;
 mod agents;
 mod appearance;
 mod chrome;
+mod collab;
+mod comments;
+mod share;
 mod dialog_chrome;
 mod file_ops;
 mod history_dialog;
@@ -40,6 +43,8 @@ mod cloud;
 mod cloud_office;
 mod cloud_resources;
 mod cloud_ui;
+mod darkmown;
+mod export;
 mod office;
 mod overlay;
 mod palette;
@@ -104,6 +109,8 @@ pub struct Workspace {
     projects: projects::Projects,
     /// Settings › Appearance's live controls.
     appearance: appearance::AppearanceUi,
+    /// The open `.wd` document's preview (`workspace/darkmown.rs`).
+    darkmown: darkmown::DarkmownState,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
@@ -140,6 +147,8 @@ pub struct Workspace {
     page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
+    /// Live collaboration, comments and sharing (collab.rs, comments.rs, share.rs).
+    collab: collab::Collab,
     /// The dialog layer: settings, palette, new document and the rest.
     dialogs: overlay::Dialogs,
     /// The Cloud page the rail's Cloud destination shows (account.rs).
@@ -233,6 +242,7 @@ impl Workspace {
             shell,
             projects,
             appearance,
+            darkmown: Default::default(),
             editor,
             preview,
             rich,
@@ -258,6 +268,7 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
+            collab: collab::Collab::default(),
             cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
             zoom: 1.0,
             page_width: 768.0,
@@ -534,6 +545,7 @@ impl Workspace {
                     .file_name()
                     .map_or_else(|| paths::APP_NAME.to_string(), |n| n.to_string_lossy().into_owned());
                 window.set_window_title(&title);
+                self.collab_on_open(cx);
             }
             Err(err) => {
                 window.push_notification(err.to_string(), cx);
@@ -567,6 +579,7 @@ impl Workspace {
     }
 
     fn on_edit(&mut self, cx: &mut Context<Self>) {
+        self.live_source_edit(cx);
         let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         let text = self.editor.read(cx).value().to_string();
         self.dirty = &text != saved;
@@ -956,6 +969,7 @@ impl Workspace {
                     .into_any_element()
             }
             // Literal text formats look like Electron's TextDocumentEditor.
+            (DocKind::Text { .. }, _) if doc.format == FormatKind::Darkmown && !doc.large => self.render_darkmown(cx),
             (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => self.render_text(cx),
             _ => div()
                 .size_full()
@@ -999,6 +1013,7 @@ impl Render for Workspace {
         }
         self.ensure_browse_rows();
         self.sync_vault(window, cx);
+        self.sync_darkmown(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
         let history = match self.side {
@@ -1043,6 +1058,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
             .on_action(cx.listener(Self::on_toggle_vault))
+            .on_action(cx.listener(Self::on_print))
+            .on_action(cx.listener(Self::on_export_pdf_dark))
+            .on_action(cx.listener(Self::on_export_pdf_light))
+            .on_action(cx.listener(Self::on_export_html))
             .relative()
             .size_full()
             .bg(cx.theme().background)
@@ -1067,13 +1086,23 @@ impl Render for Workspace {
                                     .overflow_hidden()
                                     .children(banner)
                                     .children(cloud_banner)
-                                    .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_document(cx))),
+                                    .children(self.render_live_banner(cx))
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .flex_1()
+                                            .min_h_0()
+                                            .overflow_hidden()
+                                            .child(self.render_document(cx))
+                                            .children(self.render_comments(window, cx)),
+                                    ),
                             )
                             .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))
                         }
                     }),
             )
-            .children(self.render_search(cx));
+            .children(self.render_search(cx))
+            .children(self.render_share(window, cx));
         self.dialog_actions(root, cx).children(dialogs)
     }
 }

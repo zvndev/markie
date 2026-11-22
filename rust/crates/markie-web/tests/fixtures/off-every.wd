@@ -1,0 +1,4 @@
+:state secs = 0
+:every 1s -> secs++
+
+{ secs }

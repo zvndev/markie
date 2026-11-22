@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<ul>\n<li><input type=\"checkbox\" disabled> One</li>\n<li><input type=\"checkbox\" disabled checked> Two</li>\n</ul>\n\n</main>\n",
+ "title": "Interactive document",
+ "warnings": [],
+ "requiresRuntime": false,
+ "hasCode": false
+}

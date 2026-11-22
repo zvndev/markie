@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<h1 id=\"a-small-working-document\">A small working document</h1>\n\n<script type=\"application/json\" data-wd-state>{\"profile\":null}</script><form data-wd-form=\"profile\"><input type=\"text\" name=\"name\" placeholder=\"Your name\" aria-label=\"Your name\">\n<button type=\"submit\">Use this name</button></form>\n<p>Submitted name: <span data-wd-bind=\"profile\" data-wd-path=\"name\"></span>.</p>\n<p>This form updates temporary document state. It does not send a request or store your name.</p>\n\n</main>\n<script type=\"module\" src=\"/__wd/runtime.js\"></script>",
+ "title": "Local form",
+ "warnings": [],
+ "requiresRuntime": true,
+ "hasCode": false
+}

@@ -13,6 +13,8 @@ gpui-kit = "=0.10.0"
 markie-core.workspace = true
 url = "2"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
+yrs = "=0.28.2"
+serde_json.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSSpellChecker"] }
@@ -20,3 +22,6 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 
 [dev-dependencies]
 tempfile.workspace = true
+markie-cloud = { path = "../markie-cloud" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+uuid = { version = "1", features = ["v4"] }

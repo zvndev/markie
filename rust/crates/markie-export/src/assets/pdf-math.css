@@ -1,0 +1,5 @@
+
+  .markdown-body .katex { font-size: 1.05em; }
+  .markdown-body .katex-display { margin: 1em 0; page-break-inside: avoid; }
+  .markdown-body .katex-display > .katex { white-space: normal; }
+  .markdown-body .katex-error { color: #ef4444; font-family: inherit; }

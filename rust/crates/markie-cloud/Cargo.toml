@@ -16,7 +16,7 @@ thiserror = "2"
 url = "2.5"
 unicode-normalization = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "macros"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 yrs = { version = "0.28", features = ["sync"] }
@@ -30,5 +30,5 @@ percent-encoding = "2"
 
 [dev-dependencies]
 wiremock = "0.6"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
 tempfile.workspace = true

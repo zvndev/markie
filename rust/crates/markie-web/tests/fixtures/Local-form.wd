@@ -1,0 +1,14 @@
+---
+title: Local form
+---
+
+# A small working document
+
+:form into profile
+:input name placeholder="Your name"
+:submit "Use this name"
+:endform
+
+Submitted name: { profile.name }.
+
+This form updates temporary document state. It does not send a request or store your name.

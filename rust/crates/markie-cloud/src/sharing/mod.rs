@@ -1,5 +1,8 @@
 //! Sharing, people, public links, Live Doc addresses and collab tickets.
 //! Port of makeSharesClient and makePeopleClient in src/lib/auth-client.ts.
+//! The wording and rules the share dialog shows are in `view`.
+pub mod view;
+
 use crate::client::{CloudClient, seg};
 use crate::collab::COLLAB_SCHEMA_VERSION;
 use crate::docs::Role;

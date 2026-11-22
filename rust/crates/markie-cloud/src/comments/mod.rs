@@ -1,8 +1,14 @@
-//! Cloud comment threads. Port of src/lib/comments.ts.
+//! Comment threads. Cloud threads (this file) are a port of
+//! src/lib/comments.ts; local comments on Markdown files are `local`, with
+//! their quote anchors in `anchor` and the rich-view projection in `project`.
 //!
 //! The anchor is opaque here: for rich rooms it is y-prosemirror
 //! RelativePosition JSON into the XmlFragment, which belongs to the rich
 //! editor work. This client carries it through unchanged.
+pub mod anchor;
+pub mod local;
+pub mod project;
+
 use crate::client::{CloudClient, seg};
 use crate::error::{CloudError, Result};
 use serde::{Deserialize, Serialize};

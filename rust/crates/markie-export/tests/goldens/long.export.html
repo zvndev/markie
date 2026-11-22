@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* The page margin box cannot be painted by the document. With
+     a 2cm page margin the dark theme filled only the text area and
+     every page came out as a dark rectangle floating in a white frame, which
+     is what a dark export actually looked like. Chromium propagates neither
+     the body background nor the html background into that margin box, and a
+     fixed-position backdrop is clipped to the page area, so all three of the
+     obvious fixes do nothing. Measured, not guessed.
+
+     So the page has no margin at all and the inset is padding on the body,
+     which the background does cover. box-decoration-break: clone is what
+     makes that padding repeat on the second page and every page after it;
+     without it padding applies once at the top of the first fragment and once
+     at the bottom of the last, and page two starts with text against the paper
+     edge. Chromium honours it here. See scripts/pdf-export-check.mjs, which
+     prints a two-page document and reads the corner pixels back. */
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.75;
+    padding: 2cm 2.2cm;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* A line stranded alone at a page boundary reads as a mistake in the export
+     rather than as prose. */
+  .markdown-body p, .markdown-body li { orphans: 2; widows: 2; }
+
+  .markdown-body { max-width: 100%; }
+
+  /* Nothing may be wider than the column. Chromium scales the whole document
+     down to the widest box when printing, so one long URL or one wide table
+     used to turn every page into tiny text. Long words and links break
+     anywhere rather than run off the page. */
+  .markdown-body { overflow-wrap: anywhere; }
+
+  /* Export HTML is read in a browser as often as it is printed, and a body
+     the width of a monitor is a body nobody finishes a line of. Screen only:
+     paper already has its measure from the page size. */
+  @media screen {
+    body { max-width: 46em; margin: 0 auto; }
+  }
+
+  .markdown-body h1 {
+    font-size: 2em;
+    font-weight: 700;
+    margin: 1.2em 0 0.5em;
+    padding-bottom: 0.3em;
+    letter-spacing: -0.025em;
+    page-break-after: avoid;
+  }
+
+  .markdown-body h1:first-child { margin-top: 0; }
+
+  .markdown-body h2 {
+    font-size: 1.5em;
+    font-weight: 650;
+    margin: 1.3em 0 0.45em;
+    padding-bottom: 0.25em;
+    letter-spacing: -0.02em;
+    page-break-after: avoid;
+  }
+
+  .markdown-body h3 {
+    font-size: 1.25em;
+    font-weight: 600;
+    margin: 1.2em 0 0.4em;
+    page-break-after: avoid;
+  }
+
+  .markdown-body h4 {
+    font-size: 1.1em;
+    font-weight: 600;
+    margin: 1.1em 0 0.35em;
+    page-break-after: avoid;
+  }
+
+  .markdown-body h5, .markdown-body h6 {
+    font-size: 1em;
+    font-weight: 600;
+    margin: 1em 0 0.3em;
+    page-break-after: avoid;
+  }
+
+  .markdown-body p { margin: 0.7em 0; }
+
+  .markdown-body a { text-decoration: none; }
+
+  .markdown-body strong { font-weight: 650; }
+  .markdown-body em { font-style: italic; }
+
+  .markdown-body blockquote {
+    margin: 1em 0;
+    padding: 0.5em 1em;
+    border-left: 3px solid;
+    border-radius: 0 6px 6px 0;
+  }
+
+  .markdown-body blockquote p { margin: 0.25em 0; }
+
+  .markdown-body ul, .markdown-body ol {
+    margin: 0.6em 0;
+    padding-left: 1.8em;
+  }
+
+  .markdown-body li { margin: 0.25em 0; }
+  .markdown-body ul li { list-style-type: disc; }
+  .markdown-body ol li { list-style-type: decimal; }
+
+  .markdown-body code {
+    font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    padding: 0.15em 0.35em;
+    border-radius: 4px;
+    border: 1px solid;
+  }
+
+  /* A scroll container does not scroll on paper: overflow-x: auto used to
+     clip a long line silently at the block's right edge. It wraps instead. */
+  .markdown-body pre {
+    margin: 1em 0;
+    padding: 1em 1.2em;
+    border-radius: 8px;
+    border: 1px solid;
+    white-space: pre-wrap;
+    overflow: visible;
+    page-break-inside: avoid;
+  }
+
+  .markdown-body pre code {
+    padding: 0;
+    background: none !important;
+    border: none;
+    border-radius: 0;
+    font-size: 0.85em;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .markdown-body hr {
+    margin: 1.8em 0;
+    border: none;
+    height: 1px;
+  }
+
+  .markdown-body img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin: 1em 0;
+    page-break-inside: avoid;
+  }
+
+  /* A video card (rehype-embeds.ts) is its thumbnail, linked. The one YouTube
+     serves is 4:3 with black bars, so it is cropped to the player's shape. */
+  .markdown-body p.markie-embed img {
+    display: block;
+    width: 100%;
+    max-width: 640px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+  }
+
+  .markdown-body table {
+    width: auto;
+    max-width: 100%;
+    margin: 1em 0;
+    border-collapse: collapse;
+    font-size: 0.9em;
+  }
+
+  /* A long table breaks between rows, never inside one, and the header
+     repeats on every page it spans. */
+  .markdown-body thead { display: table-header-group; }
+  .markdown-body tr { page-break-inside: avoid; }
+  .markdown-body th, .markdown-body td { overflow-wrap: anywhere; }
+
+  .markdown-body thead th {
+    text-align: left;
+    padding: 0.55em 0.8em;
+    font-weight: 600;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .markdown-body tbody td {
+    padding: 0.5em 0.8em;
+  }
+
+  .markdown-body input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 5px;
+    position: relative;
+    top: -1px;
+  }
+
+  .markdown-body input[type="checkbox"]:checked::after {
+    content: "✓";
+    font-size: 10px;
+    font-weight: 700;
+    position: absolute;
+    top: -1px;
+    left: 1px;
+  }
+
+  .markdown-body .task-list-item {
+    list-style: none;
+    margin-left: -1.5em;
+  }
+
+  .markdown-body del { text-decoration: line-through; }
+  .markdown-body sup { font-size: 0.75em; vertical-align: super; }
+  .markdown-body sub { font-size: 0.75em; vertical-align: sub; }
+
+
+  body { background: #fff; color: #1a1a2e; }
+  .markdown-body { color: #1a1a2e; }
+  .markdown-body h1 { border-bottom: 1px solid #e4e4e7; color: #09090b; }
+  .markdown-body h2 { border-bottom: 1px solid #e4e4e7; color: #18181b; }
+  .markdown-body h3, .markdown-body h4 { color: #27272a; }
+  .markdown-body h5, .markdown-body h6 { color: #71717a; }
+  .markdown-body a { color: #2563eb; }
+  .markdown-body strong { color: #09090b; }
+  .markdown-body blockquote { border-left-color: #8b5cf6; background: #f5f3ff; color: #52525b; }
+  .markdown-body li::marker { color: #71717a; }
+  .markdown-body code { background: #f4f4f5; border-color: #e4e4e7; color: #c2410c; }
+  .markdown-body pre { background: #fafafa; border-color: #e4e4e7; }
+  .markdown-body pre code { color: #1a1a2e; }
+  .markdown-body hr { background: #e4e4e7; }
+  .markdown-body thead th { background: #f4f4f5; border-bottom: 2px solid #e4e4e7; color: #71717a; }
+  .markdown-body tbody td { border-bottom: 1px solid #e4e4e7; }
+  .markdown-body del { color: #a1a1aa; }
+  .markdown-body input[type="checkbox"] { border-color: #d4d4d8; }
+  .markdown-body input[type="checkbox"]:checked { background: #2563eb; border-color: #2563eb; }
+  .markdown-body input[type="checkbox"]:checked::after { color: #fff; }
+
+  /* highlight.js light */
+  .hljs { color: #24292e; }
+  .hljs-keyword { color: #d73a49; }
+  .hljs-string { color: #032f62; }
+  .hljs-title { color: #6f42c1; }
+  .hljs-built_in { color: #e36209; }
+  .hljs-comment { color: #6a737d; }
+  .hljs-number { color: #005cc5; }
+  .hljs-attr { color: #005cc5; }
+  .hljs-subst { color: #24292e; }
+  .hljs-literal { color: #005cc5; }
+  .hljs-type { color: #e36209; }
+  .hljs-params { color: #24292e; }
+  .hljs-variable { color: #e36209; }
+  .hljs-function { color: #6f42c1; }
+
+
+  .markdown-body .katex { font-size: 1.05em; }
+  .markdown-body .katex-display { margin: 1em 0; page-break-inside: avoid; }
+  .markdown-body .katex-display > .katex { white-space: normal; }
+  .markdown-body .katex-error { color: #ef4444; font-family: inherit; }
+</style>
+<script>
+(function () {
+  function fit() {
+    var article = document.querySelector("article.markdown-body");
+    if (!article) return;
+    var max = article.clientWidth;
+    var body = getComputedStyle(document.body);
+    var pageHeight = 1122.5 - parseFloat(body.paddingTop) - parseFloat(body.paddingBottom);
+    var blocks = article.querySelectorAll("table, pre, .katex-display, img, p.markie-embed");
+    for (var i = 0; i < blocks.length; i += 1) {
+      var el = blocks[i];
+      var width = el.scrollWidth;
+      if (width > max + 1) el.style.zoom = String(Math.max(0.4, max / width));
+      if (el.getBoundingClientRect().height > pageHeight * 0.5) el.style.breakInside = "auto";
+    }
+  }
+  function whenReady(run) {
+    var loaded = document.readyState === "complete"
+      ? Promise.resolve()
+      : new Promise(function (resolve) { window.addEventListener("load", resolve, { once: true }); });
+    var fonts = (document.fonts && document.fonts.ready) || Promise.resolve();
+    Promise.all([loaded, Promise.resolve(fonts)]).then(run, run);
+  }
+  whenReady(fit);
+})();
+</script>
+</head>
+<body>
+<article class="markdown-body"><h1>Long document</h1>
+<h2>Section 1</h2>
+<p>Paragraph 1. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 2</h2>
+<p>Paragraph 2. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 3</h2>
+<p>Paragraph 3. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 4</h2>
+<p>Paragraph 4. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 5</h2>
+<p>Paragraph 5. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 6</h2>
+<p>Paragraph 6. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 7</h2>
+<p>Paragraph 7. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 8</h2>
+<p>Paragraph 8. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 9</h2>
+<p>Paragraph 9. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 10</h2>
+<p>Paragraph 10. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 11</h2>
+<p>Paragraph 11. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 12</h2>
+<p>Paragraph 12. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 13</h2>
+<p>Paragraph 13. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 14</h2>
+<p>Paragraph 14. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 15</h2>
+<p>Paragraph 15. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 16</h2>
+<p>Paragraph 16. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 17</h2>
+<p>Paragraph 17. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 18</h2>
+<p>Paragraph 18. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 19</h2>
+<p>Paragraph 19. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 20</h2>
+<p>Paragraph 20. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 21</h2>
+<p>Paragraph 21. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 22</h2>
+<p>Paragraph 22. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 23</h2>
+<p>Paragraph 23. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 24</h2>
+<p>Paragraph 24. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 25</h2>
+<p>Paragraph 25. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 26</h2>
+<p>Paragraph 26. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 27</h2>
+<p>Paragraph 27. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 28</h2>
+<p>Paragraph 28. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 29</h2>
+<p>Paragraph 29. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 30</h2>
+<p>Paragraph 30. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 31</h2>
+<p>Paragraph 31. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 32</h2>
+<p>Paragraph 32. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 33</h2>
+<p>Paragraph 33. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 34</h2>
+<p>Paragraph 34. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 35</h2>
+<p>Paragraph 35. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 36</h2>
+<p>Paragraph 36. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 37</h2>
+<p>Paragraph 37. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 38</h2>
+<p>Paragraph 38. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 39</h2>
+<p>Paragraph 39. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 40</h2>
+<p>Paragraph 40. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 41</h2>
+<p>Paragraph 41. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 42</h2>
+<p>Paragraph 42. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 43</h2>
+<p>Paragraph 43. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 44</h2>
+<p>Paragraph 44. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 45</h2>
+<p>Paragraph 45. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 46</h2>
+<p>Paragraph 46. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 47</h2>
+<p>Paragraph 47. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 48</h2>
+<p>Paragraph 48. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 49</h2>
+<p>Paragraph 49. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 50</h2>
+<p>Paragraph 50. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 51</h2>
+<p>Paragraph 51. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 52</h2>
+<p>Paragraph 52. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 53</h2>
+<p>Paragraph 53. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 54</h2>
+<p>Paragraph 54. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 55</h2>
+<p>Paragraph 55. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 56</h2>
+<p>Paragraph 56. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 57</h2>
+<p>Paragraph 57. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 58</h2>
+<p>Paragraph 58. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 59</h2>
+<p>Paragraph 59. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<h2>Section 60</h2>
+<p>Paragraph 60. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+<pre><code>line 1 of a long code block that has to break across pages
+line 2 of a long code block that has to break across pages
+line 3 of a long code block that has to break across pages
+line 4 of a long code block that has to break across pages
+line 5 of a long code block that has to break across pages
+line 6 of a long code block that has to break across pages
+line 7 of a long code block that has to break across pages
+line 8 of a long code block that has to break across pages
+line 9 of a long code block that has to break across pages
+line 10 of a long code block that has to break across pages
+line 11 of a long code block that has to break across pages
+line 12 of a long code block that has to break across pages
+line 13 of a long code block that has to break across pages
+line 14 of a long code block that has to break across pages
+line 15 of a long code block that has to break across pages
+line 16 of a long code block that has to break across pages
+line 17 of a long code block that has to break across pages
+line 18 of a long code block that has to break across pages
+line 19 of a long code block that has to break across pages
+line 20 of a long code block that has to break across pages
+line 21 of a long code block that has to break across pages
+line 22 of a long code block that has to break across pages
+line 23 of a long code block that has to break across pages
+line 24 of a long code block that has to break across pages
+line 25 of a long code block that has to break across pages
+line 26 of a long code block that has to break across pages
+line 27 of a long code block that has to break across pages
+line 28 of a long code block that has to break across pages
+line 29 of a long code block that has to break across pages
+line 30 of a long code block that has to break across pages
+line 31 of a long code block that has to break across pages
+line 32 of a long code block that has to break across pages
+line 33 of a long code block that has to break across pages
+line 34 of a long code block that has to break across pages
+line 35 of a long code block that has to break across pages
+line 36 of a long code block that has to break across pages
+line 37 of a long code block that has to break across pages
+line 38 of a long code block that has to break across pages
+line 39 of a long code block that has to break across pages
+line 40 of a long code block that has to break across pages
+line 41 of a long code block that has to break across pages
+line 42 of a long code block that has to break across pages
+line 43 of a long code block that has to break across pages
+line 44 of a long code block that has to break across pages
+line 45 of a long code block that has to break across pages
+line 46 of a long code block that has to break across pages
+line 47 of a long code block that has to break across pages
+line 48 of a long code block that has to break across pages
+line 49 of a long code block that has to break across pages
+line 50 of a long code block that has to break across pages
+line 51 of a long code block that has to break across pages
+line 52 of a long code block that has to break across pages
+line 53 of a long code block that has to break across pages
+line 54 of a long code block that has to break across pages
+line 55 of a long code block that has to break across pages
+line 56 of a long code block that has to break across pages
+line 57 of a long code block that has to break across pages
+line 58 of a long code block that has to break across pages
+line 59 of a long code block that has to break across pages
+line 60 of a long code block that has to break across pages
+line 61 of a long code block that has to break across pages
+line 62 of a long code block that has to break across pages
+line 63 of a long code block that has to break across pages
+line 64 of a long code block that has to break across pages
+line 65 of a long code block that has to break across pages
+line 66 of a long code block that has to break across pages
+line 67 of a long code block that has to break across pages
+line 68 of a long code block that has to break across pages
+line 69 of a long code block that has to break across pages
+line 70 of a long code block that has to break across pages
+line 71 of a long code block that has to break across pages
+line 72 of a long code block that has to break across pages
+line 73 of a long code block that has to break across pages
+line 74 of a long code block that has to break across pages
+line 75 of a long code block that has to break across pages
+line 76 of a long code block that has to break across pages
+line 77 of a long code block that has to break across pages
+line 78 of a long code block that has to break across pages
+line 79 of a long code block that has to break across pages
+line 80 of a long code block that has to break across pages
+</code></pre></article>
+</body>
+</html>

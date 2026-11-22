@@ -1,0 +1,4 @@
+:form action="/api/x"
+:input name
+:submit "Go"
+:endform

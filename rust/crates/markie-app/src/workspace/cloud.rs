@@ -577,6 +577,11 @@ impl Workspace {
         if self.cloud.suspend_push {
             return;
         }
+        // While a live room runs, the desktop writes its own file and never
+        // the stored copy (live-snapshot.ts); the room's writer does (collab.rs).
+        if self.live_active() {
+            return;
+        }
         let Some(mut binding) = self.cloud.bindings.get(path).cloned() else {
             return;
         };

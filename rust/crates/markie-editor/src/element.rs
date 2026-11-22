@@ -45,6 +45,12 @@ pub struct Deco {
     pub caret_color: Hsla,
     pub find_color: Hsla,
     pub find_current_color: Hsla,
+    /// Peers' selections in their colours (live rooms).
+    pub remote_selections: Vec<(Range<usize>, Hsla)>,
+    /// Peers' carets: unit, colour, name, and the name tag's opacity.
+    pub remote_carets: Vec<(usize, Hsla, SharedString, f32)>,
+    /// Commented passages (local comments).
+    pub marks: Vec<(Range<usize>, Hsla)>,
 }
 
 pub struct LeafElement {
@@ -144,6 +150,11 @@ impl Element for LeafElement {
                 window.paint_quad(fill(at(b), color));
             }
         }
+        for (r, color) in self.deco.marks.iter().chain(&self.deco.remote_selections) {
+            for b in laid.selection_rects(r.clone()) {
+                window.paint_quad(fill(at(b), *color).corner_radii(px(2.)));
+            }
+        }
         if let Some(sel) = &self.deco.selection {
             for b in laid.selection_rects(sel.clone()) {
                 window.paint_quad(fill(at(b), self.deco.selection_color));
@@ -159,6 +170,27 @@ impl Element for LeafElement {
                     window.paint_quad(fill(at(Bounds::new(point(x, y), size(px(1.5), px(1.5)))), gpui_kit::rgb(0xe5484d)));
                     x += px(3.);
                 }
+            }
+        }
+        for (u, color, name, label) in &self.deco.remote_carets {
+            let c = laid.caret((*u).min(laid.len), false);
+            // `.collaboration-carets__caret`: 1px borders either side.
+            let bar = Bounds::new(point(c.origin.x - px(1.), c.origin.y), size(px(2.), c.size.height));
+            window.paint_quad(fill(at(bar), *color));
+            if *label > 0.01 {
+                // `.collaboration-carets__label`: 10px semibold, 1px 5px 2px
+                // padding, 4 4 4 0 corners, 1.3em above the caret.
+                let font = Font { weight: FontWeight::SEMIBOLD, ..window.text_style().font() };
+                let run = TextRun { len: name.len(), font, color: hsla(0., 0., 0., 0.8 * label), background_color: None, underline: None, strikethrough: None };
+                let shaped = window.text_system().shape_line(name.clone(), px(10.), &[run], None);
+                let h = px(12.) + px(3.);
+                let w = shaped.width + px(10.);
+                let tag = Bounds::new(point(c.origin.x - px(1.), c.origin.y - px(13.)), size(w, h));
+                let mut bg = *color;
+                bg.a *= *label;
+                window.paint_quad(fill(at(tag), bg).corner_radii(Corners { top_left: px(4.), top_right: px(4.), bottom_right: px(4.), bottom_left: px(0.) }));
+                let t = at(tag);
+                let _ = shaped.paint(point(t.origin.x + px(5.), t.origin.y + px(1.)), px(12.), TextAlign::Left, None, window, cx);
             }
         }
         if let Some(m) = &self.deco.marked {

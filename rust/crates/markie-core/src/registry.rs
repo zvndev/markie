@@ -301,4 +301,24 @@ mod tests {
         assert_eq!(civil_from_days(20_413), (2025, 11, 21));
         assert!(now_iso().ends_with('Z'));
     }
+
+    #[test]
+    fn cloud_records_survive_reopen_and_keep_recents() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("registry.db");
+        let path = dir.path().join("sample.md");
+        let record = serde_json::json!({
+            "user": "scratch-principal",
+            "record": {"cloud_doc_id": "sample", "cloud_version": 3, "state": "conflict"}
+        });
+        {
+            let reg = Registry::open(&db).unwrap();
+            reg.track_opened(&path).unwrap();
+            reg.set_cloud_record(&path, &record).unwrap();
+        }
+        let reg = Registry::open(&db).unwrap();
+        assert_eq!(reg.cloud_record::<serde_json::Value>(&path).unwrap(), Some(record.clone()));
+        assert_eq!(reg.recent(1).unwrap()[0].path, path);
+        assert_eq!(reg.cloud_records::<serde_json::Value>().unwrap(), vec![(path, record)]);
+    }
 }

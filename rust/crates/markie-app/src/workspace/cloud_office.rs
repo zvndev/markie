@@ -5,7 +5,9 @@ use super::cloud_ui::role_name;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{ActiveTheme, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme, Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use markie_cloud::CloudError;
@@ -68,6 +70,37 @@ impl Workspace {
             let file_name = name(&path);
             let path = path.clone();
             let area = this.cloud.area.clone();
+            let areas: Vec<_> = scope
+                .as_ref()
+                .and_then(|scope| this.cloud.listing(scope))
+                .into_iter()
+                .flat_map(|listing| &listing.areas)
+                .map(|area| (Some(area.id.clone()), area.label.clone()))
+                .collect();
+            let area_buttons: Vec<_> = if areas.is_empty() {
+                vec![]
+            } else {
+                std::iter::once((None, "Default cloud".to_owned()))
+                    .chain(areas)
+                    .map(|(id, label)| {
+                        let owner = owner.clone();
+                        Button::new(SharedString::from(format!(
+                            "upload-area-{}",
+                            id.as_deref().unwrap_or_default()
+                        )))
+                        .xsmall()
+                        .label(label)
+                        .selected(this.cloud.area == id)
+                        .disabled(this.cloud_office.busy)
+                        .on_click(move |_, _, cx| {
+                            let _ = owner.update(cx, |this, cx| {
+                                this.cloud.area = id.clone();
+                                cx.notify();
+                            });
+                        })
+                    })
+                    .collect()
+            };
             let upload = scope.clone().map(|scope| {
                 let owner = owner.clone();
                 Button::new("cloud-create-snapshot")
@@ -106,6 +139,10 @@ impl Workspace {
                                 .clone()
                                 .map(|s| div().text_sm().child(s)),
                         )
+                        .when(!area_buttons.is_empty(), |body| {
+                            body.child(div().text_xs().child("Upload destination"))
+                                .child(h_flex().gap_2().flex_wrap().children(area_buttons))
+                        })
                         .child(
                             h_flex().gap_2().children(upload).child(
                                 Button::new("cloud-browse-snapshots")

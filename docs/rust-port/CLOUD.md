@@ -4,6 +4,8 @@ Date: 2026-11-21. Circular task ENG-8733. Crate: `rust/crates/markie-cloud`.
 
 The crate is the groundwork for Phase 3. It talks to Markie Cloud and self-hosted servers through the same API as the Electron app, web and phone. It has no UI and no GPUI dependency.
 
+The later desktop file-sync and byte-snapshot work is tracked in [CLOUD-SYNC.md](CLOUD-SYNC.md).
+
 ## What is done
 
 | Module | What it does | Ported from |
@@ -64,7 +66,7 @@ It passed three runs in a row. Each run checks these steps:
 |---|---|
 | Deep link for Google and Apple | **Decision needed.** The server's bridge always returns `markie://auth`, and Markie RS does not claim `markie://` (PLAN.md ground rules). Options: a `markie-rs://` scheme plus a small server change, or a loopback redirect. |
 | UI wiring | Sign-in sheet, Settings > Servers, Library cloud states, conflict strip and dialog, share dialog, people requests, comments panel, presence avatars, view-only banner. |
-| Registry integration | Store `SyncRecord` fields in the markie-core registry. Push after save, background update checks, and landing cloud documents in `~/Documents/Markie/Cloud`. |
+| Registry integration | Store `SyncRecord` fields in the markie-core registry. Push after save, background update checks, and land cloud documents in `~/Documents/Markie RS/Cloud`. |
 | Assets and links | Port `asset-sync.js`, `asset-cache.js` and `link-sync.js` on top of the `docs` calls. |
 | Room supervisor | Reconnect with backoff and refresh the ticket in place every 2 minutes, using the rules in `collab/ticket.rs`. |
 | Rich rooms | XmlFragment rooms and comment anchors (Y.RelativePosition). Waits on the Phase 2a spike. |

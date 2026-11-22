@@ -43,7 +43,6 @@ impl Source {
 }
 
 impl Workspace {
-
     pub(super) fn render_cloud_library(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let scopes = self.cloud.scopes();
@@ -464,7 +463,12 @@ impl Workspace {
             let compare = behind || state == SyncState::Conflict;
             let user = workspace.cloud.selected_scope();
             let origin = record
-                .and_then(|r| r.cloud_origin.clone())
+                .filter(|r| r.state != SyncState::LocalOnly)
+                .map(|r| {
+                    r.cloud_origin
+                        .clone()
+                        .unwrap_or_else(|| markie_cloud::DEFAULT_SERVER.into())
+                })
                 .or_else(|| user.as_ref().map(|s| s.origin().to_owned()));
             let busy = workspace.cloud.busy.contains(&path);
             let actions: &[(&str, TextAction)] = if compare {

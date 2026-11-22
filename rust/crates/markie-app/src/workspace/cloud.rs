@@ -43,6 +43,8 @@ pub(super) struct Binding {
     pub user: String,
     pub record: SyncRecord,
     #[serde(default)]
+    pending_area: Option<String>,
+    #[serde(default)]
     media: assets::Transfer,
     #[serde(default)]
     links: links::Transfer,
@@ -53,6 +55,7 @@ impl Binding {
         Self {
             user: user.into(),
             record,
+            pending_area: None,
             media: Default::default(),
             links: Default::default(),
         }
@@ -296,7 +299,10 @@ pub(super) fn landing_base() -> PathBuf {
 }
 
 pub(super) fn landing_dir() -> std::io::Result<PathBuf> {
-    let mut dir = landing_base();
+    landing_dir_at(landing_base())
+}
+
+fn landing_dir_at(mut dir: PathBuf) -> std::io::Result<PathBuf> {
     for segment in ["Markie RS", "Cloud"] {
         dir.push(segment);
         match std::fs::create_dir(&dir) {
@@ -311,6 +317,53 @@ pub(super) fn landing_dir() -> std::io::Result<PathBuf> {
         }
     }
     dir.canonicalize()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{landing_dir_at, path_occupied};
+    use markie_cloud::{assets, sync};
+
+    #[test]
+    fn cloud_landing_is_isolated_and_exclusive() {
+        let scratch = tempfile::tempdir().unwrap();
+        let original = scratch.path().join("Markie").join("Cloud");
+        std::fs::create_dir_all(&original).unwrap();
+        std::fs::write(original.join("note.md"), "untouched").unwrap();
+        let rs = landing_dir_at(scratch.path().to_owned()).unwrap();
+        assert_eq!(
+            rs,
+            scratch
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("Markie RS/Cloud")
+        );
+        let path = sync::free_path(&rs, &sync::landing_name("../note.md"), path_occupied).unwrap();
+        assets::create_copy(&path, b"first").unwrap();
+        assert!(assets::create_copy(&path, b"second").is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "first");
+        assert_eq!(
+            std::fs::read_to_string(original.join("note.md")).unwrap(),
+            "untouched"
+        );
+        assert!(
+            sync::free_path(&rs, "note.md", path_occupied)
+                .unwrap()
+                .ends_with("note (2).md")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cloud_landing_refuses_a_link_into_another_app() {
+        let scratch = tempfile::tempdir().unwrap();
+        let original = scratch.path().join("Markie");
+        std::fs::create_dir(&original).unwrap();
+        std::os::unix::fs::symlink(&original, scratch.path().join("Markie RS")).unwrap();
+        assert!(landing_dir_at(scratch.path().to_owned()).is_err());
+        assert!(!original.join("Cloud").exists());
+    }
 }
 
 pub(super) fn land(name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
@@ -332,7 +385,6 @@ struct TextWork {
     binding: Binding,
     action: TextAction,
     path: PathBuf,
-    area: Option<String>,
     roots: Vec<PathBuf>,
     targets: HashMap<PathBuf, String>,
     remote: Option<DocMeta>,
@@ -404,24 +456,35 @@ impl TextWork {
                         .record;
                 }
                 TextAction::Enable | TextAction::Push | TextAction::Repair => {
+                    let creating = previous.cloud_version == 0;
+                    let recovered = creating
+                        && self.remote.as_ref().is_some_and(|r| {
+                            !r.shared && r.version >= 1 && r.hash.as_deref() == Some(hash.as_str())
+                        });
                     let same_content = previous.state == SyncState::Synced
                         && previous.content_hash.as_deref() == Some(hash.as_str());
                     let remote_matches = self.remote.as_ref().is_none_or(|r| {
                         r.version > previous.cloud_version
-                            || r.hash.as_deref() == Some(hash.as_str())
+                            || r.hash.as_deref().is_none_or(|remote| remote == hash)
                     });
-                    if self.action == TextAction::Enable
+                    if recovered {
+                        self.binding.record.cloud_version = self.remote.as_ref().unwrap().version;
+                        self.binding.record.content_hash = Some(hash);
+                        self.binding.record.state = SyncState::Synced;
+                        self.binding.record.last_synced_at = Some(chrono::Utc::now().to_rfc3339());
+                        self.binding.pending_area = None;
+                    } else if self.action == TextAction::Enable
                         || !same_content
                         || (self.action == TextAction::Repair && !remote_matches)
                     {
-                        let (record, result) = if self.action == TextAction::Enable {
+                        let (record, result) = if self.action == TextAction::Enable || creating {
                             engine
                                 .sync_on_in_area(
                                     &previous,
                                     &name,
                                     &text,
                                     viewer,
-                                    self.area.as_deref(),
+                                    self.binding.pending_area.as_deref(),
                                 )
                                 .await
                         } else {
@@ -429,7 +492,10 @@ impl TextWork {
                         };
                         self.binding.record = record;
                         status = match result {
-                            PushResult::Ok { .. } => None,
+                            PushResult::Ok { .. } => {
+                                self.binding.pending_area = None;
+                                None
+                            }
                             PushResult::Conflict { .. } => {
                                 Some("This document has a newer cloud copy.".into())
                             }
@@ -511,7 +577,7 @@ impl Workspace {
         if self.cloud.suspend_push {
             return;
         }
-        let Some(binding) = self.cloud.bindings.get(path) else {
+        let Some(mut binding) = self.cloud.bindings.get(path).cloned() else {
             return;
         };
         if !matches!(
@@ -521,6 +587,16 @@ impl Workspace {
         {
             return;
         }
+        if self.doc.as_ref().is_some_and(|doc| {
+            (&doc.path == path) && matches!(&doc.kind,
+                DocKind::Text { saved, .. } if binding.record.content_hash.as_deref() != Some(sync::hash_content(saved).as_str()))
+        }) {
+            binding.record.state = SyncState::Unpushed;
+            if let Err(error) = self.store_binding(path, binding.clone()) {
+                self.cloud.notice = Some(error);
+                return;
+            }
+        }
         if self.cloud.busy.contains(path) {
             self.cloud.queued.insert(path.to_owned());
             return;
@@ -528,7 +604,7 @@ impl Workspace {
         if self
             .cloud
             .scope(binding.origin())
-            .is_none_or(|scope| !scope.matches(binding))
+            .is_none_or(|scope| !scope.matches(&binding))
         {
             let mut binding = binding.clone();
             binding.record.state = SyncState::Unpushed;
@@ -582,6 +658,16 @@ impl Workspace {
                 },
             )
         });
+        if action == TextAction::Enable && binding.record.cloud_doc_id.is_none() {
+            binding.record.cloud_doc_id = Some(sync::reserve_document_id());
+            binding.record.state = SyncState::Unpushed;
+            binding.pending_area = self.cloud.area.clone();
+            if let Err(error) = self.store_binding(&path, binding.clone()) {
+                self.cloud.notice = Some(error);
+                cx.notify();
+                return;
+            }
+        }
         if action != TextAction::Enable && binding.record.cloud_doc_id.is_none() {
             return;
         }
@@ -600,7 +686,6 @@ impl Workspace {
             path: path.clone(),
             binding,
             remote,
-            area: self.cloud.area.clone(),
             roots: self
                 .registry
                 .as_ref()
@@ -854,11 +939,15 @@ impl Workspace {
                 {
                     return None;
                 }
-                let remote = self.cloud.remote(path)?;
-                (remote.version <= binding.record.cloud_version
-                    && (!remote.shared || remote.role == Some(Role::Editor))
-                    && path.is_file())
-                .then(|| path.clone())
+                let remote = self.cloud.remote(path);
+                ((binding.record.cloud_version == 0 && binding.record.cloud_doc_id.is_some())
+                    || remote.is_some_and(|remote| {
+                        remote.version <= binding.record.cloud_version
+                            && (!remote.shared || remote.role == Some(Role::Editor))
+                    }))
+                .then_some(path)
+                .filter(|p| p.is_file())
+                .cloned()
             })
             .collect();
         paths.sort();

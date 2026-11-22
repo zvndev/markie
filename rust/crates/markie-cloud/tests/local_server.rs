@@ -102,8 +102,11 @@ async fn cloud_sync_assets_links_and_office_bytes() {
     std::fs::create_dir(dir.path().join("media")).unwrap();
     let png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
     std::fs::write(dir.path().join("media/test.png"), png).unwrap();
-    let (first, result) = engine.sync_on(&SyncRecord::default(), "source.md", content, false).await;
+    let id = markie_cloud::sync::reserve_document_id();
+    let reserved = SyncRecord { cloud_doc_id: Some(id.clone()), state: SyncState::Unpushed, ..Default::default() };
+    let (first, result) = engine.sync_on(&reserved, "source.md", content, false).await;
     assert_eq!(result, PushResult::Ok { version: 1 });
+    assert_eq!(first.cloud_doc_id.as_deref(), Some(id.as_str()));
     let (target, _) = engine.sync_on(&SyncRecord::default(), "target.md", "# Target\n", false).await;
     let id = first.cloud_doc_id.as_deref().unwrap();
     let target_id = target.cloud_doc_id.unwrap();
@@ -114,6 +117,8 @@ async fn cloud_sync_assets_links_and_office_bytes() {
         let media = assets::revalidate(&docs, &cache, &uid, &env.base, id, "media/test.png").await.unwrap();
         assert_eq!(std::fs::read(media).unwrap(), png);
     }
+    let etag = docs.fetch_asset(id, "media/test.png", None).await.unwrap().etag.unwrap();
+    assert_eq!(docs.fetch_asset(id, "media/test.png", Some(&etag)).await.unwrap().status, 304);
     let pointers = links::resolve(&note, content, |p| p.ends_with("target.md").then(|| target_id.clone()));
     let posted = links::reconcile(&docs, id, 1, &pointers, &Default::default()).await.unwrap();
     assert!(posted.refused.is_none());
@@ -146,6 +151,9 @@ async fn cloud_sync_assets_links_and_office_bytes() {
     assert!(response.ok());
     assert_eq!(response.bytes, updated);
     office.revoke_link(id, &link.id).await.unwrap();
+    let revoked = client.call(markie_cloud::client::Call::new(markie_cloud::http::Method::Get,
+        &format!("/api/document-platform/links/{}/download", link.token)).anonymous()).await.unwrap();
+    assert_eq!(revoked.status, 404);
     let links = office.links(id).await.unwrap();
     assert!(links["links"][0]["revokedAt"].is_number());
     eprintln!("office create, list, replace, history, stale version, download and revoke passed");

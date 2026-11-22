@@ -108,6 +108,8 @@ struct Live {
     /// Peers' cursor JSON as last seen, and when it last moved.
     cursors: HashMap<u64, (Value, Value, Instant)>,
     last_sel: (u64, u64),
+    /// Whether our caret is in the room's awareness now.
+    published: bool,
     _pump: Task<()>,
     _timer: Option<Task<()>>,
     _observe: Option<Subscription>,
@@ -132,6 +134,9 @@ pub(super) struct Collab {
     pub peers: Vec<Peer>,
     /// The session ended in a way that keeps it off for this document.
     live_unavailable: bool,
+    /// Whether the rich editor has focus (y-tiptap publishes the caret only
+    /// then).
+    rich_focused: bool,
     run: u64,
     /// Whether this module made Source read-only.
     source_locked: bool,
@@ -470,6 +475,7 @@ impl Workspace {
             front_matter,
             cursors: HashMap::new(),
             last_sel: (u64::MAX, u64::MAX),
+            published: false,
             _pump: pump,
             _timer: None,
             _observe: observe,
@@ -702,6 +708,7 @@ impl Workspace {
         }
         self.apply_lock(cx);
         self.live_presence(cx);
+        self.live_selection(cx);
         self.cloud_comments_open(cx);
         cx.notify();
     }
@@ -748,20 +755,48 @@ impl Workspace {
         });
     }
 
-    /// Publish our caret when it moves (y-prosemirror's cursor plugin).
+    /// Publish our caret when it moves, and only while the editor has focus;
+    /// without focus, take it out of awareness (y-tiptap's
+    /// `updateCursorInfo`, run on every update and on focusin/focusout).
     fn live_selection(&mut self, cx: &mut Context<Self>) {
+        let focused = self.collab.rich_focused;
         let Some(live) = self.collab.live.as_mut() else { return };
         if live.stage != Stage::Ready || live.revoked {
             return;
         }
         let Room::Rich(binding) = &live.room else { return };
+        if !focused {
+            if live.published {
+                live.published = false;
+                live.last_sel = (u64::MAX, u64::MAX);
+                live.session.set_cursor(None);
+            }
+            return;
+        }
         let ed = &self.rich.read(cx).editor;
         let key = (ed.sel_version, ed.version);
-        if key == live.last_sel {
+        if key == live.last_sel && live.published {
             return;
         }
         live.last_sel = key;
+        live.published = true;
         live.session.set_cursor(binding.cursor_for(ed));
+    }
+
+    /// Follow the rich editor's focus, for `live_selection`.
+    pub(super) fn watch_rich_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
+        let handle = self.rich.read(cx).focus_handle().clone();
+        self.collab.rich_focused = handle.contains_focused(window, cx);
+        vec![
+            cx.on_focus_in(&handle, window, |this, _, cx| {
+                this.collab.rich_focused = true;
+                this.live_selection(cx);
+            }),
+            cx.on_focus_out(&handle, window, |this, _, _, cx| {
+                this.collab.rich_focused = false;
+                this.live_selection(cx);
+            }),
+        ]
     }
 
     /// A local edit in the rich editor: into the room, as the smallest change.

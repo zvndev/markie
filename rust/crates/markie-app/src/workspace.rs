@@ -267,6 +267,8 @@ impl Workspace {
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
+        let focus = this.watch_rich_focus(window, cx);
+        this._subscriptions.extend(focus);
         this.start_agent_bridge(window, cx);
         this.start_cloud_poll(cx);
         if let Some(reg) = &this.registry {

@@ -116,9 +116,48 @@ pub fn live_roots(reg: &Registry) -> Vec<PathBuf> {
     reg.roots().unwrap_or_default().into_iter().filter(|p| p.is_dir()).collect()
 }
 
+/// `ensureDefaultWorkspaceRoot` (`src/lib/workspace-default.ts`): with no
+/// live root registered, `createDefaultRoot` makes `default_root`
+/// (`~/Documents/Markie`) and registers it. Returns the live roots and whether
+/// the default was created.
+pub fn ensure_default_root(reg: &Registry, default_root: &Path) -> anyhow::Result<(Vec<PathBuf>, bool)> {
+    let known = live_roots(reg);
+    if !known.is_empty() {
+        return Ok((known, false));
+    }
+    std::fs::create_dir_all(default_root)?;
+    reg.add_root(default_root)?;
+    let refreshed = live_roots(reg);
+    Ok((if refreshed.is_empty() { vec![default_root.to_path_buf()] } else { refreshed }, true))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_root_is_made_only_when_no_live_root_is_registered() {
+        let dir = tempfile::tempdir().unwrap();
+        let default = dir.path().join("Documents/Markie");
+        let reg = Registry::in_memory().unwrap();
+        // A registered folder that was deleted outside the app does not count.
+        reg.add_root(&dir.path().join("gone")).unwrap();
+        let (roots, created) = ensure_default_root(&reg, &default).unwrap();
+        assert!(created);
+        assert!(default.is_dir());
+        assert_eq!(roots, vec![default.clone()]);
+        let (again, created) = ensure_default_root(&reg, &default).unwrap();
+        assert!(!created);
+        assert_eq!(again, vec![default.clone()]);
+
+        let other = Registry::in_memory().unwrap();
+        let mine = dir.path().join("mine");
+        std::fs::create_dir_all(&mine).unwrap();
+        other.add_root(&mine).unwrap();
+        let elsewhere = dir.path().join("elsewhere/Markie");
+        assert_eq!(ensure_default_root(&other, &elsewhere).unwrap(), (vec![mine], false));
+        assert!(!elsewhere.exists(), "an existing root means nothing is created");
+    }
 
     #[test]
     fn names_are_sanitized() {
@@ -160,5 +199,78 @@ mod tests {
         remove_root(&root, &reg).unwrap();
         assert!(live_roots(&reg).is_empty());
         assert!(root.join("b/one.md").exists(), "removing a folder deletes nothing");
+    }
+}
+
+/// `electron/examples.js`: the examples offered once into Markie's own folder.
+pub const EXAMPLES: [(&str, &str, &str); 1] = [("darkmown-welcome-v1", "Welcome to Darkmown.wd", include_str!("welcome-darkmown.wd"))];
+
+/// `seedExamples`: write each example not yet offered into `root`, never over
+/// a file of the same name, and remember it in `marker`
+/// (`seeded-examples.json`, `{ "seeded": [ids] }`). Nothing happens when the
+/// folder is missing. Returns the paths written.
+pub fn seed_examples(root: &Path, marker: &Path) -> Vec<PathBuf> {
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    let mut seeded: Vec<String> = std::fs::read_to_string(marker)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("seeded").and_then(|s| s.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()))
+        .unwrap_or_default();
+    let mut written = Vec::new();
+    let mut changed = false;
+    for (id, name, content) in EXAMPLES {
+        if seeded.iter().any(|s| s == id) {
+            continue;
+        }
+        let target = root.join(name);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&target) {
+            Ok(mut f) => {
+                use std::io::Write as _;
+                if f.write_all(content.as_bytes()).is_err() {
+                    continue;
+                }
+                written.push(target);
+            }
+            // "wx" refuses to replace a file the user already has.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => continue,
+        }
+        seeded.push(id.to_string());
+        changed = true;
+    }
+    if changed {
+        if let Some(dir) = marker.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(marker, serde_json::to_string_pretty(&serde_json::json!({ "seeded": seeded })).unwrap_or_default());
+    }
+    written
+}
+
+#[cfg(test)]
+mod example_tests {
+    use super::*;
+
+    #[test]
+    fn the_darkmown_example_is_offered_once_and_never_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, marker) = (dir.path().join("Markie"), dir.path().join("data/seeded-examples.json"));
+        assert!(seed_examples(&root, &marker).is_empty(), "no folder, nothing written");
+        std::fs::create_dir_all(&root).unwrap();
+        let written = seed_examples(&root, &marker);
+        assert_eq!(written, vec![root.join("Welcome to Darkmown.wd")]);
+        assert!(std::fs::read_to_string(&written[0]).unwrap().starts_with("---\ntitle: Welcome to Darkmown\n---"));
+        std::fs::remove_file(&written[0]).unwrap();
+        assert!(seed_examples(&root, &marker).is_empty(), "offered once: a deleted example stays deleted");
+
+        let other = dir.path().join("Other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("Welcome to Darkmown.wd"), "mine").unwrap();
+        let marker2 = dir.path().join("m2.json");
+        assert!(seed_examples(&other, &marker2).is_empty());
+        assert_eq!(std::fs::read_to_string(other.join("Welcome to Darkmown.wd")).unwrap(), "mine");
+        assert!(std::fs::read_to_string(&marker2).unwrap().contains("darkmown-welcome-v1"));
     }
 }

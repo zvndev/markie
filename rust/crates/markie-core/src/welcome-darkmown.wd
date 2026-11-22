@@ -1,0 +1,42 @@
+---
+title: Welcome to Darkmown
+---
+
+# Welcome to Darkmown
+
+Darkmown is Markdown that can do things. This file is plain text you can read in any editor, and in Markie it becomes a small working document.
+
+Choose **View > Darkmown Source and Preview** to see the source beside the result. The preview starts switched off: trust this document to turn its controls on. Nothing here goes online.
+
+## A counter
+
+:state cups = 0
+:computed ounces = cups * 8
+
+You have had { cups } cups of water today, about { ounces } ounces.
+
+:button "Add a cup" -> cups++
+:button "Start over" -> cups reset
+
+## A quick estimate
+
+:state hours = 6
+:state rate = 120
+:computed total = hours * rate
+
+:slider hours min=1 max=40 step=1
+
+{ hours } hours at { rate } an hour comes to { total }.
+
+## A small form
+
+:form into visitor
+:input name placeholder="Your name"
+:submit "Say hello"
+:endform
+
+Hello, { visitor.name }.
+
+## How it saves
+
+Markie saves the source you see in Source view. Counts, slider positions and form answers are temporary preview state, so they reset when you open the file again. Edit the lines that start with a colon to change what the document does.

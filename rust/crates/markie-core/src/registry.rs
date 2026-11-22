@@ -103,6 +103,13 @@ impl Registry {
                record TEXT NOT NULL
              );",
         )?;
+        // registry.js's v1 (md_meta, project_*) and v2 (projects) tables,
+        // created idempotently, and the PRAGMA they are guarded by.
+        crate::projects::store::ensure_tables(&db)?;
+        let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version < 2 {
+            db.pragma_update(None, "user_version", 2)?;
+        }
         Ok(Self { db })
     }
 
@@ -341,6 +348,21 @@ mod tests {
         let snap = IndexSnapshot::default();
         reg.save_snapshot(&snap).unwrap();
         assert!(reg.load_snapshot().unwrap().is_some());
+    }
+
+    #[test]
+    fn user_version_is_two_with_the_project_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("registry.db");
+        for _ in 0..2 {
+            let reg = Registry::open(&path).unwrap();
+            let v: i64 = reg.conn().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+            assert_eq!(v, 2);
+            for table in ["md_meta", "project_pins", "project_blocks", "project_assignments", "projects_config", "projects"] {
+                let n: i64 = reg.conn().query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1", [table], |r| r.get(0)).unwrap();
+                assert_eq!(n, 1, "{table}");
+            }
+        }
     }
 
     #[test]

@@ -115,7 +115,7 @@ async fn cloud_sync_assets_links_and_office_bytes() {
     let cache = dir.path().join("cache");
     for _ in 0..2 {
         let cache = markie_cloud::asset_cache::AssetCache::for_account(&cache, &uid, &env.base).unwrap();
-        let media = assets::revalidate(&docs, &cache, id, "media/test.png").await.unwrap();
+        let media = assets::revalidate(&docs, &cache, &uid, &env.base, id, "media/test.png").await.unwrap();
         assert_eq!(std::fs::read(media).unwrap(), png);
     }
     let etag = docs.fetch_asset(id, "media/test.png", None).await.unwrap().etag.unwrap();

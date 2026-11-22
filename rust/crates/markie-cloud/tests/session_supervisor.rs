@@ -41,6 +41,19 @@ impl TicketSource for Tickets {
     }
 }
 
+/// A server from before tickets: no ticket route, and a session token to
+/// fall back on (or none, when signed out).
+struct LegacyTickets(Option<&'static str>);
+
+impl TicketSource for LegacyTickets {
+    fn ticket(&self) -> Pin<Box<dyn Future<Output = CollabTicketAnswer> + Send + '_>> {
+        Box::pin(async { CollabTicketAnswer::Legacy })
+    }
+    fn legacy_token(&self) -> Option<String> {
+        self.0.map(str::to_string)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Then {
     /// Sync, then drop the TCP connection without a close frame.
@@ -164,10 +177,38 @@ async fn a_blip_on_the_first_ticket_is_retried_and_a_refusal_is_unavailable() {
     let s2 = LiveSession::start(&tokio::runtime::Handle::current(), &srv.origin, "doc-4", Doc::new(), refused, opts());
     assert!(s2.wait_for(Duration::from_secs(5), |s| s.status().is_final()).await);
     assert_eq!(s2.status(), LiveStatus::Unavailable);
-    let legacy = Tickets::new(vec![CollabTicketAnswer::Legacy]);
-    let s3 = LiveSession::start(&tokio::runtime::Handle::current(), &srv.origin, "doc-5", Doc::new(), legacy, opts());
+    // No session to fall back on: nothing to connect with.
+    let s3 = LiveSession::start(&tokio::runtime::Handle::current(), &srv.origin, "doc-5", Doc::new(), Arc::new(LegacyTickets(None)), opts());
     assert!(s3.wait_for(Duration::from_secs(5), |s| s.status().is_final()).await);
-    assert_eq!(s3.status(), LiveStatus::Unavailable, "never a token in a URL");
+    assert_eq!(s3.status(), LiveStatus::Unavailable);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_from_before_tickets_takes_the_session_token() {
+    // connectWithTicket: a "legacy" answer (no such route) connects with
+    // `params = { token }` and never asks for a ticket again, reconnects
+    // included.
+    let srv = server(vec![Then::Drop, Then::Serve]).await;
+    let s = LiveSession::start(&tokio::runtime::Handle::current(), &srv.origin, "doc-legacy", Doc::new(), Arc::new(LegacyTickets(Some("session-token"))), opts());
+    assert!(s.wait_for(Duration::from_secs(10), |s| s.synced() && s.history().1 >= 2).await);
+    let urls: Vec<String> = srv.urls.lock().unwrap().iter().map(|(_, u)| u.clone()).collect();
+    assert_eq!(urls[..2], ["/collab/doc-legacy?token=session-token", "/collab/doc-legacy?token=session-token"]);
+    s.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_that_never_writes_the_stored_copy_leaves_the_field_out() {
+    // useLiveRoom sets markieSnapshotWriter only when it offers; the desktop
+    // passes offer: false, so its presence carries no such field.
+    let srv = server(vec![Then::Serve]).await;
+    let mut o = opts();
+    o.offer_snapshot_writer = false;
+    let s = LiveSession::start(&tokio::runtime::Handle::current(), &srv.origin, "doc-desk", Doc::new(), Tickets::new(vec![]), o);
+    assert!(s.wait_for(Duration::from_secs(5), |s| s.synced()).await);
+    let ours = s.states().into_iter().find(|(id, _)| *id == s.client_id()).unwrap().1;
+    assert!(ours.get("markieSnapshotWriter").is_none(), "{ours}");
+    assert_eq!(ours["user"]["name"], "Rust");
+    s.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

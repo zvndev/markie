@@ -19,8 +19,8 @@ pub fn is_transient(answer: &CollabTicketAnswer) -> bool {
 pub enum FirstTicket {
     Connect(String),
     RetryAfterMs(u64),
-    /// A server from before tickets. This client does not put a session token
-    /// in a URL, so live editing is unavailable there.
+    /// A server from before tickets ("no such route"): the socket takes the
+    /// session token instead, as connectWithTicket does.
     Legacy,
     Unavailable,
 }

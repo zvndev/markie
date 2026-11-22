@@ -369,48 +369,72 @@ pub async fn reconcile(
     })
 }
 
-/// Cache an asset under the RS data directory, keeping a short validation
-/// lease like Electron before asking the account's server again.
+/// Downloads and revalidates references in the single shared media cache.
 pub async fn revalidate(
     docs: &DocsClient<'_>,
     cache: &crate::asset_cache::AssetCache,
+    account: &str,
+    origin: &str,
     id: &str,
     reference: &str,
 ) -> Result<PathBuf> {
     let expected = mime(reference).ok_or(CloudError::Refused)?;
-    let key = format!("{id}\t{reference}");
+    let key = cache.key(account, origin, id, reference).ok_or(CloudError::StaleSession)?;
+    let lock = cache.request(&key);
+    let mut request = lock.lock().await;
+    docs.check_asset_scope(account, origin)?;
     let now = markie_core::clock::now_ms();
-    let bad_cache = |_: std::io::Error| CloudError::Unreadable;
-    let previous = cache.lookup(&key, now, false).map_err(bad_cache)?;
-    if let Some((path, entry)) = &previous && entry.fresh(now) {
-        return Ok(path.clone());
-    }
-    let tag = previous.as_ref().map(|(_, e)| format!("\"{}\"", e.hash));
-    let retained = || cache.lookup(&key, markie_core::clock::now_ms(), false).map_err(bad_cache)?
-        .map(|(path, _)| path).ok_or(CloudError::Offline);
-    let answer = match docs.fetch_asset(id, reference, tag.as_deref()).await {
-        Ok(answer) => answer,
-        Err(CloudError::Offline) => return retained(),
-        Err(error) => return Err(error),
+    let bad_cache = |error: std::io::Error| {
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            CloudError::StaleSession
+        } else {
+            CloudError::Unreadable
+        }
     };
-    if answer.status == 304 {
-        return cache.lookup(&key, markie_core::clock::now_ms(), true).map_err(bad_cache)?
-            .map(|(path, _)| path).ok_or(CloudError::Unreadable);
+    let previous = cache.lookup(&key, now, false).map_err(bad_cache)?;
+    if let Some(result) = request.as_ref() {
+        return match result {
+            Ok(_) => previous.map(|(path, _)| path).ok_or(CloudError::Unreadable),
+            Err(error) => Err(error.clone()),
+        };
     }
-    if matches!(answer.status, 401 | 403 | 404 | 410) {
-        cache.forget(&key).map_err(bad_cache)?;
-    } else if answer.status >= 500 {
-        return retained();
-    }
-    let answer = answer.into_ok()?;
-    let tag = answer.etag.as_deref().ok_or(CloudError::Unreadable)?;
-    let hash = parse_etag(tag).ok_or(CloudError::Unreadable)?;
-    if answer.content_type.as_deref() != Some(expected)
-        || answer.bytes.len() > MAX_ASSET_BYTES
-    {
-        return Err(CloudError::Unreadable);
-    }
-    cache.store(key, expected, hash, &answer.bytes, markie_core::clock::now_ms()).map_err(bad_cache)
+    let result = async {
+        if let Some((path, entry)) = &previous && entry.fresh(now) { return Ok(path.clone()); }
+        let tag = previous.as_ref().map(|(_, entry)| format!("\"{}\"", entry.hash));
+        let retain = |failure| {
+            docs.check_asset_scope(account, origin)?;
+            cache.lookup(&key, markie_core::clock::now_ms(), false).map_err(bad_cache)?
+                .map(|(path, _)| path).ok_or(failure)
+        };
+        let answer = match docs.fetch_asset(id, reference, tag.as_deref()).await {
+            Ok(answer) => answer,
+            Err(error @ (CloudError::Offline | CloudError::TooLarge)) => return retain(error),
+            Err(error) => return Err(error),
+        };
+        if answer.status == 304 {
+            return cache.lookup(&key, markie_core::clock::now_ms(), true).map_err(bad_cache)?
+                .map(|(path, _)| path).ok_or(CloudError::Unreadable);
+        }
+        if matches!(answer.status, 401 | 403 | 404 | 410) {
+            cache.forget(&key).map_err(bad_cache)?;
+        } else if answer.status >= 500 {
+            return retain(answer.into_ok().unwrap_err());
+        }
+
+        let answer = answer.into_ok()?;
+        let Some(hash) = answer.etag.as_deref().and_then(parse_etag) else { return retain(CloudError::Unreadable) };
+        if answer.content_type.as_deref() != Some(expected) || answer.bytes.len() > MAX_ASSET_BYTES {
+            return retain(CloudError::Unreadable);
+        }
+        // A failed replacement does not displace a good retained copy. The cache
+        // checks the session generation before serving or committing either one.
+        match cache.store(key.clone(), expected, hash, &answer.bytes, markie_core::clock::now_ms()).map_err(bad_cache) {
+            Err(CloudError::Unreadable) => retain(CloudError::Unreadable),
+            result => result,
+        }
+    }.await;
+    *request = Some(result.clone());
+    result
 }
 
 fn parse_etag(tag: &str) -> Option<&str> {
@@ -441,6 +465,93 @@ mod tests {
 <img data-src="ignored.png" SRC='other.svg'> ![](https://a/x.png) ![](a%20b.png)"#;
         let src = format!("{src}\n\x60![](code.png)\x60\n~~~\n![](fence.png)\n~~~");
         assert_eq!(references(&src), ["clip.mp4", "a b.png", "other.svg"]);
+    }
+
+    #[tokio::test]
+    async fn asset_cache_revalidates_retains_and_forgets_like_electron() {
+        use crate::asset_cache::{AssetCache, CACHE_VALID_FOR};
+        use crate::client::CloudClient;
+        use crate::origin::Trust;
+        use crate::tokens::{MemoryTokenStore, Session, TokenStore};
+        use std::sync::{Arc, RwLock};
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let origin = server.uri();
+        let tokens = Arc::new(MemoryTokenStore::new());
+        tokens.put(&origin, Some(&Session { token: "synthetic".into(), user_id: Some("alice".into()) })).unwrap();
+        let trust = Arc::new(RwLock::new(Trust::new([], true)));
+        let client = CloudClient::new(&origin, trust, tokens, crate::http::Transport::new()).unwrap();
+        let docs = DocsClient::new(&client);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AssetCache::for_account(dir.path(), "alice", &origin).unwrap();
+        let key = cache.key("alice", &origin, "doc_1", "pic.png").unwrap();
+        let hash = hash_content("synthetic asset");
+        let tag = format!("\"{hash}\"");
+        let stale_at = || markie_core::clock::now_ms() - CACHE_VALID_FOR.as_millis() as i64 - 1;
+        let seed = || cache.store(key.clone(), "image/png", &hash, b"synthetic asset", stale_at()).unwrap();
+        let retained = seed();
+        Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+            .respond_with(ResponseTemplate::new(304)).expect(1).mount(&server).await;
+        for _ in 0..2 {
+            assert_eq!(revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png").await.unwrap(), retained);
+        }
+        server.verify().await;
+        server.reset().await;
+        seed();
+        Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+            .respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_millis(25)))
+            .expect(1).mount(&server).await;
+        let fetch = || revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png");
+        let (first, second) = tokio::join!(fetch(), fetch());
+        assert_eq!(first.unwrap(), retained);
+        assert_eq!(second.unwrap(), retained);
+        assert!(!cache.lookup(&key, markie_core::clock::now_ms(), false).unwrap().unwrap().1.fresh(markie_core::clock::now_ms()));
+        server.verify().await;
+        server.reset().await;
+        Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+            .respond_with(ResponseTemplate::new(200).insert_header("content-type", "image/png")
+                .insert_header("etag", tag.as_str()).set_body_bytes(b"wrong bytes".to_vec()))
+            .expect(1).mount(&server).await;
+        assert_eq!(revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png").await.unwrap(), retained);
+        assert_eq!(fs::read(&retained).unwrap(), b"synthetic asset");
+        server.verify().await;
+        for status in [401, 403, 404, 410] {
+            server.reset().await;
+            seed();
+            Mock::given(method("GET")).and(path("/api/docs/doc_1/assets/file")).and(header("if-none-match", tag.as_str()))
+                .respond_with(ResponseTemplate::new(status)).expect(1).mount(&server).await;
+            assert_eq!(revalidate(&docs, &cache, "alice", &origin, "doc_1", "pic.png").await.unwrap_err().status(), Some(status));
+            assert!(!retained.exists());
+            server.verify().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn an_offline_copy_still_requires_an_active_account() {
+        use crate::asset_cache::{AssetCache, CACHE_VALID_FOR};
+        use crate::client::CloudClient;
+        use crate::origin::Trust;
+        use crate::tokens::{MemoryTokenStore, Session, TokenStore};
+        use std::sync::{Arc, RwLock};
+
+        let origin = "http://127.0.0.1:0";
+        let tokens = Arc::new(MemoryTokenStore::new());
+        tokens.put(origin, Some(&Session { token: "synthetic".into(), user_id: Some("alice".into()) })).unwrap();
+        let trust = Arc::new(RwLock::new(Trust::new([], true)));
+        let client = CloudClient::new(origin, trust, tokens.clone(), crate::http::Transport::new()).unwrap();
+        let docs = DocsClient::new(&client);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AssetCache::for_account(dir.path(), "alice", origin).unwrap();
+        let key = cache.key("alice", origin, "doc_1", "pic.png").unwrap();
+        let cached = cache.store(
+            key, "image/png", &hash_content("synthetic asset"), b"synthetic asset",
+            markie_core::clock::now_ms() - CACHE_VALID_FOR.as_millis() as i64 - 1,
+        ).unwrap();
+        assert_eq!(revalidate(&docs, &cache, "alice", origin, "doc_1", "pic.png").await.unwrap(), cached);
+        tokens.put(origin, None).unwrap();
+        assert_eq!(revalidate(&docs, &cache, "alice", origin, "doc_1", "pic.png").await.unwrap_err(), CloudError::NotSignedIn);
     }
 
     #[test]

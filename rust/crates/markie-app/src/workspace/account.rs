@@ -406,7 +406,8 @@ impl AccountStore {
     /// Sign out here at once, and end the session at the server too.
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         self.ticket += 1;
-        let _ = markie_cloud::asset_cache::AssetCache::clear(&markie_core::paths::data_dir().join("asset-cache"));
+        use markie_cloud::asset_cache::{AssetCache, CACHE_DIRECTORY};
+        let _ = AssetCache::clear(&markie_core::paths::data_dir().join(CACHE_DIRECTORY));
         self.status = AuthStatus::Out;
         self.identities = None;
         self.docs = None;
@@ -418,6 +419,12 @@ impl AccountStore {
                 eprintln!("markie-rs: sign-out did not reach the server: {e}");
             }
         });
+    }
+
+    /// Sign-out hides cached assets immediately, even while the server is
+    /// still ending the session and holds the token for that final request.
+    pub(super) fn cache_excluded_origin(&self) -> Option<&str> {
+        matches!(self.status, AuthStatus::Out).then_some(self.config.origin.as_str())
     }
 
     /// The browser start URL with a fresh single-use nonce, or None.

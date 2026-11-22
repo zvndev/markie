@@ -166,4 +166,16 @@ impl<'a> DocsClient<'a> {
         call.if_none_match = if_none_match;
         self.client.call(call).await
     }
+
+    /// A cache hit must not bypass the current origin and account checks.
+    pub(crate) fn check_asset_scope(&self, account: &str, origin: &str) -> Result<()> {
+        if self.client.origin() != origin || !self.client.trusted() {
+            return Err(CloudError::NotTrusted);
+        }
+        let session = self.client.session().ok_or(CloudError::NotSignedIn)?;
+        if session.user_id.as_deref() != Some(account) {
+            return Err(CloudError::StaleSession);
+        }
+        Ok(())
+    }
 }

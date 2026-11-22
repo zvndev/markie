@@ -85,7 +85,7 @@ impl Scope {
     pub(super) fn matches(&self, binding: &Binding) -> bool {
         self.user == binding.user && self.origin() == binding.origin()
     }
-    fn engine(&self) -> SyncEngine<'_> {
+    pub(super) fn engine(&self) -> SyncEngine<'_> {
         SyncEngine::new(&self.client, self.origin() == DEFAULT_SERVER)
     }
 }
@@ -127,6 +127,31 @@ pub(super) struct CloudWorkspace {
     suspend_push: bool,
     queued: HashSet<PathBuf>,
     cursors: HashMap<String, usize>,
+    /// The update strip's busy and error state (page.tsx `updateBusy`,
+    /// `updateError`), for the document it was shown for.
+    pub update: super::cloud_strip::UpdateState,
+    /// Files whose unsaved buffer the person chose to replace with the cloud
+    /// copy ("Pull and overwrite").
+    pub overwrite_buffer: HashSet<PathBuf>,
+    /// When the last background repair pass ran (`reconcileIfDue`).
+    last_reconcile: Option<std::time::Instant>,
+    /// The window has focus: the update check runs on focus and on a timer
+    /// only while focused, so a backgrounded Markie makes no requests.
+    pub window_active: bool,
+    /// The window can be seen (`!document.hidden`): cloud comments poll only
+    /// then.
+    pub window_visible: bool,
+    /// The share gate's "Upload destination" for the next Turn sync on;
+    /// None uses the Cloud page's area.
+    pub enable_area: Option<Option<String>>,
+    /// Settings > Advanced > Servers (`servers_setting.rs`).
+    pub servers_ui: super::servers_setting::ServersUi,
+    /// Origins closing a session but still holding the token for the final request.
+    pub media_signing_out: HashSet<String>,
+    /// The area picker's "New area" field, its request and its error.
+    pub area_input: Option<Entity<gpui_kit::component::input::InputState>>,
+    pub area_busy: bool,
+    pub area_error: Option<String>,
 }
 
 impl CloudWorkspace {
@@ -187,6 +212,17 @@ impl CloudWorkspace {
             suspend_push: false,
             queued: HashSet::new(),
             cursors: HashMap::new(),
+            update: Default::default(),
+            overwrite_buffer: HashSet::new(),
+            last_reconcile: None,
+            window_active: true,
+            window_visible: true,
+            enable_area: None,
+            servers_ui: Default::default(),
+            media_signing_out: HashSet::new(),
+            area_input: None,
+            area_busy: false,
+            area_error: None,
         }
     }
 
@@ -222,6 +258,11 @@ impl CloudWorkspace {
 
     pub fn primary_scope(&self) -> Option<Scope> {
         self.scope(&self.primary_origin())
+    }
+
+    /// The request transport, for probing a server before it is trusted.
+    pub(super) fn transport(&self) -> Transport {
+        self.transport.clone()
     }
 
     /// A client for `origin` whether or not anyone is signed in there.
@@ -347,6 +388,11 @@ impl CloudWorkspace {
     }
 }
 
+/// reconcile.js: a pass every ten minutes, 50 rows, 250 ms apart.
+const RECONCILE_EVERY: Duration = Duration::from_secs(10 * 60);
+const RECONCILE_LIMIT: usize = 50;
+const RECONCILE_GAP: Duration = Duration::from_millis(250);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TextAction {
     Enable,
@@ -355,8 +401,10 @@ pub(super) enum TextAction {
     Pause,
     Delete,
     Pull,
+    /// `docResolve(strategy: "cloud")` from the conflict dialog: take the
+    /// cloud copy over the file and the buffer, as the person was told.
+    TakeCloud,
     KeepBoth,
-    Overwrite,
 }
 
 impl TextAction {
@@ -369,7 +417,7 @@ impl TextAction {
     fn sends_text(self) -> bool {
         matches!(
             self,
-            Self::Enable | Self::Push | Self::Repair | Self::Overwrite
+            Self::Enable | Self::Push | Self::Repair
         )
     }
 }
@@ -464,8 +512,8 @@ mod tests {
             TextAction::Pause,
             TextAction::Delete,
             TextAction::Pull,
+            TextAction::TakeCloud,
             TextAction::KeepBoth,
-            TextAction::Overwrite,
         ];
         let rechecks: Vec<_> = all.into_iter().filter(|a| a.changes_sync()).collect();
         assert_eq!(rechecks, [TextAction::Enable, TextAction::Pause, TextAction::Delete]);
@@ -590,9 +638,9 @@ impl TextWork {
             let viewer = self.binding.record.share_role == Some(Role::Viewer);
             let previous = self.binding.record.clone();
             match self.action {
-                TextAction::Pull | TextAction::KeepBoth => {
+                TextAction::Pull | TextAction::TakeCloud | TextAction::KeepBoth => {
                     let keep_both = self.action == TextAction::KeepBoth;
-                    if !keep_both
+                    if self.action == TextAction::Pull
                         && previous.state != SyncState::Conflict
                         && previous.content_hash.as_deref() != Some(hash.as_str())
                     {
@@ -614,15 +662,6 @@ impl TextWork {
                         bom,
                         keep_both,
                     });
-                }
-                TextAction::Overwrite => {
-                    if viewer {
-                        return Err(sync::VIEWER_REFUSAL.into());
-                    }
-                    self.binding.record = engine
-                        .resolve_overwrite(&previous, &name, &text)
-                        .await?
-                        .record;
                 }
                 TextAction::Enable | TextAction::Push | TextAction::Repair => {
                     let creating = previous.cloud_version == 0;
@@ -832,10 +871,11 @@ impl Workspace {
                 },
             )
         });
+        let chosen_area = if action == TextAction::Enable { self.cloud.enable_area.take() } else { None };
         if action == TextAction::Enable && binding.record.cloud_doc_id.is_none() {
             binding.record.cloud_doc_id = Some(sync::reserve_document_id());
             binding.record.state = SyncState::Unpushed;
-            binding.pending_area = self.cloud.area.clone();
+            binding.pending_area = chosen_area.unwrap_or_else(|| self.cloud.area.clone());
             if let Err(error) = self.store_binding(&path, binding.clone()) {
                 self.cloud.notice = Some(error);
                 cx.notify();
@@ -901,6 +941,17 @@ impl Workspace {
                         workspace.store_binding(&path, result.binding)?;
                         Ok(result.status)
                     });
+                    if matches!(action, TextAction::Pull | TextAction::TakeCloud | TextAction::KeepBoth) {
+                        workspace.cloud_resolution_done(&path, action, outcome.as_ref().err().cloned(), None, cx);
+                    }
+                    if action == TextAction::Enable {
+                        let failed = match &outcome {
+                            Err(e) => Some(e.clone()),
+                            Ok(Some(status)) if workspace.cloud.bindings.get(&path).is_none_or(|b| b.record.state != SyncState::Synced) => Some(status.clone()),
+                            _ => None,
+                        };
+                        workspace.share_sync_done(&path, failed, cx);
+                    }
                     if action != TextAction::Repair {
                         workspace.cloud.notice = match outcome {
                             Ok(status) => status,
@@ -939,7 +990,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let current = self.doc.as_ref().is_some_and(|d| d.path == path);
-        if (current && (self.dirty || self.disk_conflict.is_some()))
+        let overwrite = self.cloud.overwrite_buffer.remove(path);
+        if (current && ((self.dirty && !overwrite) || self.disk_conflict.is_some()))
             || std::fs::symlink_metadata(path).map_or(true, |m| !m.is_file())
             || text_file(path).ok().as_ref()
                 != Some(&(write.before.clone(), write.encoding, write.bom))
@@ -961,6 +1013,10 @@ impl Workspace {
         document::save_text(path, &write.remote, write.encoding, write.bom)
             .map_err(|e| e.to_string())?;
         if current {
+            if overwrite {
+                self.dirty = false;
+                self.autosave.cancel();
+            }
             self.load_text(path, write.remote.clone(), cx);
             if self.rich_active() {
                 self.load_rich(&write.remote, cx);
@@ -975,7 +1031,13 @@ impl Workspace {
     pub(super) fn on_account_changed(&mut self, cx: &mut Context<Self>) {
         self.cloud.selection = None;
         self.cloud.area = None;
-        self.refresh_cloud(false, cx);
+        // Whose pictures the media cache holds (asset-cache.js bindSession):
+        // another account, or none, starts it empty.
+        self.refresh_cloud_resources(cx);
+        // main.js runs reconcileIfDue when a session arrives, within its
+        // ten-minute cooldown.
+        self.refresh_cloud(true, cx);
+        self.share_account_changed(cx);
         if self.doc.is_some() {
             self.collab_on_open(cx);
         }
@@ -1014,6 +1076,9 @@ impl Workspace {
         .detach();
     }
 
+    /// page.tsx checks for updates once when it mounts, then on focus and
+    /// every 60 s, but only while the window is focused: the answer is only
+    /// acted on by someone looking at the screen.
     pub(super) fn start_cloud_poll(&mut self, cx: &mut Context<Self>) {
         self.start_test_drive(cx);
         self.refresh_cloud(true, cx);
@@ -1023,7 +1088,11 @@ impl Workspace {
                     .timer(Duration::from_secs(60))
                     .await;
                 if weak
-                    .update(cx, |this, cx| this.refresh_cloud(true, cx))
+                    .update(cx, |this, cx| {
+                        if this.cloud.window_active {
+                            this.refresh_cloud(true, cx);
+                        }
+                    })
                     .is_err()
                 {
                     break;
@@ -1031,6 +1100,29 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    /// Focus starts the update check; visibility gates the comment poll
+    /// (comments.tsx pauses while `document.hidden`).
+    pub(super) fn watch_window_for_cloud(window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
+        vec![
+            cx.observe_window_activation(window, |this, window, cx| {
+                let active = window.is_window_active();
+                let gained = active && !this.cloud.window_active;
+                this.cloud.window_active = active;
+                if gained {
+                    this.refresh_cloud(true, cx);
+                }
+            }),
+            cx.observe_window_visibility(window, |this, visibility, _, cx| {
+                let visible = visibility.is_visible();
+                let shown = visible && !this.cloud.window_visible;
+                this.cloud.window_visible = visible;
+                if shown {
+                    this.cloud_comments_visible(cx);
+                }
+            }),
+        ]
     }
 
     pub(super) fn refresh_cloud(&mut self, background: bool, cx: &mut Context<Self>) {
@@ -1097,6 +1189,11 @@ impl Workspace {
             .await;
             let _ = this.update(cx, |this, cx| {
                 this.cloud.checking = false;
+                // One repair pass for every server at most every ten minutes.
+                let reconcile = background && this.cloud.last_reconcile.is_none_or(|at| at.elapsed() >= RECONCILE_EVERY);
+                if reconcile && refresh.is_ok() {
+                    this.cloud.last_reconcile = Some(std::time::Instant::now());
+                }
                 if let Ok(replies) = refresh {
                     for (scope, listing, landed) in replies {
                         if !scope.active()
@@ -1126,7 +1223,7 @@ impl Workspace {
                         this.cloud
                             .listings
                             .insert(scope.origin().to_owned(), listing);
-                        if background {
+                        if reconcile {
                             this.reconcile_cloud(&scope, cx);
                         }
                     }
@@ -1161,6 +1258,9 @@ impl Workspace {
         Ok(path)
     }
 
+    /// `reconcileIfDue`: at most one repair pass every ten minutes, riding
+    /// on the update check, up to 50 documents a pass with 250 ms between
+    /// them (reconcile.js).
     fn reconcile_cloud(&mut self, scope: &Scope, cx: &mut Context<Self>) {
         let mut paths: Vec<_> = self
             .cloud
@@ -1197,16 +1297,30 @@ impl Workspace {
         }
         let cursor = self.cloud.cursors.entry(scope.origin().into()).or_default();
         let mut offset = *cursor % paths.len();
-        let limit = paths.len().min(4);
+        let limit = paths.len().min(RECONCILE_LIMIT);
         let mut window = Vec::new();
         for _ in 0..limit {
             window.push(paths[offset].clone());
             offset = (offset + 1) % paths.len();
         }
         *cursor = offset;
-        for path in window {
-            self.cloud_text(path, TextAction::Repair, None, cx);
+        let mut window = window.into_iter();
+        if let Some(first) = window.next() {
+            self.cloud_text(first, TextAction::Repair, None, cx);
         }
+        let rest: Vec<PathBuf> = window.collect();
+        if rest.is_empty() {
+            return;
+        }
+        cx.spawn(async move |weak, cx| {
+            for path in rest {
+                cx.background_executor().timer(RECONCILE_GAP).await;
+                if weak.update(cx, |this, cx| this.cloud_text(path, TextAction::Repair, None, cx)).is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
     }
 
     pub(super) fn open_cloud_text(
@@ -1219,6 +1333,20 @@ impl Workspace {
     ) {
         if let Some(path) = self.cloud.find(&scope, &id).filter(|p| p.is_file()) {
             self.open_path(&path, window, cx);
+            return;
+        }
+        // library.tsx `open`: a document shared with you opens from Downloads
+        // with no save dialog (doc-open-shared); your own cloud copy that
+        // this device does not have asks where to put it (doc-pull).
+        let shared = self
+            .cloud
+            .listing(&scope)
+            .and_then(|l| l.docs.as_ref())
+            .and_then(|docs| docs.iter().find(|d| d.id == id))
+            .is_some_and(|d| d.shared);
+        if !shared {
+            let dir = landing_dir().unwrap_or_else(|_| super::cloud_strip::downloads_dir());
+            self.save_cloud_copy_as(scope, id, fallback, dir, window, cx);
             return;
         }
         let request = scope.clone();
@@ -1235,13 +1363,24 @@ impl Workspace {
                 {
                     return;
                 }
-                let landed = pull.and_then(|(doc, record)| {
+                let landed = pull.and_then(|(doc, mut record)| {
                     if let Some(id) = record.cloud_doc_id.as_deref()
                         && let Some(path) = this.cloud.find(&scope, id).filter(|p| p.is_file())
                     {
                         return Ok(path);
                     }
-                    this.land_cloud_doc(&scope, doc, record)
+                    let dir = super::cloud_strip::downloads_dir();
+                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                    let path = super::cloud_strip::shared_download_path(&dir, &doc.name, path_occupied)
+                        .ok_or("No unused filename for the shared document.")?;
+                    assets::create_copy(&path, doc.content.as_bytes()).map_err(|e| e.to_string())?;
+                    record.share_role = doc.role;
+                    record.share_role_user = Some(scope.user.clone());
+                    this.store_binding(&path, Binding::new(&scope.user, record))?;
+                    if let Some(registry) = &this.registry {
+                        let _ = registry.track_opened(&path);
+                    }
+                    Ok(path)
                 });
                 match landed {
                     Ok(path) => this.open_path(&path, window, cx),

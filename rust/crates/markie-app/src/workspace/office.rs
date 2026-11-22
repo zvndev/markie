@@ -44,7 +44,7 @@ impl OfficeDoc {
     }
 }
 
-fn engine_format(format: FormatKind) -> Option<Format> {
+pub(super) fn engine_format(format: FormatKind) -> Option<Format> {
     match format {
         FormatKind::Docx => Some(Format::Docx),
         FormatKind::Rtf => Some(Format::Rtf),

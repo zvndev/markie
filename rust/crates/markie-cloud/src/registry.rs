@@ -442,6 +442,21 @@ impl ServerStore {
         Ok(Probe { probe_id, already_added: self.is_trusted(&origin), origin, host, info })
     }
 
+    /// Step one split for a UI thread that cannot hold the store across the
+    /// request: the checked address and host to probe (`parseServerOrigin`).
+    pub fn probe_target(&self, input: &str) -> std::result::Result<(String, String), String> {
+        let typed = parse_server_origin(input, self.allow_dev)?;
+        Ok(if is_cloud_origin(&typed.origin) { (DEFAULT_SERVER.to_string(), host_of(DEFAULT_SERVER)) } else { (typed.origin, typed.host) })
+    }
+
+    /// ...then, with the server's answer, remember the probe for `add`.
+    pub fn record_probe(&mut self, origin: &str, host: &str, info: ServerInfo) -> Probe {
+        self.prune();
+        let probe_id = random_id();
+        self.probes.insert(probe_id.clone(), Pending { origin: origin.to_string(), info: info.clone(), at: (self.now)() });
+        Probe { probe_id, already_added: self.is_trusted(origin), origin: origin.to_string(), host: host.to_string(), info }
+    }
+
     /// Step two: the user confirmed what the probe showed them.
     pub fn add(&mut self, probe_id: &str) -> std::result::Result<Server, String> {
         self.prune();
@@ -718,6 +733,23 @@ mod tests {
         assert!(!store.is_trusted(SELF));
         assert!(!store.trust_handle().read().unwrap().is_allowed_server_origin(SELF));
         assert_eq!(ServerStore::open(Some(file), false).origins(), vec![DEFAULT_SERVER]);
+    }
+
+    #[tokio::test]
+    async fn a_split_probe_adds_like_the_whole_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ServerStore::open(Some(dir.path().join("servers.json")), false);
+        let (origin, host) = store.probe_target(&format!("{SELF}/")).unwrap();
+        assert_eq!(origin, SELF);
+        assert!(store.probe_target("not a server").is_err());
+        let info = probe_server_info(&Fake::new(200, info()), &origin).await.unwrap();
+        let probe = store.record_probe(&origin, &host, info);
+        assert!(!probe.already_added);
+        assert!(!store.is_trusted(SELF), "recording a probe is not adding");
+        store.add(&probe.probe_id).unwrap();
+        assert!(store.is_trusted(SELF));
+        let again = store.record_probe(&origin, &host, probe.info.clone());
+        assert!(again.already_added);
     }
 
     #[tokio::test]

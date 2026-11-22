@@ -67,6 +67,12 @@ pub fn room_url(ws_base: &str, doc_id: &str, ticket: &str) -> String {
     format!("{ws_base}/{}?ticket={}", crate::client::seg(doc_id), crate::client::seg(ticket))
 }
 
+/// The socket address for a room on a server from before tickets, which only
+/// takes the session token (`provider.params = { token }` in collab.ts).
+pub fn legacy_room_url(ws_base: &str, doc_id: &str, token: &str) -> String {
+    format!("{ws_base}/{}?token={}", crate::client::seg(doc_id), crate::client::seg(token))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

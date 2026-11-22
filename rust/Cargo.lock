@@ -4716,6 +4716,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "markie-export"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "html5ever",
+ "markie-math",
+ "markie-office",
+ "markup5ever_rcdom",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tempfile",
+ "two-face",
+ "url",
+]
+
+[[package]]
 name = "markie-math"
 version = "0.1.0"
 dependencies = [

@@ -266,6 +266,8 @@ impl Workspace {
         self.collab.note = None;
         self.collab.live_unavailable = false;
         self.comments_reset(cx);
+        // An owner's pinned theme belongs to the document it came with.
+        self.release_doc_theme(cx);
         self.collab_check(cx);
     }
 
@@ -366,6 +368,8 @@ impl Workspace {
             cx.notify();
             return;
         };
+        // Members read with the owner's pinned theme (page.tsx getDocTheme).
+        self.check_doc_theme(&members, &me, cx);
         let Some(cloud) = self.collab.cloud.clone() else { return };
         self.share_cloud_ready(cx);
         debug(|| format!("access {:?}, {} members", access.role, members.len()));

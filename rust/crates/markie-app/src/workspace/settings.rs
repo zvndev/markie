@@ -52,6 +52,10 @@ impl Workspace {
     /// A theme change the person made: kept here and sent to the account
     /// (`pushCloudThemes`, a no-op when signed out).
     pub(super) fn theme_changed(&self, cx: &App) {
+        // Locked while an owner's pinned theme shows (`themeLocked`).
+        if self.doc_theme_pinned() {
+            return;
+        }
         self.save_theme_store(cx);
         super::theme_sync::push_cloud_themes(cx);
     }

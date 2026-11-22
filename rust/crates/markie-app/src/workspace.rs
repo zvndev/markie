@@ -63,6 +63,7 @@ mod rail;
 mod rich;
 mod text_view;
 mod theme_sync;
+mod doc_theme;
 mod welcome;
 mod untitled;
 mod settings;
@@ -182,6 +183,10 @@ pub struct Workspace {
     /// The vault page (workspace/vault.rs), made the first time the Vault view opens.
     vault: Option<Entity<vault::VaultPage>>,
     _subscriptions: Vec<Subscription>,
+    /// The person's own theme store, kept aside while an owner's pinned
+    /// theme paints a shared document (doc_theme.rs).
+    own_theme: Option<markie_core::theme::ThemeStore>,
+    _doc_theme: Option<Task<()>>,
     /// The (document, dirty) the menu bar was last built for.
     menu_key: Option<(PathBuf, bool)>,
     /// When the device index last began a walk.
@@ -325,6 +330,8 @@ impl Workspace {
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
             menu_key: None,
+            own_theme: None,
+            _doc_theme: None,
             last_scan_at: None,
         };
         this.start_disk_poll(cx);

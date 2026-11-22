@@ -298,6 +298,20 @@ impl Workspace {
                 &p,
                 cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(CommandPalette), cx)),
             ))
+            // toolbar.tsx `themeLocked`: the owner's pinned theme shows.
+            .when(self.doc_theme_pinned(), |el| {
+                el.child(
+                    div()
+                        .id("tb-owner-theme")
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .text_color(p.muted)
+                        .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("The owner pinned their theme to this doc").build(window, cx))
+                        .child(super::dialog_chrome::stroke_icon("M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM7 11V7a5 5 0 0 1 10 0v4", p.muted, 10., 2.))
+                        .child(div().text_size(px(10.)).child("OWNER THEME")),
+                )
+            })
             // The live dot and peers' avatars (collab.rs), as toolbar.tsx.
             .children(self.render_presence(&p))
             .child(self.render_mode_switch(&p, cx))

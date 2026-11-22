@@ -119,14 +119,22 @@ impl RichView {
         let (lo, hi) = (top_visible - screen, top_visible + screen * 2.);
         let (a, h) = (self.editor.anchor.block, self.editor.head.block);
         let mut y = px(28.);
-        let mut blocks: Vec<AnyElement> = Vec::with_capacity(self.editor.block_count());
+        let mut blocks: Vec<AnyElement> = Vec::new();
+        // Consecutive off-screen blocks share one spacer: one element per
+        // block made layout cost grow with the document (4 to 5 ms a frame
+        // at 900 KB) even though only a screenful is drawn.
+        let mut gap = px(0.);
         for b in 0..self.editor.block_count() {
             let height = self.heights.get(b).copied().flatten();
             let near = height.is_none_or(|ht| y + ht >= lo && y <= hi);
             y += height.unwrap_or(px(30.));
             if !near && b != a && b != h {
-                blocks.push(div().w_full().h(height.unwrap_or(px(30.))).into_any_element());
+                gap += height.unwrap_or(px(30.));
                 continue;
+            }
+            if gap > px(0.) {
+                blocks.push(div().w_full().h(gap).into_any_element());
+                gap = px(0.);
             }
             let el = self.render_block(b, &look, window, cx);
             let store = self.store.clone();
@@ -148,6 +156,9 @@ impl RichView {
                     )
                     .into_any_element(),
             );
+        }
+        if gap > px(0.) {
+            blocks.push(div().w_full().h(gap).into_any_element());
         }
         let view = cx.entity();
         let store = self.store.clone();

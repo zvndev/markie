@@ -42,15 +42,8 @@ impl Workspace {
     }
 
     fn on_rich_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
-        let text = self.rich.read(cx).markdown();
-        self.dirty = &text != saved;
-        self.update_stats(&text);
-        if self.dirty && self.disk_conflict.is_none() {
-            self.autosave.note_change(std::time::Instant::now());
-            self.schedule_autosave(cx);
-        }
-        cx.notify();
+        // Serializing the whole document per keystroke waits for a pause.
+        self.note_edit(cx);
     }
 
     /// Leaving View for Source: Source gets the rich editor's text.

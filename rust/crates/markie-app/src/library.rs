@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use markie_core::formats::FormatKind;
 use markie_core::index::{IndexSnapshot, IndexedDoc};
-use markie_core::search::{Hit, LibraryQuery, search_library};
+use markie_core::search::{Hit, LibraryQuery, SearchIndex};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LibraryTab {
@@ -21,16 +21,49 @@ pub struct Library {
     docs: Vec<IndexedDoc>,
     recent: Vec<IndexedDoc>,
     starred: Vec<IndexedDoc>,
+    /// Lowercase keys for each list, built when the list changes, not per query.
+    docs_index: SearchIndex,
+    recent_index: SearchIndex,
+    starred_index: SearchIndex,
+    /// `format_counts` for each tab, built with the list: the sidebar draws
+    /// them every frame.
+    counts: [Vec<(FormatKind, usize)>; 3],
     query: LibraryQuery,
     hits: Vec<Hit>,
     pub scanning: bool,
     pub truncated: bool,
 }
 
+/// A snapshot with its search keys and counts built, off the main thread.
+pub struct PreparedSnapshot {
+    snapshot: IndexSnapshot,
+    index: SearchIndex,
+    counts: Vec<(FormatKind, usize)>,
+}
+
+impl PreparedSnapshot {
+    pub fn new(snapshot: IndexSnapshot) -> Self {
+        let index = SearchIndex::new(&snapshot.files);
+        let counts = count_formats(&snapshot.files);
+        Self { snapshot, index, counts }
+    }
+
+    pub fn elapsed_ms(&self) -> u128 {
+        self.snapshot.elapsed_ms
+    }
+
+    pub fn len(&self) -> usize {
+        self.snapshot.files.len()
+    }
+}
+
 impl Library {
-    pub fn set_snapshot(&mut self, snapshot: IndexSnapshot) {
+    pub fn set_snapshot(&mut self, prepared: PreparedSnapshot) {
+        let PreparedSnapshot { snapshot, index, counts } = prepared;
         self.truncated = snapshot.truncated.is_some();
         self.docs = snapshot.files;
+        self.docs_index = index;
+        self.counts[0] = counts;
         self.refresh();
     }
 
@@ -43,7 +76,14 @@ impl Library {
     pub fn set_lists(&mut self, recent: Vec<std::path::PathBuf>, starred: Vec<std::path::PathBuf>) {
         self.recent = recent.into_iter().filter_map(|p| row_for(&p)).collect();
         self.starred = starred.into_iter().filter_map(|p| row_for(&p)).collect();
-        self.refresh();
+        self.recent_index = SearchIndex::new(&self.recent);
+        self.starred_index = SearchIndex::new(&self.starred);
+        self.counts[1] = count_formats(&self.recent);
+        self.counts[2] = count_formats(&self.starred);
+        // The All tab's hits do not depend on these lists.
+        if self.tab != LibraryTab::All {
+            self.refresh();
+        }
     }
 
     pub fn set_text(&mut self, text: &str) {
@@ -77,11 +117,15 @@ impl Library {
 
     /// Formats present in the index, in display order, with their counts.
     pub fn format_counts(&self) -> Vec<(FormatKind, usize)> {
-        let mut counts: BTreeMap<FormatKind, usize> = BTreeMap::new();
-        for doc in self.source() {
-            *counts.entry(doc.format).or_default() += 1;
+        self.counts[self.tab_slot()].clone()
+    }
+
+    fn tab_slot(&self) -> usize {
+        match self.tab {
+            LibraryTab::All => 0,
+            LibraryTab::Recent => 1,
+            LibraryTab::Starred => 2,
         }
-        FormatKind::OPENABLE.iter().filter_map(|k| counts.get(k).map(|n| (*k, *n))).collect()
     }
 
     pub fn total(&self) -> usize {
@@ -105,13 +149,26 @@ impl Library {
     }
 
     fn refresh(&mut self) {
-        let mut hits = search_library(self.source(), &self.query);
+        let index = match self.tab {
+            LibraryTab::All => &self.docs_index,
+            LibraryTab::Recent => &self.recent_index,
+            LibraryTab::Starred => &self.starred_index,
+        };
+        let mut hits = index.search(self.source(), &self.query);
         if self.tab != LibraryTab::All && self.query.text.trim().is_empty() {
             // Recent keeps the registry's order (newest open first), not mtime.
             hits.sort_by_key(|h| h.index);
         }
         self.hits = hits;
     }
+}
+
+fn count_formats(docs: &[IndexedDoc]) -> Vec<(FormatKind, usize)> {
+    let mut counts: BTreeMap<FormatKind, usize> = BTreeMap::new();
+    for doc in docs {
+        *counts.entry(doc.format).or_default() += 1;
+    }
+    FormatKind::OPENABLE.iter().filter_map(|k| counts.get(k).map(|n| (*k, *n))).collect()
 }
 
 /// A Library row for a path that is not necessarily in the device index.

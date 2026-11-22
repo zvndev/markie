@@ -6,6 +6,7 @@
 mod actions;
 mod library;
 mod open_urls;
+mod perf;
 mod themes;
 mod workspace;
 
@@ -119,6 +120,7 @@ fn main() {
     });
     app.run(move |cx| {
             gpui_kit::init(cx);
+            perf::init(cx);
             bind_keys(cx);
             markie_editor::bind_keys(cx);
             set_menus(cx);

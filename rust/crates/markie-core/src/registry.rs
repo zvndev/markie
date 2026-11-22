@@ -69,6 +69,9 @@ impl Registry {
 
     fn init(db: Connection) -> Result<Self> {
         db.pragma_update(None, "journal_mode", "WAL")?;
+        // The Library snapshot is saved from a background connection; the
+        // window's own writes wait for it instead of failing.
+        db.busy_timeout(std::time::Duration::from_secs(3))?;
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS files (
                path TEXT PRIMARY KEY,

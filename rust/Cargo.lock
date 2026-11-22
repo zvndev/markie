@@ -4693,6 +4693,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs 7.0.0",
+ "memchr",
  "pulldown-cmark",
  "regex",
  "rusqlite",

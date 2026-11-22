@@ -6,7 +6,6 @@ use gpui_kit::component::{ActiveTheme, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use markie_core::stats;
 
 use super::{Mode, SidePanel, Workspace};
 
@@ -81,8 +80,8 @@ impl Workspace {
 
     pub(super) fn render_stats(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let text = self.editor.read(cx).value().to_string();
-        let s = stats::compute(&text);
+        // Counted when the text settles, not on every frame the panel is open.
+        let s = self.doc_stats;
         let rows = [
             ("Words", s.words.to_string()),
             ("Characters", s.chars.to_string()),

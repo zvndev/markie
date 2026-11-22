@@ -28,7 +28,7 @@ use markie_core::registry::Registry;
 use markie_core::{outline, paths, stats};
 
 use crate::actions::*;
-use crate::library::{Library, LibraryTab};
+use crate::library::{Library, LibraryTab, PreparedSnapshot};
 
 mod file_ops;
 mod office;
@@ -36,6 +36,10 @@ mod palette;
 mod panels;
 mod rich;
 mod settings;
+
+/// How long typing must pause before the edited marker, word count and
+/// outline catch up.
+const SETTLE_AFTER: Duration = Duration::from_millis(150);
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -84,6 +88,8 @@ pub struct Workspace {
     dirty: bool,
     words: usize,
     reading_minutes: usize,
+    /// The whole status-bar and statistics-panel count, kept with `words`.
+    doc_stats: stats::DocStats,
     sections: Vec<outline::Section>,
     history: History,
     drafts: Drafts,
@@ -91,6 +97,9 @@ pub struct Workspace {
     autosave: Autosave,
     _autosave_task: Task<()>,
     _poll_task: Task<()>,
+    /// Pending work after an edit: the exact edited marker, counts and
+    /// outline, done once typing pauses instead of on every keystroke.
+    settle_task: Option<Task<()>>,
     /// What the file says on disk when it changed under unsaved edits.
     disk_conflict: Option<String>,
     disk_missing: bool,
@@ -157,10 +166,7 @@ impl Workspace {
             _ => {}
         }
 
-        let mut library = Library::default();
-        if let Some(snapshot) = registry.as_ref().and_then(|r| r.load_snapshot().ok().flatten()) {
-            library.set_snapshot(snapshot);
-        }
+        let library = Library::default();
 
         let data_dir = paths::data_dir();
         let drafts = Drafts::new(&data_dir);
@@ -178,6 +184,7 @@ impl Workspace {
             dirty: false,
             words: 0,
             reading_minutes: 0,
+            doc_stats: stats::DocStats::default(),
             sections: Vec::new(),
             history: History::new(&data_dir),
             drafts,
@@ -185,6 +192,7 @@ impl Workspace {
             autosave: Autosave::default(),
             _autosave_task: Task::ready(()),
             _poll_task: Task::ready(()),
+            settle_task: None,
             disk_conflict: None,
             disk_missing: false,
             recovered,
@@ -223,7 +231,35 @@ impl Workspace {
             this.open_path(&path, window, cx);
         }
         this.rescan(cx);
+        this.load_saved_snapshot(cx);
         this
+    }
+
+    /// The last scan's Library, read and prepared off the main thread so a
+    /// large index never delays the first frame. A fresh scan that finishes
+    /// first wins.
+    fn load_saved_snapshot(&mut self, cx: &mut Context<Self>) {
+        if self.registry.is_none() {
+            return;
+        }
+        let db_path = paths::data_dir().join("registry.db");
+        cx.spawn(async move |this, cx| {
+            let prepared = cx
+                .background_spawn(async move {
+                    let snapshot = Registry::open(&db_path).ok()?.load_snapshot().ok().flatten()?;
+                    Some(PreparedSnapshot::new(snapshot))
+                })
+                .await;
+            let Some(prepared) = prepared else { return };
+            this.update(cx, |this, cx| {
+                if this.library.scanning {
+                    this.library.set_snapshot(prepared);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn refresh_lists(&mut self) {
@@ -352,14 +388,23 @@ impl Workspace {
             .and_then(|r| r.roots().ok())
             .unwrap_or_default();
         let opts = ScanOptions::from_env(paths::home_dir(), roots);
+        let db_path = self.registry.is_some().then(|| paths::data_dir().join("registry.db"));
         cx.spawn(async move |this, cx| {
-            let snapshot = cx.background_spawn(async move { scan(&opts) }).await;
+            // Scan, save and prepare off the main thread: saving serializes
+            // every row, and the search keys lowercase every name and path.
+            let prepared = cx
+                .background_spawn(async move {
+                    let snapshot = scan(&opts);
+                    if let Some(reg) = db_path.and_then(|p| Registry::open(&p).ok()) {
+                        let _ = reg.save_snapshot(&snapshot);
+                    }
+                    PreparedSnapshot::new(snapshot)
+                })
+                .await;
             this.update(cx, |this, cx| {
-                if let Some(reg) = &this.registry {
-                    let _ = reg.save_snapshot(&snapshot);
-                }
+                crate::perf::scan_done(prepared.elapsed_ms(), prepared.len());
                 this.library.scanning = false;
-                this.library.set_snapshot(snapshot);
+                this.library.set_snapshot(prepared);
                 cx.notify();
             })
             .ok();
@@ -393,6 +438,8 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        crate::perf::open_started();
+        self.settle_now(cx);
         if self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)) {
             self.save(window, cx);
         }
@@ -403,10 +450,16 @@ impl Workspace {
                     Content::Text { text, encoding, bom } => {
                         let language = doc.format.editor_language();
                         self.editor.update(cx, |state, cx| {
+                            // Soft wrap measures every line of the file with the
+                            // text system before the first frame (gpui-kit has
+                            // no lazy wrap): 5 s and 2.5 GB for 10 MB. Files in
+                            // the large tier (Source only) open unwrapped.
+                            state.set_soft_wrap(!large, window, cx);
                             state.set_highlighter(language, cx);
                             state.set_value(text.clone(), window, cx);
                         });
-                        self.set_preview(&text, doc.format, cx);
+                        // No set_preview here: the CSV rows and the rich editor are
+                        // loaded below, once `self.doc` is the new document.
                         self.update_stats(&text);
                         self.disk.remember(&doc.path, &text, false);
                         DocKind::Text { encoding, bom, saved: text }
@@ -416,11 +469,13 @@ impl Workspace {
                             *state = TextViewState::html(&html, cx).selectable(true);
                         });
                         self.words = 0;
+                        self.doc_stats = stats::DocStats::default();
                         self.sections.clear();
                         DocKind::Html
                     }
                     Content::Engine => {
                         self.words = 0;
+                        self.doc_stats = stats::DocStats::default();
                         self.sections.clear();
                         match office::open(&doc.path, doc.format, window, cx) {
                             Ok(office) => DocKind::Office(office),
@@ -493,10 +548,10 @@ impl Workspace {
         if format != FormatKind::Markdown {
             return;
         }
-        // Front matter is held aside in the rich view, never shown.
-        let body = &text[outline::front_matter_len(text)..];
-        self.preview.update(cx, |state, cx| state.set_text(body, cx));
-        // (open_path loads the rich editor itself, once the document is set.)
+        // Markdown View is the rich editor. The TextView preview is never
+        // shown for Markdown (a large file stays in Source), so it is not fed:
+        // feeding it parsed the whole file again, 10 MB included, on every
+        // open and reload.
         if self.doc.as_ref().is_some_and(|d| !d.large) && text.len() <= 1_000_000 {
             self.load_rich(text, cx);
         }
@@ -506,18 +561,54 @@ impl Workspace {
         let s = stats::compute(text);
         self.words = s.words;
         self.reading_minutes = s.reading_minutes;
+        self.doc_stats = s;
         self.sections = outline::sections(text);
     }
 
     fn on_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
-        let text = self.editor.read(cx).value().to_string();
-        self.dirty = &text != saved;
-        self.update_stats(&text);
-        if self.dirty && self.disk_conflict.is_none() {
+        self.note_edit(cx);
+    }
+
+    /// An edit in either editor. Per keystroke this is only bookkeeping:
+    /// copying out the whole text, comparing it with the saved text and
+    /// recounting words and headings cost milliseconds per key on a large
+    /// document, so they wait for a pause in typing (`settle`).
+    pub(super) fn note_edit(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. })) {
+            return;
+        }
+        self.dirty = true;
+        if self.disk_conflict.is_none() {
             self.autosave.note_change(Instant::now());
             self.schedule_autosave(cx);
         }
+        self.settle_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SETTLE_AFTER).await;
+            this.update(cx, |this, cx| {
+                this.settle_task = None;
+                this.settle(cx);
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Run a pending settle now, before anything that needs the exact state.
+    fn settle_now(&mut self, cx: &mut Context<Self>) {
+        if self.settle_task.take().is_some() {
+            self.settle(cx);
+        }
+    }
+
+    fn settle(&mut self, cx: &mut Context<Self>) {
+        let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
+        let text = self.current_text(cx);
+        self.dirty = &text != saved;
+        if !self.dirty {
+            // Typed and undone back to the saved bytes: nothing to save.
+            self.autosave.cancel();
+        }
+        self.update_stats(&text);
         cx.notify();
     }
 
@@ -540,6 +631,10 @@ impl Workspace {
     /// Autosave never opens a dialog: a failure leaves a crash draft and the
     /// edited marker, and the next save tries again.
     fn autosave_now(&mut self, cx: &mut Context<Self>) {
+        self.settle_now(cx);
+        if !self.dirty {
+            return;
+        }
         let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
@@ -598,6 +693,7 @@ impl Workspace {
             }
             Some(DiskChange::Changed(theirs)) => {
                 let path = doc.path.clone();
+                self.settle_now(cx);
                 if self.dirty {
                     self.disk_conflict = Some(theirs);
                     self.autosave.cancel();
@@ -1351,6 +1447,7 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::perf::frame_start();
         if let Some(text) = self.pending_editor_text.take() {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
@@ -1419,5 +1516,6 @@ impl Render for Workspace {
                     .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h))),
             )
             .child(self.render_status(cx))
+            .children(crate::perf::marker())
     }
 }

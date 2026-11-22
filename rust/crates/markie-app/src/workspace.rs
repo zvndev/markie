@@ -30,6 +30,7 @@ use markie_core::{outline, paths, stats};
 use crate::actions::*;
 use crate::library::{Library, LibraryTab};
 
+pub(crate) mod account;
 mod file_ops;
 mod office;
 mod palette;
@@ -108,6 +109,8 @@ pub struct Workspace {
     page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
+    /// The Cloud destination, when it is showing (account.rs).
+    cloud: Option<Entity<account::CloudPanel>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -129,7 +132,7 @@ impl Workspace {
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
         let (rich, rich_sub) = Self::new_rich(cx);
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     let text = state.read(cx).value().to_string();
@@ -144,6 +147,7 @@ impl Workspace {
             }),
             rich_sub,
         ];
+        subscriptions.extend(Self::watch_account(window, cx));
 
         let template = registry
             .as_ref()
@@ -193,6 +197,7 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
+            cloud: None,
             zoom: 1.0,
             page_width: 768.0,
             _subscriptions: subscriptions,
@@ -1390,6 +1395,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_trash))
             .on_action(cx.listener(Self::on_reveal))
             .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_open_account))
+            .on_action(cx.listener(Self::on_show_cloud))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -1399,7 +1406,8 @@ impl Render for Workspace {
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(
+                    .when_some(self.cloud.clone(), |el, cloud| el.child(div().flex_1().h_full().overflow_hidden().child(cloud)))
+                    .when(self.cloud.is_none(), |el| el.child(
                         div().flex_1().h_full().overflow_hidden().child(
                             h_resizable("main")
                                 .child(
@@ -1415,7 +1423,7 @@ impl Render for Workspace {
                                         .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_document(cx))),
                                 )),
                         ),
-                    )
+                    ))
                     .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h))),
             )
             .child(self.render_status(cx))

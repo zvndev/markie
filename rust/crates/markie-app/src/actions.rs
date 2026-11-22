@@ -24,6 +24,8 @@ actions!(
         ToggleStar,
         ImportFromMarkie,
         OpenSettings,
+        OpenAccount,
+        ShowCloud,
         ZoomIn,
         ZoomOut,
         ZoomReset,

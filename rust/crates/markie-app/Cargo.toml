@@ -15,6 +15,8 @@ markie-core.workspace = true
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }
+markie-cloud = { path = "../markie-cloud" }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 anyhow.workspace = true
 serde_json.workspace = true
 serde.workspace = true

@@ -90,6 +90,10 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
         cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
         cmd("About Markie RS", "Help", None, "version", action(ShowAbout)),
     ]);
+    // Super-nightly in Electron (`makeInteractiveAvailable`).
+    if super::comments::nightly(None) {
+        list.push(cmd("Make interactive", "File", None, "darkmown wd live doc interactive convert copy checklist calculator", action(MakeInteractive)));
+    }
     list
 }
 

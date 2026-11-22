@@ -98,7 +98,7 @@ impl Workspace {
             return;
         };
         let path = doc.path.clone();
-        let dir = path.parent().map(PathBuf::from).unwrap_or_else(markie_core::paths::home_dir);
+        let dir = self.default_dir();
         let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         let source = if doc.format == FormatKind::Markdown { SourceKind::Markdown } else { SourceKind::Text };
         let dark = crate::themes::palette(cx).dark;

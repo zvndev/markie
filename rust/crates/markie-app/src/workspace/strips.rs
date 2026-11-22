@@ -122,7 +122,11 @@ impl Workspace {
 
     /// The recovered draft for the open document, if Markie kept one.
     fn open_draft(&self) -> Option<usize> {
-        let path = self.doc.as_ref()?.path.to_string_lossy().into_owned();
+        let doc = self.doc.as_ref()?;
+        if doc.untitled {
+            return self.recovered.iter().position(|d| d.meta.path.is_none());
+        }
+        let path = doc.path.to_string_lossy().into_owned();
         self.recovered.iter().position(|d| d.meta.path.as_deref() == Some(path.as_str()))
     }
 

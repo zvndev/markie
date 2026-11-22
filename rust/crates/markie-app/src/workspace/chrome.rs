@@ -6,7 +6,6 @@
 //! layout and `src/app/globals.css` (`.markie-toolbar`, `.markie-toolbar-action`,
 //! `.markie-segmented-*`, `.markie-menu-*`) for the surfaces.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{Theme, ThemeMode, TitleBar, WindowExt as _, h_flex, v_flex};
@@ -203,7 +202,7 @@ impl Workspace {
     fn save_a_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shell.menu = None;
         let Some(doc) = &self.doc else { return };
-        let dir = doc.path.parent().map(PathBuf::from).unwrap_or_else(markie_core::paths::home_dir);
+        let dir = self.default_dir();
         let name = doc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let source = doc.path.clone();
         let text = matches!(doc.kind, DocKind::Text { .. }).then(|| self.current_text(cx));
@@ -230,7 +229,8 @@ impl Workspace {
 
     pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = themes::palette(cx);
-        let name = self.doc.as_ref().and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned());
+        // An untitled buffer shows no name, as Electron's null fileName.
+        let name = self.doc.as_ref().filter(|d| !d.untitled).and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned());
         let dirty = self.dirty
             || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
         let has_text = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }));

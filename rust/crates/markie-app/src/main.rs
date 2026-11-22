@@ -120,6 +120,7 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Open Folder…", OpenFolder),
                 MenuItem::separator(),
                 MenuItem::action("Save", Save),
+                MenuItem::action("Make Interactive", MakeInteractive),
                 MenuItem::action("Version History", ShowHistory),
                 MenuItem::separator(),
                 MenuItem::action("Rename…", RenameDocument),

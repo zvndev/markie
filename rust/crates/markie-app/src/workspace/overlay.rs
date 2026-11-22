@@ -190,6 +190,11 @@ impl Workspace {
         .on_action(cx.listener(|this, _: &RichMode, window, cx| this.set_mode(Mode::View, window, cx)))
         .on_action(cx.listener(|this, _: &SourceMode, window, cx| this.set_mode(Mode::Source, window, cx)))
         .on_action(cx.listener(|this, _: &SplitMode, window, cx| this.set_mode(Mode::Split, window, cx)))
+        .on_action(cx.listener(|this, _: &MakeInteractive, window, cx| {
+            if super::comments::nightly(this.registry.as_deref()) {
+                this.make_interactive(window, cx);
+            }
+        }))
         .on_action(cx.listener(Self::on_move))
     }
 

@@ -52,6 +52,7 @@ mod projects;
 mod rail;
 mod rich;
 mod text_view;
+mod untitled;
 mod settings;
 mod shortcuts;
 mod strips;
@@ -85,6 +86,8 @@ struct OpenDoc {
     /// Over 1 MB: Source only, like the Electron app.
     large: bool,
     kind: DocKind,
+    /// No file behind it yet (`untitled.rs`): `path` holds only its name.
+    untitled: bool,
 }
 
 enum DocKind {
@@ -300,7 +303,13 @@ impl Workspace {
                 first_file = Some(path);
             }
         }
-        if let Some(path) = first_file.or_else(|| this.most_recent()) {
+        if let Some(path) = first_file.clone() {
+            this.open_path(&path, window, cx);
+        } else if this.untitled_draft_pending() {
+            // Electron offers the untitled journal entry when the launch opens
+            // no document: an empty untitled buffer shows the recovery strip.
+            this.open_untitled(untitled::untitled_name("md"), String::new(), window, cx);
+        } else if let Some(path) = this.most_recent() {
             this.open_path(&path, window, cx);
         }
         this.rescan(cx);
@@ -360,6 +369,9 @@ impl Workspace {
 
     fn on_toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
         let (Some(reg), Some(doc)) = (&self.registry, &self.doc) else { return };
+        if doc.untitled {
+            return;
+        }
         let _ = reg.toggle_star(&doc.path, "file");
         self.refresh_lists();
         cx.notify();
@@ -442,9 +454,7 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)) {
-            self.save(window, cx);
-        }
+        self.settle(window, cx);
         match document::open(path) {
             Ok(doc) => {
                 let large = doc.is_large();
@@ -507,7 +517,7 @@ impl Workspace {
                 if let Some(old) = &self.doc {
                     self.disk.forget(&old.path);
                 }
-                self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind });
+                self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind, untitled: false });
                 if self.shell.view == rail::LeftView::Cloud {
                     self.shell.panel_open = false;
                 }
@@ -631,6 +641,11 @@ impl Workspace {
             return self.office_autosave(cx);
         }
         let text = self.current_text(cx);
+        if self.is_untitled() {
+            // No file yet: the journal is where autosave keeps it.
+            let _ = self.drafts.save(None, &text);
+            return;
+        }
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
         if self.write_text(&text, cx).is_ok() {
@@ -643,6 +658,9 @@ impl Workspace {
     /// that this write was ours.
     fn write_text(&mut self, text: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
         let Some(doc) = self.doc.as_mut() else { return Ok(()) };
+        if doc.untitled {
+            return Ok(());
+        }
         let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return Ok(()) };
         let _ = self.history.capture(&doc.path, text, Writer::User);
         document::save_text(&doc.path, text, *encoding, *bom)?;
@@ -672,7 +690,7 @@ impl Workspace {
 
     fn check_disk(&mut self, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        if !matches!(doc.kind, DocKind::Text { .. }) {
+        if !matches!(doc.kind, DocKind::Text { .. }) || doc.untitled {
             return;
         }
         match self.disk.changed_since(&doc.path) {
@@ -707,6 +725,9 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_untitled() {
+            return self.save_untitled(window, cx);
+        }
         if let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc {
             let (path, format) = (path.clone(), *format);
             self.autosave.cancel();

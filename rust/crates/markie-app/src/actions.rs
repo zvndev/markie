@@ -38,6 +38,7 @@ actions!(
         RichMode,
         SourceMode,
         SplitMode,
+        MakeInteractive,
         MoveDocument,
         Print,
         ExportPdfDark,

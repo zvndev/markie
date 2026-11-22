@@ -598,6 +598,12 @@ impl Workspace {
 
     /// After the settle: seed, claim, take the room as it is, or refuse.
     fn live_decide(&mut self, cx: &mut Context<Self>) {
+        // The copy this pane opened on, for bringing an older room up to date.
+        let (front_matter, body) = {
+            let md = self.rich.read(cx).markdown();
+            let fm = markie_rich::document::front_matter_len(&md);
+            (md[..fm].to_string(), md[fm..].to_string())
+        };
         let Some(live) = self.collab.live.as_mut() else { return };
         if live.stage != Stage::Settling {
             return;
@@ -615,8 +621,16 @@ impl Workspace {
                     if readonly || binding.has_model() {
                         return self.live_ready(true, cx);
                     }
-                    // A room an older build seeded: claim it for this model as it is.
-                    let want = binding.room();
+                    // A room an older build seeded: bring its math and front
+                    // matter up to date, or refuse it (rich-room-migrate.ts).
+                    let want = match markie_editor::collab::legacy::plan_legacy_room(&binding.room(), &front_matter, &body) {
+                        markie_editor::collab::legacy::LegacyPlan::Refuse => return self.live_refuse(cx),
+                        markie_editor::collab::legacy::LegacyPlan::None => binding.room(),
+                        markie_editor::collab::legacy::LegacyPlan::Migrate { room, front_matter_removed, formulas } => {
+                            debug(|| format!("older room: {formulas} formulas, front matter removed: {front_matter_removed}"));
+                            room
+                        }
+                    };
                     let schema = binding.claim_schema(&want, live.front_matter);
                     let update = binding.claim_update(&want, &[(markie_editor::collab::MODEL_KEY, yrs::Any::from(markie_editor::collab::EDITOR_MODEL)), (markie_editor::collab::SCHEMA_KEY, yrs::Any::from(schema))]);
                     return self.live_claim(update, cx);

@@ -8,6 +8,9 @@ use markie_cloud::{DEFAULT_SERVER, assets, links};
 use markie_core::paths;
 use std::collections::{HashMap, HashSet};
 
+/// doc-link-open.js: a linked document that could not be brought here.
+const LANDING_FAILED: &str = "Couldn't open that document. Check your connection, or ask for it to be shared again.";
+
 impl Workspace {
     pub(super) fn refresh_cloud_resources(&mut self, cx: &mut Context<Self>) {
         self.cloud.resource_epoch = self.cloud.resource_epoch.wrapping_add(1);
@@ -19,7 +22,8 @@ impl Workspace {
         let restricted =
             path.starts_with(&root) || root.canonicalize().is_ok_and(|real| path.starts_with(real));
         self.rich.update(cx, |view, cx| {
-            view.set_cloud_resources(HashMap::new(), HashSet::new(), restricted, cx)
+            view.set_cloud_resources(HashMap::new(), HashSet::new(), restricted, cx);
+            view.set_unshared_links(HashSet::new(), cx);
         });
         let Some((scope, id)) = self.cloud.bound_scope(&path) else {
             return;
@@ -32,21 +36,24 @@ impl Workspace {
             return;
         };
         let references = assets::references(saved);
+        let doc_dir = path.parent().map(std::path::Path::to_path_buf);
         let request = scope.clone();
         let cache = paths::data_dir().join("cloud-media");
         cx.spawn(async move |weak, cx| {
             let response = network(async move {
                 let docs = DocsClient::new(&request.client);
-                let links = links::fetch(&docs, &id)
-                    .await
-                    .unwrap_or_default()
+                let (open, refused) = links::fetch_all(&docs, &id).await.unwrap_or_default();
+                let links: HashSet<String> = open.into_iter().map(|p| p.reference).collect();
+                // Disk wins over the cloud (doc-link-open.js): a target that
+                // sits beside the document opens as a local file, unmuted.
+                let refused: HashSet<String> = refused
                     .into_iter()
-                    .map(|p| p.reference)
+                    .filter(|r| doc_dir.as_ref().is_none_or(|d| !d.join(r).exists()))
                     .collect();
                 let mut media = HashMap::new();
                 for reference in references
                     .into_iter()
-                    .filter(|r| assets::mime(r).is_some_and(|mime| mime.starts_with("image/")))
+                    .filter(|r| assets::mime(r).is_some_and(|mime| ["image/", "video/", "audio/"].iter().any(|kind| mime.starts_with(kind))))
                     .take(64)
                 {
                     if let Ok(path) = assets::revalidate(
@@ -62,7 +69,7 @@ impl Workspace {
                         media.insert(reference, path);
                     }
                 }
-                (media, links)
+                (media, links, refused)
             })
             .await;
             let _ = weak.update(cx, |this, cx| {
@@ -75,9 +82,10 @@ impl Workspace {
                 {
                     return;
                 }
-                if let Ok((media, links)) = response {
+                if let Ok((media, links, refused)) = response {
                     this.rich.update(cx, |view, cx| {
-                        view.set_cloud_resources(media, links, restricted, cx)
+                        view.set_cloud_resources(media, links, restricted, cx);
+                        view.set_unshared_links(refused, cx);
                     });
                 }
             });
@@ -103,9 +111,10 @@ impl Workspace {
                 let target = answer
                     .into_iter()
                     .find(|link| link.reference == reference)
-                    .ok_or("The linked cloud document is not available to this account.")?;
+                    .ok_or(markie_editor::NOT_SHARED)?;
                 let engine = SyncEngine::new(&request.client, request.origin() == DEFAULT_SERVER);
-                engine.pull(&target.target, &target.reference).await
+                // doc-link-open.js LANDING_FAILED, whatever stopped the landing.
+                engine.pull(&target.target, &target.reference).await.map_err(|_| LANDING_FAILED.to_string())
             })
             .await
             .and_then(|r| r);
@@ -125,7 +134,7 @@ impl Workspace {
                     {
                         Ok(path)
                     } else {
-                        this.land_cloud_doc(&scope, doc, record)
+                        this.land_cloud_doc(&scope, doc, record).map_err(|_| LANDING_FAILED.to_string())
                     }
                 });
                 match target {

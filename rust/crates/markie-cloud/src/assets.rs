@@ -369,8 +369,76 @@ pub async fn reconcile(
     })
 }
 
+/// asset-cache.js: 2 GiB of cloud media, the least recently used going first.
+pub const CACHE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// A copy checked with the server this recently is served without asking
+/// again (`VALID_FOR_MS`).
+pub const CACHE_VALID_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+const SESSION_FILE: &str = "session";
+
+fn touch(path: &Path) {
+    if let Ok(f) = fs::OpenOptions::new().append(true).open(path) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+/// `evict`: drop the least recently used files until the cache fits.
+/// A bucket that loses its file loses its ETag too, so the next look
+/// fetches in full.
+pub fn evict(dir: &Path, limit: u64) {
+    let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    let Ok(buckets) = fs::read_dir(dir) else { return };
+    for bucket in buckets.flatten().filter(|b| b.file_type().is_ok_and(|t| t.is_dir())) {
+        let Ok(entries) = fs::read_dir(bucket.path()) else { continue };
+        for e in entries.flatten() {
+            if e.file_name() == "etag" {
+                continue;
+            }
+            if let Some(meta) = e.metadata().ok().filter(|m| m.is_file()) {
+                files.push((e.path(), meta.len(), meta.modified().unwrap_or(std::time::UNIX_EPOCH)));
+            }
+        }
+    }
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    files.sort_by_key(|f| f.2);
+    for (path, size, _) in files {
+        if total <= limit {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            if let Some(bucket) = path.parent() {
+                let _ = fs::remove_file(bucket.join("etag"));
+            }
+            total = total.saturating_sub(size);
+        }
+    }
+}
+
+/// `bindSession`: whose pictures the cache holds. A different session, or
+/// none (a sign-out), empties it; the same session keeps what it fetched
+/// across relaunches.
+pub fn bind_session(dir: &Path, session: Option<&str>) -> std::io::Result<()> {
+    let recorded = fs::read_to_string(dir.join(SESSION_FILE)).ok();
+    let wanted = session.map(hash_content);
+    if recorded.is_some() && recorded == wanted {
+        return Ok(());
+    }
+    if dir.exists() {
+        for e in fs::read_dir(dir)?.flatten() {
+            let path = e.path();
+            let _ = if e.file_type().is_ok_and(|t| t.is_dir()) { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
+        }
+    }
+    if let Some(key) = wanted {
+        fs::create_dir_all(dir)?;
+        markie_core::save::atomic_write(&dir.join(SESSION_FILE), key.as_bytes())?;
+    }
+    Ok(())
+}
+
 /// Cache an asset under the RS data directory. A cached byte stream is never
-/// returned until this exact account and reference has been reauthorized.
+/// returned until this exact account and reference has been reauthorized
+/// within the last minute.
 pub async fn revalidate(
     docs: &DocsClient<'_>,
     dir: &Path,
@@ -395,11 +463,23 @@ pub async fn revalidate(
         .and_then(parse_etag)
         .map(path_for)
         .filter(|p| p.is_file());
+    let checked_recently = fs::metadata(bucket.join("etag"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|ago| ago < CACHE_VALID_FOR);
+    if let Some(path) = previous.as_ref().filter(|_| checked_recently) {
+        touch(path);
+        return Ok(path.clone());
+    }
     let answer = docs
         .fetch_asset(id, reference, tag.as_deref().filter(|_| previous.is_some()))
         .await?;
     if answer.status == 304 {
-        return previous.ok_or(CloudError::Unreadable);
+        let path = previous.ok_or(CloudError::Unreadable)?;
+        touch(&path);
+        touch(&bucket.join("etag"));
+        return Ok(path);
     }
     let answer = answer.into_ok()?;
     let tag = answer.etag.as_deref().ok_or(CloudError::Unreadable)?;
@@ -418,6 +498,7 @@ pub async fn revalidate(
     if let Some(old) = previous.filter(|p| p != &path) {
         let _ = fs::remove_file(old);
     }
+    evict(dir, CACHE_LIMIT_BYTES);
     Ok(path)
 }
 
@@ -453,6 +534,40 @@ mod tests {
 <img data-src="ignored.png" SRC='other.svg'> ![](https://a/x.png) ![](a%20b.png)"#;
         let src = format!("{src}\n\x60![](code.png)\x60\n~~~\n![](fence.png)\n~~~");
         assert_eq!(references(&src), ["clip.mp4", "a b.png", "other.svg"]);
+    }
+
+    #[test]
+    fn the_cache_drops_the_least_recently_used_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000 + secs);
+        for (bucket, secs) in [("a", 1), ("b", 3), ("c", 2)] {
+            let b = dir.path().join(bucket);
+            fs::create_dir(&b).unwrap();
+            fs::write(b.join("etag"), "\"x\"").unwrap();
+            let f = b.join("file.png");
+            fs::write(&f, vec![0u8; 10]).unwrap();
+            fs::OpenOptions::new().append(true).open(&f).unwrap().set_modified(at(secs)).unwrap();
+        }
+        evict(dir.path(), 20);
+        assert!(!dir.path().join("a/file.png").exists(), "oldest goes first");
+        assert!(!dir.path().join("a/etag").exists(), "its ETag goes with it");
+        assert!(dir.path().join("b/file.png").exists() && dir.path().join("c/file.png").exists());
+    }
+
+    #[test]
+    fn a_different_session_or_a_sign_out_empties_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cloud-media");
+        bind_session(&cache, Some("alice")).unwrap();
+        fs::create_dir_all(cache.join("bucket")).unwrap();
+        fs::write(cache.join("bucket/x.png"), b"x").unwrap();
+        bind_session(&cache, Some("alice")).unwrap();
+        assert!(cache.join("bucket/x.png").exists(), "same session keeps its pictures");
+        bind_session(&cache, Some("bob")).unwrap();
+        assert!(!cache.join("bucket").exists(), "another account starts empty");
+        fs::create_dir_all(cache.join("bucket")).unwrap();
+        bind_session(&cache, None).unwrap();
+        assert!(!cache.join("bucket").exists() && !cache.join("session").exists(), "signing out empties it");
     }
 
     #[test]

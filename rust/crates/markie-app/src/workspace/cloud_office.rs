@@ -1,6 +1,6 @@
 //! Explicit byte-snapshot actions. Local Save never publishes a snapshot.
 use super::Workspace;
-use super::cloud::{Scope, land, name, network};
+use super::cloud::{Scope, name, network};
 use super::cloud_ui::role_name;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -24,9 +24,27 @@ pub(super) struct Target {
     meta: SnapshotMeta,
 }
 
+/// A cloud snapshot open for editing in the dialog (cloud-document-editor
+/// .tsx): no local file, and nothing saved until "Save this snapshot to
+/// cloud".
+pub(super) enum CloudEditBody {
+    Office(Entity<markie_office_view::WordView>),
+    Text(Entity<gpui_kit::component::input::EditorState>),
+    /// A format this dialog can download but not edit.
+    Binary,
+}
+
+pub(super) struct CloudEdit {
+    id: String,
+    body: CloudEditBody,
+    dirty: bool,
+    _sub: Option<Subscription>,
+}
+
 #[derive(Default)]
 pub(super) struct OfficeCloud {
     pub targets: HashMap<PathBuf, Target>,
+    editing: Option<CloudEdit>,
     busy: bool,
     members: Vec<Member>,
     link: Option<DownloadLink>,
@@ -185,6 +203,9 @@ impl Workspace {
         self.cloud_office.members.clear();
         self.cloud_office.link = None;
         self.cloud_office.notice = None;
+        if self.cloud_office.editing.as_ref().is_some_and(|e| e.id != target.meta.id) {
+            self.cloud_office.editing = None;
+        }
         self.cloud_office.inspector = Some(target.clone());
         let email = cx.new(|cx| InputState::new(window, cx).placeholder("Email"));
         let owner = cx.weak_entity();
@@ -209,7 +230,42 @@ impl Workspace {
             let busy = ws.cloud_office.busy;
             let can_manage = target.meta.role == Role::Owner;
             let mut actions = Vec::new();
-            if let Some(path) = path.clone().filter(|_| target.meta.role != Role::Viewer) {
+            let editing = ws.cloud_office.editing.as_ref().filter(|e| e.id == target.meta.id);
+            let edit_dirty = editing.is_some_and(|e| e.dirty);
+            let edit_view: Option<AnyElement> = editing.map(|e| match &e.body {
+                CloudEditBody::Office(view) => div().h(px(420.)).overflow_hidden().rounded(px(6.)).border_1().border_color(cx.theme().border).child(view.clone()).into_any_element(),
+                CloudEditBody::Text(state) => div().h(px(420.)).rounded(px(6.)).border_1().border_color(cx.theme().border).child(gpui_kit::component::input::Editor::new(state).bordered(false).h(relative(1.))).into_any_element(),
+                CloudEditBody::Binary => div().text_sm().child("This format can be downloaded, but not edited here.").into_any_element(),
+            });
+            let editable = editing.is_some_and(|e| !matches!(e.body, CloudEditBody::Binary));
+            if editable && target.meta.role != Role::Viewer {
+                let owner = owner.clone();
+                let target = target.clone();
+                actions.push(
+                    Button::new("cloud-save-edit")
+                        .primary()
+                        .small()
+                        .label("Save this snapshot to cloud")
+                        .disabled(busy)
+                        .on_click(move |_, window, cx| {
+                            let _ = owner.update(cx, |this, cx| this.save_cloud_edit(target.clone(), window, cx));
+                        }),
+                );
+            }
+            {
+                let owner = owner.clone();
+                let target = target.clone();
+                actions.push(
+                    Button::new("cloud-open-edit")
+                        .small()
+                        .label("Open current cloud version for editing")
+                        .disabled(busy)
+                        .on_click(move |_, window, cx| {
+                            let _ = owner.update(cx, |this, cx| this.open_cloud_edit(target.clone(), window, cx));
+                        }),
+                );
+            }
+            if let Some(path) = path.clone().filter(|_| target.meta.role != Role::Viewer && !editable) {
                 let owner = owner.clone();
                 let target = target.clone();
                 actions.push(
@@ -238,7 +294,7 @@ impl Workspace {
                 actions.push(
                     Button::new("cloud-download-snapshot")
                         .small()
-                        .label("Download a local copy")
+                        .label(if editable { "Download edited copy" } else { "Download a local copy instead" })
                         .disabled(busy)
                         .on_click(move |_, window, cx| {
                             let _ = owner.update(cx, |this, cx| {
@@ -349,7 +405,7 @@ impl Workspace {
                     )
                 })
                 .collect();
-            dialog.title("Cloud document").w(px(580.)).child(
+            dialog.title("Cloud document").w(px(if edit_view.is_some() { 1024. } else { 580. })).overlay_closable(false).keyboard(!edit_dirty).close_button(!edit_dirty).child(
                 v_flex()
                     .gap_3()
                     .child(
@@ -371,6 +427,34 @@ impl Workspace {
                         "This is not live Word co-editing. Local Save does not publish a version.",
                     )
                     .child(h_flex().gap_2().flex_wrap().children(actions))
+                    .children(edit_view)
+                    .when(editable, |el| {
+                        el.child(div().text_xs().text_color(cx.theme().muted_foreground).child(if edit_dirty { "Cloud edits are not saved yet." } else { "No unsaved cloud edits." }))
+                    })
+                    .when(edit_dirty, |el| {
+                        // `mayClose`: unsaved cloud edits are only dropped on purpose.
+                        let owner = owner.clone();
+                        el.child(
+                            Button::new("cloud-discard-edit")
+                                .ghost()
+                                .small()
+                                .label("Close")
+                                .on_click(move |_, window, cx| {
+                                    let answer = window.prompt(PromptLevel::Warning, "Discard unsaved cloud edits? Download a copy first to keep them.", None, &["Discard", "Cancel"], cx);
+                                    let owner = owner.clone();
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            if answer.await == Ok(0) {
+                                                let _ = cx.update(|window, cx| {
+                                                    let _ = owner.update(cx, |this, _| this.cloud_office.editing = None);
+                                                    window.close_dialog(cx);
+                                                });
+                                            }
+                                        })
+                                        .detach();
+                                }),
+                        )
+                    })
                     .when(!areas.is_empty(), |el| {
                         el.child(h_flex().gap_2().flex_wrap().children(areas))
                     })
@@ -514,7 +598,130 @@ impl Workspace {
         );
     }
 
+    /// `loadCloud`: the current version, opened in the dialog for editing.
+    fn open_cloud_edit(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cloud_office.editing.as_ref().is_some_and(|e| e.id == target.meta.id && e.dirty) {
+            let answer = window.prompt(PromptLevel::Warning, "Discard the unsaved cloud edits before opening another version?", None, &["Discard", "Cancel"], cx);
+            cx.spawn_in(window, async move |this, cx| {
+                if answer.await == Ok(0) {
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        if let Some(e) = this.cloud_office.editing.as_mut() {
+                            e.dirty = false;
+                        }
+                        this.open_cloud_edit(target, window, cx);
+                    });
+                }
+            })
+            .detach();
+            return;
+        }
+        let request = target.clone();
+        self.snapshot_job(
+            target.scope.clone(),
+            async move { PlatformClient(&request.scope.client).snapshot(&request.meta.id, None).await },
+            move |this, snapshot, window, cx| {
+                if snapshot.meta.id != target.meta.id {
+                    this.cloud_office.notice = Some("The server returned a different cloud document.".into());
+                    return;
+                }
+                let read_only = snapshot.meta.role == Role::Viewer;
+                let format = markie_core::formats::classify(&snapshot.meta.name);
+                let (body, sub) = match super::office::engine_format(format)
+                    .and_then(|engine| markie_office::rich_document::open_rich_document(engine, &snapshot.bytes).ok())
+                {
+                    Some(document) => {
+                        let mut editor = markie_office_view::editor::WordEditor::new(document);
+                        editor.host_read_only = read_only;
+                        let view = cx.new(|cx| markie_office_view::WordView::new(editor, window, cx));
+                        let sub = cx.subscribe(&view, |this: &mut Workspace, _, event: &markie_office_view::WordViewEvent, cx| {
+                            if matches!(event, markie_office_view::WordViewEvent::Changed)
+                                && let Some(e) = this.cloud_office.editing.as_mut()
+                            {
+                                e.dirty = true;
+                                cx.notify();
+                            }
+                        });
+                        (CloudEditBody::Office(view), Some(sub))
+                    }
+                    None => match String::from_utf8(snapshot.bytes.clone()).ok().filter(|_| markie_cloud::platform::supported_name(&snapshot.meta.name).is_some_and(|f| !matches!(f, markie_core::formats::FormatKind::Docx | markie_core::formats::FormatKind::Rtf | markie_core::formats::FormatKind::Odt | markie_core::formats::FormatKind::Doc | markie_core::formats::FormatKind::Html))) {
+                        Some(text) => {
+                            let state = cx.new(|cx| gpui_kit::component::input::EditorState::new(window, cx).soft_wrap(true));
+                            state.update(cx, |s, cx| s.set_value(text, window, cx));
+                            let sub = cx.subscribe(&state, |this: &mut Workspace, _, event: &gpui_kit::component::input::InputEvent, cx| {
+                                if matches!(event, gpui_kit::component::input::InputEvent::Change)
+                                    && let Some(e) = this.cloud_office.editing.as_mut()
+                                {
+                                    e.dirty = true;
+                                    cx.notify();
+                                }
+                            });
+                            (CloudEditBody::Text(state), Some(sub))
+                        }
+                        None => (CloudEditBody::Binary, None),
+                    },
+                };
+                this.cloud_office.notice = Some(format!("Opened cloud version {}. Edits are not saved until you save this version.", snapshot.meta.version));
+                this.cloud_office.inspector = Some(Target { scope: target.scope.clone(), meta: snapshot.meta.clone() });
+                this.cloud_office.editing = Some(CloudEdit { id: snapshot.meta.id, body, dirty: false, _sub: sub });
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The edited copy's bytes, or None when nothing is open for editing.
+    fn cloud_edit_bytes(&self, id: &str, cx: &App) -> Option<Result<Vec<u8>, String>> {
+        let e = self.cloud_office.editing.as_ref().filter(|e| e.id == id)?;
+        match &e.body {
+            CloudEditBody::Office(view) => Some(view.read(cx).editor.export().map_err(|e| e.to_string())),
+            CloudEditBody::Text(state) => Some(Ok(state.read(cx).value().to_string().into_bytes())),
+            CloudEditBody::Binary => None,
+        }
+    }
+
+    /// `publish` for an edited cloud copy: a new version over the one opened.
+    fn save_cloud_edit(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bytes) = self.cloud_edit_bytes(&target.meta.id, cx) else { return };
+        let bytes = match bytes {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.cloud_office.notice = Some("The copy could not be exported. Your edits were kept.".into());
+                cx.notify();
+                return;
+            }
+        };
+        let request = target.clone();
+        self.snapshot_job(
+            target.scope.clone(),
+            async move {
+                PlatformClient(&request.scope.client)
+                    .upload(&request.meta.name, &bytes, Some((request.meta.id.as_str(), request.meta.version)), None)
+                    .await
+            },
+            move |this, saved, _, cx| {
+                if let Some(e) = this.cloud_office.editing.as_mut().filter(|e| e.id == saved.meta.id) {
+                    e.dirty = false;
+                }
+                this.cloud_office.inspector = Some(Target { scope: target.scope.clone(), meta: saved.meta });
+                this.cloud_office.notice = Some("Cloud copy saved. It is separate from your local recovery copy.".into());
+                this.refresh_cloud(false, cx);
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// "Download a local copy instead" or "Download edited copy": the bytes
+    /// into Downloads; nothing is saved to the cloud.
     fn download_snapshot(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bytes) = self.cloud_edit_bytes(&target.meta.id, cx) {
+            self.cloud_office.notice = Some(match bytes.and_then(|b| save_download(&target.meta.name, &b)) {
+                Ok(_) => "Download started for this snapshot. This action did not save a cloud version.".into(),
+                Err(_) => "The copy could not be exported. Your edits were kept.".into(),
+            });
+            cx.notify();
+            return;
+        }
         let request = target.clone();
         self.snapshot_job(
             target.scope.clone(),
@@ -523,19 +730,12 @@ impl Workspace {
                     .snapshot(&request.meta.id, None)
                     .await
             },
-            move |this, snapshot, window, cx| match land(&snapshot.meta.name, &snapshot.bytes) {
-                Ok(path) => {
-                    this.cloud_office.targets.insert(
-                        path.clone(),
-                        Target {
-                            scope: target.scope,
-                            meta: snapshot.meta,
-                        },
-                    );
-                    window.close_dialog(cx);
-                    this.open_path(&path, window, cx);
-                }
-                Err(err) => this.cloud_office.notice = Some(err),
+            move |this, snapshot, _, _| {
+                let _ = &target;
+                this.cloud_office.notice = Some(match save_download(&snapshot.meta.name, &snapshot.bytes) {
+                    Ok(_) => "Download started for this snapshot. This action did not save a cloud version.".into(),
+                    Err(err) => err,
+                });
             },
             window,
             cx,
@@ -635,6 +835,16 @@ fn manage_button(
                 this.manage_snapshot(target.clone(), action.clone(), window, cx)
             });
         })
+}
+
+/// `downloadWebDocument`: a copy in Downloads under a free name.
+fn save_download(name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    let dir = super::cloud_strip::downloads_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = markie_cloud::sync::free_path(&dir, std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("Cloud document"), |p| std::fs::symlink_metadata(p).is_ok())
+        .ok_or("No unused filename for the download.")?;
+    markie_cloud::assets::create_copy(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 fn read_bytes(path: &Path) -> Result<Vec<u8>, CloudError> {

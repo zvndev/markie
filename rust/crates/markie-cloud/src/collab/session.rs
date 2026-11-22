@@ -6,7 +6,9 @@
 //! `Text("content")`):
 //!
 //! * The first ticket is asked for with three quick retries on a transient
-//!   failure. No ticket means no session ("unavailable"), never a token in a URL.
+//!   failure. A refusal means no session ("unavailable"). Only a server from
+//!   before tickets (no such route) gets the session token on the socket, as
+//!   `connectWithTicket` does for it, and nothing else ever does.
 //! * The ticket is refreshed in place every two minutes, and on a close when
 //!   the last ask is older than 30 s. A 4000-4999 close stops the refreshes.
 //! * A dropped socket reconnects with y-websocket's backoff,
@@ -25,7 +27,7 @@
 use crate::client::CloudClient;
 use crate::collab::room::CloseReason;
 use crate::collab::ticket::{FirstTicket, OnClose, TICKET_REFRESH_MS, first_ticket, is_transient, on_close};
-use crate::collab::{PeerUser, collab_ws_base, room_url};
+use crate::collab::{PeerUser, collab_ws_base, legacy_room_url, room_url};
 use crate::collab::snapshot::SNAPSHOT_WRITER_FIELD;
 use crate::sharing::{CollabTicketAnswer, SharesClient};
 use futures_util::{SinkExt, StreamExt};
@@ -134,6 +136,12 @@ pub fn parse_peer(client_id: u64, state: &Value) -> Option<Peer> {
 /// Asks the document's server for a live-editing pass.
 pub trait TicketSource: Send + Sync + 'static {
     fn ticket(&self) -> Pin<Box<dyn Future<Output = CollabTicketAnswer> + Send + '_>>;
+    /// The session token, for a server that answered "no such route" to the
+    /// ticket request (`CollabTicketAnswer::Legacy`). Its socket can only take
+    /// the token, exactly as every build did before tickets.
+    fn legacy_token(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Tickets from the document's own server, with that server's session.
@@ -145,6 +153,9 @@ pub struct CloudTickets {
 impl TicketSource for CloudTickets {
     fn ticket(&self) -> Pin<Box<dyn Future<Output = CollabTicketAnswer> + Send + '_>> {
         Box::pin(async move { SharesClient::new(&self.client).collab_ticket(&self.doc_id).await })
+    }
+    fn legacy_token(&self) -> Option<String> {
+        self.client.token()
     }
 }
 
@@ -355,7 +366,11 @@ impl LiveSession {
         let out: Out = Arc::new(Mutex::new(None));
         let mut local = JsonMap::new();
         local.insert("user".into(), json!(opts.user));
-        local.insert(SNAPSHOT_WRITER_FIELD.into(), Value::Bool(opts.offer_snapshot_writer));
+        // useLiveRoom only sets the field on a client that offers to write;
+        // the desktop (offer: false) never puts it in its presence at all.
+        if opts.offer_snapshot_writer {
+            local.insert(SNAPSHOT_WRITER_FIELD.into(), Value::Bool(true));
+        }
         let mut awareness = Awareness::new(doc.clone());
         let _ = awareness.set_local_state(Value::Object(local.clone()));
         let (changes, _) = watch::channel(0u64);
@@ -627,6 +642,13 @@ async fn sleep_or_stop(shared: &Shared, d: Duration) -> bool {
     }
 }
 
+/// What the socket is opened with.
+enum Pass {
+    Ticket(String),
+    /// A server from before tickets: the session token (`?token=`).
+    Token(String),
+}
+
 async fn supervise(shared: Arc<Shared>) {
     // The first pass, with quick retries on a blip.
     let mut attempt = 0;
@@ -636,29 +658,48 @@ async fn supervise(shared: Arc<Shared>) {
             return;
         }
         match first_ticket(&answer, attempt) {
-            FirstTicket::Connect(t) => break t,
+            FirstTicket::Connect(t) => break Pass::Ticket(t),
             FirstTicket::RetryAfterMs(ms) => {
                 if !sleep_or_stop(&shared, Duration::from_millis(ms)).await {
                     return;
                 }
                 attempt += 1;
             }
-            FirstTicket::Legacy | FirstTicket::Unavailable => {
+            FirstTicket::Legacy => match shared.tickets.legacy_token() {
+                // LEGACY: only a server that answered "no such route" gets
+                // here, and it can only take the session token. Nothing
+                // refreshes it: the token is the pass.
+                Some(token) => break Pass::Token(token),
+                None => {
+                    shared.set_status(LiveStatus::Unavailable);
+                    return;
+                }
+            },
+            FirstTicket::Unavailable => {
                 shared.set_status(LiveStatus::Unavailable);
                 return;
             }
         }
     };
-    shared.state.lock().unwrap().ticket = Some(ticket);
+    let legacy = match ticket {
+        Pass::Ticket(t) => {
+            shared.state.lock().unwrap().ticket = Some(t);
+            None
+        }
+        Pass::Token(t) => Some(t),
+    };
 
     loop {
         if shared.stopped() {
             return;
         }
         shared.set_status(LiveStatus::Connecting);
-        let url = {
-            let st = shared.state.lock().unwrap();
-            room_url(&shared.ws_base, &shared.doc_id, st.ticket.as_deref().unwrap_or(""))
+        let url = match &legacy {
+            Some(token) => legacy_room_url(&shared.ws_base, &shared.doc_id, token),
+            None => {
+                let st = shared.state.lock().unwrap();
+                room_url(&shared.ws_base, &shared.doc_id, st.ticket.as_deref().unwrap_or(""))
+            }
         };
         let code = run_socket(&shared, &url).await;
         if shared.stopped() {
@@ -678,7 +719,8 @@ async fn supervise(shared: Arc<Shared>) {
         }
         shared.set_status(LiveStatus::Disconnected);
         let since = shared.state.lock().unwrap().asked_at.map(|t| t.elapsed().as_millis() as u64).unwrap_or(u64::MAX);
-        match on_close(code, since) {
+        // A legacy socket has no ticket loop listening for closes.
+        match if legacy.is_some() { OnClose::Keep } else { on_close(code, since) } {
             OnClose::Halt => shared.state.lock().unwrap().halted = true,
             OnClose::Refresh => shared.refresh().await,
             OnClose::Keep => {}

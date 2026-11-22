@@ -20,6 +20,7 @@ pub use render::MONO;
 mod chrome;
 pub mod attach;
 mod behaviour;
+pub use behaviour::NOT_SHARED;
 mod table_bar;
 mod math_field;
 pub mod a11y;
@@ -210,9 +211,8 @@ pub enum RichEvent {
     /// Documents dropped on the editor, to open (attach.ts leaves them to
     /// the window's open path).
     OpenPaths(Vec<PathBuf>),
-    /// A click on a link to a file, as `classify_click` decided it: the
-    /// host opens, reveals or refuses it.
-    OpenLocal(markie_core::links::LinkClick),
+    /// A local link click. The host applies its own workspace grants.
+    OpenLocal(String),
     /// The toolbar asked for a zoom (a `ZOOM_STEPS` value) or a page width
     /// (a `WIDTH_STEPS` value); the host stores both.
     Zoom(f32),
@@ -290,6 +290,9 @@ pub struct RichView {
     base_dir: Option<PathBuf>,
     cloud_media: HashMap<String, PathBuf>,
     cloud_links: HashSet<String>,
+    /// Document links the server knows and this account may not follow
+    /// (`data-doc-link="none"`): drawn muted, and a click says so.
+    unshared_links: HashSet<String>,
     restrict_local_media: bool,
     pub zoom: f32,
     pub page_width: f32,
@@ -401,6 +404,7 @@ impl RichView {
             base_dir: None,
             cloud_media: HashMap::new(),
             cloud_links: HashSet::new(),
+            unshared_links: HashSet::new(),
             restrict_local_media: false,
             zoom: 1.0,
             page_width: 0.0,
@@ -503,6 +507,14 @@ impl RichView {
         self.cloud_links = links;
         self.restrict_local_media = restrict_local;
         cx.notify();
+    }
+
+    /// The links `markDocLinks` marks "none" for this reader.
+    pub fn set_unshared_links(&mut self, links: HashSet<String>, cx: &mut Context<Self>) {
+        if self.unshared_links != links {
+            self.unshared_links = links;
+            cx.notify();
+        }
     }
 
     pub fn focus_handle(&self) -> &FocusHandle {

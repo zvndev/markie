@@ -59,9 +59,9 @@ pub fn available_commands(editor: &WordEditor) -> Vec<&'static str> {
     let doc = editor.rich();
     let docx = editor.is_docx();
     let editable = editor.can_mutate();
-    let mut out: Vec<&'static str> = vec!["view-page", "view-continuous", "view-outline", "view-zoom-reset", "view-light-paper"];
+    let mut out: Vec<&'static str> = vec!["view-page", "view-continuous", "view-zoom-reset", "view-light-paper"];
     if docx {
-        out.extend(["review-comments", "review-tracking", "review-changes", "review-final"]);
+        out.extend(["view-outline", "review-comments", "review-tracking", "review-changes", "review-final"]);
         if doc.original_text.is_some() {
             out.push("review-original");
         }
@@ -97,6 +97,10 @@ pub fn available_commands(editor: &WordEditor) -> Vec<&'static str> {
         out.extend(["format-bold", "format-italic", "format-underline", "format-clear", "format-font"]);
     }
     out
+}
+
+pub(crate) fn menu_commands(editor: &WordEditor, tool: Option<Tool>) -> Vec<&'static str> {
+    if tool.is_none() { available_commands(editor) } else { Vec::new() }
 }
 
 pub fn is_available(editor: &WordEditor, id: &str) -> bool {

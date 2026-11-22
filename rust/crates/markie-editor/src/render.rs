@@ -13,6 +13,7 @@ use super::{CONTEXT, RichView};
 use markie_rich::edit::Unit;
 use markie_rich::editor::Pos;
 use markie_rich::model::*;
+use std::collections::HashSet;
 
 /// Sizes and colours for one frame: the `.markdown-body` rules of
 /// `globals.css`, with the template's typography (`style.rs`).
@@ -48,6 +49,8 @@ pub(crate) struct Look {
     pub mono: SharedString,
     pub focused: bool,
     pub scale: f32,
+    /// Reference keys of document links this reader may not follow.
+    pub unshared_links: HashSet<String>,
 }
 
 /// `--font-geist-mono`: SF Mono, which macOS only hands out under its
@@ -169,6 +172,7 @@ impl RichView {
             mono: SharedString::from(MONO),
             focused: self.focus.is_focused(window),
             scale: window.scale_factor(),
+            unshared_links: self.unshared_links.clone(),
         }
     }
 
@@ -1384,8 +1388,10 @@ fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
             s.size = px(z * look.zoom);
         }
     }
-    if m.link.is_some() {
-        s.color = look.link;
+    if let Some(link) = &m.link {
+        // `a[data-doc-link="none"]`: muted, for a document not shared with
+        // this reader.
+        s.color = if !look.unshared_links.is_empty() && look.unshared_links.contains(&media::reference_key(&link.href)) { look.muted } else { look.link };
     }
     if let Some(h) = &m.highlight {
         let c = h.color.as_deref().and_then(media::css_color).unwrap_or_else(|| rgb(0xfef08a).into());

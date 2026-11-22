@@ -1,350 +1,55 @@
-//! Cloud document rows, per-file sync controls, and conflict choices.
-use super::cloud::{TextAction, name, network};
-use super::{DocKind, Workspace};
-use gpui_kit::component::Disableable as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{
-    ActiveTheme, Sizable as _, WindowExt as _, h_flex, v_flex,
-};
+//! What sits above a synced document: the update strip (`cloud_strip.rs`)
+//! and, under it, a cloud action that failed. Electron has no per-document
+//! sync bar; its sync controls live in the Library row menu, the share gate
+//! and the conflict dialog, as Markie RS's now do.
+use super::Workspace;
 use gpui_kit::*;
 use markie_cloud::docs::Role;
-use markie_cloud::sync::{SyncEngine, SyncState};
 
 impl Workspace {
     pub(super) fn render_cloud_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let doc = self.doc.as_ref()?;
-        if !matches!(doc.kind, DocKind::Text { .. })
-            && markie_cloud::platform::supported_name(&name(&doc.path)).is_none()
-        {
+        let strip = self.render_update_strip(cx);
+        let error = self.cloud.notice.clone().filter(|_| self.doc.is_some());
+        if strip.is_none() && error.is_none() {
             return None;
         }
-        if !self.cloud.bindings.contains_key(&doc.path)
-            && !self.cloud_office.targets.contains_key(&doc.path)
-        {
-            return None;
-        }
-        let path = doc.path.clone();
-        let caption = self.cloud.badge(&path);
-        let busy = self.cloud.busy.contains(&path);
-        let viewer = self
-            .cloud
-            .remote(&path)
-            .is_some_and(|r| r.shared && r.role != Some(Role::Editor));
-        let status = if busy {
-            Some("Syncing…")
-        } else if viewer {
-            Some("View-only cloud access")
-        } else {
-            caption
-        };
-        let open = matches!(caption, Some("Conflict" | "Update available"));
-        let office = !matches!(doc.kind, DocKind::Text { .. })
-            || self.cloud_office.targets.contains_key(&path);
-        let theme = cx.theme().clone();
-        Some(
-            h_flex()
-                .py_1()
-                .px_3()
-                .gap_2()
-                .flex_wrap()
-                .border_b_1()
-                .border_color(theme.border)
+        let t = self.tokens(cx);
+        let fg = t.foreground;
+        // ShareBanner's error row: the sentence in red, never truncated past
+        // two lines, with a × that clears only the error.
+        let error_row = error.map(|message| {
+            div()
+                .flex_none()
+                .flex()
+                .items_start()
+                .gap(px(8.))
+                .px(px(12.))
+                .py(px(6.))
+                .bg(t.surface)
+                .shadow(vec![super::dialog_chrome::inset(t.border, -1.)])
+                .child(div().flex_1().min_w_0().text_size(px(11.)).line_height(relative(1.375)).line_clamp(2).text_color(t.red).child(message))
                 .child(
-                    Button::new("document-cloud-control")
-                        .small()
-                        .ghost()
-                        .label(if office {
-                            "Cloud document"
-                        } else if open {
-                            "Review cloud copy"
-                        } else {
-                            "Cloud sync"
-                        })
-                        .disabled(busy)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if office {
-                                this.show_office_upload(window, cx);
-                            } else {
-                                this.show_text_sync(window, cx);
-                            }
+                    div()
+                        .id("cloud-error-dismiss")
+                        .flex_none()
+                        .rounded(px(4.))
+                        .border_1()
+                        .border_color(t.border)
+                        .px(px(6.))
+                        .text_size(px(12.))
+                        .line_height(px(14.))
+                        .text_color(t.muted)
+                        .cursor_pointer()
+                        .hover(move |s| s.text_color(fg))
+                        .child("×")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.cloud.notice = None;
+                            cx.notify();
                         })),
                 )
-                .children(
-                    status.map(|s| div().text_xs().text_color(theme.muted_foreground).child(s)),
-                )
-                .children(
-                    self.cloud
-                        .notice
-                        .clone()
-                        .map(|s| div().text_xs().text_color(theme.muted_foreground).child(s)),
-                )
-                .into_any_element(),
-        )
-    }
-
-    pub(super) fn show_text_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else {
-            return;
-        };
-        let owner = cx.weak_entity();
-        window.open_dialog(cx, move |dialog, _, cx| {
-            let Some(entity) = owner.upgrade() else {
-                return dialog;
-            };
-            let workspace = entity.read(cx);
-            let record = workspace.cloud.bindings.get(&path).map(|b| &b.record);
-            let state = record.map(|r| r.state).unwrap_or_default();
-            let linked = record.is_some_and(|r| r.cloud_doc_id.is_some());
-            let remote = workspace.cloud.remote(&path);
-            let behind = workspace.cloud.badge(&path) == Some("Update available");
-            let viewer = remote.is_some_and(|r| r.shared && r.role != Some(Role::Editor))
-                || record.is_some_and(|r| r.share_role == Some(Role::Viewer));
-            let compare = behind || state == SyncState::Conflict;
-            let user = workspace.cloud.selected_scope();
-            let origin = record
-                .filter(|r| r.state != SyncState::LocalOnly)
-                .map(|r| {
-                    r.cloud_origin
-                        .clone()
-                        .unwrap_or_else(|| markie_cloud::DEFAULT_SERVER.into())
-                })
-                .or_else(|| user.as_ref().map(|s| s.origin().to_owned()));
-            let busy = workspace.cloud.busy.contains(&path);
-            let actions: &[(&str, TextAction)] = if compare {
-                &[
-                    ("Keep both", TextAction::KeepBoth),
-                    ("Take cloud copy", TextAction::Pull),
-                    ("Overwrite cloud", TextAction::Overwrite),
-                ]
-            } else if linked {
-                &[
-                    ("Back up now", TextAction::Push),
-                    ("Turn sync on", TextAction::Enable),
-                    ("Pause sync", TextAction::Pause),
-                    ("Remove cloud copy", TextAction::Delete),
-                ]
-            } else {
-                &[("Turn sync on", TextAction::Enable)]
-            };
-            let buttons: Vec<_> = actions
-                .iter()
-                .copied()
-                .filter(|(_, a)| {
-                    !(viewer
-                        && matches!(
-                            a,
-                            TextAction::Enable
-                                | TextAction::Push
-                                | TextAction::Overwrite
-                                | TextAction::Delete
-                        ))
-                        && (*a != TextAction::Enable || !linked || state == SyncState::Paused)
-                        && (*a != TextAction::Push || state != SyncState::Paused)
-                        && (*a != TextAction::Pause || state != SyncState::Paused)
-                })
-                .map(|(label, action)| {
-                    let owner = owner.clone();
-                    let origin = origin.clone();
-                    let path = path.clone();
-                    Button::new(SharedString::from(format!("cloud-sync-{action:?}")))
-                        .small()
-                        .label(label)
-                        .disabled(
-                            busy || (action == TextAction::Pull && state == SyncState::Unpushed),
-                        )
-                        .on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                            let origin = origin.clone();
-                            let path = path.clone();
-                            let _ = owner.update(cx, |this, cx| {
-                                if matches!(action, TextAction::Delete | TextAction::Overwrite) {
-                                    this.confirm_cloud_action(
-                                        path, origin, label, action, window, cx,
-                                    );
-                                    return;
-                                }
-                                if matches!(
-                                    action,
-                                    TextAction::Enable | TextAction::Push | TextAction::KeepBoth
-                                ) && !this.persist_cloud_choice(&path, window, cx)
-                                {
-                                    return;
-                                }
-                                this.cloud_text(path, action, origin, cx);
-                            });
-                        })
-                })
-                .collect();
-            let compare_button = if compare {
-                let owner = owner.clone();
-                let path = path.clone();
-                Some(
-                    Button::new("cloud-compare")
-                        .ghost()
-                        .small()
-                        .label("Compare copies")
-                        .on_click(move |_, window, cx| {
-                            let path = path.clone();
-                            let _ =
-                                owner.update(cx, |this, cx| this.compare_cloud(path, window, cx));
-                        }),
-                )
-            } else {
-                None
-            };
-            dialog
-                .title(if compare {
-                    "Cloud version conflict".to_owned()
-                } else {
-                    format!("Cloud sync: {}", name(&path))
-                })
-                .w(px(540.))
-                .child(
-                    v_flex()
-                        .gap_3()
-                        .child(if compare {
-                            "A newer cloud version is available. Choose which copy to keep."
-                        } else {
-                            "Sync keeps a versioned backup. Your local file remains yours."
-                        })
-                        .children(origin.map(|o| div().text_xs().child(format!("Server: {o}"))))
-                        .children(
-                            workspace
-                                .cloud
-                                .notice
-                                .clone()
-                                .map(|s| div().text_sm().child(s)),
-                        )
-                        .child(
-                            h_flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .children(buttons)
-                                .children(compare_button),
-                        ),
-                )
         });
+        Some(div().flex().flex_col().children(strip).children(error_row).into_any_element())
     }
-
-    fn confirm_cloud_action(
-        &mut self,
-        path: std::path::PathBuf,
-        origin: Option<String>,
-        label: &'static str,
-        action: TextAction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let owner = cx.weak_entity();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let owner = owner.clone();
-            let origin = origin.clone();
-            let path = path.clone();
-            dialog
-                .title(format!("{label}?"))
-                .w(px(440.))
-                .child(if action == TextAction::Delete {
-                    "This removes the cloud copy and its access links. Your local file is kept."
-                } else {
-                    "The current contents of your local file will replace the cloud copy."
-                })
-                .footer(
-                    Button::new("confirm-cloud-change")
-                        .danger()
-                        .small()
-                        .label(label)
-                        .on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                            let _ = owner.update(cx, |this, cx| {
-                                if action == TextAction::Overwrite
-                                    && !this.persist_cloud_choice(&path, window, cx)
-                                {
-                                    return;
-                                }
-                                this.cloud_text(path.clone(), action, origin.clone(), cx);
-                            });
-                        }),
-                )
-        });
-    }
-
-    fn compare_cloud(
-        &mut self,
-        path: std::path::PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(b) = self.cloud.bindings.get(&path).cloned() else {
-            return;
-        };
-        let Some(scope) = self
-            .cloud
-            .scope(
-                b.record
-                    .cloud_origin
-                    .as_deref()
-                    .unwrap_or(markie_cloud::DEFAULT_SERVER),
-            )
-            .filter(|s| s.user == b.user)
-        else {
-            return;
-        };
-        let local = self.current_text(cx);
-        let target = name(&path);
-        let primary = scope.origin() == markie_cloud::DEFAULT_SERVER;
-        let request = scope.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let cloud = network(async move {
-                SyncEngine::new(&request.client, primary)
-                    .remote_content(&b.record, &target)
-                    .await
-            })
-            .await
-            .and_then(|r| r);
-            let _ = this.update_in(cx, |this, window, cx| {
-                if !scope.active() || this.doc.as_ref().is_none_or(|d| d.path != path) {
-                    return;
-                }
-                match cloud {
-                    Ok(cloud) => window.open_dialog(cx, move |dialog, _, _| {
-                        dialog
-                            .title("Compare local and cloud copies")
-                            .w(px(820.))
-                            .child(
-                                h_flex()
-                                    .items_start()
-                                    .gap_3()
-                                    .child(copy_excerpt("Your copy", &local))
-                                    .child(copy_excerpt("Cloud copy", &cloud.content)),
-                            )
-                    }),
-                    Err(error) => window.push_notification(error, cx),
-                }
-            });
-        })
-        .detach();
-    }
-}
-
-fn copy_excerpt(label: &'static str, text: &str) -> impl IntoElement {
-    let excerpt: String = text.chars().take(12_000).collect();
-    v_flex()
-        .flex_1()
-        .min_w_0()
-        .gap_2()
-        .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
-        .child(
-            div()
-                .id(label)
-                .max_h(px(390.))
-                .overflow_y_scroll()
-                .text_sm()
-                .child(if excerpt.len() < text.len() {
-                    format!("{excerpt}\n\nPreview truncated.")
-                } else {
-                    excerpt
-                }),
-        )
 }
 
 pub(super) fn role_name(role: Role) -> &'static str {

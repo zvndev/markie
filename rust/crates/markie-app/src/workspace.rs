@@ -41,6 +41,7 @@ mod dialog_chrome;
 mod edit_menu;
 pub(crate) use edit_menu::{NewDarkmownDocument, NewMarkdownDocument, NewTextDocument, NewWordDocument};
 mod file_ops;
+mod first_run;
 mod folder_tree;
 mod history_dialog;
 mod library_rows;
@@ -50,6 +51,8 @@ mod cloud;
 mod cloud_drive;
 mod cloud_office;
 mod cloud_page;
+mod cloud_strip;
+mod servers_setting;
 mod cloud_resources;
 mod cloud_ui;
 mod darkmown;
@@ -147,6 +150,7 @@ pub struct Workspace {
     dirty: bool,
     /// Warnings shown above a converted copy (Electron's `session.warnings`).
     doc_notes: Vec<String>,
+    import_epoch: u64,
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
@@ -255,6 +259,7 @@ impl Workspace {
                 this.rescan(cx);
             }
         }));
+        subscriptions.extend(Self::watch_window_for_cloud(window, cx));
         let (shell, shell_subs) = rail::Shell::new(color_mode, template, window, cx);
         subscriptions.extend(shell_subs);
         let (projects, projects_sub) = projects::Projects::new(window, cx);
@@ -304,6 +309,7 @@ impl Workspace {
             split_echo: None,
             dirty: false,
             doc_notes: Vec::new(),
+            import_epoch: 0,
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
@@ -363,7 +369,7 @@ impl Workspace {
                 first_file = Some(path);
             }
         }
-        if let Some(path) = first_file.clone() {
+        if let Some(path) = first_file {
             this.open_path(&path, window, cx);
         } else if this.untitled_draft_pending() {
             // Electron offers the untitled journal entry when the launch opens
@@ -510,6 +516,7 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.invalidate_import();
         if self.intercept_import(path, window, cx) {
             return;
         }

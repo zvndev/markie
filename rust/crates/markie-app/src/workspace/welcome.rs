@@ -32,7 +32,11 @@ impl Workspace {
         let seen = self.registry.as_ref().map(|r| r.setting(SEEN_KEY).ok().flatten());
         let welcome = should_show_welcome(false, seen);
         let text = if welcome { WELCOME_DOC } else { "" };
-        self.open_untitled(super::untitled::untitled_name("md"), text.to_string(), window, cx);
+        if welcome {
+            self.open_welcome(window, cx);
+        } else {
+            self.open_untitled(super::untitled::untitled_name("md"), String::new(), window, cx);
+        }
         // `applyExternalDoc`: what is shown is what counts as saved, so the
         // welcome is not an unsaved edit and never reaches the journal.
         self.dirty = false;

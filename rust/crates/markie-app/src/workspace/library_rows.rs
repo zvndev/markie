@@ -2,9 +2,10 @@
 //! them (`SYNC_STATUS`, `rowMenuEntries`, `FileMenu`).
 //!
 //! The state comes from the cloud workspace (`cloud.rs`) as it already
-//! labels a row. Sync actions open the document and hand it to the cloud
-//! work's own sheet (`show_text_sync`, `open_share`), which knows how to run
-//! them; Electron runs some of them in place from the menu.
+//! labels a row. Sync actions run in place from the menu, as Electron's do:
+//! Retry backup pushes, Sync to cloud and Resume sync turn sync on, Pull
+//! latest takes the cloud copy, Stop syncing asks first (`cloud_strip.rs`),
+//! and Manage sharing opens the share dialog for the cloud document.
 
 use std::path::{Path, PathBuf};
 
@@ -111,6 +112,7 @@ pub(super) enum RowAction {
     Review,
     ManageSharing,
     SyncOff,
+    Download,
     Delete,
     /// The file is gone: "Remove from Library".
     Forget,
@@ -138,6 +140,9 @@ pub(super) struct CloudLinks {
     /// A cloud `.wd` on a server this row is signed in to, with super-nightly
     /// on: Copy Live Doc address and Open Live Doc.
     pub live_doc: bool,
+    /// The cloud has the document and this device no longer has its file
+    /// (`cloudCopyOnly`): Download….
+    pub cloud_only: bool,
 }
 
 /// `rowMenuEntries`: the links, copy path, then the sync action this state
@@ -170,7 +175,10 @@ pub(super) fn row_entries_for(status: SyncStatus, signed_in: bool, classic: bool
             SyncStatus::Conflict => sync.push(e(RowAction::Review, "Review changes…", ICON_REVIEW, Tone::Accent)),
             _ => {}
         }
-        if in_cloud && status != SyncStatus::Shared {
+        if links.cloud_only {
+            sync.push(e(RowAction::Download, "Download…", ICON_DOWNLOAD, Tone::Accent));
+        }
+        if in_cloud && status != SyncStatus::Shared && !links.cloud_only {
             sync.push(e(RowAction::ManageSharing, "Manage sharing…", PEOPLE, Tone::Default));
         }
         if status == SyncStatus::Synced {
@@ -229,7 +237,17 @@ impl Workspace {
             && row_signed_in
             && markie_core::formats::classify(name) == markie_core::formats::FormatKind::Darkmown
             && super::comments::nightly(self.registry.as_deref());
-        CloudLinks { private_link, live_doc }
+        let cloud_only = private_link && row_signed_in && !path.exists();
+        CloudLinks { private_link, live_doc, cloud_only }
+    }
+
+    /// `signedInFor(item)`: signed in to the server this row's actions would
+    /// reach, its cloud copy's server, or the primary one for a local file.
+    fn row_signed_in(&self, path: &Path) -> bool {
+        match self.cloud.binding_key(path).filter(|key| self.cloud.bindings.get(key).is_some_and(|b| b.record.cloud_doc_id.is_some())) {
+            Some(key) => self.cloud.bound_scope(&key).is_some(),
+            None => self.cloud.primary_scope().is_some(),
+        }
     }
 
     pub(super) fn open_row_menu(&mut self, path: PathBuf, at: Point<Pixels>, cx: &mut Context<Self>) {
@@ -264,13 +282,28 @@ impl Workspace {
             }
             RowAction::Review => self.open_path(&path, window, cx),
             RowAction::ManageSharing => {
-                self.open_path(&path, window, cx);
-                self.open_share(window, cx);
+                let id = self.cloud.bindings.get(&path).and_then(|b| b.record.cloud_doc_id.clone());
+                match id {
+                    Some(id) => self.manage_cloud_share(id, super::cloud::name(&path), window, cx),
+                    None => {
+                        self.open_path(&path, window, cx);
+                        self.open_share(window, cx);
+                    }
+                }
             }
-            RowAction::RetryBackup | RowAction::SyncOn | RowAction::Resume | RowAction::Pull | RowAction::SyncOff => {
-                self.open_path(&path, window, cx);
-                self.show_text_sync(window, cx);
+            // docRetryPush, docSyncOn and docResolve("cloud"), in place.
+            RowAction::RetryBackup => self.cloud_text(path, super::cloud::TextAction::Push, None, cx),
+            RowAction::SyncOn | RowAction::Resume => {
+                let has_id = self.cloud.bindings.get(&path).is_some_and(|b| b.record.cloud_doc_id.is_some());
+                if self.cloud.area.is_some() && has_id {
+                    self.cloud.notice = Some("Existing cloud files keep their area. Move the cloud document separately before changing its destination.".into());
+                } else {
+                    self.cloud_text(path, super::cloud::TextAction::Enable, None, cx);
+                }
             }
+            RowAction::Pull => self.cloud_text(path, super::cloud::TextAction::Pull, None, cx),
+            RowAction::SyncOff => self.show_dialog(Overlay::StopSync { path }, window, cx),
+            RowAction::Download => self.download_cloud_copy(path, window, cx),
         }
         cx.notify();
     }
@@ -280,7 +313,7 @@ impl Workspace {
         let (path, at) = self.shell.row_menu.clone()?;
         let p = themes::palette(cx);
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let signed_in = super::account::signed_in_user(cx).is_some();
+        let signed_in = self.row_signed_in(&path);
         let exists = !self.shell.recent.is_missing(&path);
         let entries = row_entries_for(self.row_status(&path), signed_in, classic(&name), self.row_links(&path, &name), exists);
         let hover = p.accent.opacity(0.85);
@@ -346,7 +379,7 @@ mod tests {
 
     #[test]
     fn cloud_rows_offer_the_link_first_and_live_docs_the_two_addresses() {
-        let links = |private_link, live_doc| CloudLinks { private_link, live_doc };
+        let links = |private_link, live_doc| CloudLinks { private_link, live_doc, cloud_only: false };
         let got = |status, signed_in, l| row_entries(status, signed_in, true, l).into_iter().map(|e| (e.action, e.label)).collect::<Vec<_>>();
         // Copy link shows for any row with a cloud copy, signed in or not.
         assert_eq!(
@@ -415,6 +448,13 @@ mod tests {
         assert_eq!(got[1].label, "Remove from Library");
         let unpushed: Vec<_> = row_entries_for(SyncStatus::Unpushed, true, true, CloudLinks::default(), false).iter().map(|e| e.action).collect();
         assert!(!unpushed.contains(&RowAction::RetryBackup));
+    }
+
+    #[test]
+    fn a_cloud_copy_without_its_file_offers_download() {
+        let only = CloudLinks { private_link: true, live_doc: false, cloud_only: true };
+        let got: Vec<RowAction> = row_entries(SyncStatus::Synced, true, true, only).into_iter().map(|e| e.action).collect();
+        assert_eq!(got, [RowAction::CopyLink, RowAction::CopyPath, RowAction::Download, RowAction::SyncOff, RowAction::Delete]);
     }
 
     #[test]

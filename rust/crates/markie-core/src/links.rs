@@ -90,7 +90,8 @@ pub fn candidate_path(href: &str, doc_dir: &Path) -> Option<PathBuf> {
     if path.is_empty() {
         return None;
     }
-    let decoded = percent_decode(path)?;
+    // A literal percent in a filename is not a broken URL in Electron.
+    let decoded = percent_decode(path).unwrap_or_else(|| path.to_string());
     if decoded.contains('\0') {
         return None;
     }
@@ -115,10 +116,14 @@ fn percent_decode(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// The whole rule. `doc_dir` is None for an unsaved document. A local file is
-/// allowed only inside the document's own folder; Electron also allows the
-/// workspace folders it holds grants for.
+/// The local policy with only the document's folder granted.
 pub fn classify_click(href: &str, doc_dir: Option<&Path>) -> LinkClick {
+    classify_click_with_roots(href, doc_dir, &[])
+}
+
+/// The document's folder and explicit workspace roots are the only directory
+/// grants. Check resolved targets, not the link's lexical spelling.
+pub fn classify_click_with_roots(href: &str, doc_dir: Option<&Path>, workspace_roots: &[PathBuf]) -> LinkClick {
     if let Some(web) = external_web_target(href.trim()) {
         return LinkClick::Web(web);
     }
@@ -128,7 +133,9 @@ pub fn classify_click(href: &str, doc_dir: Option<&Path>) -> LinkClick {
     let (Ok(real), Ok(root)) = (target.canonicalize(), dir.canonicalize()) else {
         return LinkClick::Refuse("That link does not point at a file.");
     };
-    if !real.starts_with(&root) {
+    if !real.starts_with(&root)
+        && !workspace_roots.iter().filter_map(|p| p.canonicalize().ok()).any(|p| real.starts_with(p))
+    {
         return LinkClick::Refuse("Markie only opens files that sit beside the document or inside your workspace.");
     }
     match local_open_action(&real, real.is_dir()) {
@@ -140,6 +147,31 @@ pub fn classify_click(href: &str, doc_dir: Option<&Path>) -> LinkClick {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_roots_grant_passive_files_and_never_turn_scripts_into_opens() {
+        let temp = tempfile::tempdir().unwrap();
+        let notes = temp.path().join("notes");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir(&notes).unwrap();
+        std::fs::create_dir(&workspace).unwrap();
+        let report = workspace.join("100%.pdf");
+        let setup = workspace.join("setup.command");
+        std::fs::write(&report, []).unwrap();
+        std::fs::write(&setup, []).unwrap();
+        let roots = &[workspace];
+        let classify = |href| classify_click_with_roots(href, Some(&notes), roots);
+        assert!(matches!(classify_click("../workspace/100%.pdf", Some(&notes)), LinkClick::Refuse(_)));
+        assert_eq!(classify("../workspace/100%.pdf"), LinkClick::Open(report.canonicalize().unwrap()));
+        assert_eq!(classify("../workspace/setup.command"), LinkClick::Reveal(setup.canonicalize().unwrap()));
+        #[cfg(unix)]
+        {
+            let outside = temp.path().join("outside.pdf");
+            std::fs::write(&outside, []).unwrap();
+            std::os::unix::fs::symlink(outside, roots[0].join("escape.pdf")).unwrap();
+            assert!(matches!(classify("../workspace/escape.pdf"), LinkClick::Refuse(_)));
+        }
+    }
 
     #[test]
     fn passive_files_open_and_programs_are_shown() {

@@ -10,11 +10,25 @@ use gpui_kit::{App, Window};
 /// The local files among the URLs macOS passed, in order. Anything that is not
 /// a `file://` URL is skipped here.
 pub fn file_paths(urls: &[String]) -> Vec<PathBuf> {
-    urls.iter()
-        .filter_map(|raw| url::Url::parse(raw).ok())
-        .filter(|u| u.scheme() == "file")
-        .filter_map(|u| u.to_file_path().ok())
-        .collect()
+    urls.iter().filter_map(|raw| file_path(raw)).collect()
+}
+
+fn file_path(raw: &str) -> Option<PathBuf> {
+    let url = url::Url::parse(raw).ok()?;
+    if url.scheme() != "file" {
+        return None;
+    }
+    url.to_file_path().ok()
+}
+
+/// A desktop launcher can pass local URLs, while the CLI passes paths.
+pub fn launch_file_paths(args: &[String]) -> Vec<PathBuf> {
+    args.iter().filter_map(|arg| {
+        if arg.contains("://") {
+            return file_path(arg);
+        }
+        (!arg.starts_with('-')).then(|| PathBuf::from(arg))
+    }).collect()
 }
 
 /// The sign-in hand-back links among the URLs, in order. Only Markie RS's own
@@ -100,6 +114,28 @@ pub fn register_url_scheme() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linux_launcher_advertises_only_the_side_build_scheme() {
+        let entry = include_str!("../../../scripts/com.zvn.markie.rs.desktop");
+        assert!(entry.lines().any(|line| line == "Exec=markie-rs %U"));
+        assert_eq!(
+            entry.lines().filter(|line| line.starts_with("MimeType=")).collect::<Vec<_>>(),
+            ["MimeType=x-scheme-handler/markie-rs;"]
+        );
+    }
+
+    #[test]
+    fn cold_launch_accepts_paths_and_desktop_urls_in_argument_order() {
+        let url = if cfg!(windows) { "file:///C:/tmp/a%20b.docx" } else { "file:///tmp/a%20b.docx" };
+        let args = [url, "Notes.md", "markie-rs://doc?id=1", "markie://auth", "--unrecognized", "https://example.org/x"]
+            .map(str::to_string);
+        let mut expected = file_paths(&args);
+        assert_eq!(expected.len(), 1);
+        assert_eq!(expected[0].file_name().unwrap(), "a b.docx");
+        expected.push(PathBuf::from("Notes.md"));
+        assert_eq!(launch_file_paths(&args), expected);
+    }
 
     #[test]
     fn keeps_only_local_files_in_order() {

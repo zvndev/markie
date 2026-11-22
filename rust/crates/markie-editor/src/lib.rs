@@ -359,21 +359,33 @@ pub struct RichView {
     /// does nothing there, as in Electron, where the rich editor is gone.
     pub(crate) source_mode: bool,
     source_toolbar: Option<Entity<SourceToolbar>>,
+    split_toolbar: Option<Entity<SourceToolbar>>,
+    /// Set by the host each frame its Split layout draws the row above both
+    /// panes; the rich pane then draws none of its own.
+    toolbar_outside: bool,
 }
 
 /// The formatting row above the Source pane. Electron keeps its toolbar
 /// when Source shows: zoom, page width and history still work, the
 /// formatting buttons have no editor to act on.
+///
+/// In Split it is the one row above both panes, and it formats the rich
+/// pane, as Electron's single DocToolbar does (`split`).
 pub struct SourceToolbar {
     rich: WeakEntity<RichView>,
+    split: bool,
     _observe: Subscription,
 }
 
 impl Render for SourceToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(rich) = self.rich.upgrade() else { return div().into_any_element() };
+        let split = self.split;
         rich.update(cx, |r, cx| {
-            r.source_mode = true;
+            if split && r.read_only {
+                return div().into_any_element();
+            }
+            r.source_mode = !split;
             r.render_toolbar(window, cx)
         })
     }
@@ -429,6 +441,8 @@ impl RichView {
             rail_hover: Default::default(),
             source_mode: false,
             source_toolbar: None,
+            split_toolbar: None,
+            toolbar_outside: false,
         }
     }
 
@@ -530,8 +544,21 @@ impl RichView {
             return t.clone();
         }
         let rich = cx.entity();
-        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), split: false, _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
         self.source_toolbar = Some(t.clone());
+        t
+    }
+
+    /// The row to draw above both panes in Split. Call it on every frame the
+    /// Split layout draws: that frame, the rich pane leaves its own row out.
+    pub fn split_toolbar(&mut self, cx: &mut Context<Self>) -> Entity<SourceToolbar> {
+        self.toolbar_outside = true;
+        if let Some(t) = &self.split_toolbar {
+            return t.clone();
+        }
+        let rich = cx.entity();
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), split: true, _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        self.split_toolbar = Some(t.clone());
         t
     }
 

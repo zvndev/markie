@@ -1058,7 +1058,8 @@ impl Render for RichView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let started = std::time::Instant::now();
         self.source_mode = false;
-        let toolbar = (!self.read_only).then(|| self.render_toolbar(window, cx));
+        let outside = std::mem::take(&mut self.toolbar_outside);
+        let toolbar = (!self.read_only && !outside).then(|| self.render_toolbar(window, cx));
         let prompt = self.render_prompt(cx);
         let doc = self.render_document(window, cx);
         let find = self.render_find(cx);

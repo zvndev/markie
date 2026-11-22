@@ -93,8 +93,7 @@ impl Workspace {
     /// adds a cursor and ⌥⇧-drag selects a block, both kept).
     pub(super) fn source_mouse(&self, editor: impl IntoElement, cx: &mut Context<Self>) -> Div {
         div()
-            .w_full()
-            .flex_1()
+            .size_full()
             .min_h_0()
             .child(editor)
             .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, window, cx| this.source_mouse_down(ev, window, cx)))

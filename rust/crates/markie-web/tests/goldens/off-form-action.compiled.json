@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<form action=\"/api/x\" method=\"post\"><input type=\"text\" name=\"name\" aria-label=\"Name\">\n<button type=\"submit\">Go</button></form>\n</main>\n",
+ "title": "Interactive document",
+ "warnings": [],
+ "requiresRuntime": false,
+ "hasCode": false
+}

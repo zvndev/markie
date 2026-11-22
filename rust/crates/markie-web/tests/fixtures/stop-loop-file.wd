@@ -1,0 +1,3 @@
+@loop /rows.json into r
+{ r.a }
+@endloop

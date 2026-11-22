@@ -1,0 +1,19 @@
+---
+title: Interactive counter
+---
+
+# A document you can use
+
+This is real Darkmown source. Trust this document to enable its local controls.
+
+:state count = 0
+:computed doubled = count * 2
+
+Count: { count }.
+
+Double: { doubled }.
+
+:button "Add one" -> count++
+:button "Subtract one" -> count--
+
+These values are temporary preview state. Saving the document saves the source, not your current count.

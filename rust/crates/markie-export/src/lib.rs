@@ -17,6 +17,8 @@ pub mod highlight;
 pub mod markdown;
 pub mod math_html;
 pub mod mdast;
+pub mod pdf;
+pub mod pdf_world;
 pub mod render;
 pub mod sanitize;
 pub mod strict_math;

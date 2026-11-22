@@ -1,0 +1,5 @@
+:state q = 0
+:state s = 0
+:effect q -> s++
+
+{ s }

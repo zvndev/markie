@@ -1,0 +1,36 @@
+---
+title: Shopping list
+---
+
+# Shopping list
+
+:state shopping = [{"item": "Bread", "price": 4.5, "got": false}, {"item": "Milk", "price": 2, "got": true}, {"item": "Coffee", "price": 12, "got": false}]
+:state showTotal = false
+:state name = "Ada"
+:computed title = name + "'s list"
+:computed many = count(shopping)
+
+## { title | upper }
+
+- [x] Write the list
+- [ ] Go to the shop
+
+@loop shopping into row sort by row.price desc
+**{ row.item }**: { row.price | money }
+
+:if row.got
+(in the basket)
+:else
+(still to buy)
+:endif
+@endloop
+
+:button "Add eggs" -> shopping append {"item": "Eggs", "price": 3, "got": false}
+:button "Toggle total" -> showTotal toggle
+:button "Empty the list" -> shopping clear
+
+:if showTotal
+Total: { shopping | sum:"price" | money } for { many } items.
+:else
+The total is hidden.
+:endif

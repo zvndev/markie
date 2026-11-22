@@ -1,0 +1,3 @@
+:state p = 5
+
+{ p | money }

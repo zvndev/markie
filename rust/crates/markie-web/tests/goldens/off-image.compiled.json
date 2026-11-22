@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<p><img src=\"x.png\" alt=\"pic\" decoding=\"async\" fetchpriority=\"high\"></p>\n\n</main>\n",
+ "title": "Interactive document",
+ "warnings": [],
+ "requiresRuntime": false,
+ "hasCode": false
+}

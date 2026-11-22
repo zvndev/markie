@@ -130,7 +130,7 @@ fn compare(work: &Path) {
             let theirs = trim_end_newlines(y.as_str().unwrap());
             if ours == theirs {
                 block_match += 1;
-            } else if block_diffs.len() < 400 {
+            } else if block_diffs.len() < 100_000 {
                 block_diffs.push(json!({ "path": r["path"], "source": x["source"], "rs": ours, "electron": theirs }));
             }
         }

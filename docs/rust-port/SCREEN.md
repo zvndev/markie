@@ -19,7 +19,8 @@ Every agent that runs Markie RS or Electron Markie shares Kirby's one Mac screen
    - `act.sh <pid> resize 1280 820`, `act.sh <pid> minimize`, `act.sh <pid> focus`
 5. **Capture without the lock.** `capture.sh <pid> <out.png>` grabs your window even when another window covers it. It cannot capture a minimized window.
 6. **Quit what you started, by PID:** `kill <pid>`. Never `killall`, `pkill -f`, or `osascript … quit`.
-7. **Scratch data only.** Fixtures, data dirs and profiles live in your own scratch folder. Never read or write `~/Library/Application Support/Markie`, Kirby's Keychain items, or his documents.
+7. **Keep Kirby's folders out of the index.** Launch every scratch instance of either app with `env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=<your scratch home>`, as well as its scratch data folder. The device index walks `$CLAUDE_CONFIG_DIR/skills` and the home folder, and Electron ignores a changed HOME, so in a scratch Electron never open or capture its Browse, Search or Library lists. Open only your own fixtures, passed on the command line.
+8. **Scratch data only.** Fixtures, data dirs and profiles live in your own scratch folder. Never read or write `~/Library/Application Support/Markie`, Kirby's Keychain items, or his documents.
 
 ## Comparing with Electron
 

@@ -628,9 +628,8 @@ impl RichView {
                     })),
                 ],
                 Part::Output => vec![
-                    // Printing arrives with phase 5's PDF export; until then the
-                    // button is shown where Electron has it, and disabled.
-                    self.tool("rt-print", "icons/printer.svg", "Print (⌘P)", "Print", m, false, true, cx, |_, _, _| {}),
+                    // The host prints through its export path (RichEvent::Print).
+                    self.tool("rt-print", "icons/printer.svg", "Print (⌘P)", "Print", m, false, false, cx, |_, _, cx| cx.emit(RichEvent::Print)),
                     self.tool("rt-history", "icons/clock.svg", "Version history", "History", m, false, false, cx, |_, _, cx| cx.emit(RichEvent::History)),
                 ],
                 Part::View => vec![

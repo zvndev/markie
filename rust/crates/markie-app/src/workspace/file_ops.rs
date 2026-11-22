@@ -89,8 +89,13 @@ fn file_name(path: &Path) -> String {
 }
 
 impl Workspace {
-    fn default_dir(&self) -> PathBuf {
-        if let Some(doc) = &self.doc {
+    /// The open document's file; none for an untitled buffer.
+    pub(super) fn file_path(&self) -> Option<PathBuf> {
+        self.doc.as_ref().filter(|d| !d.untitled).map(|d| d.path.clone())
+    }
+
+    pub(super) fn default_dir(&self) -> PathBuf {
+        if let Some(doc) = self.doc.as_ref().filter(|d| !d.untitled) {
             if let Some(dir) = doc.path.parent() {
                 return dir.to_path_buf();
             }
@@ -107,6 +112,12 @@ impl Workspace {
     }
 
     pub(super) fn create_document(&mut self, ext: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        // Text kinds start as an unsaved, untitled buffer, as Electron's New
+        // does; ⌘S asks where it goes. Word, RTF and ODT are written first.
+        if blank_bytes(ext).is_ok_and(|b| b.is_empty()) {
+            self.open_untitled(super::untitled::untitled_name(ext), String::new(), window, cx);
+            return;
+        }
         let dir = self.default_dir();
         let suggested = document::untitled_path(&dir, ext);
         let name = suggested.file_name().map(|n| n.to_string_lossy().into_owned());
@@ -349,7 +360,7 @@ impl Workspace {
     // ------------------------------------------------------------- rename
 
     pub(super) fn on_rename(&mut self, _: &RenameDocument, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        let Some(path) = self.file_path() else { return };
         let current = file_name(&path);
         let input = cx.new(|cx| {
             let mut state = InputState::new(window, cx).default_value(current.clone());
@@ -420,7 +431,7 @@ impl Workspace {
     // ----------------------------------------------------------- duplicate
 
     pub(super) fn on_duplicate(&mut self, _: &DuplicateDocument, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        let Some(path) = self.file_path() else { return };
         if self.dirty {
             self.save(window, cx);
         }
@@ -437,7 +448,7 @@ impl Workspace {
     // --------------------------------------------------------------- trash
 
     pub(super) fn on_trash(&mut self, _: &TrashDocument, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        let Some(path) = self.file_path() else { return };
         self.show_dialog(Overlay::Trash { path }, window, cx);
     }
 
@@ -499,7 +510,7 @@ impl Workspace {
     /// Move the open document to another folder. A name already taken there
     /// asks before anything moves, and keeping both never overwrites.
     pub(super) fn on_move(&mut self, _: &MoveDocument, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(from) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        let Some(from) = self.file_path() else { return };
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -568,14 +579,14 @@ impl Workspace {
     // --------------------------------------------------------- reveal, copy
 
     pub(super) fn on_reveal(&mut self, _: &RevealDocument, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(doc) = &self.doc {
-            cx.reveal_path(&doc.path);
+        if let Some(path) = self.file_path() {
+            cx.reveal_path(&path);
         }
     }
 
     pub(super) fn on_copy_path(&mut self, _: &CopyPath, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(doc) = &self.doc {
-            cx.write_to_clipboard(ClipboardItem::new_string(doc.path.to_string_lossy().into_owned()));
+        if let Some(path) = self.file_path() {
+            cx.write_to_clipboard(ClipboardItem::new_string(path.to_string_lossy().into_owned()));
             window.push_notification("Path copied.", cx);
         }
     }

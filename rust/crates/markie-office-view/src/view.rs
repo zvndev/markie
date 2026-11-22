@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -129,6 +129,9 @@ pub struct WordView {
     pub paper: PaperTone,
     pub(crate) tool: Option<Tool>,
     pub(crate) inputs: Inputs,
+    /// The toolbar's font-size field (Electron's `<input type=number>`).
+    size_field: Entity<InputState>,
+    _size_sub: Subscription,
     /// Layouts being built by this render, and the ones the last frame painted.
     building: RefCell<HashMap<String, Painted>>,
     painted: Rc<RefCell<HashMap<String, Painted>>>,
@@ -200,6 +203,18 @@ impl WordView {
             comment_text: input("Comment on the selected paragraph"),
         };
         let mode = if editor.is_docx() { ViewMode::Page } else { ViewMode::Continuous };
+        let size_field = cx.new(|cx| InputState::new(window, cx).placeholder("Auto"));
+        // As Electron's onChange: a valid size applies as it is typed.
+        let size_sub = cx.subscribe_in(&size_field, window, |this: &mut WordView, field, ev: &InputEvent, window, cx| {
+            if !matches!(ev, InputEvent::Change) || !field.read(cx).focus_handle(cx).is_focused(window) {
+                return;
+            }
+            if let Some(points) = parse_size(field.read(cx).value().as_ref()) {
+                if this.editor.selection_format().font_size_points.value() != Some(&Some(points)) {
+                    this.set_size(points, window, cx);
+                }
+            }
+        });
         WordView {
             editor,
             focus: cx.focus_handle(),
@@ -210,6 +225,8 @@ impl WordView {
             paper: PaperTone::Theme,
             tool: None,
             inputs,
+            size_field,
+            _size_sub: size_sub,
             building: RefCell::new(HashMap::new()),
             painted: Rc::new(RefCell::new(HashMap::new())),
             composition: None,
@@ -951,6 +968,26 @@ impl WordView {
         cx.notify();
     }
 
+    /// The field shows the selection's size, or empty under its Auto or
+    /// Mixed placeholder, unless the person is typing in it.
+    fn sync_size_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.size_field.read(cx).focus_handle(cx).is_focused(window) {
+            return;
+        }
+        let format = self.editor.selection_format();
+        let (value, placeholder) = match &format.font_size_points {
+            Common::Value(Some(points)) => (trim_size(*points), "Auto"),
+            Common::Mixed => (String::new(), "Mixed"),
+            _ => (String::new(), "Auto"),
+        };
+        self.size_field.update(cx, |field, cx| {
+            if field.value().as_ref() as &str != value.as_str() {
+                field.set_value(value, window, cx);
+            }
+            field.set_placeholder(placeholder, window, cx);
+        });
+    }
+
     fn set_size(&mut self, points: f64, window: &mut Window, cx: &mut Context<Self>) {
         if (1.0..=400.0).contains(&points) {
             self.editor.format_selection(RunFormat { font_size_points: Some(Some(points)), ..Default::default() });
@@ -1285,11 +1322,7 @@ impl WordView {
             Common::Value(Some(points)) => Some(*points),
             _ => None,
         };
-        let size_text = match (&format.font_size_points, size) {
-            (_, Some(points)) => format!("{}", (points * 2.0).round() / 2.0),
-            (Common::Mixed, None) => "Mixed".into(),
-            _ => "Auto".into(),
-        };
+        let size_tip = "Size of the selected text";
         let menu = in_menu("size");
         let smaller = can_format && size.is_some_and(|s| s > 1.0);
         let larger = can_format && size.is_some_and(|s| s < 400.0);
@@ -1301,20 +1334,21 @@ impl WordView {
         ));
         row.push((
             "primary",
+            // `markie-overlay-field text-[11px] h-7 w-[38px] text-center`.
             div()
+                .id("word-size-field")
                 .w(px(38.))
                 .h(px(28.))
                 .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
                 .rounded(px(6.))
                 .border_1()
                 .border_color(theme.border)
                 .bg(theme.background)
                 .text_size(px(11.))
                 .text_color(if size.is_some() { fg } else { muted })
-                .child(size_text)
+                .when(!can_format, |d| d.opacity(0.5))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(size_tip).build(window, cx))
+                .child(Input::new(&self.size_field).appearance(false).xsmall().text_center().disabled(!can_format))
                 .into_any_element(),
         ));
         row.push((
@@ -1455,6 +1489,7 @@ impl WordView {
 impl Render for WordView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_images();
+        self.sync_size_field(window, cx);
         self.building.borrow_mut().clear();
         let theme = cx.theme().clone();
         let colors = self.page_colors(cx);
@@ -1683,5 +1718,40 @@ impl EntityInputHandler for WordView {
 
     fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
         self.editor.can_mutate()
+    }
+}
+
+/// A size Electron's field accepts: 1 to 400 points in half-point steps.
+pub(crate) fn parse_size(text: &str) -> Option<f64> {
+    let value: f64 = text.trim().parse().ok()?;
+    (value.is_finite() && (1.0..=400.0).contains(&value) && (value * 2.0).fract() == 0.0).then_some(value)
+}
+
+fn trim_size(points: f64) -> String {
+    let p = (points * 2.0).round() / 2.0;
+    if p.fract() == 0.0 { format!("{}", p as i64) } else { format!("{p}") }
+}
+
+#[cfg(test)]
+mod size_field_tests {
+    use super::{parse_size, trim_size};
+
+    #[test]
+    fn takes_what_electrons_number_field_takes() {
+        assert_eq!(parse_size("12"), Some(12.0));
+        assert_eq!(parse_size(" 10.5 "), Some(10.5));
+        assert_eq!(parse_size("400"), Some(400.0));
+        assert_eq!(parse_size("0.5"), None);
+        assert_eq!(parse_size("401"), None);
+        assert_eq!(parse_size("10.25"), None);
+        assert_eq!(parse_size(""), None);
+        assert_eq!(parse_size("abc"), None);
+        assert_eq!(parse_size("NaN"), None);
+    }
+
+    #[test]
+    fn shows_sizes_without_trailing_zeros() {
+        assert_eq!(trim_size(12.0), "12");
+        assert_eq!(trim_size(10.5), "10.5");
     }
 }

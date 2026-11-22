@@ -47,6 +47,7 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
         cmd("Reveal in Finder", "File", Some("⌥⌘R"), "finder explorer folder show reveal drag locate", action(RevealDocument)),
         cmd("Rich Mode", "View", Some("⌘1"), "preview rich wysiwyg formatted view", Rc::new(|ws, w, cx| ws.set_mode(Mode::View, w, cx))),
         cmd("Source Mode", "View", Some("⌘2"), "source raw markdown edit", Rc::new(|ws, w, cx| ws.set_mode(Mode::Source, w, cx))),
+        cmd("Split Mode", "View", Some("⌘3"), "both side by side", Rc::new(|ws, w, cx| ws.set_mode(Mode::Split, w, cx))),
         cmd("Statistics", "View", Some("⇧⌘I"), "words count reading", action(ToggleStats)),
         cmd("Command Palette", "View", Some("⌘K"), "", Rc::new(|_, _, _| {})),
         cmd("Copy File Path", "File", None, "link location terminal clipboard", action(CopyPath)),
@@ -89,6 +90,12 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
         cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
         cmd("About Markie RS", "Help", None, "version", action(ShowAbout)),
     ]);
+    // Super-nightly in Electron (`makeInteractiveAvailable`).
+    if super::comments::nightly(None) {
+        list.push(cmd("Open Darkmown project preview…", "File", None, "darkmown live docs site project dev server localhost wd run", Rc::new(|ws, w, cx| ws.open_live_preview(w, cx))));
+        list.push(cmd("Live Docs", "View", None, "darkmown projects live docs", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::LiveDocs, cx))));
+        list.push(cmd("Make interactive", "File", None, "darkmown wd live doc interactive convert copy checklist calculator", action(MakeInteractive)));
+    }
     list
 }
 

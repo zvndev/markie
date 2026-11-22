@@ -38,6 +38,8 @@ mod collab;
 mod comments;
 mod share;
 mod dialog_chrome;
+mod edit_menu;
+pub(crate) use edit_menu::{NewDarkmownDocument, NewMarkdownDocument, NewTextDocument, NewWordDocument};
 mod file_ops;
 mod folder_tree;
 mod history_dialog;
@@ -179,6 +181,8 @@ pub struct Workspace {
     /// The vault page (workspace/vault.rs), made the first time the Vault view opens.
     vault: Option<Entity<vault::VaultPage>>,
     _subscriptions: Vec<Subscription>,
+    /// The (document, dirty) the menu bar was last built for.
+    menu_key: Option<(PathBuf, bool)>,
     /// When the device index last began a walk.
     last_scan_at: Option<std::time::Instant>,
 }
@@ -319,6 +323,7 @@ impl Workspace {
             vault: None,
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
+            menu_key: None,
             last_scan_at: None,
         };
         this.start_disk_poll(cx);
@@ -1220,6 +1225,7 @@ mod rescan_tests {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_menus(cx);
         if let Some(path) = self.cloud.pending_link.take() {
             self.open_path(&path, window, cx);
         }
@@ -1248,6 +1254,7 @@ impl Render for Workspace {
             .track_focus(&self.focus_handle)
             .key_context("Workspace")
             .map(|d| Self::source_actions(d, cx))
+            .map(|d| Self::edit_menu_actions(d, cx))
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))

@@ -10,6 +10,7 @@ mod icons;
 mod instance;
 mod library;
 mod logs;
+mod menus;
 mod open_urls;
 mod themes;
 mod workspace;
@@ -23,6 +24,7 @@ use crate::workspace::Workspace;
 
 fn bind_keys(cx: &mut App) {
     cx.bind_keys(key_bindings());
+    cx.bind_keys(menus::key_bindings());
     markie_office_view::actions::bind_keys(cx);
 }
 
@@ -99,93 +101,9 @@ mod key_tests {
 }
 
 fn set_menus(cx: &mut App) {
-    let mut menus = vec![
-        Menu {
-            name: "Markie RS".into(),
-            items: vec![
-                MenuItem::action("About Markie RS", ShowAbout),
-                MenuItem::separator(),
-                MenuItem::action("Settings…", OpenSettings),
-                MenuItem::action("Sign In…", OpenAccount),
-                MenuItem::separator(),
-                MenuItem::action("Quit Markie RS", Quit),
-            ],
-            disabled: false,
-        },
-        Menu {
-            name: "File".into(),
-            items: vec![
-                MenuItem::action("New Document", NewDocument),
-                MenuItem::action("Open…", Open),
-                MenuItem::action("Open Folder…", OpenFolder),
-                MenuItem::separator(),
-                MenuItem::action("Save", Save),
-                MenuItem::action("Make Interactive", MakeInteractive),
-                MenuItem::action("Version History", ShowHistory),
-                MenuItem::separator(),
-                MenuItem::action("Rename…", RenameDocument),
-                MenuItem::action("Duplicate", DuplicateDocument),
-                MenuItem::action("Reveal in Finder", RevealDocument),
-                MenuItem::action("Copy Path", CopyPath),
-                MenuItem::action("Move To…", MoveDocument),
-                MenuItem::action("Move to Trash", TrashDocument),
-                MenuItem::separator(),
-                MenuItem::action("Print…", Print),
-                MenuItem::submenu(Menu {
-                    name: "Export".into(),
-                    items: vec![
-                        MenuItem::action("PDF (Dark)…", ExportPdfDark),
-                        MenuItem::action("PDF (Light)…", ExportPdfLight),
-                        MenuItem::action("HTML…", ExportHtml),
-                    ],
-                    disabled: false,
-                }),
-            ],
-            disabled: false,
-        },
-        Menu {
-            name: "View".into(),
-            items: vec![
-                MenuItem::action("Command Palette", CommandPalette),
-                MenuItem::action("Library", ToggleLibrary),
-                MenuItem::action("Rich Text", RichMode),
-                MenuItem::action("Markdown Source", SourceMode),
-                MenuItem::action("Split", SplitMode),
-                MenuItem::action("Toggle View and Source", ToggleMode),
-                MenuItem::action("Outline", ToggleOutline),
-                MenuItem::action("Statistics", ToggleStats),
-                MenuItem::action("Search All Documents", FocusSearch),
-                MenuItem::action("Cloud", ShowCloud),
-                MenuItem::action("Rescan Documents", Rescan),
-                MenuItem::separator(),
-                MenuItem::action("Zoom In", ZoomIn),
-                MenuItem::action("Zoom Out", ZoomOut),
-                MenuItem::action("Actual Size", ZoomReset),
-                MenuItem::action("Wider Page", PageWider),
-                MenuItem::action("Narrower Page", PageNarrower),
-                MenuItem::separator(),
-                MenuItem::action("Toggle Dark Mode", ToggleTheme),
-                MenuItem::separator(),
-                MenuItem::action("Vault", workspace::vault::ToggleVault),
-                MenuItem::separator(),
-                MenuItem::submenu(Menu { name: "Word Layout".into(), items: markie_office_view::actions::view_menu_items(), disabled: false }),
-            ],
-            disabled: false,
-        },
-    ];
-    // Format, Insert, Layout and Review act on the Word page view; they show
-    // disabled when another document has focus.
-    menus.extend(markie_office_view::actions::menus());
-    menus.push(Menu {
-        name: "Help".into(),
-        items: vec![
-            MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
-            MenuItem::separator(),
-            MenuItem::action(logs::reveal_menu_label(), logs::RevealCrashLog),
-        ],
-        disabled: false,
-    });
-    cx.set_menus(menus);
+    menus::bind_app_actions(cx);
+    let nightly = std::env::var("MARKIE_RS_NIGHTLY").is_ok_and(|v| v == "1");
+    menus::install(menus::MenuState { has_history: false, nightly }, cx);
 }
 
 fn main() {

@@ -184,7 +184,7 @@ impl Workspace {
     // The Share button opens `open_share` (share.rs): the share sheet for a
     // document with a cloud copy, else the sync opt-in or an Office snapshot.
 
-    fn copy_all(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn copy_all(&mut self, cx: &mut Context<Self>) {
         let text = self.current_text(cx);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         self.shell.copied = CopyState::Copied;
@@ -200,7 +200,7 @@ impl Workspace {
     }
 
     /// "Save a Copy…": the document as it stands, written somewhere else.
-    fn save_a_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn save_a_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shell.menu = None;
         let Some(doc) = &self.doc else { return };
         let dir = self.default_dir();

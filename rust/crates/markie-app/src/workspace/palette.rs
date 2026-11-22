@@ -35,23 +35,84 @@ fn cmd(title: impl Into<SharedString>, group: &'static str, shortcut: Option<&'s
     PaletteCommand { title: title.into(), group, shortcut, keywords: keywords.into(), run }
 }
 
-/// Every command, in Electron's order. The shortcuts sheet reads the same
-/// list, so a shortcut shown anywhere is one that works.
+/// What the list depends on, as Electron's `commands` memo reads it.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct PaletteContext {
+    /// A plain-text document is open (`plainText`): text export formats.
+    pub plain_text: bool,
+    /// A Word, RTF or ODT document is open (`documentsOpen`).
+    pub office_open: bool,
+    /// The open text document can be edited (`docEditable`).
+    pub editable: bool,
+    /// A CSV is open: no Make interactive.
+    pub csv: bool,
+    /// The super-nightly switch.
+    pub nightly: bool,
+}
+
+fn export(kind: super::export::ExportKind) -> Run {
+    Rc::new(move |ws, w, cx| ws.export_document(kind, w, cx))
+}
+
+/// Every command, in Electron's order (`commands` in `src/app/page.tsx`),
+/// with the commands Markie RS adds at the end. The shortcuts sheet reads
+/// the same list, so a shortcut shown anywhere is one that works.
 pub(super) fn commands() -> Vec<PaletteCommand> {
+    commands_for(PaletteContext { editable: true, ..PaletteContext::default() })
+}
+
+pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
+    use super::export::ExportKind;
     let mut list = vec![
         cmd("Open File…", "File", Some("⌘O"), "", action(Open)),
         cmd("New Markdown document", "File", None, "md markdown", Rc::new(|ws, w, cx| ws.create_document("md", w, cx))),
+        cmd("New Word document", "File", None, "docx office", Rc::new(|ws, w, cx| ws.create_document("docx", w, cx))),
         cmd("New text document", "File", None, "txt plain", Rc::new(|ws, w, cx| ws.create_document("txt", w, cx))),
+        cmd("New Darkmown document", "File", None, "wd interactive state", Rc::new(|ws, w, cx| ws.create_document("wd", w, cx))),
+    ];
+    // Super-nightly in Electron (`makeInteractiveAvailable`), and only for a
+    // Markdown document.
+    if ctx.nightly && !ctx.office_open && !ctx.plain_text && !ctx.csv {
+        list.push(cmd("Make interactive", "File", None, "darkmown wd live doc interactive convert copy checklist calculator", action(MakeInteractive)));
+    }
+    list.extend([
+        cmd("Open Vault", "File", None, "locked private secure passphrase env keys secrets environment", Rc::new(|ws, w, cx| ws.open_vault(w, cx))),
         cmd("Save", "File", Some("⌘S"), "", action(Save)),
+        cmd("Save As…", "File", Some("⇧⌘S"), "", action(SaveAs)),
         cmd("Duplicate (Fork)", "File", Some("⇧⌘D"), "copy fork duplicate", action(DuplicateDocument)),
-        cmd("Reveal in Finder", "File", Some("⌥⌘R"), "finder explorer folder show reveal drag locate", action(RevealDocument)),
+        cmd(crate::menus::reveal_label(), "File", Some("⌥⌘R"), "finder explorer folder show reveal drag locate", action(RevealDocument)),
+        // Electron labels this ⇧⌘E but binds nothing to it; so does Markie RS.
+        cmd("Export PDF (Dark)", "File", Some("⇧⌘E"), "print", export(ExportKind::PdfDark)),
+        cmd("Export PDF (Light)", "File", None, "print", export(ExportKind::PdfLight)),
+        cmd("Export HTML", "File", None, "", export(ExportKind::Html)),
+    ]);
+    if !ctx.office_open {
+        // `exportFormatsFor`: Markdown leaves out .md, text leaves out .txt.
+        for (kind, label, ext) in [
+            (ExportKind::Docx, "Word (.docx)", "docx"),
+            (ExportKind::Rtf, "RTF (.rtf)", "rtf"),
+            (ExportKind::Odt, "OpenDocument (.odt)", "odt"),
+            (ExportKind::Txt, "Plain text (.txt)", "txt"),
+            (ExportKind::Md, "Markdown (.md)", "md"),
+        ] {
+            if (ctx.plain_text && ext == "txt") || (!ctx.plain_text && ext == "md") {
+                continue;
+            }
+            list.push(cmd(format!("Export as {label}"), "File", None, format!("export convert {ext}"), export(kind)));
+        }
+    }
+    list.extend([
         cmd("Rich Mode", "View", Some("⌘1"), "preview rich wysiwyg formatted view", Rc::new(|ws, w, cx| ws.set_mode(Mode::View, w, cx))),
         cmd("Source Mode", "View", Some("⌘2"), "source raw markdown edit", Rc::new(|ws, w, cx| ws.set_mode(Mode::Source, w, cx))),
         cmd("Split Mode", "View", Some("⌘3"), "both side by side", Rc::new(|ws, w, cx| ws.set_mode(Mode::Split, w, cx))),
         cmd("Statistics", "View", Some("⇧⌘I"), "words count reading", action(ToggleStats)),
         cmd("Command Palette", "View", Some("⌘K"), "", Rc::new(|_, _, _| {})),
+        cmd("Find…", "View", Some("⌘F"), "search find text", action(MenuFind)),
+        cmd("Find and Replace…", "View", Some("⌥⌘F"), "search find replace all substitute", action(super::source::FindReplace)),
         cmd("Copy File Path", "File", None, "link location terminal clipboard", action(CopyPath)),
-    ];
+        cmd("Copy Document Contents", "File", None, "clipboard markdown text", Rc::new(|ws, _, cx| ws.copy_all(cx))),
+        cmd("Format Tables", "Format", Some("⌥⌘T"), "align prettify pipes", action(super::source::FormatTables)),
+    ]);
     for t in crate::themes::templates() {
         let id = t.id.clone();
         list.push(cmd(
@@ -65,6 +126,7 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
     list.extend([
         cmd("Theme Settings…", "Theme", None, "color font preset style", Rc::new(|ws, w, cx| ws.open_settings(SettingsSection::Appearance, w, cx))),
         cmd("Settings…", "File", Some("⌘,"), "account sign in sync login", Rc::new(|ws, w, cx| ws.open_settings(SettingsSection::Account, w, cx))),
+        cmd("Connect an Agent (MCP)…", "File", None, "mcp claude codex ai agent tools search documents", Rc::new(|ws, w, cx| ws.open_agents(w, cx))),
         cmd(
             "Default Apps for File Types…",
             "File",
@@ -72,13 +134,23 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
             "open with finder double click default handler txt json yaml csv xml markdown associate",
             Rc::new(|ws, w, cx| ws.open_settings(SettingsSection::Files, w, cx)),
         ),
+        cmd("Search All Documents…", "File", Some("⇧⌘F"), "find files everywhere full text docx rtf word grep content global", action(FocusSearch)),
+        cmd("Library…", "File", Some("⌘L"), "documents cloud sync files recent projects organize workspace group", action(ToggleLibrary)),
+        cmd("Browse all documents…", "File", None, "all files device skills index find", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::Browse, cx))),
         cmd("Cloud…", "File", None, "synced shared sharing people cloud sync backup invited", action(ShowCloud)),
-        cmd("Search All Documents…", "File", Some("⇧⌘F"), "find files everywhere full text global", action(FocusSearch)),
+        cmd("Skills & agent files…", "File", None, "claude agents codex gemini cursor instructions", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::Skills, cx))),
         cmd("New file", "File", Some("⌘N"), "blank create empty document", action(NewDocument)),
+        cmd("Share…", "File", None, "collaborate invite live people sync cloud link", Rc::new(|ws, w, cx| ws.open_share(w, cx))),
         cmd("History…", "File", None, "versions restore snapshot revert previous", action(ShowHistory)),
         cmd("Keyboard Shortcuts", "Help", Some("⌘/"), "help keys", action(ShowShortcuts)),
-        // Markie RS has these as commands of their own; Electron has them in
-        // the Library row menu and the title bar.
+    ]);
+    if ctx.nightly {
+        list.push(cmd("Live Docs…", "File", None, "darkmown projects site wd skin api edit folder", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::LiveDocs, cx))));
+        list.push(cmd("Open Darkmown project preview…", "File", None, "darkmown live docs site project dev server localhost wd run", Rc::new(|ws, w, cx| ws.open_live_preview(w, cx))));
+    }
+    // Markie RS has these as commands of their own; Electron has them in
+    // the Library row menu and the title bar.
+    list.extend([
         cmd("Rename…", "File", None, "name file", action(RenameDocument)),
         cmd("Move to…", "File", None, "folder relocate", action(MoveDocument)),
         cmd("Move to Trash", "File", None, "delete remove", action(TrashDocument)),
@@ -90,12 +162,15 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
         cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
         cmd("About Markie RS", "Help", None, "version", action(ShowAbout)),
     ]);
-    // Super-nightly in Electron (`makeInteractiveAvailable`).
-    if super::comments::nightly(None) {
-        list.push(cmd("Open Darkmown project preview…", "File", None, "darkmown live docs site project dev server localhost wd run", Rc::new(|ws, w, cx| ws.open_live_preview(w, cx))));
-        list.push(cmd("Live Docs", "View", None, "darkmown projects live docs", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::LiveDocs, cx))));
-        list.push(cmd("Make interactive", "File", None, "darkmown wd live doc interactive convert copy checklist calculator", action(MakeInteractive)));
-    }
+    // The filter at the end of Electron's memo.
+    const HIDDEN_FOR_DOCUMENTS: [&str; 10] =
+        ["Export PDF (Dark)", "Export PDF (Light)", "Export HTML", "Rich Mode", "Source Mode", "Split Mode", "Statistics", "Copy File Path", "Copy Document Contents", "Format Tables"];
+    list.retain(|c| {
+        if c.title.as_ref() == "Format Tables" && !ctx.editable {
+            return false;
+        }
+        !(ctx.office_open && (HIDDEN_FOR_DOCUMENTS.contains(&c.title.as_ref()) || c.title.as_ref() == crate::menus::reveal_label()))
+    });
     list
 }
 
@@ -180,9 +255,21 @@ impl Workspace {
         );
     }
 
+    fn palette_context(&self) -> PaletteContext {
+        let doc = self.doc.as_ref();
+        let text = doc.filter(|d| matches!(d.kind, super::DocKind::Text { .. }));
+        PaletteContext {
+            plain_text: text.is_some_and(|d| d.format == markie_core::formats::FormatKind::Text),
+            office_open: doc.is_some_and(|d| matches!(d.kind, super::DocKind::Office(_))),
+            editable: text.is_some_and(|d| !d.large),
+            csv: doc.is_some_and(|d| d.format == markie_core::formats::FormatKind::Csv),
+            nightly: super::comments::nightly(self.registry.as_deref()),
+        }
+    }
+
     fn palette_results(&self, cx: &App) -> Vec<PaletteCommand> {
         let Overlay::Palette(p) = &self.dialogs.open else { return Vec::new() };
-        filter(commands(), &p.input.read(cx).value())
+        filter(commands_for(self.palette_context()), &p.input.read(cx).value())
     }
 
     /// Arrow keys move the selection; Return runs it.
@@ -290,7 +377,7 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{commands, filter, score_match};
+    use super::{PaletteContext, commands, commands_for, filter, score_match};
 
     #[test]
     fn ranks_like_electron() {
@@ -301,6 +388,65 @@ mod tests {
         let hits = filter(commands(), "sav");
         assert_eq!(hits[0].title.as_ref(), "Save");
         assert_eq!(filter(commands(), "").len(), commands().len());
+    }
+
+    /// Electron's titles, in Electron's order, for a Markdown document.
+    #[test]
+    fn commands_follow_electrons_list() {
+        let titles: Vec<String> = commands_for(PaletteContext { editable: true, ..Default::default() }).iter().map(|c| c.title.to_string()).collect();
+        let electron = [
+            "Open File…", "New Markdown document", "New Word document", "New text document", "New Darkmown document", "Open Vault",
+            "Save", "Save As…", "Duplicate (Fork)", "Reveal in Finder", "Export PDF (Dark)", "Export PDF (Light)", "Export HTML",
+            "Export as Word (.docx)", "Export as RTF (.rtf)", "Export as OpenDocument (.odt)", "Export as Plain text (.txt)",
+            "Rich Mode", "Source Mode", "Split Mode", "Statistics", "Command Palette", "Find…", "Find and Replace…",
+            "Copy File Path", "Copy Document Contents", "Format Tables",
+        ];
+        assert_eq!(titles[..electron.len()], electron);
+        let tail = [
+            "Theme Settings…", "Settings…", "Connect an Agent (MCP)…", "Default Apps for File Types…", "Search All Documents…",
+            "Library…", "Browse all documents…", "Cloud…", "Skills & agent files…", "New file", "Share…", "History…", "Keyboard Shortcuts",
+        ];
+        let start = titles.iter().position(|t| t == "Theme Settings…").unwrap();
+        assert_eq!(titles[start..start + tail.len()], tail);
+    }
+
+    #[test]
+    fn context_filters_like_electron() {
+        let titles = |ctx| commands_for(ctx).iter().map(|c| c.title.to_string()).collect::<Vec<_>>();
+        let text = titles(PaletteContext { plain_text: true, editable: true, ..Default::default() });
+        assert!(text.contains(&"Export as Markdown (.md)".to_string()) && !text.contains(&"Export as Plain text (.txt)".to_string()));
+        let office = titles(PaletteContext { office_open: true, ..Default::default() });
+        for gone in ["Rich Mode", "Export HTML", "Copy File Path", "Format Tables", "Reveal in Finder", "Export as Word (.docx)"] {
+            assert!(!office.contains(&gone.to_string()), "{gone} is hidden for a Word document");
+        }
+        assert!(!titles(PaletteContext::default()).contains(&"Format Tables".to_string()), "read-only documents have no Format Tables");
+        let nightly = titles(PaletteContext { nightly: true, editable: true, ..Default::default() });
+        assert!(nightly.contains(&"Make interactive".to_string()) && nightly.contains(&"Live Docs…".to_string()));
+        assert!(!titles(PaletteContext { nightly: true, csv: true, ..Default::default() }).contains(&"Make interactive".to_string()));
+    }
+
+    /// Electron's `filterCommands`, run by
+    /// rust/scripts/parity/library-settings-parity.mjs on the same commands.
+    #[test]
+    fn ranking_matches_electrons_filter_commands() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!("../fixtures/library-settings-parity.json")).unwrap();
+        let groups = ["File", "View", "Format", "Theme", "Help"];
+        let list: Vec<super::PaletteCommand> = fixture["palette"]["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                let group = groups.into_iter().find(|g| *g == c["group"].as_str().unwrap()).unwrap();
+                super::cmd(c["title"].as_str().unwrap().to_string(), group, None, c["keywords"].as_str().unwrap().to_string(), std::rc::Rc::new(|_, _, _| {}))
+            })
+            .collect();
+        let results = fixture["palette"]["results"].as_object().unwrap();
+        assert_eq!(results.len(), 16);
+        for (query, want) in results {
+            let got: Vec<String> = filter(list.clone(), query).iter().map(|c| c.title.to_string()).collect();
+            let want: Vec<String> = want.as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect();
+            assert_eq!(got, want, "query {query:?}");
+        }
     }
 
     #[test]

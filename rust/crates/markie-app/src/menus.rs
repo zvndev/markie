@@ -1,0 +1,314 @@
+//! The menu bar, built like Electron's template (`electron/main.js` around
+//! line 3700) after `document-menu.js` `install` has merged the document
+//! commands into it: the app menu, File, Edit, the Word menus (Format,
+//! Insert, Layout, Review), View, Window and Help, in that order, with
+//! Electron's labels, separators and shortcuts.
+//!
+//! Left out on purpose: Check for Updates… (Markie RS has no updater) and
+//! the developer tools item. Commands Markie RS has that Electron keeps
+//! elsewhere (Rename, Move, Trash, Copy Path, Cloud, Vault, Rescan) stay in
+//! the command palette and their shortcuts, not in the menu bar.
+
+use gpui_kit::*;
+
+use crate::actions::*;
+
+/// What the menus depend on, the way `refreshRevertMenuItem` and the
+/// super-nightly gate decide them in Electron.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MenuState {
+    /// The open document has versions: History… is enabled.
+    pub has_history: bool,
+    /// Make Interactive is shown only in a super-nightly build.
+    pub nightly: bool,
+}
+
+fn item(label: &str, action: impl Action) -> MenuItem {
+    MenuItem::action(label.to_string(), action)
+}
+
+pub fn build(state: MenuState) -> Vec<Menu> {
+    let app = Menu {
+        name: markie_core::paths::APP_NAME.into(),
+        items: vec![
+            item("About Markie RS", ShowAbout),
+            MenuItem::separator(),
+            item("Settings…", OpenSettings),
+            item("Default Apps for File Types…", DefaultApps),
+            MenuItem::separator(),
+            item("Hide Markie RS", HideApp),
+            item("Hide Others", HideOthers),
+            item("Show All", ShowAll),
+            MenuItem::separator(),
+            item("Quit Markie RS", Quit),
+        ],
+        disabled: false,
+    };
+
+    let mut file = vec![
+        item("New File", NewDocument),
+        item("Open…", Open),
+        MenuItem::separator(),
+        item("Library…", ToggleLibrary),
+        item("Search All Documents…", FocusSearch),
+        MenuItem::separator(),
+        item("Save", Save),
+        item("Save As…", SaveAs),
+        item("History…", ShowHistory).disabled(!state.has_history),
+        item("Duplicate (Fork)", DuplicateDocument),
+        item(reveal_label(), RevealDocument),
+        MenuItem::separator(),
+        item("Print…", Print),
+        MenuItem::submenu(Menu {
+            name: "Export".into(),
+            items: vec![item("PDF (Dark)…", ExportPdfDark), item("PDF (Light)…", ExportPdfLight), item("HTML…", ExportHtml)],
+            disabled: false,
+        }),
+        // document-menu.js puts the document File commands before the
+        // last separator.
+        MenuItem::separator(),
+        item("New Markdown Document", crate::workspace::NewMarkdownDocument),
+        item("New Word Document", crate::workspace::NewWordDocument),
+        item("New Text Document", crate::workspace::NewTextDocument),
+        item("New Darkmown Document", crate::workspace::NewDarkmownDocument),
+    ];
+    if state.nightly {
+        file.push(item("Make Interactive", MakeInteractive));
+    }
+    file.extend([MenuItem::separator(), item("Close Window", CloseWindow)]);
+
+    let edit = Menu {
+        name: "Edit".into(),
+        items: vec![
+            item("Undo", MenuUndo),
+            item("Redo", MenuRedo),
+            MenuItem::separator(),
+            MenuItem::os_action("Cut", MenuCut, OsAction::Cut),
+            MenuItem::os_action("Copy", MenuCopy, OsAction::Copy),
+            MenuItem::os_action("Paste", MenuPaste, OsAction::Paste),
+            MenuItem::os_action("Select All", MenuSelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            item("Find…", MenuFind),
+            item("Find and Replace…", crate::workspace::source::FindReplace),
+            MenuItem::separator(),
+            item("Format Tables", crate::workspace::source::FormatTables),
+        ],
+        disabled: false,
+    };
+
+    let mut view = vec![
+        item("Rich Text", RichMode),
+        item("Markdown Source", SourceMode),
+        item("Split", SplitMode),
+        MenuItem::separator(),
+        item("Zoom In", ZoomIn),
+        item("Zoom Out", ZoomOut),
+        item("Actual Size", ZoomReset),
+        item("Wider Page", PageWider),
+        item("Narrower Page", PageNarrower),
+        MenuItem::separator(),
+        item("Command Palette…", CommandPalette),
+        item("Theme…", ShowTheme),
+        item("Keyboard Shortcuts", ShowShortcuts),
+        item("Statistics", ToggleStats),
+        MenuItem::separator(),
+        item("Toggle Full Screen", ToggleFullScreen),
+    ];
+    // document-menu.js appends the document View commands after a separator.
+    let word_view = markie_office_view::actions::view_menu_items();
+    if !word_view.is_empty() {
+        view.push(MenuItem::separator());
+        view.extend(word_view);
+    }
+
+    let mut menus = vec![app, Menu { name: "File".into(), items: file, disabled: false }, edit];
+    // The Word menus sit between Edit and View, as `install` splices them.
+    menus.extend(markie_office_view::actions::menus());
+    menus.push(Menu { name: "View".into(), items: view, disabled: false });
+    menus.push(Menu {
+        name: "Window".into(),
+        items: vec![item("Minimize", MinimizeWindow), item("Zoom", ZoomWindow), MenuItem::separator(), item("Bring All to Front", BringAllToFront)],
+        disabled: false,
+    });
+    menus.push(Menu { name: "Help".into(), items: vec![item(crate::logs::reveal_menu_label(), crate::logs::RevealCrashLog)], disabled: false });
+    menus
+}
+
+/// Electron's reveal label per platform.
+pub fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Show in Explorer"
+    } else {
+        "Show in File Manager"
+    }
+}
+
+thread_local! {
+    static INSTALLED: std::cell::Cell<Option<MenuState>> = const { std::cell::Cell::new(None) };
+}
+
+/// Sets the menu bar, only when what it depends on changed.
+pub fn install(state: MenuState, cx: &mut App) {
+    if INSTALLED.with(|s| s.get()) == Some(state) {
+        return;
+    }
+    INSTALLED.with(|s| s.set(Some(state)));
+    cx.set_menus(build(state));
+}
+
+/// The window and app items Electron leaves to menu roles.
+pub fn bind_app_actions(cx: &mut App) {
+    cx.on_action(|_: &HideApp, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &BringAllToFront, cx| cx.activate(true));
+}
+
+/// Shortcuts the menu shows. Electron's accelerators, bound globally; an
+/// editor's own binding for the same keys wins inside it.
+pub fn key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("cmd-shift-s", SaveAs, None),
+        KeyBinding::new("cmd-z", MenuUndo, None),
+        KeyBinding::new("cmd-shift-z", MenuRedo, None),
+        KeyBinding::new("cmd-x", MenuCut, None),
+        KeyBinding::new("cmd-c", MenuCopy, None),
+        KeyBinding::new("cmd-v", MenuPaste, None),
+        KeyBinding::new("cmd-a", MenuSelectAll, None),
+        KeyBinding::new("cmd-f", MenuFind, None),
+        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-m", MinimizeWindow, None),
+        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
+        KeyBinding::new("cmd-h", HideApp, None),
+        KeyBinding::new("cmd-alt-h", HideOthers, None),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: GPUI's glob export brings its own `test` attribute.
+    use super::{MenuState, build, key_bindings};
+    use gpui_kit::{Keystroke, Menu, MenuItem};
+
+    fn labels(items: &[MenuItem]) -> Vec<String> {
+        items
+            .iter()
+            .map(|i| match i {
+                MenuItem::Separator => "-".to_string(),
+                MenuItem::Action { name, .. } => name.to_string(),
+                MenuItem::Submenu(m) => format!("{} >", m.name),
+                MenuItem::SystemMenu(m) => format!("{} >", m.name),
+            })
+            .collect()
+    }
+
+    fn menu<'a>(menus: &'a [Menu], name: &str) -> &'a Menu {
+        menus.iter().find(|m| m.name.as_ref() == name).unwrap_or_else(|| panic!("no {name} menu"))
+    }
+
+    #[test]
+    fn menus_come_in_electrons_order() {
+        let menus = build(MenuState::default());
+        let names: Vec<&str> = menus.iter().map(|m| m.name.as_ref()).collect();
+        assert_eq!(names, ["Markie RS", "File", "Edit", "Format", "Insert", "Layout", "Review", "View", "Window", "Help"]);
+    }
+
+    #[test]
+    fn file_menu_matches_electron() {
+        let menus = build(MenuState { has_history: true, nightly: false });
+        assert_eq!(
+            labels(&menu(&menus, "File").items),
+            [
+                "New File", "Open…", "-", "Library…", "Search All Documents…", "-", "Save", "Save As…", "History…",
+                "Duplicate (Fork)", "Reveal in Finder", "-", "Print…", "Export >", "-", "New Markdown Document",
+                "New Word Document", "New Text Document", "New Darkmown Document", "-", "Close Window",
+            ]
+        );
+        let MenuItem::Submenu(export) = &menu(&menus, "File").items[13] else { panic!() };
+        assert_eq!(labels(&export.items), ["PDF (Dark)…", "PDF (Light)…", "HTML…"]);
+        let nightly = build(MenuState { has_history: true, nightly: true });
+        assert!(labels(&menu(&nightly, "File").items).contains(&"Make Interactive".to_string()));
+    }
+
+    #[test]
+    fn history_is_greyed_until_the_document_has_versions() {
+        let find = |state| {
+            let menus = build(state);
+            menu(&menus, "File").items.iter().find_map(|i| match i {
+                MenuItem::Action { name, disabled, .. } if name.as_ref() == "History…" => Some(*disabled),
+                _ => None,
+            })
+        };
+        assert_eq!(find(MenuState { has_history: false, nightly: false }), Some(true));
+        assert_eq!(find(MenuState { has_history: true, nightly: false }), Some(false));
+    }
+
+    #[test]
+    fn edit_view_window_and_help_match_electron() {
+        let menus = build(MenuState::default());
+        assert_eq!(
+            labels(&menu(&menus, "Edit").items),
+            ["Undo", "Redo", "-", "Cut", "Copy", "Paste", "Select All", "-", "Find…", "Find and Replace…", "-", "Format Tables"]
+        );
+        let view = labels(&menu(&menus, "View").items);
+        assert_eq!(
+            view[..16],
+            [
+                "Rich Text", "Markdown Source", "Split", "-", "Zoom In", "Zoom Out", "Actual Size", "Wider Page",
+                "Narrower Page", "-", "Command Palette…", "Theme…", "Keyboard Shortcuts", "Statistics", "-",
+                "Toggle Full Screen",
+            ]
+        );
+        assert_eq!(labels(&menu(&menus, "Window").items), ["Minimize", "Zoom", "-", "Bring All to Front"]);
+        assert_eq!(labels(&menu(&menus, "Help").items), ["Reveal Crash Log in Finder"]);
+        assert_eq!(
+            labels(&menus[0].items),
+            ["About Markie RS", "-", "Settings…", "Default Apps for File Types…", "-", "Hide Markie RS", "Hide Others", "Show All", "-", "Quit Markie RS"]
+        );
+    }
+
+    /// Every accelerator in Electron's template has the same keys here,
+    /// bound to the item it sits on.
+    #[test]
+    fn electron_accelerators_reach_their_items() {
+        let mut all = crate::key_bindings();
+        all.extend(key_bindings());
+        let has = |keys: &'static str, action: &str| {
+            let typed = [Keystroke::parse(keys).unwrap()];
+            all.iter().any(|b| b.match_keystrokes(&typed) == Some(false) && b.action().name().ends_with(action))
+        };
+        for (keys, action) in [
+            ("cmd-,", "OpenSettings"),
+            ("cmd-n", "NewDocument"),
+            ("cmd-o", "Open"),
+            ("cmd-l", "ToggleLibrary"),
+            ("cmd-shift-f", "FocusSearch"),
+            ("cmd-s", "Save"),
+            ("cmd-shift-s", "SaveAs"),
+            ("cmd-shift-d", "DuplicateDocument"),
+            ("cmd-alt-r", "RevealDocument"),
+            ("cmd-p", "Print"),
+            ("cmd-z", "MenuUndo"),
+            ("cmd-shift-z", "MenuRedo"),
+            ("cmd-f", "MenuFind"),
+            ("cmd-1", "RichMode"),
+            ("cmd-2", "SourceMode"),
+            ("cmd-3", "SplitMode"),
+            ("cmd-=", "ZoomIn"),
+            ("cmd--", "ZoomOut"),
+            ("cmd-0", "ZoomReset"),
+            ("cmd-alt-]", "PageWider"),
+            ("cmd-alt-[", "PageNarrower"),
+            ("cmd-k", "CommandPalette"),
+            ("cmd-/", "ShowShortcuts"),
+            ("cmd-shift-i", "ToggleStats"),
+            ("cmd-q", "Quit"),
+            ("cmd-w", "CloseWindow"),
+            ("cmd-m", "MinimizeWindow"),
+        ] {
+            assert!(has(keys, action), "{keys} should run {action}");
+        }
+    }
+}

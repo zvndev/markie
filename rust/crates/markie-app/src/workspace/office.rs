@@ -164,6 +164,24 @@ fn write(office: &OfficeDoc, path: &Path, cx: &mut Context<Workspace>) -> anyhow
     Ok(Some(bytes))
 }
 
+/// Save As for a Word, RTF or ODT document: an edited one is exported by the
+/// engine to `target`; an untouched one keeps its bytes. The source file is
+/// not written.
+pub(super) fn write_to(office: &OfficeDoc, source: &Path, target: &Path, cx: &mut Context<Workspace>) -> anyhow::Result<()> {
+    let edited = matches!(office.source, Source::Rich) && {
+        let editor = &office.view.read(cx).editor;
+        editor.is_dirty() && editor.rich().can_edit
+    };
+    if edited {
+        let bytes = office.view.read(cx).editor.export().map_err(anyhow::Error::msg)?;
+        markie_core::save::atomic_write(target, &bytes)?;
+    } else {
+        let bytes = std::fs::read(source)?;
+        markie_core::save::atomic_write(target, &bytes)?;
+    }
+    Ok(())
+}
+
 /// ⌘S. A failure says so; autosave uses `Workspace::office_autosave`, which
 /// never does.
 pub(super) fn save(office: &OfficeDoc, path: &Path, window: &mut Window, cx: &mut Context<Workspace>) -> Option<Vec<u8>> {

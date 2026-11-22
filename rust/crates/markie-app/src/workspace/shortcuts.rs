@@ -95,7 +95,9 @@ mod tests {
     #[test]
     fn groups_follow_electron_order() {
         let names: Vec<&str> = shortcut_groups().iter().map(|(g, _)| *g).collect();
-        assert_eq!(names, ["File", "View", "Help"]);
+        // Format holds Format Tables (⌥⌘T), as Electron's sheet does for a
+        // document that can be edited.
+        assert_eq!(names, ["File", "View", "Format", "Help"]);
         let file = &shortcut_groups()[0].1;
         assert_eq!(file[0].title.as_ref(), "Open File…");
         assert_eq!(file[0].shortcut, Some("⌘O"));

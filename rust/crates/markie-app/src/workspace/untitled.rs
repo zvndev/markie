@@ -115,10 +115,47 @@ impl Workspace {
     /// ⌘S on an untitled buffer: Save As, then the written file is the open
     /// document, and the journal entry is spent.
     pub(super) fn save_untitled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_as(window, cx);
+    }
+
+    /// File > Save As… (⇧⌘S), Electron's `handleSaveAs`: what is on screen
+    /// goes to a file the person picks, and that file becomes the open
+    /// document. A `.csv` target keeps the first table as CSV. A Word, RTF or
+    /// ODT document is written by its engine to the new path
+    /// (`documentShell.save(true)`). Anything else saves a copy.
+    pub(super) fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        let name = doc.path.to_string_lossy().into_owned();
-        let text = self.current_text(cx);
+        let untitled = doc.untitled;
+        let name = if untitled {
+            doc.path.to_string_lossy().into_owned()
+        } else {
+            doc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "untitled.md".into())
+        };
         let dir = self.default_dir();
+        if let DocKind::Office(_) = &doc.kind {
+            let rx = cx.prompt_for_new_path(&dir, Some(&name));
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(target))) = rx.await else { return };
+                this.update_in(cx, |this, window, cx| {
+                    let Some(OpenDoc { path, kind: DocKind::Office(office), .. }) = &this.doc else { return };
+                    let source = path.clone();
+                    match super::office::write_to(office, &source, &target, cx) {
+                        Ok(()) => {
+                            this.open_path(&target, window, cx);
+                            this.rescan(cx);
+                        }
+                        Err(e) => window.push_notification(format!("Markie could not save: {e:#}"), cx),
+                    }
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+        if !matches!(doc.kind, DocKind::Text { .. }) {
+            return self.save_a_copy(window, cx);
+        }
+        let text = self.current_text(cx);
         let rx = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(target))) = rx.await else { return };
@@ -128,10 +165,22 @@ impl Workspace {
             let written = document::save_text(&target, &bytes, TextEncoding::Utf8, false);
             this.update_in(cx, |this, window, cx| match written {
                 Ok(()) => {
-                    let _ = this.drafts.discard(&Drafts::key_for(None));
-                    // The buffer is on disk now: nothing left to settle.
+                    // Save As commits the untitled buffer, so its journal
+                    // entry is spent too.
+                    if untitled {
+                        let _ = this.drafts.discard(&Drafts::key_for(None));
+                    }
+                    // The open document is the new file now: nothing left to
+                    // settle on the old one.
+                    this.autosave.cancel();
                     this.dirty = false;
                     this.open_path(&target, window, cx);
+                    // CSV keeps the first table and nothing else (handleSaveAs).
+                    if as_csv {
+                        if let Some(note) = super::csv_doc::csv_save_note(&text) {
+                            window.push_notification(note, cx);
+                        }
+                    }
                     this.rescan(cx);
                 }
                 Err(e) => window.push_notification(format!("Markie could not save: {e:#}"), cx),

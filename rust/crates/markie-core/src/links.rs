@@ -116,7 +116,7 @@ fn absolute_lexical(path: &Path) -> std::io::Result<PathBuf> {
 /// Session grants. Opening a legacy text document grants its directory for
 /// assets, whereas an attachment grants only its exact location. An href
 /// never grants anything, including the folder used to resolve it.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct FileGrants {
     opened: HashSet<PathBuf>,
     attached: HashSet<PathBuf>,

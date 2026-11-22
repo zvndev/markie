@@ -355,6 +355,10 @@ pub struct RichView {
     pub(crate) notice: Option<(SharedString, u64)>,
     /// A video card's player, while it plays (`video.rs`).
     pub(crate) video: Option<video::VideoViewer>,
+    pub(crate) inline_video: Option<Rc<RefCell<video::InlineVideo>>>,
+    web_views_covered: bool,
+    media_grants: markie_core::links::FileGrants,
+    media_roots: Vec<PathBuf>,
     /// The toolbar's "more" popover is open.
     pub(crate) more_open: bool,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
@@ -439,6 +443,10 @@ impl RichView {
             size_field: None,
             notice: None,
             video: None,
+            inline_video: None,
+            web_views_covered: false,
+            media_grants: Default::default(),
+            media_roots: Vec::new(),
             more_open: false,
             rail_hover: Default::default(),
             source_mode: false,
@@ -454,6 +462,7 @@ impl RichView {
     pub fn load(&mut self, markdown: &str, base_dir: Option<PathBuf>, cx: &mut Context<Self>) {
         self.editor = Editor::parse(markdown);
         self.video = None;
+        self.inline_video = None;
         self.heights.clear();
         self.emitted = self.editor.version;
         self.base_dir = base_dir;
@@ -501,9 +510,16 @@ impl RichView {
     /// Install per-document resources without modifying its Markdown.
     pub fn set_cloud_resources(&mut self, media: HashMap<String, PathBuf>, links: HashSet<String>,
         restrict_local: bool, cx: &mut Context<Self>) {
+        self.inline_video = None;
         self.cloud_media = media;
         self.cloud_links = links;
         self.restrict_local_media = restrict_local;
+        cx.notify();
+    }
+
+    pub fn set_media_grants(&mut self, grants: markie_core::links::FileGrants, roots: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.media_grants = grants;
+        self.media_roots = roots;
         cx.notify();
     }
 

@@ -34,6 +34,7 @@ impl Workspace {
                 for path in paths {
                     this.file_grants.grant_attachment(path);
                 }
+                this.sync_rich_media_grants(cx);
             }
             RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
             RichEvent::Zoom(z) => this.set_zoom(*z, cx),
@@ -63,8 +64,15 @@ impl Workspace {
     /// Put Markdown text in the rich editor (on open, reload, or coming
     /// back from Source).
     pub(super) fn load_rich(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.sync_rich_media_grants(cx);
         let dir = self.doc.as_ref().and_then(|d| d.path.parent().map(|p| p.to_path_buf()));
         self.rich.update(cx, |r, cx| r.load(text, dir, cx));
+    }
+
+    fn sync_rich_media_grants(&self, cx: &mut Context<Self>) {
+        let grants = self.file_grants.clone();
+        let roots = self.registry.as_ref().and_then(|r| r.roots().ok()).unwrap_or_default();
+        self.rich.update(cx, |view, cx| view.set_media_grants(grants, roots, cx));
     }
 
     pub(super) fn on_rich_edit(&mut self, cx: &mut Context<Self>) {

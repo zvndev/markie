@@ -220,6 +220,11 @@ impl RichView {
     }
 
     pub(crate) fn render_document(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.inline_video.as_ref().is_some_and(|v| v.borrow().version != self.editor.version) {
+            self.inline_video = None;
+        }
+        let inline_video = self.inline_video.clone();
+        let video_covered = self.web_views_covered;
         {
             let mut s = self.store.borrow_mut();
             // Heights of what was drawn last frame.
@@ -418,6 +423,11 @@ impl RichView {
                         // Keep the caret in sight after keyboard moves.
                         let st = store.borrow();
                         let viewport = scroll.bounds();
+                        if let Some(video) = &inline_video {
+                            let mut video = video.borrow_mut();
+                            let bounds = st.atoms.get(&video.key).copied();
+                            video.place(bounds, viewport, video_covered);
+                        }
                         let target = to_top.or(autoscroll.then_some((head.block, head.leaf)));
                         if let Some(key) = target {
                             let rect = st
@@ -945,8 +955,18 @@ impl RichView {
             }
             source => source,
         };
-        let image: AnyElement = if kind != markie_rich::html::MediaKind::Image {
-            // Playback is phase 5: a card for the clip.
+        let image: AnyElement = if kind == markie_rich::html::MediaKind::Video && self.inline_mp4(src).is_some() {
+            let src = src.to_string();
+            let width = w.unwrap_or(640.) * look.zoom;
+            div()
+                .id(SharedString::from(format!("play-mp4-{}-{}", key.0, key.1)))
+                .w(px(width)).max_w_full().h(px(width * 9. / 16.))
+                .flex().items_center().justify_center()
+                .rounded(px(6.)).bg(rgb(0x101010)).text_color(rgb(0xffffff))
+                .cursor_pointer().child("▶  Play video")
+                .on_click(cx.listener(move |this, _, window, cx| this.open_inline_mp4(key, &src, window, cx)))
+                .into_any_element()
+        } else if kind != markie_rich::html::MediaKind::Image {
             div()
                 .p(px(12.))
                 .rounded(px(6.))

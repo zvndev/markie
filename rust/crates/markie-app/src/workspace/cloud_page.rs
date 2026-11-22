@@ -15,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use markie_cloud::docs::{DocMeta, Role};
-use markie_cloud::platform::SnapshotMeta;
+use markie_cloud::platform::{PlatformClient, SnapshotMeta};
 use markie_cloud::sharing::SharedByMeDoc;
 use markie_core::formats::{self, FormatKind};
 
@@ -579,8 +579,11 @@ impl Workspace {
         let type_label = TYPES.iter().find(|(f, _)| *f == q.format).map(|(_, l)| *l).unwrap_or("All types");
         let sort_label = SORTS.iter().find(|(s, _)| *s == q.sort).map(|(_, l)| *l).unwrap_or("Default order");
         let menu = self.cloud.menu;
-        let toggle = |m: Menu| move |this: &mut Self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>| {
+        let toggle = |m: Menu| move |this: &mut Self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>| {
             this.cloud.menu = if this.cloud.menu == Some(m) { None } else { Some(m) };
+            if this.cloud.menu == Some(Menu::Area) {
+                this.ensure_area_input(window, cx);
+            }
             cx.notify();
         };
         div().flex_none().border_b_1().border_color(p.border.opacity(0.6)).px(px(28.)).py(px(16.)).child(
@@ -756,6 +759,7 @@ impl Workspace {
                     .w(px(300.))
                     .p(px(8.))
                     .child(h_flex().flex_wrap().gap(px(4.)).children(chips))
+                    .children(self.render_area_create(false, &p, cx))
                     .on_mouse_down_out(close)
                     .into_any_element()
             }
@@ -765,6 +769,115 @@ impl Workspace {
             .top(px(32. + 6.))
             .left_0()
             .child(deferred(anchored().snap_to_window_with_margin(px(8.)).child(body)))
+    }
+
+    /// The "New area" field under the area chips, created the first time a
+    /// picker opens (it needs the window).
+    pub(super) fn ensure_area_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cloud.area_input.is_none() {
+            let input = cx.new(|cx| gpui_kit::component::input::InputState::new(window, cx).placeholder("New area"));
+            self.cloud.area_input = Some(input);
+        }
+        self.cloud.area_error = None;
+    }
+
+    /// `createArea` then `areas` (cloud-area-picker.tsx): the new area is
+    /// listed and selected in the picker that made it.
+    pub(super) fn create_cloud_area(&mut self, for_share: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(input) = self.cloud.area_input.clone() else { return };
+        let label = input.read(cx).value().to_string();
+        if self.cloud.area_busy || label.trim().is_empty() {
+            return;
+        }
+        let Some(scope) = (if for_share { self.cloud.primary_scope() } else { self.cloud.selected_scope() }) else { return };
+        self.cloud.area_busy = true;
+        self.cloud.area_error = None;
+        let request = scope.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = super::cloud::network(async move {
+                let platform = PlatformClient(&request.client);
+                let area = platform.create_area(&label).await?;
+                let areas = platform.areas().await?;
+                Ok::<_, markie_cloud::error::CloudError>((area, areas))
+            })
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.cloud.area_busy = false;
+                match result {
+                    Ok(Ok((area, areas))) => {
+                        if let Some(listing) = this.cloud.listings.get_mut(scope.origin()).filter(|l| l.user == scope.user) {
+                            listing.areas = areas;
+                        }
+                        if for_share {
+                            if let Some(sheet) = this.collab.share.as_mut() {
+                                sheet.set_upload_area(Some(area.id));
+                            }
+                        } else {
+                            this.cloud.area = Some(area.id);
+                            this.cloud.menu = None;
+                        }
+                        input.update(cx, |s, cx| s.set_value("", window, cx));
+                    }
+                    Ok(Err(markie_cloud::error::CloudError::Invalid(m))) => this.cloud.area_error = Some(m),
+                    _ => this.cloud.area_error = Some("Cloud area could not be created.".into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The form row: field and Create, then the busy and error lines.
+    pub(super) fn render_area_create(&self, for_share: bool, p: &Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let input = self.cloud.area_input.clone()?;
+        let p = *p;
+        let empty = input.read(cx).value().trim().is_empty();
+        let busy = self.cloud.area_busy;
+        Some(
+            v_flex()
+                .gap(px(6.))
+                .mt(px(8.))
+                .pt(px(8.))
+                .border_t_1()
+                .border_color(p.border.opacity(0.7))
+                .child(
+                    h_flex()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h(px(26.))
+                                .px(px(4.))
+                                .flex()
+                                .items_center()
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(p.border)
+                                .bg(p.background)
+                                .child(gpui_kit::component::input::Input::new(&input).appearance(false).text_size(px(11.)).w_full()),
+                        )
+                        .child(
+                            div()
+                                .id(if for_share { "share-area-create" } else { "cloud-area-create" })
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(p.border)
+                                .px(px(8.))
+                                .py(px(4.))
+                                .text_size(px(11.))
+                                .text_color(p.muted)
+                                .when(busy || empty, |el| el.opacity(0.4))
+                                .when(!busy && !empty, |el| el.cursor_pointer().hover(|s| s.text_color(p.foreground)))
+                                .child("Create")
+                                .on_click(cx.listener(move |this, _, window, cx| this.create_cloud_area(for_share, window, cx))),
+                        ),
+                )
+                .when(busy, |el| el.child(div().text_size(px(11.)).text_color(p.muted).child("Loading areas…")))
+                .when_some(self.cloud.area_error.clone(), |el, e| el.child(div().text_size(px(11.)).text_color(p.red).child(e)))
+                .into_any_element(),
+        )
     }
 
     /// `CloudView` beside the snapshots (`alongsideSnapshots`).
@@ -844,6 +957,11 @@ impl Workspace {
             h_flex().flex_none().flex_wrap().items_center().gap(px(4.)).mb(px(12.)).children(row)
         });
 
+        // Signed out: no counts to summarize and nothing loading, just the
+        // empty state (cloud-view.tsx; its workspace body is empty).
+        if scope.is_none() {
+            return v_flex().min_h_0().child(empty_state("markie/cloud.svg", "Sign in to see synced and shared files", "", None::<(&'static str, fn(&ClickEvent, &mut Window, &mut App))>, &p));
+        }
         let show_list = !(condensed && !by_me_error && by_me.is_some()) && !booting;
         let rows: Vec<AnyElement> = shown.iter().map(|e| self.render_cloud_row(scope.cloned(), e, share_list_known, &p, cx)).collect();
         v_flex()

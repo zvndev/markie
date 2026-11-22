@@ -141,6 +141,10 @@ impl RichView {
         if self.editor.has_selection() {
             return;
         }
+        if !self.unshared_links.is_empty() && self.unshared_links.contains(&super::media::reference_key(&href)) {
+            self.show_notice(NOT_SHARED, cx);
+            return;
+        }
         match activation(&href, &self.cloud_links, self.base_dir.as_deref()) {
             Activation::Web(url) => cx.open_url(&url),
             Activation::Cloud(reference) => cx.emit(RichEvent::DocumentLink(reference)),
@@ -200,6 +204,9 @@ pub enum Activation {
     Local(markie_core::links::LinkClick),
     Ignore,
 }
+
+/// `NOT_SHARED` in doc-links.ts.
+pub const NOT_SHARED: &str = "This document isn't shared with you.";
 
 pub fn activation(href: &str, cloud_links: &std::collections::HashSet<String>, doc_dir: Option<&std::path::Path>) -> Activation {
     use markie_core::links::{LinkClick, classify_click};

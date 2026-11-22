@@ -20,6 +20,7 @@ pub use render::MONO;
 mod chrome;
 pub mod attach;
 mod behaviour;
+pub use behaviour::NOT_SHARED;
 mod table_bar;
 mod math_field;
 pub mod a11y;
@@ -289,6 +290,9 @@ pub struct RichView {
     base_dir: Option<PathBuf>,
     cloud_media: HashMap<String, PathBuf>,
     cloud_links: HashSet<String>,
+    /// Document links the server knows and this account may not follow
+    /// (`data-doc-link="none"`): drawn muted, and a click says so.
+    unshared_links: HashSet<String>,
     restrict_local_media: bool,
     pub zoom: f32,
     pub page_width: f32,
@@ -400,6 +404,7 @@ impl RichView {
             base_dir: None,
             cloud_media: HashMap::new(),
             cloud_links: HashSet::new(),
+            unshared_links: HashSet::new(),
             restrict_local_media: false,
             zoom: 1.0,
             page_width: 0.0,
@@ -502,6 +507,14 @@ impl RichView {
         self.cloud_links = links;
         self.restrict_local_media = restrict_local;
         cx.notify();
+    }
+
+    /// The links `markDocLinks` marks "none" for this reader.
+    pub fn set_unshared_links(&mut self, links: HashSet<String>, cx: &mut Context<Self>) {
+        if self.unshared_links != links {
+            self.unshared_links = links;
+            cx.notify();
+        }
     }
 
     pub fn focus_handle(&self) -> &FocusHandle {

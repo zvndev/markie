@@ -49,6 +49,8 @@ mod cloud;
 mod cloud_drive;
 mod cloud_office;
 mod cloud_page;
+mod cloud_strip;
+mod servers_setting;
 mod cloud_resources;
 mod cloud_ui;
 mod darkmown;
@@ -228,6 +230,7 @@ impl Workspace {
             chrome::ColorMode::parse(registry.as_ref().and_then(|r| r.setting("color_mode").ok().flatten()).as_deref());
         chrome::apply_color_mode(color_mode, window, cx);
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| this.on_appearance_changed(window, cx)));
+        subscriptions.extend(Self::watch_window_for_cloud(window, cx));
         let (shell, shell_subs) = rail::Shell::new(color_mode, template, window, cx);
         subscriptions.extend(shell_subs);
         let (projects, projects_sub) = projects::Projects::new(window, cx);

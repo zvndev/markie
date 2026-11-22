@@ -304,6 +304,16 @@ pub fn local_files_notice(count: usize) -> Option<(String, String)> {
 }
 
 /// A person's display name: their name, else their address.
+/// share-gate.tsx's line for a document on another server with no session
+/// here: `hostOf(server)` is the URL's host, or the address as given.
+pub fn server_sign_in_line(server: &str) -> String {
+    let host = url::Url::parse(server)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| match u.port() { Some(port) => format!("{h}:{port}"), None => h.to_string() }))
+        .unwrap_or_else(|| server.to_string());
+    format!("This document is on {host}. Sign in to that server in Settings > Advanced > Servers to share it.")
+}
+
 pub fn who(name: Option<&str>, email: &str) -> String {
     name.filter(|n| !n.is_empty()).unwrap_or(email).to_string()
 }
@@ -382,5 +392,14 @@ mod tests {
         assert_eq!(private_url("http://localhost:18787", "abc"), "http://localhost:18787/d/abc");
         assert_eq!(link_to_copy("https://api.markiedocs.com", "abc", "a.md", Some("https://markiedocs.com/s/t")), "https://markiedocs.com/s/t");
         assert_eq!(link_to_copy("https://api.markiedocs.com", "abc", "a.wd", Some("https://markiedocs.com/s/t")), "https://markiedocs.com/d/abc");
+    }
+
+    #[test]
+    fn a_document_on_another_server_names_its_host() {
+        assert_eq!(
+            server_sign_in_line("https://docs.example.com"),
+            "This document is on docs.example.com. Sign in to that server in Settings > Advanced > Servers to share it."
+        );
+        assert_eq!(server_sign_in_line("http://localhost:18787"), "This document is on localhost:18787. Sign in to that server in Settings > Advanced > Servers to share it.");
     }
 }

@@ -73,7 +73,7 @@ impl Workspace {
         self.show_dialog(Overlay::Settings { section, colors_open: false }, window, cx);
     }
 
-    fn settings_tab(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+    pub(super) fn settings_tab(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         if let Overlay::Settings { section: s, .. } = &mut self.dialogs.open {
             *s = section;
         }
@@ -93,7 +93,7 @@ impl Workspace {
             SettingsSection::Account => self.render_account_section(t, cx),
             SettingsSection::Appearance => self.render_appearance_live(colors_open, t, window, cx),
             SettingsSection::Files => render_files(t),
-            SettingsSection::Advanced => self.render_advanced(t, cx),
+            SettingsSection::Advanced => self.render_advanced(t, window, cx),
         };
         self.panel(t, 12.)
             .id("settings-panel")
@@ -149,7 +149,7 @@ impl Workspace {
 
     // --------------------------------------------------------------- advanced
 
-    fn render_advanced(&mut self, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+    fn render_advanced(&mut self, t: &Tokens, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         div()
             .child(setting_block(
                 "Updates",
@@ -169,47 +169,9 @@ impl Workspace {
             // The working switch from logs.rs; absent, as in Electron, when no
             // report address is configured.
             .children(crate::logs::render_crash_setting(cx).map(|el| div().mb(px(20.)).child(el)))
-            .child(
-                div()
-                    .mb(px(20.))
-                    .child(section_label("Servers", t).mb(px(8.)))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(t.muted)
-                            .mb(px(8.))
-                            .child("To work on someone\u{2019}s document, sign in to the server it lives on."),
-                    )
-                    .child(
-                        div()
-                            .rounded(px(6.))
-                            .border_1()
-                            .border_color(t.border)
-                            .px(px(12.))
-                            .py(px(8.))
-                            .child(div().text_size(px(13.)).child("Markie Cloud"))
-                            .child(div().text_size(px(11.)).text_color(t.muted).child("api.markiedocs.com"))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(12.))
-                                    .mt(px(6.))
-                                    .child(div().text_size(px(11.)).text_color(t.muted).child("Not signed in"))
-                                    .child(
-                                        overlay_button("server-sign-in", "Sign in", t).on_click(cx.listener(
-                                            |this, _, window, cx| this.settings_tab_account(window, cx),
-                                        )),
-                                    ),
-                            ),
-                    ),
-            )
+            // Markie Cloud and the servers added here (servers_setting.rs).
+            .child(self.render_servers_setting(t, window, cx))
             .into_any_element()
-    }
-
-    fn settings_tab_account(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings_tab(SettingsSection::Account, cx);
     }
 }
 

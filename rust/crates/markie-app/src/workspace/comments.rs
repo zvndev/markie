@@ -89,6 +89,8 @@ pub(super) struct Comments {
     error: Option<String>,
     // Local comments.
     local: Option<LocalPanel>,
+    /// The window y of the last mouse up in Source.
+    source_up: Option<Pixels>,
     /// The commented passages tinted in Source (`source-comments.ts`), and
     /// what they were drawn for (text, threads, active), to redraw on change.
     source_marks: Option<TextDecorationCollection>,
@@ -198,11 +200,21 @@ impl Workspace {
         self.collab.comments._poll = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(POLL).await;
-                if this.update(cx, |w, cx| w.cloud_refresh(cx)).is_err() {
+                // Paused while the window is hidden, so a document left open
+                // overnight does not ask thousands of times (comments.tsx).
+                if this.update(cx, |w, cx| if w.cloud.window_visible { w.cloud_refresh(cx) }).is_err() {
                     return;
                 }
             }
         }));
+    }
+
+    /// The window came back into view: refresh at once, as comments.tsx does
+    /// on `visibilitychange`.
+    pub(super) fn cloud_comments_visible(&mut self, cx: &mut Context<Self>) {
+        if self.collab.comments._poll.is_some() && self.live_rich_binding().is_some() {
+            self.cloud_refresh(cx);
+        }
     }
 
     fn cloud_refresh(&mut self, cx: &mut Context<Self>) {
@@ -681,6 +693,49 @@ impl Workspace {
         self.source_marks(cx);
     }
 
+    /// Local comments are showing for the open document.
+    pub(super) fn local_comments_on(&self) -> bool {
+        self.collab.comments.local.is_some()
+    }
+
+    /// Where a Source selection ended, for placing "Comment" under it.
+    pub(super) fn note_source_mouse_up(&mut self, y: Pixels) {
+        self.collab.comments.source_up = Some(y);
+    }
+
+    /// The reader's selection as a quote anchor into the Markdown, with the
+    /// height to offer "Comment" at. The focused pane decides (local-comments
+    /// .tsx `readSelection`): Source by its own offsets, View through the
+    /// visible-text projection.
+    fn local_selection(&self, window: &Window, cx: &App) -> Option<(markie_cloud::comments::anchor::TextAnchor, f32)> {
+        let source_focused = match self.mode {
+            Mode::Source => true,
+            Mode::Split => self.editor.read(cx).focus_handle(cx).is_focused(window),
+            Mode::View => false,
+        };
+        let o = self.collab.comments.origin.get()?.origin;
+        if source_focused {
+            let input = self.editor.read(cx);
+            let range = input.selected_range();
+            let text = input.value();
+            if range.is_empty() || range.end > text.len() || !text.is_char_boundary(range.start) || !text.is_char_boundary(range.end) {
+                return None;
+            }
+            let from = text[..range.start].encode_utf16().count();
+            let to = from + text[range.start..range.end].encode_utf16().count();
+            let anchor = make_anchor(&text, from, to)?;
+            // Under the point where the selection ended (the Source pane
+            // records its last mouse up), as Electron puts it under the range.
+            let bottom = self.collab.comments.source_up.unwrap_or(o.y + px(40.));
+            return Some((anchor, f32::from(bottom - o.y) + 18.));
+        }
+        let anchor = self.local_selection_anchor(cx)?;
+        let rich = self.rich.read(cx);
+        let (_, to) = rich.editor.range();
+        let top = rich.caret_rect(to).map(|r| f32::from(r.origin.y + r.size.height - o.y) + 6.)?;
+        Some((anchor, top))
+    }
+
     /// The selection in View as a quote anchor into the Markdown.
     fn local_selection_anchor(&self, cx: &App) -> Option<markie_cloud::comments::anchor::TextAnchor> {
         let md = self.markdown_now(cx);
@@ -706,13 +761,11 @@ impl Workspace {
         let p = themes::palette(cx);
         let md = self.markdown_now(cx);
         let can_comment = self.doc_editable();
-        let sel_anchor = (can_comment && self.collab.comments.local.as_ref().is_some_and(|l| l.composing.is_none())).then(|| self.local_selection_anchor(cx)).flatten();
-        let sel_top = sel_anchor.as_ref().and_then(|_| {
-            let rich = self.rich.read(cx);
-            let (_, to) = rich.editor.range();
-            let o = self.collab.comments.origin.get()?.origin;
-            rich.caret_rect(to).map(|r| f32::from(r.origin.y + r.size.height - o.y) + 6.)
-        });
+        let selection = (can_comment && self.collab.comments.local.as_ref().is_some_and(|l| l.composing.is_none())).then(|| self.local_selection(window, cx)).flatten();
+        let (sel_anchor, sel_top) = match selection {
+            Some((anchor, top)) => (Some(anchor), Some(top)),
+            None => (None, None),
+        };
         let composing = self.collab.comments.local.as_ref()?.composing.clone();
         let composer = composing.as_ref().map(|_| self.composer("local-new", "Comment…", Submit::NewLocal, window, cx));
         let panel = self.collab.comments.local.as_ref()?;

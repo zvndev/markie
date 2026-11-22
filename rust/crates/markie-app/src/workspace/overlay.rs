@@ -42,6 +42,10 @@ pub(super) enum Overlay {
     DiskConflict { confirming: Option<super::strips::Destructive> },
     /// "Import a text copy?" for an HTML file (`import_copy.rs`).
     ConvertDocument { path: PathBuf },
+    /// "Both copies of … changed" (`cloud_strip.rs`, conflict-dialog.tsx).
+    CloudConflict(super::cloud_strip::ConflictState),
+    /// "Stop syncing this document to the cloud?" (library.tsx).
+    StopSync { path: PathBuf },
 }
 
 impl Overlay {
@@ -143,6 +147,8 @@ impl Workspace {
             Overlay::Move { .. } => (self.render_move(&t, cx), false, true),
             Overlay::DiskConflict { .. } => (self.render_disk_conflict(&t, cx), false, false),
             Overlay::ConvertDocument { .. } => (self.render_convert_dialog(&t, cx), false, true),
+            Overlay::CloudConflict(_) => (self.render_cloud_conflict(&t, cx), false, false),
+            Overlay::StopSync { .. } => (self.render_stop_sync(&t, cx), false, true),
         };
         Some(
             div()
@@ -163,8 +169,14 @@ impl Workspace {
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| {
                         // Only a press on the scrim itself lands here: every
-                        // panel stops its own presses.
-                        this.close_dialog(window, cx);
+                        // panel stops its own presses. The stop-syncing
+                        // confirm has no click-outside, and the conflict
+                        // dialog ignores it while a choice runs.
+                        match &this.dialogs.open {
+                            Overlay::StopSync { .. } => {}
+                            Overlay::CloudConflict(c) if c.busy => {}
+                            _ => this.close_dialog(window, cx),
+                        }
                     }),
                 )
                 .bg(if strong { t.scrim_strong() } else { t.scrim() })
@@ -180,7 +192,10 @@ impl Workspace {
     fn dialog_key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let plain = !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt;
         if key.key == "escape" && plain {
-            self.close_dialog(window, cx);
+            // conflict-dialog.tsx ignores Escape while a choice is running.
+            if !matches!(&self.dialogs.open, Overlay::CloudConflict(c) if c.busy) {
+                self.close_dialog(window, cx);
+            }
             return true;
         }
         match &self.dialogs.open {
@@ -192,6 +207,11 @@ impl Workspace {
             }
             Overlay::Trash { .. } | Overlay::Move { .. } if key.key == "enter" && plain => {
                 self.confirm_file_dialog(window, cx);
+                true
+            }
+            // Return lands on Keep both, the choice that cannot lose anything.
+            Overlay::CloudConflict(_) if key.key == "enter" && plain => {
+                self.cloud_conflict_act(true, window, cx);
                 true
             }
             _ => false,

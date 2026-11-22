@@ -314,3 +314,45 @@ async fn live_doc_addresses_say_who_can_open_them() {
     // No address on the server (Live Docs off answers 404): the menu says so.
     assert!(shares.live_doc_address("doc-4").await.is_err());
 }
+
+#[tokio::test]
+async fn a_cloud_area_is_created_with_its_trimmed_label() {
+    use markie_cloud::platform::{AREA_LABEL_REFUSAL, PlatformClient};
+    let server = MockServer::start().await;
+    let tokens = Arc::new(MemoryTokenStore::new());
+    set_token(tokens.as_ref(), &server.uri(), Some("token-a")).unwrap();
+    Mock::given(method("POST"))
+        .and(path("/api/account/cloud-areas"))
+        .and(header("authorization", "Bearer token-a"))
+        .and(body_partial_json(json!({ "label": "Team docs" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "area": { "id": "area_123", "label": "Team docs" } })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let c = client(&server, tokens);
+    let area = PlatformClient(&c).create_area("  Team docs ").await.unwrap();
+    assert_eq!((area.id.as_str(), area.label.as_str()), ("area_123", "Team docs"));
+    // A bad label never reaches the server (expect(1) above).
+    assert_eq!(PlatformClient(&c).create_area(" ").await.unwrap_err(), CloudError::Invalid(AREA_LABEL_REFUSAL.into()));
+}
+
+#[tokio::test]
+async fn links_the_server_will_not_name_are_kept_as_unshared() {
+    use markie_cloud::docs::DocsClient;
+    let server = MockServer::start().await;
+    let tokens = Arc::new(MemoryTokenStore::new());
+    set_token(tokens.as_ref(), &server.uri(), Some("token-a")).unwrap();
+    Mock::given(method("GET"))
+        .and(path("/api/docs/doc_1/links"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "version": 3, "links": [
+            { "ref": "plan.md", "target": "doc_2" },
+            { "ref": "secret.md", "target": null },
+            { "ref": "gone.md" },
+        ] })))
+        .mount(&server)
+        .await;
+    let c = client(&server, tokens);
+    let (open, refused) = markie_cloud::links::fetch_all(&DocsClient::new(&c), "doc_1").await.unwrap();
+    assert_eq!(open.iter().map(|l| (l.reference.as_str(), l.target.as_str())).collect::<Vec<_>>(), [("plan.md", "doc_2")]);
+    assert_eq!(refused, ["secret.md", "gone.md"]);
+}

@@ -34,6 +34,8 @@ enum Gate {
     SignedOut,
     Local,
     Ready,
+    /// The document's server has no session here, or syncing failed.
+    Error(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -66,8 +68,23 @@ pub(super) struct ShareSheet {
     link_busy: bool,
     copied: bool,
     row_busy: Option<String>,
+    /// The sign-in form the gate shows in place when signed out.
+    sign_in: Option<Entity<super::account::SignInForm>>,
+    /// "Upload destination" for Sync and share, and whether its menu is open.
+    upload_area: Option<String>,
+    area_open: bool,
+    /// Sync and share is running for this file.
+    syncing: Option<std::path::PathBuf>,
     _subs: Vec<Subscription>,
     _task: Option<Task<()>>,
+}
+
+impl ShareSheet {
+    /// A new area made in the gate's picker becomes the upload destination.
+    pub(super) fn set_upload_area(&mut self, area: Option<String>) {
+        self.upload_area = area;
+        self.area_open = false;
+    }
 }
 
 fn error_text(e: &CloudError, fallback: &str) -> String {
@@ -84,31 +101,17 @@ impl Workspace {
         let subs = vec![cx.subscribe_in(&query, window, |w, state, ev: &InputEvent, window, cx| w.share_field_event(state, ev, window, cx))];
         let file_name = self.doc.as_ref().and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
         let body = self.current_text(cx);
-        // Not shared yet: the gate's "only on this Mac" step is turning sync
-        // on, which the sync work's sheet does (cloud_ui.rs), or an Office
-        // snapshot (cloud_office.rs).
-        if let Some(open) = self.doc.as_ref() {
-            if !self.has_cloud_copy() {
-                if matches!(open.kind, DocKind::Text { .. }) {
-                    self.show_text_sync(window, cx);
-                    return;
-                }
-                if markie_cloud::platform::supported_name(&super::cloud::name(&open.path)).is_some() {
-                    self.show_office_upload(window, cx);
-                    return;
-                }
-            }
+        // An Office file shares through its own snapshot dialog, as the
+        // document workspace's share does (document-workspace-host.tsx).
+        if let Some(open) = self.doc.as_ref()
+            && !matches!(open.kind, DocKind::Text { .. })
+            && !self.has_cloud_copy()
+            && markie_cloud::platform::supported_name(&super::cloud::name(&open.path)).is_some()
+        {
+            self.show_office_upload(window, cx);
+            return;
         }
-        let saved = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }) | Some(DocKind::Office(_)) | Some(DocKind::Html));
-        let gate = if self.doc.is_none() || !saved {
-            Gate::Unsaved
-        } else if self.collab.cloud.is_some() {
-            Gate::Ready
-        } else if self.has_cloud_copy() {
-            Gate::Loading
-        } else {
-            Gate::Local
-        };
+        let gate = self.share_gate(cx);
         let doc = self.collab.cloud.clone();
         self.collab.share = Some(ShareSheet {
             gate: gate.clone(),
@@ -132,14 +135,138 @@ impl Workspace {
             link_busy: false,
             copied: false,
             row_busy: None,
+            sign_in: None,
+            upload_area: None,
+            area_open: false,
+            syncing: None,
             _subs: subs,
             _task: None,
         });
-        if gate == Gate::Ready {
-            self.share_load(cx);
-            query.update(cx, |s, cx| s.focus(window, cx));
-        } else if gate == Gate::Loading {
-            self.collab_recheck(cx);
+        self.share_enter_gate(gate, Some(window), cx);
+        cx.notify();
+    }
+
+    /// share-gate.tsx `resolve`: which prerequisite is missing.
+    fn share_gate(&self, cx: &App) -> Gate {
+        let Some(open) = self.doc.as_ref() else { return Gate::Unsaved };
+        let saved = matches!(open.kind, DocKind::Text { .. } | DocKind::Office(_) | DocKind::Html);
+        if !saved {
+            return Gate::Unsaved;
+        }
+        let primary_in = super::account::signed_in_user(cx).is_some();
+        let binding = self.cloud.binding_key(&open.path).and_then(|k| self.cloud.bindings.get(&k)).filter(|b| b.record.cloud_doc_id.is_some());
+        let Some(binding) = binding else {
+            if self.has_cloud_copy() {
+                return if self.collab.cloud.is_some() { Gate::Ready } else { Gate::Loading };
+            }
+            return if primary_in { Gate::Local } else { Gate::SignedOut };
+        };
+        let origin = binding.origin().to_string();
+        let primary = origin == self.cloud.primary_origin();
+        let session = self.cloud.scope(&origin).is_some_and(|s| s.matches(binding));
+        // Signed out of the primary server says nothing about a document on
+        // another server this person is signed in to.
+        if !primary_in && (primary || !session) {
+            return Gate::SignedOut;
+        }
+        if !primary && !session {
+            return Gate::Error(sv::server_sign_in_line(&origin));
+        }
+        if self.collab.cloud.is_some() { Gate::Ready } else { Gate::Loading }
+    }
+
+    fn share_enter_gate(&mut self, gate: Gate, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        let Some(s) = self.collab.share.as_mut() else { return };
+        s.gate = gate.clone();
+        match gate {
+            Gate::Ready => {
+                s.doc = self.collab.cloud.clone();
+                let query = s.query.clone();
+                self.share_load(cx);
+                if let Some(window) = window {
+                    query.update(cx, |q, cx| q.focus(window, cx));
+                }
+            }
+            Gate::Loading => self.collab_recheck(cx),
+            Gate::SignedOut => {
+                if s.sign_in.is_none()
+                    && let (Some(window), Some(store)) = (window, super::account::AccountStore::global(cx))
+                {
+                    let form = cx.new(|cx| super::account::SignInForm::new(store, markie_cloud::auth_errors::SignInReason::Share, window, cx));
+                    if let Some(s) = self.collab.share.as_mut() {
+                        s.sign_in = Some(form);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The session changed under the sheet: resolve the gate again in place,
+    /// as share-gate.tsx does from its `status` subscription.
+    pub(super) fn share_account_changed(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = self.collab.share.as_ref() else { return };
+        if s.gate == Gate::Ready || s.syncing.is_some() {
+            return;
+        }
+        let gate = self.share_gate(cx);
+        self.share_enter_gate(gate, None, cx);
+        cx.notify();
+    }
+
+    /// "Try again" on the gate's error.
+    fn share_retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let gate = self.share_gate(cx);
+        self.share_enter_gate(gate, Some(window), cx);
+        cx.notify();
+    }
+
+    /// `syncThenShare`: turn sync on with the chosen destination, then show
+    /// the dialog once the server says who this person is.
+    fn share_sync_then_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        let Some(s) = self.collab.share.as_mut() else { return };
+        if s.syncing.is_some() {
+            return;
+        }
+        let area = s.upload_area.clone();
+        s.area_open = false;
+        if !self.persist_cloud_choice(&path, window, cx) {
+            if let Some(s) = self.collab.share.as_mut() {
+                s.gate = Gate::Error("Couldn't sync this file. Check your connection and try again.".into());
+            }
+            cx.notify();
+            return;
+        }
+        if let Some(s) = self.collab.share.as_mut() {
+            s.syncing = Some(path.clone());
+        }
+        self.cloud.enable_area = Some(area);
+        self.cloud_text(path.clone(), super::cloud::TextAction::Enable, None, cx);
+        // Refused before any request (no session for that server, a sync
+        // already running): say so on the gate instead of waiting forever.
+        if !self.cloud.busy.contains(&path) {
+            self.cloud.enable_area = None;
+            let message = self.cloud.notice.clone().unwrap_or_else(|| "Couldn't sync this file. Check your connection and try again.".into());
+            self.share_sync_done(&path, Some(message), cx);
+        }
+        cx.notify();
+    }
+
+    /// Sync on finished (`cloud_text`): an error stays on the gate; success
+    /// waits for the server's answer about access, then shows the dialog.
+    pub(super) fn share_sync_done(&mut self, path: &std::path::Path, error: Option<String>, cx: &mut Context<Self>) {
+        let Some(s) = self.collab.share.as_mut() else { return };
+        if s.syncing.as_deref() != Some(path) {
+            return;
+        }
+        s.syncing = None;
+        match error {
+            Some(e) => s.gate = Gate::Error(e),
+            None => {
+                let gate = self.share_gate(cx);
+                self.share_enter_gate(gate, None, cx);
+            }
         }
         cx.notify();
     }
@@ -182,6 +309,10 @@ impl Workspace {
             link_busy: false,
             copied: false,
             row_busy: None,
+            sign_in: None,
+            upload_area: None,
+            area_open: false,
+            syncing: None,
             _subs: subs,
             _task: None,
         });
@@ -567,20 +698,38 @@ impl Workspace {
     }
 
     fn render_share_gate(&mut self, gate: &Gate, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let name = self.collab.share.as_ref().map(|s| s.file_name.clone()).unwrap_or_default();
-        let (title, line, action): (&str, String, Option<(&str, bool)>) = match gate {
-            Gate::Loading => ("Share this document", "Checking this document…".into(), None),
-            Gate::Unsaved => ("Share this document", "Save this document to a file before you share it.".into(), None),
+        let p = *p;
+        let (name, sign_in, syncing, area_open, upload_area) = match self.collab.share.as_ref() {
+            Some(s) => (s.file_name.clone(), s.sign_in.clone(), s.syncing.is_some(), s.area_open, s.upload_area.clone()),
+            None => return div().into_any_element(),
+        };
+        // Signed out: the sign-in form in place (share-gate.tsx), which the
+        // session subscription resolves into the next stage.
+        if let (Gate::SignedOut, Some(form)) = (gate, sign_in) {
+            return Self::share_panel(&p)
+                .w(px(400.))
+                .rounded(px(12.))
+                .p(px(20.))
+                .child(h_flex().justify_end().mt(px(-4.)).mr(px(-4.)).child(Self::share_close_x("share-gate-close", &p, cx)))
+                .child(form)
+                .into_any_element();
+        }
+        let (line, action): (String, Option<&str>) = match gate {
+            Gate::Loading | Gate::SignedOut => ("Checking this document…".into(), None),
+            Gate::Unsaved => ("Save this document to a file before you share it.".into(), None),
             Gate::Local => (
-                "Share this document",
                 format!("{name} is only on this Mac. Syncing it to your account is what makes a share link possible."),
-                Some(("Sync and share", false)),
+                Some(if syncing { "Syncing…" } else { "Sync and share" }),
             ),
-            Gate::SignedOut => ("Sign in to share", "Sign in to Markie Cloud to share this document. Sharing sends the text to the people you choose.".into(), Some(("Sign in", true))),
+            Gate::Error(message) => (message.clone(), Some("Try again")),
             Gate::Ready => unreachable!(),
         };
-        Self::share_panel(p)
-            .w(px(if *gate == Gate::SignedOut { 400. } else { 440. }))
+        let local = *gate == Gate::Local;
+        let retry = matches!(gate, Gate::Error(_));
+        let areas = self.cloud.primary_scope().and_then(|s| self.cloud.listing(&s).map(|l| l.areas.clone())).unwrap_or_default();
+        let area_label = upload_area.as_ref().and_then(|id| areas.iter().find(|a| &a.id == id)).map(|a| a.label.clone()).unwrap_or_else(|| "Default cloud".into());
+        Self::share_panel(&p)
+            .w(px(440.))
             .rounded(px(12.))
             .p(px(20.))
             .child(
@@ -588,12 +737,77 @@ impl Workspace {
                     .items_start()
                     .justify_between()
                     .gap(px(12.))
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(title))
-                    .child(Self::share_close_x("share-gate-close", p, cx)),
+                    .child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Share this document"))
+                    .child(Self::share_close_x("share-gate-close", &p, cx)),
             )
             .child(div().mt(px(8.)).text_size(px(12.5)).line_height(px(20.)).text_color(p.muted).child(line))
-            .when_some(action, |el, (label, enabled)| {
-                let signed_out = *gate == Gate::SignedOut;
+            .when(local, |el| {
+                // CloudAreaPicker "Upload destination", default "Default cloud".
+                let mut chips = vec![("share-area-default".to_string(), None::<String>, "Default cloud".to_string())];
+                chips.extend(areas.iter().map(|a| (format!("share-area-{}", a.id), Some(a.id.clone()), a.label.clone())));
+                el.child(
+                    v_flex()
+                        .mt(px(8.))
+                        .child(
+                            h_flex()
+                                .id("share-upload-area")
+                                .h(px(32.))
+                                .gap(px(7.2))
+                                .pl(px(10.4))
+                                .pr(px(8.8))
+                                .rounded(px(7.))
+                                .border_1()
+                                .border_color(if area_open { mix(p.blue, p.border, 0.66) } else { p.border })
+                                .bg(mix(p.background, p.surface2, 0.72))
+                                .text_size(px(11.5))
+                                .text_color(p.muted)
+                                .when(syncing, |el| el.opacity(0.4))
+                                .when(!syncing, |el| el.cursor_pointer())
+                                .child(div().flex_none().text_color(p.muted.opacity(0.82)).child("Upload destination"))
+                                .child(div().flex_1().min_w_0().truncate().text_color(p.foreground.opacity(0.85)).child(area_label))
+                                .child("⌄")
+                                .on_click(cx.listener(move |w, _, window, cx| {
+                                    if let Some(s) = w.collab.share.as_mut()
+                                        && s.syncing.is_none()
+                                    {
+                                        s.area_open = !s.area_open;
+                                    }
+                                    if w.collab.share.as_ref().is_some_and(|s| s.area_open) {
+                                        w.ensure_area_input(window, cx);
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                        .when(area_open, |el| {
+                            let create = self.render_area_create(true, &p, cx);
+                            el.child(
+                                v_flex().mt(px(6.)).p(px(8.)).rounded(px(10.)).border_1().border_color(p.border).bg(p.surface2).child(h_flex().gap(px(4.)).flex_wrap().children(chips.into_iter().map(|(id, area, label)| {
+                                    let on = area == upload_area;
+                                    div()
+                                        .id(SharedString::from(id))
+                                        .rounded(px(6.))
+                                        .border_1()
+                                        .border_color(if on { p.foreground.opacity(0.25) } else { p.border })
+                                        .when(on, |el| el.bg(p.accent))
+                                        .px(px(8.))
+                                        .py(px(4.))
+                                        .text_size(px(11.))
+                                        .text_color(if on { p.foreground } else { p.muted })
+                                        .cursor_pointer()
+                                        .child(label)
+                                        .on_click(cx.listener(move |w, _, _, cx| {
+                                            if let Some(s) = w.collab.share.as_mut() {
+                                                s.upload_area = area.clone();
+                                                s.area_open = false;
+                                            }
+                                            cx.notify();
+                                        }))
+                                }))).children(create),
+                            )
+                        }),
+                )
+            })
+            .when_some(action, |el, label| {
                 el.child(
                     h_flex().mt(px(16.)).justify_end().child(
                         div()
@@ -604,19 +818,14 @@ impl Workspace {
                             .bg(p.accent)
                             .text_size(px(12.5))
                             .text_color(p.foreground)
-                            .when(!enabled, |el| el.opacity(0.6))
-                            .when(enabled, |el| el.cursor_pointer())
-                            .child(label)
+                            .when(syncing, |el| el.opacity(0.6))
+                            .when(!syncing, |el| el.cursor_pointer())
+                            .child(label.to_string())
                             .on_click(cx.listener(move |w, _, window, cx| {
-                                if !enabled {
-                                    return;
-                                }
-                                if signed_out {
-                                    w.close_share(cx);
-                                    w.open_account(window, cx);
-                                } else {
-                                    w.close_share(cx);
-                                    w.open_share(window, cx);
+                                if retry {
+                                    w.share_retry(window, cx);
+                                } else if local {
+                                    w.share_sync_then_share(window, cx);
                                 }
                             })),
                     ),

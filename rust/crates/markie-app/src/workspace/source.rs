@@ -98,8 +98,18 @@ impl Workspace {
             .child(editor)
             .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, window, cx| this.source_mouse_down(ev, window, cx)))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| this.source_mouse_move(ev, window, cx)))
-            .capture_any_mouse_up(cx.listener(|_, _: &MouseUpEvent, _, _| {
+            .capture_any_mouse_up(cx.listener(|this, ev: &MouseUpEvent, _, cx| {
                 RECT.with(|r| r.borrow_mut().take());
+                // A finished selection can be commented on (local comments).
+                if this.local_comments_on() {
+                    this.note_source_mouse_up(ev.position.y);
+                    cx.notify();
+                }
+            }))
+            .on_key_up(cx.listener(|this, ev: &KeyUpEvent, _, cx| {
+                if ev.keystroke.modifiers.shift && this.local_comments_on() {
+                    cx.notify();
+                }
             }))
     }
 

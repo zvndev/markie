@@ -342,6 +342,8 @@ pub struct RichView {
     pub(crate) toolbar_width: Pixels,
     /// The typed font size box (`chrome.rs`), made on the first frame.
     pub(crate) size_field: Option<chrome::SizeField>,
+    /// The pointer on the section rail, and its card (`rail.rs`).
+    pub(crate) rail_hover: rail::RailHover,
     /// The toolbar's "more" popover is open.
     pub(crate) more_open: bool,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
@@ -412,6 +414,7 @@ impl RichView {
             toolbar_width: px(0.),
             size_field: None,
             more_open: false,
+            rail_hover: Default::default(),
             source_mode: false,
             source_toolbar: None,
         }

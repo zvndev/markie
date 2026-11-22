@@ -1036,7 +1036,7 @@ impl Render for RichView {
         if self.remote.iter().any(|r| r.moved_at.elapsed().as_millis() < crate::CARET_LABEL_MS) {
             window.request_animation_frame();
         }
-        let rail = self.render_rail(cx);
+        let rail = self.render_rail(window, cx);
         if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
             eprintln!("render {} blocks in {:?}", self.editor.block_count(), started.elapsed());
         }

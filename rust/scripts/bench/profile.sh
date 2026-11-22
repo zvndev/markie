@@ -10,10 +10,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 rust="$(cd "$here/../.." && pwd)"
 file="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; secs="$2"; out="$3"
 data="${4:-$(dirname "$out")/data-profile}"
-mkdir -p "$data"
+mkdir -p "$data/home"  # scratch HOME: the index never walks Kirby's folders
 bin="$rust/target/prof/release/markie-rs"
 "$rust/scripts/screen/with-screen-lock.sh" bench-profile -- bash -c '
-  MARKIE_RS_DATA_DIR="$1" MARKIE_RS_PERF=1 samply record --save-only --unstable-presymbolicate -o "$2.json" -- "$3" "$4" 2>"$2.stderr" &
+  env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME="$1/home" MARKIE_RS_DATA_DIR="$1" MARKIE_RS_PERF=1 samply record --save-only --unstable-presymbolicate -o "$2.json" -- "$3" "$4" 2>"$2.stderr" &
   sp=$!
   sleep "$5"
   app="$(pgrep -P "$sp" || true)"

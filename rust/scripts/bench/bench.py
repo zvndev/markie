@@ -16,6 +16,8 @@ Rules it keeps (docs/rust-port/SCREEN.md):
 - Each timed launch and every keystroke or scroll holds the shared screen
   lock (with-screen-lock.sh, act.sh).
 - Data folders and fixtures live under DIR (default .autoloop/runs/perf).
+- Every app runs with HOME=DIR/home (a generated tree) and without
+  CLAUDE_CONFIG_DIR or CODEX_HOME, so its index never sees Kirby's files.
 """
 import argparse
 import json
@@ -150,6 +152,21 @@ def seed_rs_data(data: Path):
 RSB_APP = os.environ.get("MARKIE_BENCH_RS_BEFORE")
 
 
+def scratch_env(out: Path) -> dict:
+    """The environment for every app this script starts. The device index
+    walks $HOME and $CLAUDE_CONFIG_DIR/skills and $CODEX_HOME/skills, and
+    agent shells point those at real folders, so they are dropped and HOME
+    is a scratch folder holding a generated 20,000-file tree: the Library
+    is realistic and none of it is Kirby's. (The index benchmark's scan of
+    the real home folder is the one read-only exception.)"""
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CONFIG_DIR", "CODEX_HOME")}
+    home = out / "home"
+    if not (home / "notes" / ".done").exists():
+        subprocess.run([sys.executable, str(HERE / "gen-fixtures.py"), "--tree", str(home / "notes")], check=True)
+    env["HOME"] = str(home)
+    return env
+
+
 def is_rs(app: str) -> bool:
     return app in ("rs", "rsb")
 
@@ -157,7 +174,7 @@ def is_rs(app: str) -> bool:
 def launch_cmd(app: str, file: Path, data: Path) -> tuple[list[str], dict]:
     # Electron refuses a relative profile path; both get absolute paths.
     file, data = file.resolve(), data.resolve()
-    env = dict(os.environ)
+    env = scratch_env(data.parent.parent)
     if is_rs(app):
         env["MARKIE_RS_DATA_DIR"] = str(data)
         env["MARKIE_RS_PERF"] = "1"

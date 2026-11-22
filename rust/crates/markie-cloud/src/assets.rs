@@ -369,65 +369,53 @@ pub async fn reconcile(
     })
 }
 
-/// Cache an asset under the RS data directory. A cached byte stream is never
-/// returned until this exact account and reference has been reauthorized.
+/// Cache an asset under the RS data directory, keeping a short validation
+/// lease like Electron before asking the account's server again.
 pub async fn revalidate(
     docs: &DocsClient<'_>,
-    dir: &Path,
-    account: &str,
-    origin: &str,
+    cache: &crate::asset_cache::AssetCache,
     id: &str,
     reference: &str,
 ) -> Result<PathBuf> {
     let expected = mime(reference).ok_or(CloudError::Refused)?;
-    let scope = hash_content(&serde_json::to_string(&(account, origin, id, reference)).unwrap());
-    let bucket = dir.join(scope);
-    let tag = fs::read_to_string(bucket.join("etag"))
-        .ok()
-        .filter(|s| parse_etag(s).is_some());
-    let ext = Path::new(reference)
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or(CloudError::Refused)?;
-    let path_for = |hash: &str| bucket.join(format!("{hash}.{ext}"));
-    let previous = tag
-        .as_deref()
-        .and_then(parse_etag)
-        .map(path_for)
-        .filter(|p| p.is_file());
-    let answer = docs
-        .fetch_asset(id, reference, tag.as_deref().filter(|_| previous.is_some()))
-        .await?;
+    let key = format!("{id}\t{reference}");
+    let now = markie_core::clock::now_ms();
+    let bad_cache = |_: std::io::Error| CloudError::Unreadable;
+    let previous = cache.lookup(&key, now, false).map_err(bad_cache)?;
+    if let Some((path, entry)) = &previous && entry.fresh(now) {
+        return Ok(path.clone());
+    }
+    let tag = previous.as_ref().map(|(_, e)| format!("\"{}\"", e.hash));
+    let retained = || cache.lookup(&key, markie_core::clock::now_ms(), false).map_err(bad_cache)?
+        .map(|(path, _)| path).ok_or(CloudError::Offline);
+    let answer = match docs.fetch_asset(id, reference, tag.as_deref()).await {
+        Ok(answer) => answer,
+        Err(CloudError::Offline) => return retained(),
+        Err(error) => return Err(error),
+    };
     if answer.status == 304 {
-        return previous.ok_or(CloudError::Unreadable);
+        return cache.lookup(&key, markie_core::clock::now_ms(), true).map_err(bad_cache)?
+            .map(|(path, _)| path).ok_or(CloudError::Unreadable);
+    }
+    if matches!(answer.status, 401 | 403 | 404 | 410) {
+        cache.forget(&key).map_err(bad_cache)?;
+    } else if answer.status >= 500 {
+        return retained();
     }
     let answer = answer.into_ok()?;
     let tag = answer.etag.as_deref().ok_or(CloudError::Unreadable)?;
     let hash = parse_etag(tag).ok_or(CloudError::Unreadable)?;
     if answer.content_type.as_deref() != Some(expected)
         || answer.bytes.len() > MAX_ASSET_BYTES
-        || hex::encode(Sha256::digest(&answer.bytes)) != hash
     {
         return Err(CloudError::Unreadable);
     }
-    let write = |e: std::io::Error| CloudError::Invalid(format!("Couldn't cache cloud media: {e}"));
-    fs::create_dir_all(&bucket).map_err(write)?;
-    let path = path_for(hash);
-    markie_core::save::atomic_write(&path, &answer.bytes).map_err(write)?;
-    markie_core::save::atomic_write(&bucket.join("etag"), tag.as_bytes()).map_err(write)?;
-    if let Some(old) = previous.filter(|p| p != &path) {
-        let _ = fs::remove_file(old);
-    }
-    Ok(path)
+    cache.store(key, expected, hash, &answer.bytes, markie_core::clock::now_ms()).map_err(bad_cache)
 }
 
 fn parse_etag(tag: &str) -> Option<&str> {
     let value = tag.strip_prefix('"')?.strip_suffix('"')?;
-    (value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-    .then_some(value)
+    crate::asset_cache::valid_hash(value).then_some(value)
 }
 
 /// Never overwrite a pre-existing name, including an unresolvable symlink.

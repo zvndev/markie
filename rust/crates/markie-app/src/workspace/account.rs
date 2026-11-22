@@ -406,6 +406,7 @@ impl AccountStore {
     /// Sign out here at once, and end the session at the server too.
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         self.ticket += 1;
+        let _ = markie_cloud::asset_cache::AssetCache::clear(&markie_core::paths::data_dir().join("asset-cache"));
         self.status = AuthStatus::Out;
         self.identities = None;
         self.docs = None;

@@ -33,7 +33,9 @@ impl Workspace {
         };
         let references = assets::references(saved);
         let request = scope.clone();
-        let cache = paths::data_dir().join("cloud-media");
+        let cache = markie_cloud::asset_cache::AssetCache::for_account(
+            &paths::data_dir().join("asset-cache"), &request.user, request.origin(),
+        ).ok();
         cx.spawn(async move |weak, cx| {
             let response = network(async move {
                 let docs = DocsClient::new(&request.client);
@@ -44,22 +46,11 @@ impl Workspace {
                     .map(|p| p.reference)
                     .collect();
                 let mut media = HashMap::new();
-                for reference in references
-                    .into_iter()
-                    .filter(|r| assets::mime(r).is_some_and(|mime| mime.starts_with("image/")))
-                    .take(64)
-                {
-                    if let Ok(path) = assets::revalidate(
-                        &docs,
-                        &cache,
-                        &request.user,
-                        request.origin(),
-                        &id,
-                        &reference,
-                    )
-                    .await
-                    {
-                        media.insert(reference, path);
+                if let Some(cache) = cache {
+                    for reference in references.into_iter().filter(|r| assets::mime(r).is_some()).take(64) {
+                        if let Ok(path) = assets::revalidate(&docs, &cache, &id, &reference).await {
+                            media.insert(reference, path);
+                        }
                     }
                 }
                 (media, links)

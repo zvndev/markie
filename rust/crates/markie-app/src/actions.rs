@@ -44,5 +44,8 @@ actions!(
         ExportPdfDark,
         ExportPdfLight,
         ExportHtml,
+        DarkmownSourceView,
+        DarkmownPreviewView,
+        DarkmownSplitView,
     ]
 );

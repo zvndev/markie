@@ -168,6 +168,11 @@ fn set_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Vault", workspace::vault::ToggleVault),
                 MenuItem::separator(),
+                // electron/document-menu-commands.json: on for a .wd only.
+                MenuItem::action("Darkmown Source", DarkmownSourceView),
+                MenuItem::action("Darkmown Preview", DarkmownPreviewView),
+                MenuItem::action("Darkmown Source and Preview", DarkmownSplitView),
+                MenuItem::separator(),
                 MenuItem::submenu(Menu { name: "Word Layout".into(), items: markie_office_view::actions::view_menu_items(), disabled: false }),
             ],
             disabled: false,

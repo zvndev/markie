@@ -347,6 +347,9 @@ pub struct RichView {
     pub(crate) size_field: Option<chrome::SizeField>,
     /// The pointer on the section rail, and its card (`rail.rs`).
     pub(crate) rail_hover: rail::RailHover,
+    /// A message over the page (a refused link), and its generation, so a
+    /// newer one keeps its own six seconds (`linkError` in rich-view.tsx).
+    pub(crate) notice: Option<(SharedString, u64)>,
     /// The toolbar's "more" popover is open.
     pub(crate) more_open: bool,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
@@ -417,6 +420,7 @@ impl RichView {
             outline: (u64::MAX, Vec::new()),
             toolbar_width: px(0.),
             size_field: None,
+            notice: None,
             more_open: false,
             rail_hover: Default::default(),
             source_mode: false,
@@ -493,6 +497,25 @@ impl RichView {
     pub fn set_appearance(&mut self, zoom: f32, page_width: f32, cx: &mut Context<Self>) {
         self.zoom = zoom;
         self.page_width = page_width;
+        cx.notify();
+    }
+
+    /// Show a short message at the top of the page for six seconds, as
+    /// Electron shows a link it would not open.
+    pub fn show_notice(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let generation = self.notice.as_ref().map(|(_, g)| g + 1).unwrap_or(0);
+        self.notice = Some((message.into(), generation));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(6000)).await;
+            this.update(cx, |this, cx| {
+                if this.notice.as_ref().is_some_and(|(_, g)| *g == generation) {
+                    this.notice = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 

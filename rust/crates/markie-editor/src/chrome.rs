@@ -841,6 +841,37 @@ impl RichView {
             .into_any_element()
     }
 
+    /// The `role="status"` pill: centred 8 px below the top, 6 px corners,
+    /// the border at 70%, the page colour at 95%, 11.5 px text.
+    fn render_notice(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let (message, _) = self.notice.clone()?;
+        let theme = cx.theme();
+        Some(
+            div()
+                .absolute()
+                .top(px(8.))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .max_w(relative(0.9))
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_color(theme.border.opacity(0.7))
+                        .bg(theme.background.opacity(0.95))
+                        .px(px(10.))
+                        .py(px(6.))
+                        .text_size(px(11.5))
+                        .text_color(theme.foreground)
+                        .shadow_sm()
+                        .child(message),
+                )
+                .into_any_element(),
+        )
+    }
+
     pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = self.prompt.as_ref()?;
         let theme = cx.theme();
@@ -1054,7 +1085,8 @@ impl Render for RichView {
                     .children(find)
                     .children(self.render_table_bar(cx))
                     .children(self.render_math_field(cx))
-                    .children(self.render_link_card(window, cx)),
+                    .children(self.render_link_card(window, cx))
+                    .children(self.render_notice(cx)),
             )
     }
 }

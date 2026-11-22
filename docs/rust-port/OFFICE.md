@@ -140,16 +140,15 @@ Run against copies in a scratch folder with `MARKIE_RS_DATA_DIR` set. No origina
 
 ### Gaps
 
-- **One text size per paragraph.** GPUI shapes a text element at a single size, so a paragraph uses the size most of its text has. Mixed sizes inside one paragraph show at that size; save keeps them.
-- **Justified text shows left aligned.** GPUI has no justified alignment.
-- **Pages never split a block.** A paragraph or table taller than the page gets its own page and runs over. A page break inside a paragraph's text is drawn after the paragraph.
+- **Closed 2026-11-21:** mixed text sizes in one paragraph and justified text, through the `flow.rs` painter. Pages are now one sheet, as in Electron, so no block is split. See [VISUAL-FORMATS.md](VISUAL-FORMATS.md).
+- **A page break inside a paragraph's text is drawn after the paragraph's text.** Electron draws it at its offset.
 - **Live IME is not verified.** The composition path is unit tested for its offsets, but no Japanese or Chinese input source was switched on for a live check, to avoid changing Kirby's input settings.
 - **Picture insert was not driven through the file dialog.** The insert path is unit tested with real PNG bytes.
 - **No autosave, drafts or version history for Office files.** Unsaved Office edits are saved when another document is opened, as text documents are.
 - **Strikethrough stays disabled.** The engine has no strike property. Soft line breaks and tabs are refused, as in Electron.
 - **Find and replace is not ported.** Electron's Word find tool is a stub too.
 - **The margin and wide pages scroll sideways** when the window is narrow. The Library panel takes 300 px.
-- **Paper in dark mode differs from Electron on screen.** Electron's on-screen page follows the theme and only print and PDF use white paper. The brief asked for light paper, so Markie RS defaults to light paper and offers Theme paper as a toggle. Kirby should pick the default.
+- **Paper follows the theme, as in Electron** (Kirby's decision). White paper is under View > Word Layout > Light Paper.
 
 ### Estimate for the gaps
 

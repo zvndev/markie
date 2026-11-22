@@ -395,6 +395,8 @@ impl RichView {
             .on_action(cx.listener(Self::on_find_next))
             .on_action(cx.listener(Self::on_find_prev))
             .on_action(cx.listener(Self::on_escape))
+            .map(|d| self.accessibility(d, window))
+            .map(|d| Self::behaviour(d, cx))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -1046,30 +1048,16 @@ impl RichView {
         let selected = self.is_atom_selected(key);
         let yt = media::youtube_id(url);
         let site = if yt.is_some() { "YouTube" } else { "Vimeo" };
-        let thumb = yt.map(|id| format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"));
-        let thumb_el: Option<AnyElement> = thumb.and_then(|t| {
-            match self.media.remote.get(&t) {
-                Some(media::Remote::Ready(i)) => Some(img(i.clone()).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).into_any_element()),
-                Some(_) => None,
-                None => {
-                    self.media.remote.insert(t.clone(), media::Remote::Loading);
-                    let u = t.clone();
-                    cx.spawn(async move |this, cx| {
-                        let fetched = cx.background_executor().spawn(async move { media::fetch(&u) }).await;
-                        this.update(cx, |this, cx| {
-                            this.media.remote.insert(t, match fetched {
-                                Some(i) => media::Remote::Ready(Arc::new(i)),
-                                None => media::Remote::Failed,
-                            });
-                            cx.notify();
-                        })
-                        .ok();
-                    })
-                    .detach();
-                    None
-                }
-            }
-        });
+        // Nothing is fetched until the card is hovered (link_card.rs and
+        // rich-embed.ts): then its title and picture come from the guarded
+        // preview fetch, for YouTube and Vimeo alike.
+        let _ = &yt;
+        let fetched = self.link_hover.embeds.get(url).cloned();
+        let title = fetched.as_ref().and_then(|(t, _)| t.clone()).unwrap_or_else(|| url.to_string());
+        let thumb_el: Option<AnyElement> = fetched
+            .and_then(|(_, i)| i)
+            .map(|i| img(i).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).into_any_element());
+        let hover_url = url.to_string();
         // `.markie-embed-card`: the thumbnail at 16:9 with a play button
         // and a strip carrying the address and the site. Playback is phase 5,
         // so a click on the card opens the video in the browser.
@@ -1136,15 +1124,19 @@ impl RichView {
                             .text_size(px(12.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(gpui_kit::white())
-                            .child(url.to_string()),
+                            .child(title),
                     )
                     .child(div().flex_none().text_size(px(10.)).text_color(gpui_kit::white().opacity(0.85)).child(site.to_uppercase())),
             )
             .when(selected, |d| d.border_2().border_color(look.link))
             .child(track(self.store.clone(), key))
+            .on_hover(cx.listener(move |this, over: &bool, _, cx| this.embed_hover(hover_url.clone(), *over, cx)))
             .on_mouse_down(MouseButton::Left, move |ev: &MouseDownEvent, _, cx| {
+                // Only a plain web address reaches the browser.
                 if ev.click_count >= 2 {
-                    cx.open_url(&open_url);
+                    if let markie_core::links::LinkClick::Web(u) = markie_core::links::classify_click(&open_url, None) {
+                        cx.open_url(&u);
+                    }
                 }
             })
             .into_any_element()
@@ -1238,7 +1230,10 @@ impl RichView {
             }
         }
         let len = units.len();
-        let deco = self.deco(key, len, look, cx);
+        let mut deco = self.deco(key, len, look, cx);
+        if !self.read_only {
+            deco.misspelled = self.misspelled(key, &units, cx);
+        }
         let spec = LeafSpec { segs, base, line_height, align, len };
         let el = LeafElement::new(key, spec, deco, self.store.clone());
         // Inline formulas open their source on a click.
@@ -1251,15 +1246,12 @@ impl RichView {
             .w_full()
             .child(el)
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                if ev.click_count < 2 {
-                    return;
-                }
-                // A double click on a formula edits it.
+                // A click on a formula edits it in place (math_field.rs).
                 if let Some(p) = this.hit(ev.position) {
                     for i in [p.offset, p.offset.saturating_sub(1)] {
-                        if math_at.contains(&i) && (p.block, p.leaf) == (pos.block, pos.leaf) {
+                        if math_at.contains(&i) && (p.block, p.leaf) == (pos.block, pos.leaf) && this.hit_is_atom(ev.position, pos, i) {
                             cx.stop_propagation();
-                            this.open_prompt(super::PromptKind::InlineMath { at: Some((pos, i)) }, window, cx);
+                            this.open_math_field(pos, i, window, cx);
                             return;
                         }
                     }

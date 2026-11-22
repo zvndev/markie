@@ -16,6 +16,14 @@ pub mod media;
 mod render;
 pub use render::MONO;
 mod chrome;
+pub mod attach;
+mod behaviour;
+mod table_bar;
+mod math_field;
+pub mod a11y;
+pub mod spell;
+pub mod link_preview;
+mod link_card;
 mod rail;
 pub mod style;
 
@@ -138,8 +146,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-right", LineEnd, c),
         KeyBinding::new("home", LineStart, c),
         KeyBinding::new("end", LineEnd, c),
-        KeyBinding::new("ctrl-a", LineStart, c),
-        KeyBinding::new("ctrl-e", LineEnd, c),
         KeyBinding::new("cmd-shift-left", SelectLineStart, c),
         KeyBinding::new("cmd-shift-right", SelectLineEnd, c),
         KeyBinding::new("shift-home", SelectLineStart, c),
@@ -186,6 +192,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-g", FindPrev, c),
         KeyBinding::new("escape", Escape, c),
     ]);
+    behaviour::bind_keys(cx);
 }
 
 /// Emitted when the document changes, so the host can autosave.
@@ -193,6 +200,12 @@ pub fn bind_keys(cx: &mut App) {
 pub enum RichEvent {
     Changed,
     DocumentLink(String),
+    /// Documents dropped on the editor, to open (attach.ts leaves them to
+    /// the window's open path).
+    OpenPaths(Vec<PathBuf>),
+    /// A click on a link to a file, as `classify_click` decided it: the
+    /// host opens, reveals or refuses it.
+    OpenLocal(markie_core::links::LinkClick),
     /// The toolbar asked for a zoom (a `ZOOM_STEPS` value) or a page width
     /// (a `WIDTH_STEPS` value); the host stores both.
     Zoom(f32),
@@ -274,6 +287,17 @@ pub struct RichView {
     pub(crate) resize: Option<(Pos, f32, f32)>,
     pub(crate) live_width: Option<(Pos, f32)>,
     emitted: u64,
+    pub(crate) highlighters: RefCell<std::collections::HashMap<String, gpui_kit::component::highlighter::SyntaxHighlighter>>,
+    /// A link under a plain click, followed on release (behaviour.rs).
+    pub(crate) link_click: Option<String>,
+    /// An inline formula open for editing in place (math_field.rs).
+    pub(crate) math_field: Option<math_field::MathField>,
+    /// The macOS spell checker's answers (spell.rs).
+    pub(crate) spell: spell::SpellCache,
+    /// The link preview card (link_card.rs).
+    pub(crate) link_hover: link_card::LinkHover,
+    /// Settings: fetch a card for a link the pointer rests on.
+    pub link_previews: bool,
     /// The template's typography and doc rule (`style.rs`).
     pub style: style::DocStyle,
     /// The toolbar's font and size for the whole document, when nothing is
@@ -338,6 +362,12 @@ impl RichView {
             resize: None,
             live_width: None,
             emitted: 0,
+            highlighters: RefCell::new(Default::default()),
+            link_click: None,
+            math_field: None,
+            spell: spell::SpellCache::default(),
+            link_hover: Default::default(),
+            link_previews: true,
             style: style::DocStyle::default(),
             doc_font: "system",
             doc_size: 16.0,
@@ -427,6 +457,7 @@ impl RichView {
 
     /// After a change: tell the host, scroll to the caret, redraw.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.hide_link_card(cx);
         if self.editor.version != self.emitted {
             self.emitted = self.editor.version;
             cx.emit(RichEvent::Changed);
@@ -516,6 +547,16 @@ impl RichView {
         self.vertical(false, false, cx);
     }
     fn on_down(&mut self, _: &MoveDown, _: &mut Window, cx: &mut Context<Self>) {
+        // CodeBlock's exitOnArrowDown, at the very end of a code block.
+        if !self.read_only && self.editor.kind(self.editor.head) == Some(LeafKind::Code) && !self.editor.has_selection() {
+            let h = self.editor.head;
+            if h.offset == self.editor.leaf_len(h.block, h.leaf) {
+                self.edit(cx, |e| {
+                    e.code_arrow_down();
+                });
+                return;
+            }
+        }
         self.vertical(true, false, cx);
     }
     fn on_select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -671,6 +712,13 @@ impl RichView {
         self.find_step(false, cx);
     }
     fn on_escape(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cancel_math_field(window, cx) {
+            return;
+        }
+        if self.link_hover_visible() {
+            self.hide_link_card(cx);
+            return;
+        }
         if self.prompt.take().is_some() || self.find.take().is_some() {
             self.focus(window, cx);
         } else if self.editor.has_selection() {
@@ -817,18 +865,9 @@ impl RichView {
         if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
             eprintln!("mouse down {:?} clicks {} -> {:?}", ev.position, ev.click_count, p);
         }
-        if ev.modifiers.platform {
-            // ⌘-click opens a link.
-            if let Some((_, _, l)) = self.editor.link_range(p) {
-                let reference = media::reference_key(&l.href);
-                if self.cloud_links.contains(&reference) {
-                    cx.emit(RichEvent::DocumentLink(reference));
-                } else {
-                    cx.open_url(&l.href);
-                }
-                return;
-            }
-        }
+        // A click on a link follows it on release (behaviour.rs); a link
+        // to a cloud document goes to the host.
+        self.note_link_click(p, ev.click_count, ev.modifiers.shift);
         let units = self.editor.units(p.block, p.leaf);
         match ev.click_count {
             2 if self.editor.kind(p).is_some_and(|k| k.has_text()) => {
@@ -1282,5 +1321,35 @@ fn f_insert(e: &mut Editor, t: &str, typing: Option<markie_rich::model::Marks>) 
 impl Focusable for RichView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+impl RichView {
+    /// Misspelled ranges for a leaf's units, sparing the word at the caret;
+    /// unknown text is checked shortly after, off the keystroke.
+    pub(crate) fn misspelled(&mut self, key: element::LeafKey, units: &[Unit], cx: &mut Context<Self>) -> Vec<Range<usize>> {
+        let text: String = units.iter().map(|u| match u { Unit::Char(c, _) => *c, Unit::Atom(_) => '\u{fffc}' }).collect();
+        let h = self.editor.head;
+        let caret = (!self.editor.has_selection() && (h.block, h.leaf) == key).then_some(h.offset);
+        match self.spell.ranges(&text, caret) {
+            Some(r) => r,
+            None => {
+                if !self.spell.scheduled {
+                    self.spell.scheduled = true;
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+                        this.update(cx, |this, cx| {
+                            this.spell.scheduled = false;
+                            if this.spell.drain() {
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+                vec![]
+            }
+        }
     }
 }

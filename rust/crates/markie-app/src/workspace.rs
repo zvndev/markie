@@ -50,6 +50,7 @@ mod settings;
 mod shortcuts;
 mod strips;
 mod skills;
+pub mod source;
 pub(crate) mod vault;
 
 /// The panel on the right of the document.
@@ -155,7 +156,7 @@ impl Workspace {
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
         let cloud_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search cloud documents"));
-        let (rich, rich_sub) = Self::new_rich(cx);
+        let (rich, rich_sub) = Self::new_rich(window, cx);
 
         let mut subscriptions = vec![
             cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
@@ -940,6 +941,7 @@ impl Render for Workspace {
             .id("workspace")
             .track_focus(&self.focus_handle)
             .key_context("Workspace")
+            .map(|d| Self::source_actions(d, cx))
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))

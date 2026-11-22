@@ -16,10 +16,16 @@ use markie_editor::{RichEvent, RichView};
 use super::{DocKind, Mode, OpenDoc, Workspace};
 
 impl Workspace {
-    pub(super) fn new_rich(cx: &mut Context<Self>) -> (Entity<RichView>, Subscription) {
+    pub(super) fn new_rich(window: &mut Window, cx: &mut Context<Self>) -> (Entity<RichView>, Subscription) {
         let rich = cx.new(RichView::new);
-        let sub = cx.subscribe(&rich, |this, _, ev: &RichEvent, cx| match ev {
+        let sub = cx.subscribe_in(&rich, window, |this, _, ev: &RichEvent, window, cx| match ev {
             RichEvent::Changed => this.on_rich_edit(cx),
+            RichEvent::OpenPaths(paths) => {
+                if let Some(p) = paths.first() {
+                    this.open_path(p, window, cx);
+                }
+            }
+            RichEvent::OpenLocal(href) => this.open_rich_link(href, window, cx),
             RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
             RichEvent::Zoom(z) => this.set_zoom(*z, cx),
             RichEvent::PageWidth(w) => this.set_width_step(*w, cx),
@@ -115,6 +121,27 @@ impl Workspace {
             }
             r.set_style(style, cx);
         });
+    }
+
+    /// A click on a link to a file, already classified by
+    /// `markie_core::links::classify_click` (local-link.ts and
+    /// local-open-policy.js): a document opens here, another passive file in
+    /// its own app, and programs, installers and bundles only in Finder.
+    fn open_rich_link(&mut self, click: &markie_core::links::LinkClick, window: &mut Window, cx: &mut Context<Self>) {
+        use markie_core::links::LinkClick;
+        match click {
+            LinkClick::Open(path) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                if markie_editor::attach::opens_as_document(&name) {
+                    self.open_path(path, window, cx);
+                } else {
+                    cx.open_with_system(path);
+                }
+            }
+            LinkClick::Reveal(path) => cx.reveal_path(path),
+            LinkClick::Refuse(why) => eprintln!("markie-rs: link not opened: {why}"),
+            LinkClick::Web(_) | LinkClick::Ignore => {}
+        }
     }
 
     /// Electron's formatting row, above the Source pane too.

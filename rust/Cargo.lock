@@ -4742,9 +4742,14 @@ name = "markie-editor"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "markie-core",
  "markie-math",
  "markie-rich",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "reqwest",
+ "tempfile",
+ "url",
 ]
 
 [[package]]

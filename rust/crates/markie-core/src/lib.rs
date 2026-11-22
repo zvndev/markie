@@ -22,6 +22,7 @@
 pub mod autosave;
 pub mod clock;
 pub mod csv;
+pub mod format_tables;
 pub mod disk;
 pub mod document;
 pub mod drafts;

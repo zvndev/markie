@@ -39,6 +39,8 @@ pub struct Deco {
     pub caret: Option<(usize, bool)>,
     pub finds: Vec<(Range<usize>, bool)>,
     pub marked: Option<Range<usize>>,
+    /// Misspelled words (spell.rs), underlined with red dots.
+    pub misspelled: Vec<Range<usize>>,
     pub selection_color: Hsla,
     pub caret_color: Hsla,
     pub find_color: Hsla,
@@ -148,6 +150,17 @@ impl Element for LeafElement {
             }
         }
         laid.paint(o, window, cx);
+        for r in &self.deco.misspelled {
+            for b in laid.selection_rects(r.clone()) {
+                // Chromium's spelling marker: a row of red dots under the word.
+                let y = b.origin.y + b.size.height - px(2.);
+                let mut x = b.origin.x;
+                while x + px(2.) <= b.origin.x + b.size.width {
+                    window.paint_quad(fill(at(Bounds::new(point(x, y), size(px(1.5), px(1.5)))), gpui_kit::rgb(0xe5484d)));
+                    x += px(3.);
+                }
+            }
+        }
         if let Some(m) = &self.deco.marked {
             for b in laid.selection_rects(m.clone()) {
                 let line = Bounds::new(point(b.origin.x, b.origin.y + b.size.height - px(2.)), size(b.size.width, px(1.)));

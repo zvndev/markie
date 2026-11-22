@@ -822,6 +822,17 @@ impl Render for RichView {
             .size_full()
             .children(toolbar)
             .children(prompt)
-            .child(div().relative().flex_1().min_h_0().child(doc).children(rail).children(find))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(doc)
+                    .children(rail)
+                    .children(find)
+                    .children(self.render_table_bar(cx))
+                    .children(self.render_math_field(cx))
+                    .children(self.render_link_card(window, cx)),
+            )
     }
 }

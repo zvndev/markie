@@ -3,7 +3,7 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::tree::{self, ListKind};
+use super::tree;
 use super::{EditKind, Editor, LeafKind, Pos};
 use crate::document::BlockContent;
 use crate::edit::Unit;
@@ -117,6 +117,7 @@ impl Editor {
             }
             ed.insert_at(at, s, typing);
         });
+        self.run_input_rules(s);
     }
 
     /// Insert text at `at` (inside a transaction, leaves current).
@@ -148,96 +149,28 @@ impl Editor {
                 for (i, c) in s.chars().enumerate() {
                     units.insert(off + i, Unit::Char(c, marks.clone()));
                 }
-                let mut caret = off + s.chars().count();
-                if s == "$" {
-                    if let Some(c) = math_input_rule(&mut units, caret) {
-                        caret = c;
-                    }
-                }
+                let caret = off + s.chars().count();
                 self.set_units(at.block, at.leaf, &units);
                 let path = self.caret_path(at);
                 self.put_caret(at.block, path.clone(), caret);
                 if s == " " {
                     autolink_before(&mut units, caret - 1);
                     self.set_units(at.block, at.leaf, &units);
-                    self.block_input_rule(at.block, &path, caret);
                 }
             }
             None => {}
         }
     }
 
-    /// TipTap's input rules for a paragraph that starts with a Markdown
-    /// block prefix and a space: `# `, `- `, `1. `, `[ ] `, `> `.
-    fn block_input_rule(&mut self, block: usize, path: &[usize], caret: usize) {
-        let Some(BlockContent::Nodes(nodes)) = self.doc.blocks.get(block).map(|b| &b.content) else { return };
-        let Some(Node::Paragraph { content, .. }) = tree::node_at(nodes, path) else { return };
-        let text = inline_text(content);
-        let prefix: String = text.chars().take(caret).collect();
-        if prefix.chars().count() != caret || !prefix.ends_with(' ') {
-            return;
-        }
-        let p = prefix.trim_end();
-        enum Rule {
-            Heading(u8),
-            List(ListKind, u64, bool),
-            Quote,
-        }
-        let rule = if !p.is_empty() && p.len() <= 6 && p.chars().all(|c| c == '#') {
-            Rule::Heading(p.len() as u8)
-        } else if p == "-" || p == "*" || p == "+" {
-            Rule::List(ListKind::Bullet, 1, false)
-        } else if p == "[ ]" || p == "[]" {
-            Rule::List(ListKind::Task, 1, false)
-        } else if p == "[x]" || p == "[X]" {
-            Rule::List(ListKind::Task, 1, true)
-        } else if p == ">" {
-            Rule::Quote
-        } else if p.ends_with('.') && p.len() <= 10 && p[..p.len() - 1].bytes().all(|c| c.is_ascii_digit()) && p.len() > 1 {
-            Rule::List(ListKind::Ordered, p[..p.len() - 1].parse().unwrap_or(1), false)
-        } else {
-            return;
-        };
-        // In a list item only headings apply; a list in a list is Tab's job.
-        let leaf_frames = self.leaves_of(block).iter().find(|l| l.path == path).map(|l| l.frames.clone()).unwrap_or_default();
-        if leaf_frames.iter().any(|f| matches!(f, super::Frame::Cell { .. })) {
-            return;
-        }
-        let strip = prefix.chars().count();
-        let Some(nodes) = self.nodes_mut(block) else { return };
-        let Some(Node::Paragraph { content, align }) = tree::node_at_mut(nodes, path) else { return };
-        let units = crate::edit::flatten(content);
-        let rest = crate::edit::unflatten(&units[strip..]);
-        let align = align.clone();
-        match rule {
-            Rule::Heading(level) => {
-                *tree::node_at_mut(nodes, path).unwrap() = Node::Heading { level, content: rest, align };
-                self.put_caret(block, path.to_vec(), 0);
-            }
-            Rule::Quote => {
-                *tree::node_at_mut(nodes, path).unwrap() = Node::Blockquote(vec![Node::para(rest)]);
-                let mut p = path.to_vec();
-                p.push(0);
-                self.put_caret(block, p, 0);
-            }
-            Rule::List(kind, start, checked) => {
-                let para = vec![Node::para(rest)];
-                let list = match kind {
-                    ListKind::Bullet => Node::BulletList { tight: true, items: vec![para] },
-                    ListKind::Ordered => Node::OrderedList { tight: true, start, items: vec![para] },
-                    ListKind::Task => Node::TaskList { items: vec![TaskItem { checked, content: para }] },
-                };
-                *tree::node_at_mut(nodes, path).unwrap() = list;
-                let mut p = path.to_vec();
-                p.extend([0, 0]);
-                self.put_caret(block, p, 0);
-            }
-        }
-    }
-
     // ---- deleting ----
 
     pub fn backspace(&mut self) {
+        if self.undo_input_rule() {
+            return;
+        }
+        if self.code_backspace() {
+            return;
+        }
         self.delete_dir(false, false);
     }
 
@@ -330,7 +263,9 @@ impl Editor {
         // A heading or code block at the very start of the document turns
         // into a paragraph rather than doing nothing.
         let Some(prev) = self.prev_leaf(p) else {
-            if matches!(leaf.kind, LeafKind::Heading(_) | LeafKind::Code) {
+            // TipTap's clearNodes runs only on an empty heading there (core
+            // keymap); CodeBlock's own Backspace handled the code case.
+            if matches!(leaf.kind, LeafKind::Heading(_)) && self.leaf_len(p.block, p.leaf) == 0 {
                 self.set_block_style(super::BlockStyle::Paragraph);
             }
             return;
@@ -566,6 +501,9 @@ impl Editor {
     pub fn enter(&mut self) {
         let (from, to) = self.range();
         self.break_undo();
+        if from == to && self.run_input_rules("\n") {
+            return;
+        }
         if let Some(atom) = self.selected_atom() {
             // Enter on a selected picture: a new line after it.
             let at = Pos { offset: 1, ..atom };
@@ -766,6 +704,10 @@ impl Editor {
     }
 
     pub fn hard_break(&mut self) {
+        // setHardBreak tries exitCode first: Shift-Enter leaves a code block.
+        if self.exit_code() {
+            return;
+        }
         let (from, to) = self.range();
         self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
             if from != to {
@@ -911,32 +853,6 @@ fn autolink_before(units: &mut [Unit], end: usize) {
             }
         }
     }
-}
-
-/// Typing the closing `$` of `$…$` turns the span into a formula, as
-/// rich-math.ts's input rule does. Returns the new caret.
-fn math_input_rule(units: &mut Vec<Unit>, caret: usize) -> Option<usize> {
-    // The plain run before the caret, back to the last atom.
-    let mut start = caret;
-    while start > 0 && matches!(units[start - 1], Unit::Char(_, ref m) if !m.code) {
-        start -= 1;
-    }
-    let run: String = units[start..caret].iter().map(|u| u.display()).collect();
-    // The last `$` that opens a span ending exactly at the caret.
-    for (i, ch) in run.char_indices().rev().skip(1) {
-        if ch != '$' {
-            continue;
-        }
-        if let Some(end) = crate::parse::math_span_end(&run, i) {
-            if end == run.len() && !run[i..].starts_with("$$") {
-                let source = run[i..].to_string();
-                let from = start + run[..i].chars().count();
-                units.splice(from..caret, [Unit::Atom(Inline::Math { source })]);
-                return Some(from + 1);
-            }
-        }
-    }
-    None
 }
 
 /// Remove the node at `path` and prune containers it leaves empty.

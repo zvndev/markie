@@ -23,6 +23,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use markie_core::formats::{self, Newline, Representation, TextEncoding};
+use markie_office::model::{Format, TextEdit};
+use markie_office::rich_document::{OfficeDocument, export_rich_document, open_rich_document, replace_rich_text};
 use markie_vault::backup::{VAULT_BACKUP_FILE_NAME, VAULT_BACKUP_MAX_CHARACTERS, parse_vault_backup, vault_backup_text};
 use markie_vault::clipboard::{CLEAR_AFTER, SecretClipboard, ThreadScheduler};
 use markie_vault::device::{Biometric, DeviceKeeper, KeychainSecretStore, PromptDeclined, TouchIdKeeper, TouchIdStatus};
@@ -188,6 +190,7 @@ fn key_problem(key: &str, duplicates: &BTreeSet<String>) -> Option<String> {
 
 enum Body {
     Text { text: String, encoding: TextEncoding, bom: bool, newline: Newline },
+    Docx(Box<OfficeDocument>),
     Opaque,
 }
 
@@ -208,6 +211,9 @@ impl SecureDoc {
                 Ok(d) => Body::Text { text: d.text, encoding: d.encoding, bom: d.bom, newline: d.newline },
                 Err(_) => Body::Opaque,
             },
+            Representation::Bytes if formats::classify(&name) == formats::FormatKind::Docx => {
+                open_rich_document(Format::Docx, &bytes).map(|doc| Body::Docx(Box::new(doc))).unwrap_or(Body::Opaque)
+            }
             Representation::Bytes => Body::Opaque,
         };
         Self { id, original_name: name.clone(), name, media_type, bytes, dirty: recovery, body }
@@ -220,17 +226,40 @@ impl SecureDoc {
     fn text(&self) -> Option<&str> {
         match &self.body {
             Body::Text { text, .. } => Some(text),
-            Body::Opaque => None,
+            Body::Docx(_) | Body::Opaque => None,
         }
     }
 
     /// `documentBytes`.
-    fn current_bytes(&self) -> zeroize::Zeroizing<Vec<u8>> {
-        match &self.body {
-            Body::Text { text, encoding, bom, .. } => zeroize::Zeroizing::new(formats::encode_text(text, *encoding, *bom).unwrap_or_else(|_| text.as_bytes().to_vec())),
-            Body::Opaque => self.bytes.clone(),
-        }
+    fn current_bytes(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, VaultError> {
+        let bytes = match &self.body {
+            Body::Text { text, encoding, bom, .. } => formats::encode_text(text, *encoding, *bom)
+                .map_err(|_| VaultError::Vault(VaultErrorCode::InvalidEnvelope))?,
+            Body::Docx(doc) => export_rich_document(doc).map_err(|_| VaultError::Vault(VaultErrorCode::InvalidEnvelope))?,
+            Body::Opaque => return Ok(self.bytes.clone()),
+        };
+        Ok(zeroize::Zeroizing::new(bytes))
     }
+
+    fn edit_docx_run(&mut self, id: &str, value: String) -> Result<(), ()> {
+        let Body::Docx(doc) = &mut self.body else { return Err(()) };
+        let Some(run) = doc.paragraphs.iter().flat_map(|p| &p.runs).find(|r| r.id == id) else { return Err(()) };
+        if !doc.can_edit || !run.can_edit {
+            return Err(());
+        }
+        if run.text != value {
+            **doc = replace_rich_text(doc, &[TextEdit { run_id: id.into(), text: value }]).map_err(|_| ())?;
+            self.dirty = true;
+        }
+        Ok(())
+    }
+}
+
+struct PrivateRun {
+    label: String,
+    read_only: bool,
+    input: Entity<InputState>,
+    _change: Subscription,
 }
 
 /// What waits for a fresh Touch ID or passphrase check.
@@ -269,6 +298,7 @@ pub struct VaultPage {
     error: Option<String>,
     entries: Vec<VaultEntry>,
     opened: Option<SecureDoc>,
+    private_runs: Vec<PrivateRun>,
     touch_id: TouchIdStatus,
     settings_open: bool,
     enrolling: bool,
@@ -393,6 +423,7 @@ impl VaultPage {
             error: None,
             entries: Vec::new(),
             opened: None,
+            private_runs: Vec::new(),
             touch_id: TouchIdStatus { available: false, enrolled: false },
             settings_open: false,
             enrolling: false,
@@ -583,6 +614,7 @@ impl VaultPage {
         // A key copied out a moment ago should not outlive the vault it came from.
         self.clipboard.clear_now();
         self.opened = None;
+        self.private_runs.clear();
         self.env = EnvView::default();
         self.entries.clear();
         self.suggested = None;
@@ -872,6 +904,7 @@ impl VaultPage {
                             this.restore_file = None;
                             this.settings_open = false;
                             this.opened = None;
+                            this.private_runs.clear();
                             this.enter_vault("Backup restored.", window, cx);
                         }
                         Err(e) => this.error = Some(failure_copy(&e).into()),
@@ -1006,11 +1039,13 @@ impl VaultPage {
                 if let Some(prev) = previous {
                     let _ = repo.discard_recovery(&prev);
                 }
-                repo.read(&id).map(|r| (id, r))
+                repo.read(&id).map(|read| SecureDoc::from_read(
+                    Some(id), read.document.metadata.name, read.document.metadata.media_type,
+                    read.document.bytes, read.recovery,
+                ))
             },
             |this, result, window, cx| match result {
-                Ok((id, read)) => {
-                    let doc = SecureDoc::from_read(Some(id), read.document.metadata.name.clone(), read.document.metadata.media_type.clone(), read.document.bytes, read.recovery);
+                Ok(doc) => {
                     let dirty = doc.dirty;
                     this.show_doc(doc, window, cx);
                     this.settings_open = false;
@@ -1042,6 +1077,41 @@ impl VaultPage {
         self.text_editor.update(cx, |s, cx| s.set_readonly(read_only, cx));
         self.set_editor_text(&self.text_editor.clone(), &text, window, cx);
         self.env = EnvView::default();
+        self.private_runs.clear();
+        if let Body::Docx(office) = &doc.body {
+            for (paragraph, p) in office.paragraphs.iter().enumerate() {
+                for (run, r) in p.runs.iter().enumerate() {
+                    let id = r.id.clone();
+                    let read_only = !office.can_edit || !r.can_edit;
+                    let input = cx.new(|cx| InputState::new(window, cx).default_value(r.text.clone()));
+                    let change = cx.subscribe_in(&input, window, move |this: &mut Self, input, event: &InputEvent, window, cx| {
+                        if !matches!(event, InputEvent::Change) || this.writing || this.busy || this.shielded || read_only {
+                            return;
+                        }
+                        let Some(doc) = this.opened.as_mut() else { return };
+                        let value = input.read(cx).value().to_string();
+                        if doc.edit_docx_run(&id, value).is_err() {
+                            this.error = Some("This document edit is unsupported. The original encrypted copy was not changed.".into());
+                            if let Body::Docx(office) = &doc.body
+                                && let Some(run) = office.paragraphs.iter().flat_map(|p| &p.runs).find(|run| run.id == id)
+                            {
+                                let saved = run.text.clone();
+                                this.writing = true;
+                                input.update(cx, |input, cx| input.set_value(saved, window, cx));
+                                this.writing = false;
+                            }
+                        }
+                        cx.notify();
+                    });
+                    self.private_runs.push(PrivateRun {
+                        label: format!("Private paragraph {}, run {}", paragraph + 1, run + 1),
+                        read_only,
+                        input,
+                        _change: change,
+                    });
+                }
+            }
+        }
         self.opened = Some(doc);
         self.rebuild_env(window, cx);
     }
@@ -1209,7 +1279,10 @@ impl VaultPage {
             return;
         }
         let id = doc.id.clone();
-        let bytes = doc.current_bytes();
+        let bytes = match doc.current_bytes() {
+            Ok(bytes) => bytes,
+            Err(e) => { self.error = Some(failure_copy(&e).into()); cx.notify(); return; }
+        };
         let meta = VaultDocumentMetadata { name: doc.name.clone(), media_type: doc.media_type.clone() };
         self.run(
             window,
@@ -1245,7 +1318,10 @@ impl VaultPage {
             cx.notify();
             return;
         }
-        let bytes = doc.current_bytes();
+        let bytes = match doc.current_bytes() {
+            Ok(bytes) => bytes,
+            Err(e) => { self.error = Some(failure_copy(&e).into()); cx.notify(); return; }
+        };
         let name = safe_file_name(&doc.name);
         cx.spawn_in(window, async move |this, cx| {
             if !confirm(&this, cx, "Save an unencrypted copy? That copy is outside the vault and is not protected by its passphrase.").await {
@@ -1278,6 +1354,7 @@ impl VaultPage {
                 this.run(window, cx, move |repo, _| repo.remove(&id), |this, result, _, _| match result {
                     Ok(()) => {
                         this.opened = None;
+                        this.private_runs.clear();
                         this.env = EnvView::default();
                         this.refresh_entries();
                         this.notice = "Encrypted copy deleted from this vault. External copies and backups are not erased.".into();
@@ -1333,7 +1410,10 @@ impl VaultPage {
         let repo = self.repo.clone();
         let save = cx.background_executor().spawn(async move {
             match checkpoint {
-                Some((id, bytes, meta)) => repo.lock().unwrap_or_else(|p| p.into_inner()).save(id.as_deref(), &bytes, &meta).map(|_| ()),
+                Some((id, bytes, meta)) => {
+                    let bytes = bytes?;
+                    repo.lock().unwrap_or_else(|p| p.into_inner()).save(id.as_deref(), &bytes, &meta).map(|_| ())
+                }
                 None => Ok(()),
             }
         });
@@ -1913,6 +1993,18 @@ impl VaultPage {
                 .child(div().h(px(320.)).rounded_md().border_1().border_color(theme.border).child(Editor::new(&self.text_editor).h_full()))
                 .when(mixed, |el| el.child(div().text_sm().text_color(muted).child("Mixed line endings are preserved read-only.")))
                 .into_any_element()
+        } else if let Body::Docx(office) = &doc.body {
+            v_flex().gap_3()
+                .child(div().text_sm().text_color(muted).child(if office.can_edit {
+                    "Original-engine text editing. Page layout is not reproduced here."
+                } else {
+                    "This DOCX is preserved read-only because it contains unsupported features."
+                }))
+                .children(self.private_runs.iter().map(|run| {
+                    v_flex().gap_2().text_sm().child(run.label.clone())
+                        .child(Input::new(&run.input).disabled(busy || run.read_only))
+                }))
+                .into_any_element()
         } else {
             div()
                 .text_sm()
@@ -2180,6 +2272,34 @@ mod tests {
     use super::*;
     // `gpui_kit::*` brings GPUI's own `test` attribute; tests here are plain.
     use ::core::prelude::v1::test;
+
+    #[test]
+    fn private_docx_preserves_original_bytes_and_edits_survive_encrypted_save() {
+        let scratch = tempfile::tempdir().unwrap();
+        let mut repo = VaultRepository::new(FileVaultStorage::new(scratch.path().join("vault.json")));
+        let passphrase = "synthetic fixture passphrase";
+        repo.create(passphrase).unwrap();
+        let original = export_rich_document(&markie_office::rich_document::create_rich_document(Format::Docx, "Before").unwrap()).unwrap();
+        let meta = VaultDocumentMetadata {
+            name: "fixture.docx".into(),
+            media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
+        };
+        let id = repo.save(None, &original, &meta).unwrap();
+        let bytes = repo.read(&id).unwrap().document.bytes;
+        let mut doc = SecureDoc::from_read(Some(id.clone()), meta.name.clone(), meta.media_type.clone(), bytes, false);
+        assert!(doc.current_bytes().unwrap().as_slice() == original.as_slice());
+        let Body::Docx(office) = &doc.body else { panic!("synthetic DOCX did not open") };
+        let run = office.paragraphs[0].runs[0].id.clone();
+        assert!(doc.edit_docx_run("missing", "ignored".into()).is_err());
+        assert!(!doc.dirty);
+        doc.edit_docx_run(&run, "After".into()).unwrap();
+        assert!(doc.dirty);
+        repo.save(Some(&id), &doc.current_bytes().unwrap(), &meta).unwrap();
+        repo.lock();
+        repo.unlock(passphrase).unwrap();
+        let reopened = open_rich_document(Format::Docx, &repo.read(&id).unwrap().document.bytes).unwrap();
+        assert_eq!(reopened.paragraphs[0].text, "After");
+    }
 
     #[test]
     fn filenames_keep_their_type() {

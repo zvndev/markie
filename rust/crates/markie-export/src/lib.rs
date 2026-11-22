@@ -10,11 +10,13 @@
 
 pub mod assets;
 pub mod autolink;
+pub mod convert;
 pub mod embeds;
 pub mod hast;
 pub mod highlight;
 pub mod markdown;
 pub mod math_html;
+pub mod mdast;
 pub mod render;
 pub mod sanitize;
 pub mod strict_math;

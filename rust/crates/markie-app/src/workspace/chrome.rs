@@ -209,7 +209,10 @@ impl Workspace {
         let rx = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |_, cx| {
             if let Ok(Ok(Some(target))) = rx.await {
+                let as_csv = target.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
                 let result = match text {
+                    // A copy saved as .csv holds the first table as CSV.
+                    Some(text) if as_csv => std::fs::write(&target, super::csv_doc::markdown_table_to_csv(&text)),
                     Some(text) => std::fs::write(&target, text),
                     None => std::fs::copy(&source, &target).map(|_| ()),
                 };

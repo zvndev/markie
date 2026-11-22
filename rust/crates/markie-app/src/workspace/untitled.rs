@@ -66,9 +66,9 @@ impl Workspace {
         self.doc_notes.clear();
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
         let format = kind_for_extension(&ext);
-        let literal = !matches!(format, FormatKind::Markdown | FormatKind::Darkmown);
+        let literal = !matches!(format, FormatKind::Markdown | FormatKind::Darkmown | FormatKind::Csv);
         self.editor.update(cx, |state, cx| {
-            state.set_highlighter(if literal { "text" } else { format.editor_language() }, cx);
+            state.set_highlighter(if literal { "text" } else if format == FormatKind::Csv { "markdown" } else { format.editor_language() }, cx);
             state.set_line_number(!literal, window, cx);
             state.set_value(text.clone(), window, cx);
         });
@@ -84,8 +84,7 @@ impl Workspace {
             kind: DocKind::Text { encoding: TextEncoding::Utf8, bom: false, saved: String::new() },
             untitled: true,
         });
-        self.csv_rows = None;
-        if literal && format != FormatKind::Csv {
+        if literal {
             self.mode = Mode::Source;
         } else if !super::mode_allowed(format, false, self.mode) {
             self.mode = Mode::View;
@@ -123,7 +122,10 @@ impl Workspace {
         let rx = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(target))) = rx.await else { return };
-            let written = document::save_text(&target, &text, TextEncoding::Utf8, false);
+            // Saved as .csv, the first table is written as CSV (handleSaveAs).
+            let as_csv = kind_for_extension(&target.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default()) == FormatKind::Csv;
+            let bytes = if as_csv { super::csv_doc::markdown_table_to_csv(&text) } else { text.clone() };
+            let written = document::save_text(&target, &bytes, TextEncoding::Utf8, false);
             this.update_in(cx, |this, window, cx| match written {
                 Ok(()) => {
                     let _ = this.drafts.discard(&Drafts::key_for(None));

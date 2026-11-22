@@ -32,6 +32,7 @@ pub(crate) mod account;
 mod account_slot;
 mod agents;
 mod chrome;
+mod csv_doc;
 mod collab;
 mod comments;
 mod share;
@@ -150,8 +151,6 @@ pub struct Workspace {
     recovered: Vec<Draft>,
     /// The version history panel, and the version being looked at.
     side: SidePanel,
-    /// Parsed rows when a CSV document is shown as a table.
-    csv_rows: Option<Rc<Vec<Vec<String>>>>,
     versions: Vec<Version>,
     viewing_version: Option<(String, String)>,
     /// Document zoom (1.0 = 100%) and reading column width, shared by every
@@ -271,7 +270,6 @@ impl Workspace {
             disk_missing: false,
             recovered,
             side: SidePanel::None,
-            csv_rows: None,
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
@@ -467,11 +465,13 @@ impl Workspace {
             Ok(doc) => {
                 let large = doc.is_large();
                 let kind = match doc.content {
-                    Content::Text { text, encoding, bom } => {
-                        let language = doc.format.editor_language();
+                    Content::Text { text: raw, encoding, bom } => {
+                        // A CSV is edited as its Markdown table (fromDisk).
+                        let text = csv_doc::from_disk(doc.format, &raw);
+                        let language = if doc.format == FormatKind::Csv { "markdown" } else { doc.format.editor_language() };
                         // Electron shows literal text formats in a plain field:
                         // no syntax colors and no line numbers.
-                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !large;
+                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown | FormatKind::Csv) && !large;
                         self.editor.update(cx, |state, cx| {
                             state.set_highlighter(if literal { "text" } else { language }, cx);
                             state.set_line_number(!literal, window, cx);
@@ -479,7 +479,7 @@ impl Workspace {
                         });
                         self.set_preview(&text, doc.format, cx);
                         self.update_stats(&text);
-                        self.disk.remember(&doc.path, &text, false);
+                        self.disk.remember(&doc.path, &raw, false);
                         DocKind::Text { encoding, bom, saved: text }
                     }
                     Content::Html(html) => {
@@ -504,7 +504,6 @@ impl Workspace {
                         }
                     }
                 };
-                self.csv_rows = None;
                 if large || (!matches!(doc.format, FormatKind::Markdown | FormatKind::Html | FormatKind::Csv)
                     && matches!(kind, DocKind::Text { .. }))
                 {
@@ -517,11 +516,6 @@ impl Workspace {
                 }
                 self.split_source_latest = false;
                 self.split_echo = None;
-                if let DocKind::Text { saved, .. } = &kind {
-                    if doc.format == FormatKind::Csv && !large {
-                        self.csv_rows = Some(Rc::new(markie_core::csv::parse(saved)));
-                    }
-                }
                 if let Some(old) = &self.doc {
                     self.disk.forget(&old.path);
                 }
@@ -572,11 +566,7 @@ impl Workspace {
     }
 
     fn set_preview(&mut self, text: &str, format: FormatKind, cx: &mut Context<Self>) {
-        if format == FormatKind::Csv {
-            self.csv_rows = Some(Rc::new(markie_core::csv::parse(text)));
-            return;
-        }
-        if format != FormatKind::Markdown {
+        if !matches!(format, FormatKind::Markdown | FormatKind::Csv) {
             return;
         }
         // Front matter is held aside in the rich view, never shown.
@@ -670,10 +660,12 @@ impl Workspace {
             return Ok(());
         }
         let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return Ok(()) };
-        let _ = self.history.capture(&doc.path, text, Writer::User);
-        document::save_text(&doc.path, text, *encoding, *bom)?;
+        // A CSV writes its first table back as CSV (toDisk).
+        let disk_text = csv_doc::to_disk(doc.format, text);
+        let _ = self.history.capture(&doc.path, &disk_text, Writer::User);
+        document::save_text(&doc.path, &disk_text, *encoding, *bom)?;
         *saved = text.to_string();
-        self.disk.remember(&doc.path, text, true);
+        self.disk.remember(&doc.path, &disk_text, true);
         let path = doc.path.clone();
         self.dirty = false;
         if self.side == SidePanel::History {
@@ -720,8 +712,12 @@ impl Workspace {
     }
 
     /// Replace the editor's text with what is on disk, as the saved state.
-    fn load_text(&mut self, path: &Path, text: String, cx: &mut Context<Self>) {
-        self.disk.remember(path, &text, false);
+    fn load_text(&mut self, path: &Path, raw: String, cx: &mut Context<Self>) {
+        self.disk.remember(path, &raw, false);
+        let text = match &self.doc {
+            Some(d) => csv_doc::from_disk(d.format, &raw),
+            None => raw,
+        };
         if let Some(OpenDoc { kind: DocKind::Text { saved, .. }, format, .. }) = self.doc.as_mut() {
             *saved = text.clone();
             let format = *format;
@@ -754,6 +750,12 @@ impl Workspace {
             window.push_notification(format!("Markie could not save: {err:#}"), cx);
         } else if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
             let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
+            // ⌘S on a .csv keeps the first table only, and says so.
+            if self.doc.as_ref().is_some_and(|d| d.format == FormatKind::Csv) {
+                if let Some(note) = csv_doc::csv_save_note(&text) {
+                    window.push_notification(note, cx);
+                }
+            }
         }
         cx.notify();
     }
@@ -1030,9 +1032,8 @@ impl Workspace {
                     )
                     .into_any_element()
             }
-            (DocKind::Text { .. }, Mode::Split) if doc.format == FormatKind::Markdown && !doc.large => self.render_split(cx),
-            (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Csv => self.render_csv(cx),
-            (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown && !doc.large => {
+            (DocKind::Text { .. }, Mode::Split) if matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && !doc.large => self.render_split(cx),
+            (DocKind::Text { .. }, Mode::View) if matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && !doc.large => {
                 self.sync_rich_appearance(cx);
                 div().size_full().child(self.rich.clone()).into_any_element()
             }
@@ -1089,12 +1090,12 @@ impl Workspace {
 }
 
 /// May `format` show in `mode`? Electron's `requestMode`: large and literal
-/// text documents only edit as source; Markdown also splits.
+/// text documents only edit as source; Markdown and CSV also split.
 fn mode_allowed(format: FormatKind, large: bool, mode: Mode) -> bool {
     match mode {
         Mode::Source => true,
         Mode::View => !large && matches!(format, FormatKind::Markdown | FormatKind::Csv),
-        Mode::Split => !large && format == FormatKind::Markdown,
+        Mode::Split => !large && matches!(format, FormatKind::Markdown | FormatKind::Csv),
     }
 }
 
@@ -1121,9 +1122,10 @@ mod mode_tests {
     }
 
     #[test]
-    fn csv_views_but_does_not_split() {
+    fn csv_views_and_splits_like_markdown() {
+        // Electron edits a CSV as its Markdown table, so it is not plain text.
         assert!(mode_allowed(FormatKind::Csv, false, Mode::View));
-        assert!(!mode_allowed(FormatKind::Csv, false, Mode::Split));
+        assert!(mode_allowed(FormatKind::Csv, false, Mode::Split));
     }
 }
 

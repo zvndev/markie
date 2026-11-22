@@ -1041,6 +1041,15 @@ impl Workspace {
     }
 
     fn project_document(&self, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(debug_assertions)]
+        if self.doc.is_some()
+            && std::env::var_os("MARKIE_RS_DATA_DIR").is_some()
+            && std::env::var_os("MARKIE_RS_RENDER_PROBE").is_some()
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static FIRED: AtomicBool = AtomicBool::new(false);
+            assert!(FIRED.swap(true, Ordering::Relaxed), "Scratch document render probe");
+        }
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
             return v_flex()

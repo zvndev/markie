@@ -6,7 +6,9 @@
 #     it with Markie and `open -a Markie` still opens the Electron app;
 #   - no updater, no feed, no upload step, no signing identity;
 #   - it claims no file types and no markie:// scheme, so it cannot take over
-#     what double-clicking a .md file does.
+#     what double-clicking a .md file does or the links Markie answers;
+#   - the one URL scheme it registers is its own, markie-rs://, where Markie
+#     Cloud hands back a Google or Apple sign-in started with app=markie-rs.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -43,9 +45,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>com.zvn.markie.rs.sign-in</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>markie-rs</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
+# Never markie://: that scheme belongs to the Electron app.
+if /usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "$APP/Contents/Info.plist" | grep -Eq '^ *markie$'; then
+  echo "Info.plist claims markie://, which belongs to Markie" >&2; exit 1
+fi
 # Ad-hoc signature only, so Gatekeeper lets it run on this Mac.
 codesign --force --sign - "$APP" >/dev/null
 du -sh "$APP"

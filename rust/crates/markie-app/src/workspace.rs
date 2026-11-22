@@ -28,7 +28,7 @@ use markie_core::{outline, paths, stats};
 use crate::actions::*;
 use crate::library::Library;
 
-mod account;
+pub(crate) mod account;
 mod agents;
 mod chrome;
 mod file_ops;
@@ -116,6 +116,8 @@ pub struct Workspace {
     page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
+    /// The Cloud page the rail's Cloud destination shows (account.rs).
+    cloud: Entity<account::CloudPanel>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -144,6 +146,7 @@ impl Workspace {
             }),
             rich_sub,
         ];
+        subscriptions.extend(Self::watch_account(window, cx));
 
         let template = registry
             .as_ref()
@@ -197,6 +200,7 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
+            cloud: cx.new(|cx| account::CloudPanel::new(window, cx)),
             zoom: 1.0,
             page_width: 768.0,
             _subscriptions: subscriptions,
@@ -1135,6 +1139,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_trash))
             .on_action(cx.listener(Self::on_reveal))
             .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_open_account))
+            .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
             .relative()
             .size_full()

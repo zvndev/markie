@@ -6,13 +6,16 @@
 #   scripts/local-server.sh            run the integration test
 #   scripts/local-server.sh serve      just boot the server and wait
 #
+# MARKIE_SERVER_DIR points at another checkout's server/ folder, for example
+# an extracted copy of a server change that is not on this branch yet.
+#
 # Never points at Markie Cloud. RESEND_API_KEY and MARKIE_MAIL_LOG are unset
 # so the server's mail mode is "console" (server/src/email.ts): every code is
 # written to the log file below, which the test reads.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 repo=$(cd "$here/../../.." && pwd)
-server="$repo/server"
+server="${MARKIE_SERVER_DIR:-$repo/server}"
 port="${MARKIE_TEST_PORT:-18787}"
 work=$(mktemp -d "${TMPDIR:-/tmp}/markie-cloud-it.XXXXXX")
 log="$work/server.log"

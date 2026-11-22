@@ -4,7 +4,9 @@
 //! server-request.js, sync.js and src/lib/{auth-client,collab,text-collab,
 //! comments,live-snapshot}.ts). Pure rules live in their own functions so they
 //! unit-test without a network; the HTTP and websocket layers sit on top.
+pub mod account;
 pub mod auth;
+pub mod auth_errors;
 pub mod client;
 pub mod collab;
 pub mod comments;

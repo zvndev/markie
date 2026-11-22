@@ -249,6 +249,7 @@ fn share_error(error: CloudError) -> String {
         CloudError::Status {
             status: 409,
             message: Some(m),
+            ..
         } if m == "live-doc-private" => LIVE_DOC_PRIVATE.into(),
         CloudError::Offline => "Markie Cloud could not be reached.".into(),
         CloudError::Status { status, .. } => format!("Markie Cloud refused ({status})."),

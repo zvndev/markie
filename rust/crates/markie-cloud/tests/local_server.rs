@@ -132,21 +132,34 @@ async fn against_the_local_server() {
     let code = code_for(&env, &alice_email.to_lowercase(), "sign-in code", 0).await;
     assert_eq!(auth3.verify_code(&flow, &code).await.unwrap().id, alice_id);
 
-    // The browser bridge hands back a deep link with our nonce and this server as issuer.
+    // The browser bridge hands back a deep link with our nonce and this server
+    // as issuer. Markie RS asks for its own scheme with `app=markie-rs`; a
+    // server without that change still answers `markie://`, which belongs to
+    // the Electron app, and the resolver must refuse it.
     let states = AuthStates::new();
     let start = AuthClient::new(&alice3).browser_start_url(Provider::Google, &states).unwrap();
     assert!(start.starts_with(&format!("{}/auth/google-start?state=", env.base)));
-    let state = start.rsplit("state=").next().unwrap().to_string();
-    let bridge = alice3.get(&format!("/auth/desktop-bridge?state={state}")).await.unwrap();
+    assert!(start.ends_with("&app=markie-rs"), "{start}");
+    let query = start.split_once('?').unwrap().1.to_string();
+    let bridge = alice3.get(&format!("/auth/desktop-bridge?{query}")).await.unwrap();
     assert_eq!(bridge.status, 200);
     let html = String::from_utf8(bridge.bytes).unwrap();
-    let link = html.split("href=\"markie://").nth(1).and_then(|s| s.split('"').next()).map(|s| format!("markie://{s}")).expect("deep link").replace("&amp;", "&");
-    let adopted = resolve_auth_deep_link(&link, DEFAULT_SERVER, &states).expect("deep link accepted");
-    assert_eq!(adopted.origin.as_deref(), Some(env.base.as_str()));
-    // The bridge hands back the session token itself; it signs in as Alice.
-    let via_link = device(&env, &store);
-    via_link.set_token(Some(&adopted.token)).unwrap();
-    assert_eq!(AuthClient::new(&via_link).me().await.unwrap().unwrap().id, alice_id);
+    let link_after = |scheme: &str| {
+        html.split(&format!("href=\"{scheme}://")).nth(1).and_then(|s| s.split('"').next()).map(|s| format!("{scheme}://{s}").replace("&amp;", "&"))
+    };
+    if let Some(link) = link_after("markie-rs") {
+        assert!(html.contains("Returning you to Markie RS"), "the bridge names Markie RS");
+        let adopted = resolve_auth_deep_link(&link, DEFAULT_SERVER, &states).expect("deep link accepted");
+        assert_eq!(adopted.origin.as_deref(), Some(env.base.as_str()));
+        // The bridge hands back the session token itself; it signs in as Alice.
+        let via_link = device(&env, &store);
+        assert_eq!(AuthClient::new(&via_link).adopt_token(&adopted.token).await.unwrap().unwrap().id, alice_id);
+        eprintln!("hand-back: markie-rs:// accepted");
+    } else {
+        let link = link_after("markie").expect("deep link");
+        assert_eq!(resolve_auth_deep_link(&link, DEFAULT_SERVER, &states), Err(markie_cloud::auth::DeepLinkRefusal::NotAuth));
+        eprintln!("hand-back: this server predates app=markie-rs and answered markie://, refused as it must be");
+    }
 
     // Sign-out ends the session at the server too.
     let old = alice3.token().unwrap();

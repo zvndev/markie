@@ -250,7 +250,7 @@ def load1() -> float:
     return os.getloadavg()[0]
 
 
-def wait_quiet(limit: float, max_wait: float = 600):
+def wait_quiet(limit: float, max_wait: float = 1800):
     """Other agents build Rust on this Mac. Wait until the 1-minute load is
     under `limit` (or give up after max_wait s) so a sample is not a build."""
     end = time.time() + max_wait
@@ -318,8 +318,14 @@ def bench_launch(out: Path, runs: int, idle: bool, apps: list[str], label: str, 
         for i in range(runs + 1):
             order = apps if i % 2 == 0 else list(reversed(apps))
             for app in order:
-                wait_quiet(load_limit)
-                res = one_launch(out, app, name, i, label, idle and name == "doc-10k.md" and i > 0)
+                # A sample taken while a build or simulator burst hit the Mac,
+                # or with no frame detected, is taken again (up to 3 times).
+                for attempt in range(3):
+                    wait_quiet(load_limit)
+                    res = one_launch(out, app, name, i, label, idle and name == "doc-10k.md" and i > 0)
+                    if res.get("content_ms") is not None and res["load1"] <= 2 * load_limit:
+                        break
+                    log(f"  {app} {name}: retaking (frame {res.get('content_ms')}, load {res['load1']:.0f})")
                 if i == 0:
                     log(f"{app} {name}: warm-up {res.get('content_ms')} ms")
                     continue

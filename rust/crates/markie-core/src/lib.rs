@@ -32,6 +32,7 @@ pub mod import;
 pub mod link_preview;
 pub mod index;
 pub mod outline;
+pub mod path_display;
 pub mod paths;
 pub mod projects;
 pub mod registry;

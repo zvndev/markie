@@ -19,3 +19,13 @@ pub fn data_dir() -> PathBuf {
 pub fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
+
+/// Electron's `workspace.defaultRootPath()`: `~/Documents/Markie`, where
+/// `Projects.md` lives. `MARKIE_RS_DOCUMENTS_DIR` points it at a scratch
+/// folder for testing.
+pub fn default_root() -> PathBuf {
+    if let Ok(dir) = std::env::var("MARKIE_RS_DOCUMENTS_DIR") {
+        return PathBuf::from(dir).join("Markie");
+    }
+    dirs::document_dir().unwrap_or_else(|| home_dir().join("Documents")).join("Markie")
+}

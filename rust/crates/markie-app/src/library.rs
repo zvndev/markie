@@ -73,9 +73,15 @@ impl Library {
     }
 
     /// Recent and starred lists come from the registry as paths.
-    pub fn set_lists(&mut self, recent: Vec<std::path::PathBuf>, starred: Vec<std::path::PathBuf>) {
-        self.recent = recent.into_iter().filter_map(|p| row_for(&p)).collect();
-        self.starred = starred.into_iter().filter_map(|p| row_for(&p)).collect();
+    /// Rows for registry paths. Each needs a stat, so call it off the main
+    /// thread and hand the result to [`Self::set_rows`].
+    pub fn rows_for(paths: Vec<std::path::PathBuf>) -> Vec<IndexedDoc> {
+        paths.into_iter().filter_map(|p| row_for(&p)).collect()
+    }
+
+    pub fn set_rows(&mut self, recent: Vec<IndexedDoc>, starred: Vec<IndexedDoc>) {
+        self.recent = recent;
+        self.starred = starred;
         self.recent_index = SearchIndex::new(&self.recent);
         self.starred_index = SearchIndex::new(&self.starred);
         self.counts[1] = count_formats(&self.recent);

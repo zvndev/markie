@@ -40,7 +40,7 @@ RS_BIN = RS_APP / "Contents" / "MacOS" / "markie-rs"
 EL_BIN = Path("/Applications/Markie.app/Contents/MacOS/Markie")
 EL_ASAR = Path("/Applications/Markie.app/Contents/Resources/app.asar")
 
-FIXTURES = ["doc-10k.md", "doc-1m.md", "doc-10m.md", "doc-50p.docx"]
+FIXTURES = ["doc-10k.md", "doc-900k.md", "doc-1m.md", "doc-10m.md", "doc-50p.docx"]
 
 
 def log(*a):
@@ -145,14 +145,24 @@ def seed_rs_data(data: Path):
     db.close()
 
 
+# A second Markie RS build to run alongside, e.g. the saved "before" copy:
+# MARKIE_BENCH_RS_BEFORE=<path to Markie RS.app>, app name "rsb".
+RSB_APP = os.environ.get("MARKIE_BENCH_RS_BEFORE")
+
+
+def is_rs(app: str) -> bool:
+    return app in ("rs", "rsb")
+
+
 def launch_cmd(app: str, file: Path, data: Path) -> tuple[list[str], dict]:
     # Electron refuses a relative profile path; both get absolute paths.
     file, data = file.resolve(), data.resolve()
     env = dict(os.environ)
-    if app == "rs":
+    if is_rs(app):
         env["MARKIE_RS_DATA_DIR"] = str(data)
         env["MARKIE_RS_PERF"] = "1"
-        return [str(RS_BIN), str(file)], env
+        binary = RS_BIN if app == "rs" else Path(RSB_APP) / "Contents" / "MacOS" / "markie-rs"
+        return [str(binary), str(file)], env
     return [str(EL_BIN), f"--user-data-dir={data}", str(file)], env
 
 
@@ -219,66 +229,91 @@ def load(out: Path, name: str):
 
 # ---------------------------------------------------------------- launch / open
 
-def bench_launch(out: Path, runs: int, idle: bool, apps: list[str], label: str):
-    fx = fixtures(out)
+def load1() -> float:
+    return os.getloadavg()[0]
+
+
+def wait_quiet(limit: float, max_wait: float = 600):
+    """Other agents build Rust on this Mac. Wait until the 1-minute load is
+    under `limit` (or give up after max_wait s) so a sample is not a build."""
+    end = time.time() + max_wait
+    while load1() > limit and time.time() < end:
+        time.sleep(5)
+
+
+def one_launch(out: Path, app: str, name: str, i: int, label: str, idle: bool) -> dict:
+    fx = out / "fixtures"
+    data = out / "data" / f"{app}-{label}"
+    logf = out / "logs" / f"{label}-{app}-{name}-{i}.log"
+    # Electron only: its captured window shows the document and the icon
+    # rail. Markie RS's window shows its Library, which lists files from the
+    # home folder, so it is never saved.
+    png = out / "shots" / f"{label}-{app}-{name}.png" if i == 1 and app == "electron" else None
+    if png:
+        png.parent.mkdir(parents=True, exist_ok=True)
+    res = timed_launch(app, fx / name, data, logf, png)
+    res["load1"] = load1()
+    pid = res["pid"]
+    try:
+        if is_rs(app):
+            wait_for(lambda: any(e["event"] == "open" for e in perf_events(logf)), 15)
+        time.sleep(1.0)
+        res["rss_mb"] = rss_mb(pid)
+        res["footprint_mb"] = footprint_mb(pid)
+        ev = perf_events(logf)
+        if is_rs(app):
+            main = next((e for e in ev if e["event"] == "main"), None)
+            opened = next((e for e in ev if e["event"] == "open"), None)
+            if opened:
+                res["rs_open_ms"] = opened["ms"]
+                res["rs_open_frame_ms"] = opened["t"] - res["t0"]
+            if main:
+                res["rs_main_ms"] = main["t"] - res["t0"]
+        if idle:
+            # Idle: let the startup scan finish, then 30 s of nothing.
+            if is_rs(app):
+                wait_for(lambda: any(e["event"] == "scan" for e in perf_events(logf)), 45)
+                time.sleep(3)
+            else:
+                time.sleep(35)
+            c0 = cpu_seconds(pid)
+            time.sleep(30)
+            res["idle_cpu_pct"] = (cpu_seconds(pid) - c0) / 30 * 100
+            res["idle_rss_mb"] = rss_mb(pid)
+    finally:
+        kill_tree(pid)
+        time.sleep(0.5)
+    return res
+
+
+def bench_launch(out: Path, runs: int, idle: bool, apps: list[str], label: str, fixtures_list: list[str],
+                 load_limit: float):
+    fixtures(out)
     results = load(out, f"launch-{label}") or {}
     for app in apps:
-        for name in FIXTURES:
-            rows = []
-            data = out / "data" / f"{app}-{label}"
-            if app == "rs":
-                seed_rs_data(data)
-            # One untimed launch first: a first run creates the profile and
-            # warms the disk cache, for both apps alike.
-            for i in range(runs + 1):
-                logf = out / "logs" / f"{label}-{app}-{name}-{i}.log"
-                logf.parent.mkdir(parents=True, exist_ok=True)
-                # Electron only: its captured window shows the document and the
-                # icon rail. Markie RS's window shows its Library, which lists
-                # files from the home folder, so it is never saved.
-                png = out / "shots" / f"{label}-{app}-{name}.png" if i == runs and app == "electron" else None
-                if png:
-                    png.parent.mkdir(parents=True, exist_ok=True)
-                res = timed_launch(app, fx / name, data, logf, png)
-                pid = res["pid"]
-                try:
-                    if app == "rs":
-                        wait_for(lambda: any(e["event"] == "open" for e in perf_events(logf)), 10)
-                    time.sleep(1.0)
-                    res["rss_mb"] = rss_mb(pid)
-                    res["footprint_mb"] = footprint_mb(pid)
-                    ev = perf_events(logf)
-                    if app == "rs":
-                        main = next((e for e in ev if e["event"] == "main"), None)
-                        opened = next((e for e in ev if e["event"] == "open"), None)
-                        if opened:
-                            res["rs_open_ms"] = opened["ms"]
-                            res["rs_open_frame_ms"] = opened["t"] - res["t0"]
-                        if main:
-                            res["rs_main_ms"] = main["t"] - res["t0"]
-                    if idle and name == "doc-10k.md" and i > 0:
-                        # Idle: let the startup scan finish, then 30 s of nothing.
-                        if app == "rs":
-                            wait_for(lambda: any(e["event"] == "scan" for e in perf_events(logf)), 45)
-                            time.sleep(3)
-                        else:
-                            time.sleep(35)
-                        c0 = cpu_seconds(pid)
-                        time.sleep(30)
-                        res["idle_cpu_pct"] = (cpu_seconds(pid) - c0) / 30 * 100
-                        res["idle_rss_mb"] = rss_mb(pid)
-                finally:
-                    kill_tree(pid)
-                    time.sleep(0.5)
+        if is_rs(app):
+            seed_rs_data(out / "data" / f"{app}-{label}")
+    for name in fixtures_list:
+        rows: dict[str, list] = {app: [] for app in apps}
+        # One untimed launch of each first: a first run creates the profile
+        # and warms the disk cache, for every app alike. Then the apps take
+        # turns, run by run, so a load spike hits them all alike.
+        for i in range(runs + 1):
+            order = apps if i % 2 == 0 else list(reversed(apps))
+            for app in order:
+                wait_quiet(load_limit)
+                res = one_launch(out, app, name, i, label, idle and name == "doc-10k.md" and i > 0)
                 if i == 0:
                     log(f"{app} {name}: warm-up {res.get('content_ms')} ms")
                     continue
-                log(f"{app} {name} run {i}: content {res.get('content_ms')} ms, rss {res['rss_mb']:.0f} MB"
-                    + (f", rs open {res.get('rs_open_ms', 0):.1f} ms" if app == "rs" else "")
+                log(f"{app} {name} run {i}: content {res.get('content_ms')} ms, rss {res['rss_mb']:.0f} MB, "
+                    f"load {res['load1']:.0f}"
+                    + (f", rs open {res.get('rs_open_ms', 0):.1f} ms" if is_rs(app) else "")
                     + (f", idle cpu {res['idle_cpu_pct']:.2f}%" if "idle_cpu_pct" in res else ""))
-                rows.append(res)
-            results[f"{app}/{name}"] = rows
-            save(out, f"launch-{label}", results)
+                rows[app].append(res)
+        for app in apps:
+            results[f"{app}/{name}"] = rows[app]
+        save(out, f"launch-{label}", results)
     return results
 
 
@@ -397,18 +432,25 @@ def summary(out: Path, label: str):
     lines = []
     launch = load(out, f"launch-{label}")
     if launch:
-        lines.append(f"## Launch and open ({label}): median (min to max), ms or MB\n")
-        lines.append("| Fixture | Electron to full frame | Markie RS to full frame | RS open_path to paint | Electron RSS | RS RSS | Electron footprint | RS footprint |")
-        lines.append("|---|---|---|---|---|---|---|---|")
-        for name in FIXTURES:
-            el, rs = launch.get(f"electron/{name}", []), launch.get(f"rs/{name}", [])
-            lines.append(f"| {name} | {stat([r.get('content_ms') for r in el])} | {stat([r.get('content_ms') for r in rs])} | "
-                         f"{stat([r.get('rs_open_ms') for r in rs])} | {stat([r.get('rss_mb') for r in el])} | "
-                         f"{stat([r.get('rss_mb') for r in rs])} | {stat([r.get('footprint_mb') for r in el])} | "
-                         f"{stat([r.get('footprint_mb') for r in rs])} |")
-        el, rs = launch.get("electron/doc-10k.md", []), launch.get("rs/doc-10k.md", [])
-        lines.append(f"\nIdle CPU over 30 s (10 KB doc open): Electron {stat([r.get('idle_cpu_pct') for r in el])} %, "
-                     f"Markie RS {stat([r.get('idle_cpu_pct') for r in rs])} %")
+        names = {"electron": "Electron 0.9.7", "rsb": "Markie RS before", "rs": "Markie RS"}
+        apps = [a for a in ("electron", "rsb", "rs") if any(k.startswith(a + "/") for k in launch)]
+        for metric, title in (("content_ms", "Launch to first full frame, ms"),
+                              ("rs_open_ms", "Markie RS open_path to painted frame, ms"),
+                              ("rss_mb", "RSS after open, MB (all processes)"),
+                              ("footprint_mb", "Physical footprint after open, MB")):
+            cols = [a for a in apps if metric != "rs_open_ms" or is_rs(a)]
+            lines.append(f"\n### {title} ({label}): median (min to max)\n")
+            lines.append("| Fixture | " + " | ".join(names[a] for a in cols) + " |")
+            lines.append("|---" * (len(cols) + 1) + "|")
+            for name in FIXTURES:
+                if not any(f"{a}/{name}" in launch for a in cols):
+                    continue
+                lines.append(f"| {name} | " + " | ".join(stat([r.get(metric) for r in launch.get(f"{a}/{name}", [])]) for a in cols) + " |")
+        lines.append("\nIdle CPU over 30 s, 10 KB document open, %: " + ", ".join(
+            f"{names[a]} {stat([r.get('idle_cpu_pct') for r in launch.get(f'{a}/doc-10k.md', [])])}" for a in apps))
+        loads = [r.get("load1") for rows in launch.values() for r in rows if r.get("load1") is not None]
+        if loads:
+            lines.append(f"\nLoad average during samples: {stat(loads)}")
     typing = load(out, f"typing-{label}")
     if typing:
         lines.append(f"\n## Keystroke to frame, Markie RS ({label}): per-run medians, ms\n")
@@ -454,15 +496,20 @@ def main():
     ap.add_argument("--label", default="current", help="results name, e.g. before or after")
     ap.add_argument("--apps", default="electron,rs")
     ap.add_argument("--no-idle", action="store_true")
+    ap.add_argument("--fixtures", default=",".join(FIXTURES))
+    ap.add_argument("--load-limit", type=float, default=float(os.cpu_count() or 8),
+                    help="wait for the 1-minute load average to fall under this before each sample")
     a = ap.parse_args()
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     tools()
     apps = a.apps.split(",")
+    if "rsb" in apps and not RSB_APP:
+        sys.exit("set MARKIE_BENCH_RS_BEFORE to the other Markie RS.app")
     if "rs" in apps and not RS_BIN.exists():
         sys.exit(f"build the app first: {RUST}/scripts/bundle-mac.sh")
     if a.what in ("all", "launch"):
-        bench_launch(out, a.runs, not a.no_idle, apps, a.label)
+        bench_launch(out, a.runs, not a.no_idle, apps, a.label, a.fixtures.split(","), a.load_limit)
     if a.what in ("all", "typing"):
         bench_typing(out, a.runs, a.label)
     if a.what in ("all", "scroll"):

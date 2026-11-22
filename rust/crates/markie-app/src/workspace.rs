@@ -100,6 +100,8 @@ pub struct Workspace {
     /// Pending work after an edit: the exact edited marker, counts and
     /// outline, done once typing pauses instead of on every keystroke.
     settle_task: Option<Task<()>>,
+    /// Drops a Recent/Starred refresh overtaken by a newer one.
+    lists_generation: u64,
     /// What the file says on disk when it changed under unsaved edits.
     disk_conflict: Option<String>,
     disk_missing: bool,
@@ -193,6 +195,7 @@ impl Workspace {
             _autosave_task: Task::ready(()),
             _poll_task: Task::ready(()),
             settle_task: None,
+            lists_generation: 0,
             disk_conflict: None,
             disk_missing: false,
             recovered,
@@ -214,7 +217,7 @@ impl Workspace {
                 this.page_width = w;
             }
         }
-        this.refresh_lists();
+        this.refresh_lists(cx);
         this.import_once(cx);
 
         let mut first_file = None;
@@ -262,11 +265,27 @@ impl Workspace {
         .detach();
     }
 
-    fn refresh_lists(&mut self) {
+    /// Recent and Starred, from the registry. Their rows need a stat per
+    /// file, done off the main thread: on the launch path it cost 68 ms.
+    fn refresh_lists(&mut self, cx: &mut Context<Self>) {
         let Some(reg) = &self.registry else { return };
-        let recent = reg.recent(200).unwrap_or_default().into_iter().map(|r| r.path).collect();
+        let recent: Vec<PathBuf> = reg.recent(200).unwrap_or_default().into_iter().map(|r| r.path).collect();
         let starred = reg.stars().unwrap_or_default();
-        self.library.set_lists(recent, starred);
+        self.lists_generation += 1;
+        let generation = self.lists_generation;
+        cx.spawn(async move |this, cx| {
+            let (recent, starred) = cx
+                .background_spawn(async move { (Library::rows_for(recent), Library::rows_for(starred)) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.lists_generation == generation {
+                    this.library.set_rows(recent, starred);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The first launch copies recents, folders and stars from the Electron
@@ -299,7 +318,7 @@ impl Workspace {
                                 &format!("{} recents, {} folders, {} stars", summary.recents, summary.roots, summary.stars),
                             );
                         }
-                        this.refresh_lists();
+                        this.refresh_lists(cx);
                         if summary.roots > 0 {
                             this.rescan(cx);
                         }
@@ -356,7 +375,7 @@ impl Workspace {
     fn on_toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
         let (Some(reg), Some(doc)) = (&self.registry, &self.doc) else { return };
         let _ = reg.toggle_star(&doc.path, "file");
-        self.refresh_lists();
+        self.refresh_lists(cx);
         cx.notify();
     }
 
@@ -428,7 +447,7 @@ impl Workspace {
             }
         }
         if added_root {
-            self.refresh_lists();
+            self.refresh_lists(cx);
             self.rescan(cx);
         }
         if let Some(path) = first_file {
@@ -526,7 +545,7 @@ impl Workspace {
                 if let Some(reg) = &self.registry {
                     let _ = reg.track_opened(&doc.path);
                 }
-                self.refresh_lists();
+                self.refresh_lists(cx);
                 let title = doc
                     .path
                     .file_name()

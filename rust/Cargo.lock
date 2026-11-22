@@ -4713,6 +4713,8 @@ dependencies = [
  "markie-math",
  "markie-rich",
  "reqwest",
+ "serde_json",
+ "yrs",
 ]
 
 [[package]]

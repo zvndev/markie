@@ -11,3 +11,11 @@ markie-rich = { path = "../markie-rich" }
 markie-math = { path = "../markie-math" }
 gpui-kit = "=0.10.0"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
+yrs = "=0.28.2"
+serde_json.workspace = true
+
+[dev-dependencies]
+markie-cloud = { path = "../markie-cloud" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }

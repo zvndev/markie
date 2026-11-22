@@ -13,6 +13,8 @@
 pub mod layout;
 pub mod element;
 pub mod media;
+/// Live-room binding (no rendering): see `collab/mod.rs`.
+pub mod collab;
 mod render;
 mod chrome;
 

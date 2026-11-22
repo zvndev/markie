@@ -1,7 +1,10 @@
 //! Live text rooms: plain-text documents edited together over y-websocket.
 //! Port of src/lib/collab.ts, text-collab.ts and the text half of
-//! live-snapshot.ts. Rich rooms (the TipTap XmlFragment) are out of scope here.
+//! live-snapshot.ts. `session` is the supervised room both kinds use; the
+//! rich room's XmlFragment binding lives with the editor (markie-editor).
 pub mod room;
+pub mod runtime;
+pub mod session;
 pub mod snapshot;
 pub mod text;
 pub mod ticket;

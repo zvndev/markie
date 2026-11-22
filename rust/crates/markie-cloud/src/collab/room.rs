@@ -38,7 +38,7 @@ pub enum CloseReason {
 }
 
 impl CloseReason {
-    fn from_code(code: u16) -> Self {
+    pub fn from_code(code: u16) -> Self {
         match code {
             CLOSE_ACCESS_REVOKED => CloseReason::AccessRevoked,
             CLOSE_ROOM_TOO_NEW => CloseReason::RoomTooNew,

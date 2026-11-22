@@ -29,6 +29,7 @@ use crate::actions::*;
 use crate::library::Library;
 
 mod account;
+mod agents;
 mod chrome;
 mod file_ops;
 mod office;
@@ -38,6 +39,7 @@ mod rail;
 mod rich;
 mod text_view;
 mod settings;
+mod skills;
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -73,6 +75,8 @@ enum DocKind {
 }
 
 pub struct Workspace {
+    agents: agents::AgentState,
+    skills: Option<Entity<skills::SkillsPanel>>,
     pub focus_handle: FocusHandle,
     registry: Option<Rc<Registry>>,
     /// The Browse panel's view of the device index.
@@ -164,6 +168,8 @@ impl Workspace {
         let drafts = Drafts::new(&data_dir);
         let recovered = drafts.pending();
         let mut this = Self {
+            agents: agents::AgentState::new(&data_dir),
+            skills: None,
             focus_handle: cx.focus_handle(),
             registry,
             library,
@@ -196,6 +202,7 @@ impl Workspace {
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
+        this.start_agent_bridge(window, cx);
         if let Some(reg) = &this.registry {
             if let Some(z) = reg.setting("zoom").ok().flatten().and_then(|v| v.parse().ok()) {
                 this.zoom = z;
@@ -205,7 +212,6 @@ impl Workspace {
             }
         }
         this.refresh_lists();
-        this.import_once(cx);
 
         let mut first_file = None;
         for path in initial {
@@ -233,19 +239,12 @@ impl Workspace {
         self.shell.invalidate_browse();
     }
 
-    /// The first launch copies recents, folders and stars from the Electron
-    /// app, reading a copy of its registry. It never writes to Markie's data.
-    fn import_once(&mut self, cx: &mut Context<Self>) {
-        let Some(reg) = &self.registry else { return };
-        if reg.setting("electron_import").ok().flatten().is_some() {
+    fn import_from_markie(&mut self, cx: &mut Context<Self>) {
+        // Accept a user-staged copy, not the live Electron profile.
+        let source = paths::data_dir().join("electron-registry-snapshot.db");
+        if !std::fs::symlink_metadata(&source).is_ok_and(|meta| meta.file_type().is_file()) {
             return;
         }
-        let _ = reg.set_setting("electron_import", "started");
-        self.import_from_markie(cx);
-    }
-
-    fn import_from_markie(&mut self, cx: &mut Context<Self>) {
-        let Some(source) = markie_core::import::electron_registry_path().filter(|p| p.exists()) else { return };
         let db_path = paths::data_dir().join("registry.db");
         cx.spawn(async move |this, cx| {
             let result = cx

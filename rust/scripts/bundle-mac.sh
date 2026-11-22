@@ -17,6 +17,8 @@ VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/markie-rs "$APP/Contents/MacOS/markie-rs"
+cp -R ../mcp "$APP/Contents/Resources/mcp"
+cp crates/markie-agent/mcp/markie-rs-mcp.mjs "$APP/Contents/Resources/markie-rs-mcp.mjs"
 ICON_SRC="../build/icons/512x512.png"
 if [[ -f "$ICON_SRC" ]]; then
   ICONSET="$(mktemp -d)/markie-rs.iconset"

@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 markie-core.workspace = true
+markie-agent = { path = "../markie-agent" }
+markie-cloud = { path = "../markie-cloud" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }

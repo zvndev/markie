@@ -340,6 +340,8 @@ pub struct RichView {
     pub(crate) outline: (u64, Vec<markie_rich::editor::OutlineEntry>),
     /// The toolbar's width last frame, to fit its groups.
     pub(crate) toolbar_width: Pixels,
+    /// The typed font size box (`chrome.rs`), made on the first frame.
+    pub(crate) size_field: Option<chrome::SizeField>,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
     /// does nothing there, as in Electron, where the rich editor is gone.
     pub(crate) source_mode: bool,
@@ -406,6 +408,7 @@ impl RichView {
             content_height: px(0.),
             outline: (u64::MAX, Vec::new()),
             toolbar_width: px(0.),
+            size_field: None,
             source_mode: false,
             source_toolbar: None,
         }

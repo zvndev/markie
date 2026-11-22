@@ -2,7 +2,7 @@
 //! one-line prompt, around the document.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::Selectable;
 use gpui_kit::component::{ActiveTheme, Sizable as _, h_flex, v_flex};
@@ -155,7 +155,116 @@ fn fit(width: f32) -> (bool, bool, Vec<Group>) {
     (true, primary_out, out)
 }
 
+/// The size box: Electron's `<input type="number">` (min 1, max 400,
+/// step 0.5), whose value goes through `clampFontSize` (11 to 32, whole
+/// pixels).
+pub(crate) struct SizeField {
+    pub(crate) state: Entity<InputState>,
+    /// The size the box last showed, so a frame only rewrites it when the
+    /// size changed from elsewhere.
+    shown: f32,
+    _subs: Vec<Subscription>,
+}
+
+/// A typed size, as the number input takes it: a finite number from 1 to
+/// 400 in half steps, then clamped like `clampFontSize`. None leaves the
+/// size alone (an empty box, a letter, a value out of range).
+pub(crate) fn typed_size(text: &str) -> Option<f32> {
+    let v: f32 = text.trim().parse().ok()?;
+    (v.is_finite() && (1.0..=400.0).contains(&v) && (v * 2.).fract() == 0.).then(|| clamp_font_size(v))
+}
+
+/// While typing, only a value that is already a size takes effect, so
+/// typing "14" does not pass through 11 on the way (see `typed_size`).
+fn typing_size(text: &str) -> Option<f32> {
+    let v: f32 = text.trim().parse().ok()?;
+    (v.is_finite() && (11.0..=32.0).contains(&v)).then(|| clamp_font_size(v))
+}
+
 impl RichView {
+    /// The toolbar's size, for the selection or the whole document.
+    pub(crate) fn toolbar_size(&self) -> f32 {
+        let selecting = self.editor.has_selection() && !self.read_only && !self.source_mode;
+        if selecting {
+            let t = self.editor.toolbar();
+            t.font_size.as_deref().and_then(|z| super::media::css_size(z, 16.)).map(clamp_font_size).unwrap_or(self.doc_size)
+        } else {
+            self.doc_size
+        }
+    }
+
+    /// `setSize`: the selection's size when text is selected, else the
+    /// document's. `refocus` gives the document focus back (the stepper);
+    /// the typed box keeps it.
+    pub(crate) fn apply_size(&mut self, next: f32, refocus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let next = clamp_font_size(next);
+        if self.editor.has_selection() {
+            if self.read_only || self.source_mode {
+                return;
+            }
+            self.edit(cx, |e| e.set_text_style(None, None, Some(Some(format!("{next}px")))));
+            if refocus {
+                self.focus(window, cx);
+            }
+        } else {
+            self.doc_size = next;
+            self.heights.iter_mut().for_each(|h| *h = None);
+            cx.notify();
+        }
+    }
+
+    /// The size box, made once, and kept showing the current size while it
+    /// is not being typed in.
+    fn size_input(&mut self, size: f32, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
+        if self.size_field.is_none() {
+            let state = cx.new(|cx| InputState::new(window, cx));
+            state.update(cx, |s, cx| s.set_value(format!("{}", size as i32), window, cx));
+            let sub = cx.subscribe_in(&state, window, |this, state, ev: &InputEvent, window, cx| {
+                let text = state.read(cx).value().to_string();
+                match ev {
+                    InputEvent::Change => {
+                        if let Some(v) = typing_size(&text) {
+                            this.apply_size(v, false, window, cx);
+                        }
+                    }
+                    InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                        if let Some(v) = typed_size(&text) {
+                            this.apply_size(v, false, window, cx);
+                        }
+                        // Show what took effect, as the controlled input
+                        // does once React renders the clamped size.
+                        let now = this.toolbar_size();
+                        state.update(cx, |s, cx| s.set_value(format!("{}", now as i32), window, cx));
+                        if let Some(f) = &mut this.size_field {
+                            f.shown = now;
+                        }
+                    }
+                    InputEvent::Focus => {}
+                }
+            });
+            self.size_field = Some(SizeField { state, shown: size, _subs: vec![sub] });
+        }
+        let field = self.size_field.as_mut().unwrap();
+        let state = field.state.clone();
+        let focused = state.read(cx).focus_handle(cx).is_focused(window);
+        if !focused && field.shown != size {
+            field.shown = size;
+            state.update(cx, |s, cx| s.set_value(format!("{}", size as i32), window, cx));
+        }
+        state
+    }
+
+    /// The number input's arrow keys: one step up or down.
+    fn step_size_field(&mut self, up: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let now = self.toolbar_size();
+        let next = clamp_font_size(now + if up { 1. } else { -1. });
+        self.apply_size(next, false, window, cx);
+        if let Some(f) = &mut self.size_field {
+            f.shown = next;
+            f.state.update(cx, |s, cx| s.set_value(format!("{}", next as i32), window, cx));
+        }
+    }
+
     /// Run an editor command from the toolbar and give the document focus.
     fn tool_edit(&mut self, window: &mut Window, cx: &mut Context<Self>, f: impl FnOnce(&mut Editor)) {
         if self.source_mode {
@@ -258,7 +367,7 @@ impl RichView {
             .child(svg().path("icons/chevron-down.svg").size(px(12.)).text_color(muted))
     }
 
-    pub(crate) fn render_toolbar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = if self.source_mode { Default::default() } else { self.editor.toolbar() };
         let theme = cx.theme().clone();
         let weak = cx.entity().downgrade();
@@ -323,16 +432,25 @@ impl RichView {
             self.doc_size
         };
         let set_size = move |this: &mut RichView, window: &mut Window, cx: &mut Context<RichView>, next: f32| {
-            let next = clamp_font_size(next);
-            if this.editor.has_selection() {
-                this.tool_edit(window, cx, |e| e.set_text_style(None, None, Some(Some(format!("{next}px")))));
-            } else {
-                this.doc_size = next;
-                this.heights.iter_mut().for_each(|h| *h = None);
-                cx.notify();
-            }
+            this.apply_size(next, true, window, cx);
         };
-        let size_field = self.field(cx).w(px(38.)).justify_center().child(format!("{}", size as i32));
+        let size_state = self.size_input(size, window, cx);
+        let size_title: &'static str = if selecting { "Size of the selected text - Saved as HTML in the file" } else { "Font size for the whole document" };
+        let size_field = self
+            .field(cx)
+            .id("rt-size")
+            .w(px(38.))
+            .justify_center()
+            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(size_title).build(window, cx))
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                let k = &ev.keystroke;
+                if !k.modifiers.modified() && (k.key == "up" || k.key == "down") {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    this.step_size_field(k.key == "up", window, cx);
+                }
+            }))
+            .child(Input::new(&size_state).appearance(false).text_size(px(11.)).text_center().w_full());
 
         // Text colour and highlight: a glyph and a small caret, each a menu.
         let muted = theme.muted_foreground;
@@ -838,5 +956,43 @@ impl Render for RichView {
                     .children(self.render_math_field(cx))
                     .children(self.render_link_card(window, cx)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fit, typed_size, typing_size};
+
+    #[test]
+    fn the_size_box_takes_what_the_number_input_takes() {
+        assert_eq!(typed_size("14"), Some(14.));
+        assert_eq!(typed_size(" 18 "), Some(18.));
+        // Half steps are valid input; clampFontSize rounds them.
+        assert_eq!(typed_size("16.5"), Some(17.));
+        // In range for the input, clamped for the document.
+        assert_eq!(typed_size("1"), Some(11.));
+        assert_eq!(typed_size("400"), Some(32.));
+        // Not a value the input accepts: the size stays.
+        assert_eq!(typed_size(""), None);
+        assert_eq!(typed_size("abc"), None);
+        assert_eq!(typed_size("0"), None);
+        assert_eq!(typed_size("401"), None);
+        assert_eq!(typed_size("14.2"), None);
+    }
+
+    #[test]
+    fn typing_only_applies_a_size_that_is_already_one() {
+        // The first digit of "14" is not 11.
+        assert_eq!(typing_size("1"), None);
+        assert_eq!(typing_size("14"), Some(14.));
+        assert_eq!(typing_size("32"), Some(32.));
+        assert_eq!(typing_size("40"), None);
+    }
+
+    #[test]
+    fn the_row_fits_at_full_width_and_overflows_below() {
+        assert_eq!(fit(1400.), (false, false, vec![]));
+        let (compact, primary_out, out) = fit(900.);
+        assert!(compact && !primary_out && !out.is_empty());
     }
 }

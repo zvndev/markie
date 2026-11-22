@@ -313,6 +313,22 @@ impl Workspace {
     }
 }
 
+/// `.markie-search-mark`: the status yellow at 30 % behind the words, and a
+/// 70 % line under them (Chromium's inset box shadow).
+pub(super) fn marked(text: &str, ranges: &[(usize, usize)], p: &Palette) -> StyledText {
+    let style = HighlightStyle {
+        background_color: Some(p.yellow.opacity(0.3)),
+        underline: Some(UnderlineStyle { color: Some(p.yellow.opacity(0.7)), thickness: px(1.), wavy: false }),
+        ..Default::default()
+    };
+    let highlights: Vec<_> = markie_core::doc_text::merge_marks(ranges.to_vec())
+        .into_iter()
+        .filter(|(a, b)| a < b && *b <= text.len() && text.is_char_boundary(*a) && text.is_char_boundary(*b))
+        .map(|(a, b)| (a..b, style))
+        .collect();
+    StyledText::new(text.to_string()).with_highlights(highlights)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{HashMap, PathBuf, ProjectRow, project_rows};

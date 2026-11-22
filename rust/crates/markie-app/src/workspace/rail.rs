@@ -1511,12 +1511,23 @@ impl Workspace {
                             .child(
                                 h_flex()
                                     .gap(px(8.))
-                                    .child(div().truncate().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(doc.name.clone()))
+                                    .child(div().truncate().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(super::projects::marked(
+                                        &doc.name,
+                                        &markie_core::doc_text::highlight_ranges(&doc.name, lib.text()),
+                                        &p,
+                                    )))
                                     .child(div().ml_auto().flex_none().text_size(px(11.)).text_color(p.muted).child(updated_ago(doc.mtime_ms, now))),
                             )
                             .child(div().truncate().text_size(px(11.5)).text_color(p.muted).child(compact_dir(&doc.dir, &home, 3)))
                             .when_some(hit.excerpt.clone(), |el, ex| {
-                                el.child(div().mt(px(4.)).text_size(px(12.)).line_height(px(16.5)).text_color(p.fg(0.75)).child(ex))
+                                // The body search's own marks; an instant-filter
+                                // excerpt has none, so mark its terms here.
+                                let marks = if hit.marks.is_empty() {
+                                    markie_core::doc_text::highlight_ranges(&ex, lib.text())
+                                } else {
+                                    hit.marks.clone()
+                                };
+                                el.child(div().mt(px(4.)).text_size(px(12.)).line_height(px(16.5)).text_color(p.fg(0.75)).child(super::projects::marked(&ex, &marks, &p)))
                             }),
                     )
                     .on_mouse_move(cx.listener(move |this, _, _, cx| {

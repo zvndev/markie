@@ -1,0 +1,154 @@
+[
+ {
+  "text": "---\nname: a\ndescription: Plain words\n---\nbody",
+  "description": "Plain words"
+ },
+ {
+  "text": "---\ndescription: \"Quoted: with colon\"\n---\n",
+  "description": "Quoted: with colon"
+ },
+ {
+  "text": "---\ndescription: 'Single ''quoted'''\n---\n",
+  "description": "Single 'quoted'"
+ },
+ {
+  "text": "---\ndescription: \"Escapes \\\"in\\\" \\\\ here\\n next\"\n---\n",
+  "description": "Escapes \"in\" \\ here\n next"
+ },
+ {
+  "text": "---\ndescription: >\n  Folded over\n  two lines.\n---\n",
+  "description": "Folded over two lines."
+ },
+ {
+  "text": "---\ndescription: >-\n  Folded strip\n  chomp.\n---\n",
+  "description": "Folded strip chomp."
+ },
+ {
+  "text": "---\ndescription: |\n  Literal\n  block\n---\n",
+  "description": "Literal\nblock"
+ },
+ {
+  "text": "---\ndescription: |-\n  Literal\n\n  gap\n---\n",
+  "description": "Literal\n\ngap"
+ },
+ {
+  "text": "---\ndescription: >2\n    Indented\n    explicit\n---\n",
+  "description": "Indented   explicit"
+ },
+ {
+  "text": "---\ndescription: >\n  Para one\n\n  para two\n---\n",
+  "description": "Para one\n\npara two"
+ },
+ {
+  "text": "---\ndescription: Words # a comment\n---\n",
+  "description": "Words"
+ },
+ {
+  "text": "---\ndescription: [a, b]\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription: &anchor value\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription: \"unterminated\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription:\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription:   \n---\n",
+  "description": null
+ },
+ {
+  "text": "---\nname: x\n---\nno description",
+  "description": null
+ },
+ {
+  "text": "no front matter\ndescription: nope\n",
+  "description": null
+ },
+ {
+  "text": "---\r\ndescription: CRLF line\r\n---\r\nbody",
+  "description": "CRLF line"
+ },
+ {
+  "text": "---  \ndescription: trailing spaces on fence\n---  \n",
+  "description": "trailing spaces on fence"
+ },
+ {
+  "text": "---\ndescription: unclosed front matter\n",
+  "description": null
+ },
+ {
+  "text": "---\nmeta:\n  description: nested only\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription: first\ndescription: second\n---\n",
+  "description": "second"
+ },
+ {
+  "text": "---\nDescription: capital key\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription : space before colon\n---\n",
+  "description": "space before colon"
+ },
+ {
+  "text": "---\n  description: indented key\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription: a: b: c\n---\n",
+  "description": "a: b: c"
+ },
+ {
+  "text": "---\ndescription: '  padded  '\n---\n",
+  "description": "padded"
+ },
+ {
+  "text": "---\ndescription: \"\"\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription: >\n\n  leading blank\n---\n",
+  "description": "leading blank"
+ },
+ {
+  "text": "---\ndescription: ~\n---\n",
+  "description": "~"
+ },
+ {
+  "text": "---\ndescription: null\n---\n",
+  "description": "null"
+ },
+ {
+  "text": "---\ndescription: 42\n---\n",
+  "description": "42"
+ },
+ {
+  "text": "---\ndescription: |+\n  keep\n\n---\n",
+  "description": "keep"
+ },
+ {
+  "text": "---\ndescription: x\n---\n---\ndescription: y\n---\n",
+  "description": "x"
+ },
+ {
+  "text": "﻿---\ndescription: bom\n---\n",
+  "description": null
+ },
+ {
+  "text": "---\ndescription: tab\there\n---\n",
+  "description": "tab\there"
+ },
+ {
+  "text": "---\ndescription: >\n  folded\n   more indented\n  back\n---\n",
+  "description": "folded  more indented back"
+ }
+]

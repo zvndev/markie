@@ -402,7 +402,6 @@ pub(super) enum TextAction {
     /// cloud copy over the file and the buffer, as the person was told.
     TakeCloud,
     KeepBoth,
-    Overwrite,
 }
 
 impl TextAction {
@@ -415,7 +414,7 @@ impl TextAction {
     fn sends_text(self) -> bool {
         matches!(
             self,
-            Self::Enable | Self::Push | Self::Repair | Self::Overwrite
+            Self::Enable | Self::Push | Self::Repair
         )
     }
 }
@@ -510,8 +509,8 @@ mod tests {
             TextAction::Pause,
             TextAction::Delete,
             TextAction::Pull,
+            TextAction::TakeCloud,
             TextAction::KeepBoth,
-            TextAction::Overwrite,
         ];
         let rechecks: Vec<_> = all.into_iter().filter(|a| a.changes_sync()).collect();
         assert_eq!(rechecks, [TextAction::Enable, TextAction::Pause, TextAction::Delete]);
@@ -660,15 +659,6 @@ impl TextWork {
                         bom,
                         keep_both,
                     });
-                }
-                TextAction::Overwrite => {
-                    if viewer {
-                        return Err(sync::VIEWER_REFUSAL.into());
-                    }
-                    self.binding.record = engine
-                        .resolve_overwrite(&previous, &name, &text)
-                        .await?
-                        .record;
                 }
                 TextAction::Enable | TextAction::Push | TextAction::Repair => {
                     let creating = previous.cloud_version == 0;

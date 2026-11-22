@@ -278,7 +278,8 @@ impl Workspace {
     }
 
     fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
-        self.zoom = (zoom * 10.0).round().clamp(5.0, 30.0) / 10.0;
+        // Hundredths: Electron's zoom presets include 0.75 and 1.25.
+        self.zoom = (zoom * 100.0).round().clamp(50.0, 300.0) / 100.0;
         if let Some(reg) = &self.registry {
             let _ = reg.set_setting("zoom", &self.zoom.to_string());
         }
@@ -294,11 +295,11 @@ impl Workspace {
     }
 
     fn on_zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.zoom + 0.1, cx);
+        self.set_zoom(markie_editor::style::step_zoom(self.zoom, true), cx);
     }
 
     fn on_zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.zoom - 0.1, cx);
+        self.set_zoom(markie_editor::style::step_zoom(self.zoom, false), cx);
     }
 
     fn on_zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
@@ -306,11 +307,11 @@ impl Workspace {
     }
 
     fn on_wider(&mut self, _: &PageWider, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_page_width(self.page_width + 96.0, cx);
+        self.step_page_width(true, cx);
     }
 
     fn on_narrower(&mut self, _: &PageNarrower, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_page_width(self.page_width - 96.0, cx);
+        self.step_page_width(false, cx);
     }
 
     fn on_import(&mut self, _: &ImportFromMarkie, _: &mut Window, cx: &mut Context<Self>) {

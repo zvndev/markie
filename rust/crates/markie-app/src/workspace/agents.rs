@@ -276,7 +276,7 @@ impl Workspace {
         if let Some(reg) = &self.registry {
             let _ = reg.track_opened(key);
         }
-        self.refresh_lists();
+        self.refresh_lists(cx);
         self.refresh_cloud(false, cx);
         if first {
             self.collab_after_sync_change(key, cx);

@@ -539,7 +539,7 @@ impl Workspace {
                     Ok(())
                 });
                 match done {
-                    Ok(()) => this.refresh_lists(),
+                    Ok(()) => this.refresh_lists(cx),
                     Err(e) => window.push_notification(e, cx),
                 }
                 cx.notify();

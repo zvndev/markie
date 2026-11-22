@@ -1007,7 +1007,7 @@ impl Workspace {
             if let Some(registry) = &self.registry {
                 let _ = registry.track_opened(&copy);
             }
-            self.refresh_lists();
+            self.refresh_lists(cx);
         }
         let _ = self.history.capture(path, &write.before, Writer::User);
         document::save_text(path, &write.remote, write.encoding, write.bom)
@@ -1232,7 +1232,7 @@ impl Workspace {
                             this.reconcile_cloud(&scope, cx);
                         }
                     }
-                    this.refresh_lists();
+                    this.refresh_lists(cx);
                     // The requests waiting for the Cloud page's account.
                     this.people_refresh(cx);
                 }

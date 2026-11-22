@@ -13,6 +13,7 @@ mod library;
 mod logs;
 mod menus;
 mod open_urls;
+mod perf;
 mod themes;
 mod workspace;
 
@@ -132,8 +133,12 @@ mod key_tests {
     }
 }
 
+/// The first menu bar, after the first frame. The workspace may already have
+/// installed one for the open document; that one stands.
 fn set_menus(cx: &mut App) {
-    menus::bind_app_actions(cx);
+    if menus::is_installed() {
+        return;
+    }
     let nightly = std::env::var("MARKIE_RS_NIGHTLY").is_ok_and(|v| v == "1");
     menus::install(menus::MenuState { has_history: false, nightly, ..Default::default() }, cx);
 }
@@ -178,10 +183,11 @@ fn main() {
     });
     app.run(move |cx| {
             gpui_kit::init(cx);
+            perf::init(cx);
             bind_keys(cx);
             markie_editor::bind_keys(cx);
             workspace::source::bind_keys(cx);
-            set_menus(cx);
+            menus::bind_app_actions(cx);
             cx.on_action(|_: &Quit, cx| {
                 instance::release(&markie_core::paths::data_dir());
                 cx.quit()
@@ -217,6 +223,10 @@ fn main() {
                 let view = cx.new(|cx| Workspace::new(initial, window, cx));
                 let focus = view.read(cx).startup_focus(cx);
                 window.defer(cx, move |window, cx| focus.focus(window, cx));
+                // The menu bar after the first frame: building it took 50 to
+                // 80 ms of the launch. Shortcuts are bound above and work
+                // from the start.
+                window.on_next_frame(|_, cx| set_menus(cx));
                 view
             })
             .expect("failed to open the Markie RS window");

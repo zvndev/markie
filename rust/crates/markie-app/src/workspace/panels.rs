@@ -5,8 +5,8 @@ use gpui_kit::component::input::Position;
 use gpui_kit::component::{ActiveTheme, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-
 use markie_core::stats;
+
 
 use super::{Mode, SidePanel, Workspace};
 
@@ -84,9 +84,9 @@ impl Workspace {
     /// with the "STATISTICS" label, its ×, and one 12 pt row per figure.
     pub(super) fn render_stats(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = super::dialog_chrome::Tokens::current(&self.setting_or("style_template", "markie"), cx);
-        // The document as it stands, whichever pane is editing it.
-        let text = self.current_text(cx);
-        let s = stats::compute(&text);
+        // `stats::compute` over the document as it stands, kept by the
+        // window and refreshed when typing pauses, not recounted per frame.
+        let s = self.doc_stats;
         let n = stats::grouped;
         // `StatsPanel`'s rows, in its order and wording.
         let rows = [

@@ -5239,6 +5239,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs 7.0.0",
+ "memchr",
  "miniz_oxide 0.8.9",
  "pulldown-cmark",
  "regex",

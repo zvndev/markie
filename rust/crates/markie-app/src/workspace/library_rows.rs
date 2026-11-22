@@ -280,7 +280,7 @@ impl Workspace {
                     Some(Ok(())) => window.push_notification(format!("Removed {name} from your library."), cx),
                     _ => window.push_notification("Couldn't delete the file.", cx),
                 }
-                self.refresh_lists();
+                self.refresh_lists(cx);
             }
             RowAction::Review => self.open_path(&path, window, cx),
             RowAction::ManageSharing => {

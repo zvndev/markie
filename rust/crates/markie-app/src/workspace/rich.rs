@@ -76,6 +76,13 @@ impl Workspace {
     }
 
     pub(super) fn on_rich_edit(&mut self, cx: &mut Context<Self>) {
+        // Split view (Source beside View) and a live room need the text on
+        // every edit. Everything else defers serializing the whole document
+        // until typing pauses (`note_edit`).
+        if self.mode != Mode::Split && !self.live_holds_file() {
+            self.note_edit(cx);
+            return;
+        }
         let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         let text = self.rich.read(cx).markdown();
         self.dirty = &text != saved;

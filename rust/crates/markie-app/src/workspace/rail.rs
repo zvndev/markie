@@ -570,7 +570,7 @@ impl Workspace {
             window.push_notification("Couldn't save that star.", cx);
             return;
         }
-        self.refresh_lists();
+        self.refresh_lists(cx);
         cx.notify();
     }
 

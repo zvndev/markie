@@ -35,6 +35,10 @@ pub fn sections(text: &str) -> Vec<Section> {
     let base_line = text[..fm].matches('\n').count();
     let mut out = Vec::new();
     let mut current: Option<(u8, usize, String)> = None;
+    // Lines counted so far, up to `counted_to`: each heading counts only the
+    // text since the previous one. Counting from the top for every heading
+    // was quadratic, two seconds on a 10 MB file.
+    let (mut counted_to, mut lines_before) = (0usize, 0usize);
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     for (event, range) in Parser::new_ext(body, opts).into_offset_iter() {
         match event {
@@ -46,7 +50,10 @@ pub fn sections(text: &str) -> Vec<Section> {
                     _ => 0,
                 };
                 if level > 0 {
-                    let line = base_line + body[..range.start].matches('\n').count();
+                    let at = range.start.max(counted_to);
+                    lines_before += memchr::memchr_iter(b'\n', &body.as_bytes()[counted_to..at]).count();
+                    counted_to = at;
+                    let line = base_line + lines_before;
                     current = Some((level, line, String::new()));
                 }
             }
@@ -84,5 +91,13 @@ mod tests {
                 Section { level: 2, text: "Two code".into(), line: 10 },
             ]
         );
+    }
+
+    #[test]
+    fn many_headings_keep_their_lines() {
+        let text: String = (0..500).map(|i| format!("# H{i}\n\ntext\n\n")).collect();
+        let s = sections(&text);
+        assert_eq!(s.len(), 500);
+        assert!(s.iter().enumerate().all(|(i, sec)| sec.line == i * 4 && sec.text == format!("H{i}")));
     }
 }

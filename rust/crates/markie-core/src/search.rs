@@ -117,54 +117,124 @@ fn excerpt_around(body: &str, at: usize, len: usize) -> String {
     s
 }
 
+/// Position of `needle` (already ASCII-lowercase) in `hay`, ignoring ASCII
+/// case, without allocating a lowercase copy of `hay`.
+fn find_ascii_ci(hay: &str, needle: &str) -> Option<usize> {
+    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    let first = *n.first()?;
+    if n.len() > h.len() {
+        return None;
+    }
+    let last_start = h.len() - n.len();
+    let (lo, up) = (first.to_ascii_lowercase(), first.to_ascii_uppercase());
+    let mut from = 0;
+    while from <= last_start {
+        let at = from + memchr::memchr2(lo, up, &h[from..=last_start])?;
+        if h[at + 1..at + n.len()].eq_ignore_ascii_case(&n[1..]) {
+            return Some(at);
+        }
+        from = at + 1;
+    }
+    None
+}
+
+/// The lowercase keys of every document, built once per index snapshot so a
+/// query does not lowercase 100,000 names and paths on every keystroke, and
+/// the recency order an empty query shows.
+#[derive(Clone, Debug, Default)]
+pub struct SearchIndex {
+    names: Vec<String>,
+    paths: Vec<String>,
+    by_recency: Vec<usize>,
+}
+
+impl SearchIndex {
+    pub fn new(docs: &[IndexedDoc]) -> Self {
+        let mut by_recency: Vec<usize> = (0..docs.len()).collect();
+        by_recency.sort_by(|&a, &b| {
+            docs[b].mtime_ms.partial_cmp(&docs[a].mtime_ms).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Self {
+            names: docs.iter().map(|d| d.name.to_lowercase()).collect(),
+            paths: docs.iter().map(|d| d.path.to_string_lossy().to_lowercase()).collect(),
+            by_recency,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// [`search_library`] over the documents this index was built from.
+    pub fn search(&self, docs: &[IndexedDoc], query: &LibraryQuery) -> Vec<Hit> {
+        debug_assert_eq!(docs.len(), self.names.len(), "index built from other documents");
+        let terms: Vec<String> = query.text.split_whitespace().map(str::to_lowercase).collect();
+        let format_ok = |d: &IndexedDoc| query.formats.is_empty() || query.formats.contains(&d.format);
+        if terms.is_empty() {
+            return self
+                .by_recency
+                .iter()
+                .filter(|&&i| format_ok(&docs[i]))
+                .map(|&index| Hit { index, score: 0, excerpt: None, marks: Vec::new() })
+                .collect();
+        }
+        let mut hits: Vec<(Hit, f64)> = docs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| format_ok(d))
+            .filter_map(|(index, doc)| {
+                let (name, path) = (&self.names[index], &self.paths[index]);
+                let body = doc.snippet.as_deref().unwrap_or("");
+                // Lowercased only when a non-ASCII term needs it, and once.
+                let mut body_lower: Option<String> = None;
+                let mut score = 0;
+                let mut excerpt = None;
+                for term in &terms {
+                    if name.starts_with(term.as_str()) {
+                        score += 40;
+                    } else if name.contains(term.as_str()) {
+                        score += 30;
+                    } else if path.contains(term.as_str()) {
+                        score += 10;
+                    } else if term.is_ascii() {
+                        let at = find_ascii_ci(body, term)?;
+                        score += 3;
+                        if excerpt.is_none() {
+                            excerpt = Some(excerpt_around(body, at, term.len()));
+                        }
+                    } else {
+                        let lower = body_lower.get_or_insert_with(|| body.to_lowercase());
+                        let at = lower.find(term.as_str())?;
+                        score += 3;
+                        if excerpt.is_none() && lower.len() == body.len() {
+                            excerpt = Some(excerpt_around(body, at, term.len()));
+                        }
+                    }
+                }
+                Some((Hit { index, score, excerpt, marks: Vec::new() }, doc.mtime_ms))
+            })
+            .collect();
+        hits.sort_by(|a, b| {
+            b.0.score
+                .cmp(&a.0.score)
+                .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        hits.into_iter().map(|(h, _)| h).collect()
+    }
+}
+
 /// Rank documents for the library and global search. Every term must match the
 /// name, path or body. Name matches rank above path, path above body, and
 /// recency breaks ties. An empty query lists everything, most recent first.
+///
+/// Builds a [`SearchIndex`] each call; keep one per snapshot when searching
+/// the same documents repeatedly.
 pub fn search_library(docs: &[IndexedDoc], query: &LibraryQuery) -> Vec<Hit> {
-    let terms: Vec<String> = query
-        .text
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .collect();
-    let mut hits: Vec<(Hit, f64)> = docs
-        .iter()
-        .enumerate()
-        .filter(|(_, d)| query.formats.is_empty() || query.formats.contains(&d.format))
-        .filter_map(|(index, doc)| {
-            if terms.is_empty() {
-                return Some((Hit { index, score: 0, excerpt: None, marks: Vec::new() }, doc.mtime_ms));
-            }
-            let name = doc.name.to_lowercase();
-            let path = doc.path.to_string_lossy().to_lowercase();
-            let body = doc.snippet.as_deref().unwrap_or("");
-            let body_lower = body.to_lowercase();
-            let mut score = 0;
-            let mut excerpt = None;
-            for term in &terms {
-                if name.starts_with(term.as_str()) {
-                    score += 40;
-                } else if name.contains(term.as_str()) {
-                    score += 30;
-                } else if path.contains(term.as_str()) {
-                    score += 10;
-                } else if let Some(at) = body_lower.find(term.as_str()) {
-                    score += 3;
-                    if excerpt.is_none() && body_lower.len() == body.len() {
-                        excerpt = Some(excerpt_around(body, at, term.len()));
-                    }
-                } else {
-                    return None;
-                }
-            }
-            Some((Hit { index, score, excerpt, marks: Vec::new() }, doc.mtime_ms))
-        })
-        .collect();
-    hits.sort_by(|a, b| {
-        b.0.score
-            .cmp(&a.0.score)
-            .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
-    });
-    hits.into_iter().map(|(h, _)| h).collect()
+    SearchIndex::new(docs).search(docs, query)
 }
 
 #[cfg(test)]
@@ -218,5 +288,25 @@ mod tests {
         assert_eq!(md.iter().map(|h| h.index).collect::<Vec<_>>(), vec![0, 1]);
         let all = search_library(&docs, &LibraryQuery::default());
         assert_eq!(all[0].index, 2, "empty query lists most recent first");
+    }
+
+    #[test]
+    fn body_match_ignores_case_and_handles_non_ascii() {
+        let docs = vec![
+            doc("a.md", "Intro\nThe ROADMAP for Q3", 1.0, FormatKind::Markdown),
+            doc("b.md", "Ünïcode Straße notes", 2.0, FormatKind::Markdown),
+        ];
+        let idx = SearchIndex::new(&docs);
+        let hits = idx.search(&docs, &LibraryQuery { text: "roadmap q3".into(), formats: vec![] });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].score, 6);
+        assert!(hits[0].excerpt.as_deref().unwrap().contains("ROADMAP"));
+        let hits = idx.search(&docs, &LibraryQuery { text: "straße".into(), formats: vec![] });
+        assert_eq!(hits.iter().map(|h| h.index).collect::<Vec<_>>(), vec![1]);
+        let hits = idx.search(&docs, &LibraryQuery { text: "STRASSE".into(), formats: vec![] });
+        assert!(hits.is_empty(), "no folding beyond to_lowercase");
+        assert_eq!(find_ascii_ci("abcABC", "bc"), Some(1));
+        assert_eq!(find_ascii_ci("ab", "abc"), None);
+        assert_eq!(find_ascii_ci("xxAbC", "abc"), Some(2));
     }
 }

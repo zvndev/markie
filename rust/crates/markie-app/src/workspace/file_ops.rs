@@ -148,7 +148,7 @@ impl Workspace {
             }
         }
         self.open_path(last, window, cx);
-        self.refresh_lists();
+        self.refresh_lists(cx);
         cx.notify();
     }
 

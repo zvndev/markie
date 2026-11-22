@@ -144,7 +144,7 @@ impl Workspace {
         }
         let _ = self.recovery.moved(from, to);
         markie_cloud::comments::local::LocalComments::new(&paths::data_dir()).move_records(from, to);
-        self.refresh_lists();
+        self.refresh_lists(cx);
         self.compute_projects(cx);
     }
 

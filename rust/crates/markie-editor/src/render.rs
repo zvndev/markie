@@ -60,6 +60,10 @@ pub const MONO: &str = ".AppleSystemUIFontMonospaced";
 /// The quote's rule: `--purple`, the same in both tones.
 const QUOTE_RULE: u32 = 0xc084fc;
 
+/// Unmeasured blocks away from the screen drawn per frame while a document
+/// is still being measured.
+const UNMEASURED_PER_FRAME: usize = 48;
+
 impl Look {
     pub(crate) fn base(&self, size: f32) -> SegStyle {
         SegStyle {
@@ -280,7 +284,17 @@ impl RichView {
         let (lo, hi) = (top_visible - screen, top_visible + screen * 2.);
         let (a, h) = (self.editor.anchor.block, self.editor.head.block);
         let mut y = px(pad_y);
-        let mut blocks: Vec<AnyElement> = Vec::with_capacity(self.editor.block_count());
+        let mut blocks: Vec<AnyElement> = Vec::new();
+        // Consecutive off-screen blocks share one spacer: one element per
+        // block made layout cost grow with the document (4 to 5 ms a frame
+        // at 900 KB) even though only a screenful is drawn.
+        let mut spacer = px(0.);
+        // Blocks not measured yet are drawn (and so measured) when near the
+        // screen, plus a small batch elsewhere each frame until all are
+        // known. Measuring every block in the first frame cost 680 ms at
+        // 900 KB, on open and again on every window resize.
+        let mut unmeasured_budget = UNMEASURED_PER_FRAME;
+        let mut more_to_measure = false;
         for b in 0..self.editor.block_count() {
             // The space above: CSS's collapsed margin between this block and
             // the last, or the first block's own (an h1 has none there).
@@ -293,11 +307,26 @@ impl RichView {
             prev_bottom = Some(mb);
             tops.push(y + px(gap));
             let height = self.heights.get(b).copied().flatten();
-            let near = height.is_none_or(|ht| y + ht >= lo && y <= hi);
+            let near = match height {
+                Some(ht) => y + ht >= lo && y <= hi,
+                None if y + px(30.) >= lo && y <= hi => true,
+                None if unmeasured_budget > 0 => {
+                    unmeasured_budget -= 1;
+                    true
+                }
+                None => {
+                    more_to_measure = true;
+                    false
+                }
+            };
             y += height.unwrap_or(px(30.));
             if !near && b != a && b != h {
-                blocks.push(div().w_full().h(height.unwrap_or(px(30.))).into_any_element());
+                spacer += height.unwrap_or(px(30.));
                 continue;
+            }
+            if spacer > px(0.) {
+                blocks.push(div().w_full().h(spacer).into_any_element());
+                spacer = px(0.);
             }
             let el = self.render_block(b, &look, window, cx);
             let store = self.store.clone();
@@ -321,6 +350,12 @@ impl RichView {
                     )
                     .into_any_element(),
             );
+        }
+        if spacer > px(0.) {
+            blocks.push(div().w_full().h(spacer).into_any_element());
+        }
+        if more_to_measure {
+            window.request_animation_frame();
         }
         // For the section rail: where each block starts, and how tall the
         // page is, from the same pass.

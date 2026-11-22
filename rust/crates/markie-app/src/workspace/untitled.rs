@@ -53,6 +53,8 @@ impl Workspace {
             self.office_flush_recovery(cx);
             return;
         }
+        // An edit still inside its settle delay: make `dirty` exact first.
+        self.settle_edit_now(cx);
         if self.is_untitled() {
             if self.dirty {
                 let text = self.current_text(cx);

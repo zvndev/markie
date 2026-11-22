@@ -34,6 +34,48 @@ pub fn journal_delay_ms(text: &str) -> u64 {
     if big { BIG_DRAFT_DEBOUNCE_MS } else { DRAFT_DEBOUNCE_MS }
 }
 
+/// [`journal_delay_ms`] for a buffer whose UTF-16 length is already known.
+pub fn journal_delay_for_utf16_len(utf16_len: usize) -> u64 {
+    if utf16_len > BIG_DRAFT_CHARS { BIG_DRAFT_DEBOUNCE_MS } else { DRAFT_DEBOUNCE_MS }
+}
+
+/// When the journal is due after an edit, decided without the text.
+///
+/// The window defers its whole-text work until typing pauses (its "settle",
+/// 150 ms), so at the moment of an edit it has no fresh copy of the text.
+/// The journal must not wait for that: it is due `journal_delay_ms` after
+/// the last edit, from the buffer's UTF-16 length as last counted (at most
+/// one settle old, which can only move the 256 K boundary by a few
+/// keystrokes). The journal itself reads the current text when it fires.
+#[derive(Clone, Debug, Default)]
+pub struct JournalPacer {
+    due: Option<std::time::Instant>,
+}
+
+impl JournalPacer {
+    /// An edit at `now`. Returns how long until the journal is due.
+    pub fn note_edit(&mut self, now: std::time::Instant, utf16_len: usize) -> std::time::Duration {
+        let wait = std::time::Duration::from_millis(journal_delay_for_utf16_len(utf16_len));
+        self.due = Some(now + wait);
+        wait
+    }
+
+    pub fn cancel(&mut self) {
+        self.due = None;
+    }
+
+    /// True once, when the journal is due at `now`.
+    pub fn take_due(&mut self, now: std::time::Instant) -> bool {
+        match self.due {
+            Some(due) if now >= due => {
+                self.due = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftMeta {
@@ -186,6 +228,44 @@ mod tests {
         // 'é' is two UTF-8 bytes and one UTF-16 unit: JavaScript counts one.
         assert_eq!(journal_delay_ms(&"é".repeat(BIG_DRAFT_CHARS)), 250);
         assert_eq!(journal_delay_ms(&"é".repeat(BIG_DRAFT_CHARS + 1)), 2000);
+    }
+
+    #[test]
+    fn a_journal_is_written_after_an_edit_without_waiting_for_the_settle() {
+        use std::time::{Duration, Instant};
+        let dir = tempfile::tempdir().unwrap();
+        let doc = dir.path().join("note.md");
+        fs::write(&doc, "saved").unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        let drafts = Drafts::new(&dir.path().join("data"));
+        let mut pacer = JournalPacer::default();
+        let t0 = Instant::now();
+        // An edit; the window's settle (150 ms) never runs in this test.
+        let wait = pacer.note_edit(t0, "saved!".len());
+        assert_eq!(wait, Duration::from_millis(DRAFT_DEBOUNCE_MS), "Electron's 250 ms, not settle + 250");
+        assert!(!pacer.take_due(t0 + Duration::from_millis(249)));
+        assert!(pacer.take_due(t0 + Duration::from_millis(250)));
+        assert!(!pacer.take_due(t0 + Duration::from_millis(400)), "once per edit");
+        // What the journal does when due: save the current text.
+        drafts.save(Some(&doc), "saved! and more").unwrap();
+        let pending = drafts.pending();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(drafts.read(&pending[0].key).as_deref(), Some("saved! and more"));
+    }
+
+    #[test]
+    fn the_journal_restarts_its_wait_on_each_edit_and_slows_for_big_buffers() {
+        use std::time::{Duration, Instant};
+        let mut pacer = JournalPacer::default();
+        let t0 = Instant::now();
+        pacer.note_edit(t0, 10);
+        pacer.note_edit(t0 + Duration::from_millis(200), 10);
+        assert!(!pacer.take_due(t0 + Duration::from_millis(300)));
+        assert!(pacer.take_due(t0 + Duration::from_millis(450)));
+        assert_eq!(pacer.note_edit(t0, BIG_DRAFT_CHARS + 1), Duration::from_millis(BIG_DRAFT_DEBOUNCE_MS));
+        pacer.cancel();
+        assert!(!pacer.take_due(t0 + Duration::from_secs(5)));
+        assert_eq!(journal_delay_for_utf16_len(BIG_DRAFT_CHARS), journal_delay_ms(&"a".repeat(BIG_DRAFT_CHARS)));
     }
 
     #[test]

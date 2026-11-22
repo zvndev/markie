@@ -9,7 +9,7 @@ use std::sync::Arc;
 use markie_core::doc_text::{SearchResponse, SearchRow, search_pool};
 use markie_core::formats::FormatKind;
 use markie_core::index::{IndexSnapshot, IndexedDoc};
-use markie_core::search::{Hit, LibraryQuery, search_library};
+use markie_core::search::{Hit, LibraryQuery, SearchIndex};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LibraryTab {
@@ -68,6 +68,9 @@ pub struct Library {
     docs: Rc<Vec<IndexedDoc>>,
     recent: Vec<IndexedDoc>,
     starred: Vec<IndexedDoc>,
+    /// Lowercase keys for each list, built when the list changes (off the
+    /// main thread for the index), not per query. Shared with `docs`.
+    docs_index: Rc<SearchIndex>,
     query: LibraryQuery,
     hits: Vec<Hit>,
     pub scanning: bool,
@@ -80,9 +83,13 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn set_snapshot(&mut self, snapshot: IndexSnapshot) {
+    /// Takes an `IndexSnapshot` (its search keys built here) or a
+    /// [`PreparedSnapshot`] built off the main thread.
+    pub fn set_snapshot(&mut self, prepared: impl Into<PreparedSnapshot>) {
+        let PreparedSnapshot { snapshot, index } = prepared.into();
         self.truncated = snapshot.truncated.is_some();
         self.docs = Rc::new(snapshot.files);
+        self.docs_index = Rc::new(index);
         self.pool = Arc::new(Vec::new());
         self.body = None;
         self.refresh();
@@ -137,6 +144,7 @@ impl Library {
     pub fn share_docs_from(&mut self, other: &Library) {
         self.truncated = other.truncated;
         self.docs = other.docs.clone();
+        self.docs_index = other.docs_index.clone();
         self.pool = other.pool.clone();
         self.body = None;
         self.refresh();
@@ -153,19 +161,44 @@ impl Library {
     }
 
     /// Recent and starred lists come from the registry as paths.
+    /// Both lists at once, stat on the calling thread. The window uses
+    /// [`Self::recent_rows_for`] off the main thread instead.
+    #[cfg(test)]
     pub fn set_lists(&mut self, recent: Vec<std::path::PathBuf>, starred: Vec<std::path::PathBuf>) {
-        self.missing.clear();
-        self.recent = recent
+        let (recent, missing) = Self::recent_rows_for(recent);
+        self.set_rows(recent, missing, Self::rows_for(starred));
+    }
+
+    /// Rows for registry paths. Each needs a stat, so the window calls this
+    /// off the main thread and hands the result to [`Self::set_rows`].
+    pub fn rows_for(paths: Vec<std::path::PathBuf>) -> Vec<IndexedDoc> {
+        paths.into_iter().filter_map(|p| row_for(&p)).collect()
+    }
+
+    /// Recent's rows: a file that is gone stays listed, and is reported as
+    /// missing ("Missing on disk"), as Electron does.
+    pub fn recent_rows_for(paths: Vec<std::path::PathBuf>) -> (Vec<IndexedDoc>, std::collections::HashSet<PathBuf>) {
+        let mut missing = std::collections::HashSet::new();
+        let rows = paths
             .into_iter()
             .map(|p| {
                 row_for(&p).unwrap_or_else(|| {
-                    self.missing.insert(p.clone());
+                    missing.insert(p.clone());
                     missing_row(&p)
                 })
             })
             .collect();
-        self.starred = starred.into_iter().filter_map(|p| row_for(&p)).collect();
-        self.refresh();
+        (rows, missing)
+    }
+
+    pub fn set_rows(&mut self, recent: Vec<IndexedDoc>, missing: std::collections::HashSet<PathBuf>, starred: Vec<IndexedDoc>) {
+        self.recent = recent;
+        self.missing = missing;
+        self.starred = starred;
+        // The All tab's hits do not depend on these lists.
+        if self.tab != LibraryTab::All {
+            self.refresh();
+        }
     }
 
     /// The row's file is gone from disk.
@@ -273,7 +306,7 @@ impl Library {
             self.hits = query_rows(self.source(), &self.query, self.sort, &self.opened_at);
             return;
         }
-        let mut hits = search_library(self.source(), &self.query);
+        let mut hits = self.docs_index.search(self.source(), &self.query);
         let docs = self.source();
         match self.sort {
             SortOrder::Default => {}
@@ -353,6 +386,37 @@ fn missing_row(path: &std::path::Path) -> IndexedDoc {
         size: 0,
         format: markie_core::formats::classify(&path.to_string_lossy()),
         snippet: None,
+    }
+}
+
+/// A snapshot with its search keys built, off the main thread.
+pub struct PreparedSnapshot {
+    snapshot: IndexSnapshot,
+    index: SearchIndex,
+}
+
+impl PreparedSnapshot {
+    pub fn new(snapshot: IndexSnapshot) -> Self {
+        let index = SearchIndex::new(&snapshot.files);
+        Self { snapshot, index }
+    }
+
+    pub fn elapsed_ms(&self) -> u128 {
+        self.snapshot.elapsed_ms
+    }
+
+    pub fn len(&self) -> usize {
+        self.snapshot.files.len()
+    }
+
+    pub fn files(&self) -> &[IndexedDoc] {
+        &self.snapshot.files
+    }
+}
+
+impl From<IndexSnapshot> for PreparedSnapshot {
+    fn from(snapshot: IndexSnapshot) -> Self {
+        Self::new(snapshot)
     }
 }
 

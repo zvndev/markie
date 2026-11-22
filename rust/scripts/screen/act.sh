@@ -6,6 +6,10 @@
 #   act.sh <pid> click <x> <y>        points from the window's top-left corner
 #   act.sh <pid> minimize
 #   act.sh <pid> resize <w> <h>       window size in points, top-left kept
+#   act.sh <pid> scroll <x> <y> <dy> <count> <gap-ms>
+#                                     wheel events over the window at x,y (points
+#                                     from its top-left); stops if the pointer
+#                                     leaves the window (rust/scripts/bench)
 # Takes the shared screen lock for itself unless the caller already holds it.
 # Before every input it checks that <pid> is the frontmost app and refuses
 # otherwise, so a keystroke can never land in another agent's window or in
@@ -32,6 +36,10 @@ case "$verb" in
   type) guard; se "keystroke $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1")" ;;
   click) guard; read -r wx wy < <(bounds); cliclick "c:$((wx + $1)),$((wy + $2))" ;;
   minimize) guard; se "set value of attribute \"AXMinimized\" of window 1 of (first process whose unix id is $pid) to true" ;;
+  scroll)
+    tool="$here/../../target/bench-tools/postscroll"
+    [[ -x "$tool" ]] || swiftc -O -target arm64-apple-macos13 "$here/../bench/postscroll.swift" -o "$tool" 2>/dev/null
+    guard; read -r wx wy < <(bounds); cliclick "m:$((wx + $1)),$((wy + $2))"; "$tool" "$pid" "$3" "$4" "$5" ;;
   resize) guard; se "set size of window 1 of (first process whose unix id is $pid) to {$1, $2}" ;;
   *) echo "act: unknown verb $verb" >&2; exit 64 ;;
 esac

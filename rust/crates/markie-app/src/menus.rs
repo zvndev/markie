@@ -152,6 +152,11 @@ thread_local! {
     static INSTALLED: std::cell::Cell<Option<MenuState>> = const { std::cell::Cell::new(None) };
 }
 
+/// Whether any menu bar has been set yet.
+pub fn is_installed() -> bool {
+    INSTALLED.with(|s| s.get()).is_some()
+}
+
 /// Sets the menu bar, only when what it depends on changed.
 pub fn install(state: MenuState, cx: &mut App) {
     if INSTALLED.with(|s| s.get()) == Some(state) {

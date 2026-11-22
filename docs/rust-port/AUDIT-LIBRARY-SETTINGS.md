@@ -45,7 +45,7 @@ Rows that failed and were fixed in this audit: 1.2, 1.3, 1.5, 1.7, 1.8, 1.11, 1.
 | 535badf | Merge of `rust/markie-rs` (cloud, office and platform audits), conflicts resolved as its message lists. |
 | ac0bea6 | Settings › Advanced: the checkboxes stay on the panel and the descriptions wrap (found by the cloud auditor). |
 | 220da82 | The Library's own "Upload destination" picker, used by a row's Sync to cloud. |
-| (merge) | Merge of `rust/markie-rs` at e8e8e07. One menu bar (`menus.rs`) carries every auditor's items in Electron's places, one Edit menu, one palette list. |
+| 9bf5837 | Merge of `rust/markie-rs` at e8e8e07. One menu bar (`menus.rs`) carries every auditor's items in Electron's places, one Edit menu, one palette list. |
 
 Shared files touched, kept small, for the other auditors:
 

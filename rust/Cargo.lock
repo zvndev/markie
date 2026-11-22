@@ -4641,6 +4641,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "markie-agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.4",
+ "markie-cloud",
+ "markie-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "markie-app"
 version = "0.1.0"
 dependencies = [
@@ -4648,6 +4666,8 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "markie-agent",
+ "markie-cloud",
  "markie-core",
  "markie-editor",
  "markie-office",
@@ -4657,6 +4677,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "tokio",
  "trash",
  "url",
 ]

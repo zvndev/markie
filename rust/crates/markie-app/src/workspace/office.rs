@@ -187,16 +187,14 @@ fn format_id(format: FormatKind) -> &'static str {
 }
 
 impl Workspace {
-    /// An edit in the Word view: autosave on Markdown's rules (1 s idle, at
-    /// most 5 s while typing) and a recovery revision 600 ms after it, like
-    /// Electron's document library.
+    /// An edit in the Word view keeps a recovery revision 600 ms later, like
+    /// Electron's document library. The file itself is written only by ⌘S or
+    /// Save: an office file is never written on a timer.
     fn on_office_changed(&mut self, cx: &mut Context<Self>) {
         let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc else { return };
         if !office.is_dirty(cx) {
             return;
         }
-        self.autosave.note_change(std::time::Instant::now());
-        self.schedule_autosave(cx);
         self._recovery_task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(markie_core::office_recovery::RECOVERY_DEBOUNCE_MS))
@@ -227,18 +225,22 @@ impl Workspace {
         }
     }
 
-    /// Autosave for office documents: written through the engine, never a
-    /// dialog. A failure leaves the document edited and the recovery revision.
-    pub(super) fn office_autosave(&mut self, cx: &mut Context<Self>) {
-        let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc else { return };
-        let (path, format) = (path.clone(), *format);
-        if let Ok(Some(bytes)) = write(office, &path, cx) {
-            self.keep_office_bytes(&path, format, &bytes, true);
-            if self.side == super::SidePanel::History {
-                self.refresh_versions();
-            }
-        }
-        cx.notify();
+    /// Electron's `prepareClose` for office documents: make the newest edits
+    /// a durable recovery revision before the window goes. The file on disk
+    /// is not written; reopening offers the revision from Recovery history.
+    pub(super) fn office_flush_recovery(&mut self, cx: &mut Context<Self>) {
+        self._recovery_task = Task::ready(());
+        self.keep_office_revision(false, cx);
+    }
+
+    /// On open: a newer, unsaved revision from an earlier session is still in
+    /// Recovery history. Say so instead of hiding it.
+    pub(super) fn office_unsaved_notice(&self, path: &Path) -> Option<String> {
+        let idx = self.recovery.index(path)?;
+        let newest = idx.revisions.last()?;
+        let on_disk = std::fs::read(path).map(|b| markie_core::clock::sha256_hex(&b)).ok();
+        (idx.exported_revision != Some(newest.revision) && on_disk.as_deref() != Some(newest.sha256.as_str()))
+            .then(|| "This document has unsaved changes from an earlier session. Open Recovery history to restore them.".to_string())
     }
 
     /// The office document's recovery revisions as history-panel rows.
@@ -261,8 +263,9 @@ impl Workspace {
         Some(markie_core::doc_text::text_from_bytes(&bytes, format).unwrap_or_default())
     }
 
-    /// Restore a recovery revision: it becomes the newest revision and the
-    /// open document, and it is written to the file like any autosave.
+    /// Restore a recovery revision, as Electron does: it becomes the newest
+    /// revision and the open, unsaved document. The file is unchanged until
+    /// the user saves.
     pub(super) fn restore_office_version(&mut self, stamp: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(OpenDoc { path, format, kind: DocKind::Office(_), .. }) = &self.doc else { return };
         let (path, format) = (path.clone(), *format);
@@ -276,18 +279,13 @@ impl Workspace {
             Ok(d) => d,
             Err(e) => return window.push_notification(format!("This revision could not be opened. {}", e.message), cx),
         };
-        if let Err(e) = markie_core::save::atomic_write(&path, &bytes) {
-            return window.push_notification(format!("Markie could not save: {e}"), cx);
-        }
         if let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc {
             office.view.update(cx, |view, cx| {
-                view.editor = WordEditor::new(document);
+                view.editor = WordEditor::new_unsaved(document);
                 cx.notify();
             });
         }
-        if let Some(newest) = self.recovery.list(&path).first() {
-            let _ = self.recovery.mark_exported(&path, newest.revision);
-        }
+        window.push_notification("Restored a recovery revision. The file was not changed. Save to keep it.", cx);
         self.refresh_versions();
         cx.notify();
     }

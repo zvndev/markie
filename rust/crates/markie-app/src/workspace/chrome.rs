@@ -157,6 +157,7 @@ impl Workspace {
             let _ = reg.set_setting("style_template", id);
         }
         themes::apply(id, Some(window), cx);
+        self.save_theme_store(cx);
         self.shell.template = id.to_string();
         self.shell.menu = None;
         cx.notify();

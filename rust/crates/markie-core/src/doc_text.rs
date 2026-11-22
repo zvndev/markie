@@ -570,6 +570,35 @@ pub fn excerpt(text: &str, needles: &[String], radius: usize) -> Option<Excerpt>
     Some(Excerpt { text: window, marks })
 }
 
+/// `marked` in global-search.tsx: sort ranges and merge overlaps, so
+/// "plan planning" never nests marks.
+pub fn merge_marks(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    ranges.sort();
+    let mut out: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (a, b) in ranges {
+        match out.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out
+}
+
+/// `highlight` in global-search.tsx: every occurrence of every term of
+/// `query`, merged. Byte ranges into `text`.
+pub fn highlight_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
+    let lower = lower_same_len(text);
+    let mut ranges = Vec::new();
+    for needle in query.to_lowercase().split_whitespace() {
+        let mut from = 0;
+        while let Some(at) = lower[from..].find(needle).map(|i| i + from) {
+            ranges.push((at, at + needle.len()));
+            from = at + needle.len();
+        }
+    }
+    merge_marks(ranges)
+}
+
 /// A document global search can look at.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchRow {
@@ -850,6 +879,14 @@ mod tests {
         assert_eq!(short.text, "The Needle");
         assert_eq!(short.marks, vec![(4, 10)]);
         assert!(excerpt("none", &["x".into()], 70).is_none());
+    }
+
+    #[test]
+    fn highlights_merge_like_global_search() {
+        assert_eq!(highlight_ranges("Plan planning", "plan planning"), vec![(0, 4), (5, 13)]);
+        assert_eq!(highlight_ranges("planning", "plan lanni"), vec![(0, 6)]);
+        assert_eq!(merge_marks(vec![(5, 8), (0, 2), (1, 3)]), vec![(0, 3), (5, 8)]);
+        assert!(highlight_ranges("x", "  ").is_empty());
     }
 
     #[test]

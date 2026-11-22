@@ -31,6 +31,7 @@ use crate::library::Library;
 pub(crate) mod account;
 mod account_slot;
 mod agents;
+mod appearance;
 mod chrome;
 mod collab;
 mod comments;
@@ -106,6 +107,8 @@ pub struct Workspace {
     shell: rail::Shell,
     /// The Projects tab and the ⇧⌘F body search.
     projects: projects::Projects,
+    /// Settings › Appearance's live controls.
+    appearance: appearance::AppearanceUi,
     /// The open `.wd` document's preview (`workspace/darkmown.rs`).
     darkmown: darkmown::DarkmownState,
     editor: Entity<EditorState>,
@@ -184,11 +187,17 @@ impl Workspace {
         ];
         subscriptions.extend(Self::watch_account(window, cx));
 
-        let template = registry
-            .as_ref()
-            .and_then(|r| r.setting("style_template").ok().flatten())
-            .unwrap_or_else(|| "markie".into());
-        crate::themes::apply(&template, Some(window), cx);
+        // The theme store (`markie.themes.v1`); a build before it kept only
+        // the template id.
+        let store = match registry.as_ref().and_then(|r| r.setting("themes.v1").ok().flatten()) {
+            Some(json) => markie_core::theme::ThemeStore::parse(&json),
+            None => {
+                let id = registry.as_ref().and_then(|r| r.setting("style_template").ok().flatten()).unwrap_or_else(|| "markie".into());
+                markie_core::theme::ThemeStore::default().choose_template(&id, markie_core::theme::Tone::Dark)
+            }
+        };
+        let template = store.active_template().id.clone();
+        crate::themes::apply_store(store, Some(window), cx);
         // The user's own light or dark choice outranks the system appearance;
         // System follows macOS, also when it changes while the app runs.
         let color_mode =
@@ -199,6 +208,8 @@ impl Workspace {
         subscriptions.extend(shell_subs);
         let (projects, projects_sub) = projects::Projects::new(window, cx);
         subscriptions.push(projects_sub);
+        let (appearance, appearance_subs) = appearance::AppearanceUi::new(window, cx);
+        subscriptions.extend(appearance_subs);
         // Closing flushes pending saves first (Electron's close-flush.js).
         subscriptions.push(cx.on_app_quit(|this, cx| {
             this.flush_pending(cx);
@@ -230,6 +241,7 @@ impl Workspace {
             library,
             shell,
             projects,
+            appearance,
             darkmown: Default::default(),
             editor,
             preview,
@@ -500,7 +512,13 @@ impl Workspace {
                 self.disk_missing = false;
                 self.viewing_version = None;
                 // The opened bytes are the first recovery revision, as in
-                // Electron's import, and they match the file.
+                // Electron's import, and they match the file. Unsaved edits
+                // from an earlier session stay in Recovery history.
+                if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+                    if let Some(notice) = self.office_unsaved_notice(&doc.path) {
+                        window.push_notification(notice, cx);
+                    }
+                }
                 self.keep_office_revision(true, cx);
                 if self.side == SidePanel::History {
                     self.refresh_versions();
@@ -591,8 +609,10 @@ impl Workspace {
 
     /// Write whatever autosave still owes, now. Never a dialog.
     fn flush_pending(&mut self, cx: &mut Context<Self>) {
-        let office_dirty = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
-        if self.autosave.is_pending() || self.dirty || office_dirty {
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            return self.office_flush_recovery(cx);
+        }
+        if self.autosave.is_pending() || self.dirty {
             self.autosave.cancel();
             self.autosave_now(cx);
         }
@@ -602,7 +622,8 @@ impl Workspace {
     /// edited marker, and the next save tries again.
     fn autosave_now(&mut self, cx: &mut Context<Self>) {
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
-            return self.office_autosave(cx);
+            // Office files are never written on a timer.
+            return;
         }
         let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };

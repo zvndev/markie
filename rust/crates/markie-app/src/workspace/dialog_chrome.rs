@@ -26,10 +26,6 @@ pub(crate) struct Variant {
     pub status_red: Option<String>,
     pub body_font: Option<String>,
     pub heading_font: Option<String>,
-    pub line_height: Option<f32>,
-    pub paragraph_gap: Option<f32>,
-    pub font_size: Option<f32>,
-    pub content_width: Option<f32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -110,6 +106,13 @@ impl Tokens {
     /// The tokens for `template` in the current light or dark mode.
     pub(crate) fn current(template: &str, cx: &App) -> Self {
         let dark = gpui_kit::component::Theme::global(cx).mode.is_dark();
+        // The painted preset, so a custom preset's colours reach dialogs too.
+        if cx.has_global::<crate::themes::ThemeState>() {
+            let (preset, _) = crate::themes::painted(cx, dark);
+            if let Some(v) = serde_json::to_value(&preset.tokens).ok().and_then(|v| serde_json::from_value::<Variant>(v).ok()) {
+                return Self::from_variant(&v, dark);
+            }
+        }
         let all = templates();
         let t = all.iter().find(|t| t.id == template).or_else(|| all.first()).expect("templates exist");
         Self::from_variant(if dark { &t.dark } else { &t.light }, dark)
@@ -356,7 +359,7 @@ mod tests {
     #[test]
     fn every_template_has_typography() {
         for t in templates() {
-            assert!(t.light.font_size.is_some() && t.dark.content_width.is_some(), "{}", t.id);
+            assert!(t.light.body_font.is_some() && t.dark.heading_font.is_some(), "{}", t.id);
         }
     }
 

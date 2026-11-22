@@ -250,12 +250,21 @@ def load1() -> float:
     return os.getloadavg()[0]
 
 
-def wait_quiet(limit: float, max_wait: float = 1800):
-    """Other agents build Rust on this Mac. Wait until the 1-minute load is
-    under `limit` (or give up after max_wait s) so a sample is not a build."""
+def idle_pct() -> float:
+    """Idle CPU over the next 2 s, from top."""
+    r = subprocess.run(["top", "-l", "2", "-n", "0", "-s", "2"], capture_output=True, text=True).stdout
+    line = [l for l in r.splitlines() if l.startswith("CPU usage")][-1]
+    return float(line.split(",")[-1].split("%")[0])
+
+
+def wait_quiet(min_idle: float, max_wait: float = 1800):
+    """Other agents build Rust and run simulators on this Mac. Wait until at
+    least `min_idle` % of the CPU is idle (or give up after max_wait s), so a
+    sample is not taken in the middle of a build. The load average is not
+    used: it counts threads blocked on I/O and stays in the hundreds."""
     end = time.time() + max_wait
-    while load1() > limit and time.time() < end:
-        time.sleep(5)
+    while idle_pct() < min_idle and time.time() < end:
+        time.sleep(3)
 
 
 def one_launch(out: Path, app: str, name: str, i: int, label: str, idle: bool) -> dict:
@@ -270,6 +279,7 @@ def one_launch(out: Path, app: str, name: str, i: int, label: str, idle: bool) -
         png.parent.mkdir(parents=True, exist_ok=True)
     res = timed_launch(app, fx / name, data, logf, png)
     res["load1"] = load1()
+    res["idle_pct"] = idle_pct()
     pid = res["pid"]
     try:
         if is_rs(app):
@@ -323,14 +333,14 @@ def bench_launch(out: Path, runs: int, idle: bool, apps: list[str], label: str, 
                 for attempt in range(3):
                     wait_quiet(load_limit)
                     res = one_launch(out, app, name, i, label, idle and name == "doc-10k.md" and i > 0)
-                    if res.get("content_ms") is not None and res["load1"] <= 2 * load_limit:
+                    if res.get("content_ms") is not None and res["idle_pct"] >= load_limit / 2:
                         break
-                    log(f"  {app} {name}: retaking (frame {res.get('content_ms')}, load {res['load1']:.0f})")
+                    log(f"  {app} {name}: retaking (frame {res.get('content_ms')}, idle {res['idle_pct']:.0f}%)")
                 if i == 0:
                     log(f"{app} {name}: warm-up {res.get('content_ms')} ms")
                     continue
                 log(f"{app} {name} run {i}: content {res.get('content_ms')} ms, rss {res['rss_mb']:.0f} MB, "
-                    f"load {res['load1']:.0f}"
+                    f"idle {res['idle_pct']:.0f}%"
                     + (f", rs open {res.get('rs_open_ms', 0):.1f} ms" if is_rs(app) else "")
                     + (f", idle cpu {res['idle_cpu_pct']:.2f}%" if "idle_cpu_pct" in res else ""))
                 rows[app].append(res)
@@ -398,13 +408,13 @@ def bench_typing(out: Path, runs: int, label: str, apps: list[str], load_limit: 
                     act(pid, "type", " the quick brown fox jumps over the lazy dog")
                     time.sleep(0.6)
                     keys = [e for e in perf_events(logf) if e["event"] == "key"][before:]
-                    return {"ms": [k["ms"] for k in keys], "cost": [k["cost"] for k in keys], "load1": load1()}
+                    return {"ms": [k["ms"] for k in keys], "cost": [k["cost"] for k in keys], "load1": load1(), "idle_pct": idle_pct()}
 
                 r = rs_session(out, app, label, copy, logf, load_limit, body)
                 if r and r["ms"]:
                     rows[app].append(r)
                     log(f"typing {app} {name} run {i + 1}: {len(r['ms'])} frames for 44 keys, "
-                        f"median {statistics.median(r['ms']):.1f} ms, load {r['load1']:.0f}")
+                        f"median {statistics.median(r['ms']):.1f} ms, idle {r['idle_pct']:.0f}%")
         for app in apps:
             results[f"{app}/{name}"] = rows[app]
         save(out, f"typing-{label}", results)
@@ -424,13 +434,13 @@ def bench_scroll(out: Path, runs: int, label: str, apps: list[str], load_limit: 
                     act(pid, "scroll", "700", "400", "-60", "240", "8")
                     time.sleep(0.4)
                     frames = [e for e in perf_events(logf) if e["event"] == "scroll_frame"]
-                    return {"cost": [f["cost"] for f in frames], "gap": [f["gap"] for f in frames[1:]], "load1": load1()}
+                    return {"cost": [f["cost"] for f in frames], "gap": [f["gap"] for f in frames[1:]], "load1": load1(), "idle_pct": idle_pct()}
 
                 r = rs_session(out, app, label, fx / name, logf, load_limit, body)
                 if r and r["cost"]:
                     rows[app].append(r)
                     log(f"scroll {app} {name} run {i + 1}: {len(r['cost'])} frames, median cost "
-                        f"{statistics.median(r['cost']):.2f} ms, load {r['load1']:.0f}")
+                        f"{statistics.median(r['cost']):.2f} ms, idle {r['idle_pct']:.0f}%")
         for app in apps:
             results[f"{app}/{name}"] = rows[app]
         save(out, f"scroll-{label}", results)
@@ -461,7 +471,7 @@ def bench_index(out: Path, runs: int, label: str, load_limit: float):
         wait_quiet(load_limit)
         el = json.loads(subprocess.run(["node", str(HERE / "electron-index.cjs"), str(el_dir), str(runs)], env=env,
                                        capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1])
-        result[where] = {"rs": rs, "electron": el, "load1": load1()}
+        result[where] = {"rs": rs, "electron": el, "load1": load1(), "idle_pct": idle_pct()}
         log(f"index {where}: rs median {statistics.median(rs['scan_ms']):.0f} ms ({rs['files']} files), "
             f"electron median {statistics.median(el['scan_ms']):.0f} ms ({el['files']} files)")
         save(out, f"index-{label}", result)
@@ -497,9 +507,9 @@ def summary(out: Path, label: str):
                 lines.append(f"| {name} | " + " | ".join(stat([r.get(metric) for r in launch.get(f"{a}/{name}", [])]) for a in cols) + " |")
         lines.append("\nIdle CPU over 30 s, 10 KB document open, %: " + ", ".join(
             f"{names[a]} {stat([r.get('idle_cpu_pct') for r in launch.get(f'{a}/doc-10k.md', [])])}" for a in apps))
-        loads = [r.get("load1") for rows in launch.values() for r in rows if r.get("load1") is not None]
-        if loads:
-            lines.append(f"\nLoad average during samples: {stat(loads)}")
+        idles = [r.get("idle_pct") for rows in launch.values() for r in rows if r.get("idle_pct") is not None]
+        if idles:
+            lines.append(f"\nIdle CPU when each sample was taken, %: {stat(idles)}")
     typing = load(out, f"typing-{label}")
     if typing:
         lines.append(f"\n## Keystroke to frame ({label}): median of per-run medians (min to max), ms\n")
@@ -550,8 +560,8 @@ def main():
     ap.add_argument("--apps", default="electron,rs")
     ap.add_argument("--no-idle", action="store_true")
     ap.add_argument("--fixtures", default=",".join(FIXTURES))
-    ap.add_argument("--load-limit", type=float, default=float(os.cpu_count() or 8),
-                    help="wait for the 1-minute load average to fall under this before each sample")
+    ap.add_argument("--min-idle", dest="load_limit", type=float, default=50.0,
+                    help="wait for at least this %% idle CPU before each sample")
     a = ap.parse_args()
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)

@@ -475,8 +475,10 @@ impl Workspace {
     fn add_server(&mut self, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
         let ui = &self.cloud.servers_ui;
         if !ui.adding {
+            // `mt-2` on an inline button: it is as wide as its label.
             return div()
                 .mt(px(8.))
+                .flex()
                 .child(overlay_button("server-add-open", "Add a server…", t).on_click(cx.listener(|this, _, window, cx| {
                     this.cloud.servers_ui.adding = true;
                     if let Some(a) = this.cloud.servers_ui.address.clone() {

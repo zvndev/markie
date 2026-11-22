@@ -57,7 +57,12 @@ impl Answer {
 
     /// Err for a non-2xx, so typed calls can use `?`.
     pub fn into_ok(self) -> Result<Answer> {
-        if self.ok() { Ok(self) } else { Err(CloudError::Status { status: self.status, message: self.message() }) }
+        if self.ok() {
+            Ok(self)
+        } else {
+            let code = self.data.as_ref().and_then(|d| d.get("code")).and_then(Value::as_str).map(str::to_string);
+            Err(CloudError::Status { status: self.status, message: self.message(), code })
+        }
     }
 
     /// The JSON body of a 2xx, or Unreadable.

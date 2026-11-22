@@ -14,6 +14,26 @@ use crate::clock::{iso, now_ms, parse_iso, slug_for};
 const MAX_AGE_MS: i64 = 7 * 86_400_000;
 const MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024;
 
+/// `use-save-guard.ts`: the journal runs ahead of the file, 250 ms after the
+/// last edit, and 2 s for a buffer past 256 K characters (JavaScript string
+/// length, UTF-16 units), where each write costs more.
+pub const DRAFT_DEBOUNCE_MS: u64 = 250;
+pub const BIG_DRAFT_CHARS: usize = 256 * 1024;
+pub const BIG_DRAFT_DEBOUNCE_MS: u64 = 2000;
+
+pub fn journal_delay_ms(text: &str) -> u64 {
+    // UTF-16 length is at most the UTF-8 length, and at least a third of it,
+    // so only a buffer in between is counted.
+    let big = if text.len() <= BIG_DRAFT_CHARS {
+        false
+    } else if text.len() > BIG_DRAFT_CHARS * 3 {
+        true
+    } else {
+        text.encode_utf16().count() > BIG_DRAFT_CHARS
+    };
+    if big { BIG_DRAFT_DEBOUNCE_MS } else { DRAFT_DEBOUNCE_MS }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftMeta {
@@ -157,6 +177,16 @@ impl Drafts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn journal_waits_like_the_save_guard() {
+        assert_eq!(journal_delay_ms("short"), 250);
+        assert_eq!(journal_delay_ms(&"a".repeat(BIG_DRAFT_CHARS)), 250);
+        assert_eq!(journal_delay_ms(&"a".repeat(BIG_DRAFT_CHARS + 1)), 2000);
+        // 'é' is two UTF-8 bytes and one UTF-16 unit: JavaScript counts one.
+        assert_eq!(journal_delay_ms(&"é".repeat(BIG_DRAFT_CHARS)), 250);
+        assert_eq!(journal_delay_ms(&"é".repeat(BIG_DRAFT_CHARS + 1)), 2000);
+    }
 
     #[test]
     fn a_draft_survives_until_the_file_is_saved() {

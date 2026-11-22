@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -39,6 +40,8 @@ pub(super) enum Overlay {
     /// The file changed on disk under unsaved edits. `confirming` is the
     /// destructive choice waiting for its second click.
     DiskConflict { confirming: Option<super::strips::Destructive> },
+    /// "Import a text copy?" for an HTML file (`import_copy.rs`).
+    ConvertDocument { path: PathBuf },
 }
 
 impl Overlay {
@@ -104,6 +107,23 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Would a GPUI layer paint where a web view sits? A system web view is
+    /// a native subview above everything GPUI draws, so the web views hide
+    /// while one of these is open: a title-bar menu, Markie's dialogs and
+    /// the palette, ⇧⌘F search, the share sheet, and GPUI Kit's dialogs
+    /// and sheets (agents, shortcuts, sign-in). The document area also gives
+    /// way to the Cloud and Vault pages and to a version preview.
+    pub(super) fn web_views_covered(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        covered(&CoverState {
+            title_menu: self.shell.menu.is_some(),
+            dialog: self.dialogs.open.is_open(),
+            search: self.shell.search_open,
+            share: self.collab.share.is_some(),
+            kit_layer: window.has_active_dialog(cx) || window.has_active_sheet(cx),
+            page_replaced: self.workspace_page_open() || self.viewing_version.is_some(),
+        })
+    }
+
     /// The dialog layer, drawn over the whole window. Workspace::render adds
     /// it last so it paints above everything.
     pub(super) fn render_dialogs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -122,6 +142,7 @@ impl Workspace {
             Overlay::Trash { .. } => (self.render_trash(&t, cx), false, true),
             Overlay::Move { .. } => (self.render_move(&t, cx), false, true),
             Overlay::DiskConflict { .. } => (self.render_disk_conflict(&t, cx), false, false),
+            Overlay::ConvertDocument { .. } => (self.render_convert_dialog(&t, cx), false, true),
         };
         Some(
             div()
@@ -189,6 +210,12 @@ impl Workspace {
         .on_action(cx.listener(|_, _: &ShowAbout, _, cx| super::shortcuts::show_about(cx)))
         .on_action(cx.listener(|this, _: &RichMode, window, cx| this.set_mode(Mode::View, window, cx)))
         .on_action(cx.listener(|this, _: &SourceMode, window, cx| this.set_mode(Mode::Source, window, cx)))
+        .on_action(cx.listener(|this, _: &SplitMode, window, cx| this.set_mode(Mode::Split, window, cx)))
+        .on_action(cx.listener(|this, _: &MakeInteractive, window, cx| {
+            if super::comments::nightly(this.registry.as_deref()) {
+                this.make_interactive(window, cx);
+            }
+        }))
         .on_action(cx.listener(Self::on_move))
     }
 
@@ -222,3 +249,37 @@ impl Workspace {
     }
 }
 
+/// What can sit over the document area this frame.
+#[derive(Default, Clone, Copy)]
+pub(super) struct CoverState {
+    pub title_menu: bool,
+    pub dialog: bool,
+    pub search: bool,
+    pub share: bool,
+    pub kit_layer: bool,
+    pub page_replaced: bool,
+}
+
+pub(super) fn covered(s: &CoverState) -> bool {
+    s.title_menu || s.dialog || s.search || s.share || s.kit_layer || s.page_replaced
+}
+
+#[cfg(test)]
+mod cover_tests {
+    use super::{CoverState, covered};
+
+    #[test]
+    fn any_overlay_hides_the_web_views() {
+        assert!(!covered(&CoverState::default()));
+        for s in [
+            CoverState { title_menu: true, ..Default::default() },
+            CoverState { dialog: true, ..Default::default() },
+            CoverState { search: true, ..Default::default() },
+            CoverState { share: true, ..Default::default() },
+            CoverState { kit_layer: true, ..Default::default() },
+            CoverState { page_replaced: true, ..Default::default() },
+        ] {
+            assert!(covered(&s));
+        }
+    }
+}

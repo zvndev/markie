@@ -122,7 +122,11 @@ impl Workspace {
 
     /// The recovered draft for the open document, if Markie kept one.
     fn open_draft(&self) -> Option<usize> {
-        let path = self.doc.as_ref()?.path.to_string_lossy().into_owned();
+        let doc = self.doc.as_ref()?;
+        if doc.untitled {
+            return self.recovered.iter().position(|d| d.meta.path.is_none());
+        }
+        let path = doc.path.to_string_lossy().into_owned();
         self.recovered.iter().position(|d| d.meta.path.as_deref() == Some(path.as_str()))
     }
 
@@ -269,6 +273,25 @@ impl Workspace {
                             .text_color(t.muted)
                             .child(format!("{} was moved or deleted. Saving will create it again.", self.open_name())),
                     )
+                    .into_any_element(),
+            );
+        }
+
+        if !self.doc_notes.is_empty() {
+            // `.docs-warning`: status yellow on the surface, one line of notes.
+            let p = crate::themes::palette(cx);
+            strips.push(
+                div()
+                    .flex_none()
+                    .px(px(20.))
+                    .py(px(10.))
+                    .border_b_1()
+                    .border_color(p.border)
+                    .bg(p.surface)
+                    .text_size(px(12.))
+                    .line_height(relative(1.6))
+                    .text_color(p.yellow)
+                    .child(self.doc_notes.join(" "))
                     .into_any_element(),
             );
         }

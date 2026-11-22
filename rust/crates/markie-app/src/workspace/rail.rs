@@ -5,7 +5,7 @@
 //! What Markie RS has is wired; what it does not have yet shows the same
 //! empty state the Electron app shows a signed-out or first-run user.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
@@ -27,6 +27,24 @@ use crate::themes::{self, Palette, mix};
 
 pub(super) const RAIL_WIDTH: f32 = 52.;
 const PANEL_DEFAULT_WIDTH: f32 = 252.;
+/// `src/lib/panel-width.ts`.
+const PANEL_MIN_WIDTH: f32 = 200.;
+const PANEL_MAX_WIDTH: f32 = 520.;
+const PANEL_MAX_FRACTION: f32 = 0.45;
+const PANEL_WIDTH_KEY: &str = "left_panel_width_v1";
+
+/// The widest the panel may be in a window this wide, never below the minimum.
+fn max_panel_width(viewport: f32) -> f32 {
+    PANEL_MIN_WIDTH.max(PANEL_MAX_WIDTH.min((viewport * PANEL_MAX_FRACTION).round()))
+}
+
+/// `clampPanelWidth`: a bad width is the default, then the bounds.
+fn clamp_panel_width(width: f32, viewport: f32) -> f32 {
+    let wanted = if width.is_finite() && width > 0. { width } else { PANEL_DEFAULT_WIDTH };
+    PANEL_MIN_WIDTH.max(max_panel_width(viewport).min(wanted.round()))
+}
+/// Electron's `markie.browse.open.v1`, kept in Markie RS's own registry.
+const BROWSE_OPEN_KEY: &str = "browse_open_v1";
 
 /// What the left edge shows (`src/lib/left-rail.ts`, plus the Vault page).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +54,8 @@ pub(super) enum LeftView {
     Cloud,
     Skills,
     Vault,
+    /// Live Docs (super-nightly): Darkmown projects, a page of its own.
+    LiveDocs,
     /// The pencil: the formatting rail, which owns no panel.
     Edit,
 }
@@ -48,6 +68,7 @@ impl LeftView {
             LeftView::Cloud => "CLOUD",
             LeftView::Skills => "SKILLS",
             LeftView::Vault => "VAULT",
+            LeftView::LiveDocs => "LIVE DOCS",
             LeftView::Edit => "",
         }
     }
@@ -58,7 +79,7 @@ impl LeftView {
 
     /// Cloud and the Vault take the document area over instead of a panel.
     fn takes_workspace(self) -> bool {
-        matches!(self, LeftView::Cloud | LeftView::Vault)
+        matches!(self, LeftView::Cloud | LeftView::Vault | LeftView::LiveDocs)
     }
 }
 
@@ -75,11 +96,14 @@ pub(super) enum FilterMenu {
     BrowseType,
 }
 
-/// One row of Browse: a folder, or a file under an open folder.
+/// One row of Browse's folder tree, flattened for the list: a folder, a
+/// file under an open folder, or a capped folder's "Show N more". `depth`
+/// draws the hairlines Electron's nested `ml-[6px] border-l pl-[5px]` draws.
 #[derive(Clone)]
 pub(super) enum BrowseRow {
-    Folder { dir: PathBuf, label: SharedString, count: usize, open: bool },
-    File { hit: usize },
+    Folder { dir: PathBuf, label: SharedString, count: usize, open: bool, depth: usize },
+    File { hit: usize, depth: usize },
+    More { dir: PathBuf, hidden: usize, depth: usize },
 }
 
 /// Everything the chrome keeps between frames.
@@ -95,17 +119,32 @@ pub(super) struct Shell {
     previous_panel: LeftView,
     rail_hover: Option<&'static str>,
     pub panel_width: f32,
+    /// A resizer drag: where it started and the width then.
+    pub panel_drag: Option<(f32, f32)>,
+    resizer_hover: bool,
     lib_tab: LibTab,
     filter_menu: Option<FilterMenu>,
     filter_closed: Option<(FilterMenu, Instant)>,
     pub recent: Library,
     recent_filter: Entity<InputState>,
     browse_filter: Entity<InputState>,
+    /// Folders the person opened and closed by hand (`OpenedByHand`); until
+    /// they touch one, the tree opens to its first branching level.
     browse_open: HashSet<PathBuf>,
+    browse_closed: HashSet<PathBuf>,
+    browse_touched: bool,
+    /// What is open in the rows as drawn, ancestors included.
+    browse_open_now: HashSet<PathBuf>,
+    /// A filter holds the tree open to its matches.
+    browse_forced: bool,
+    /// Folders whose 200-row cap was lifted, for this list only.
+    browse_revealed: HashSet<PathBuf>,
     browse_rows: Option<Rc<Vec<BrowseRow>>>,
     browse_full_path: bool,
-    /// Until a folder is toggled, every folder shows open, as in Electron.
-    browse_touched: bool,
+    /// Starred files and folders (Browse's ☆).
+    pub stars: HashSet<PathBuf>,
+    /// The Library row whose ⋯ menu is open, and where.
+    pub row_menu: Option<(PathBuf, Point<Pixels>)>,
     pub search_open: bool,
     pub search: Library,
     search_input: Entity<InputState>,
@@ -164,6 +203,8 @@ impl Shell {
             previous_panel: LeftView::Library,
             rail_hover: None,
             panel_width: PANEL_DEFAULT_WIDTH,
+            panel_drag: None,
+            resizer_hover: false,
             lib_tab: LibTab::Recent,
             filter_menu: None,
             filter_closed: None,
@@ -171,9 +212,15 @@ impl Shell {
             recent_filter,
             browse_filter,
             browse_open: HashSet::new(),
+            browse_closed: HashSet::new(),
+            browse_touched: false,
+            browse_open_now: HashSet::new(),
+            browse_forced: false,
+            browse_revealed: HashSet::new(),
             browse_rows: None,
             browse_full_path: false,
-            browse_touched: false,
+            stars: HashSet::new(),
+            row_menu: None,
             search_open: false,
             search,
             search_input,
@@ -218,6 +265,9 @@ impl Workspace {
         s.filter_menu = None;
         if self.shell.view == LeftView::Cloud && self.shell.panel_open {
             self.refresh_cloud(false, cx);
+        }
+        if self.shell.view == LeftView::LiveDocs && self.shell.panel_open {
+            self.live_docs_shown(cx);
         }
         if self.shell.view == LeftView::Browse && self.shell.panel_open && self.library.total() == 0 && !self.library.scanning {
             self.rescan(cx);
@@ -325,59 +375,198 @@ impl Workspace {
         cx.notify();
     }
 
+    /// A chevron click (browse-view.tsx `toggle`). While a filter holds the
+    /// tree open it does nothing; otherwise what is open now becomes the
+    /// remembered set, so a folder opened for a remembered child stays open.
     fn toggle_folder(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
-        if !self.shell.browse_touched {
-            self.shell.browse_touched = true;
-            if let Some(rows) = &self.shell.browse_rows {
-                self.shell.browse_open = rows
-                    .iter()
-                    .filter_map(|r| match r {
-                        BrowseRow::Folder { dir, .. } => Some(dir.clone()),
-                        BrowseRow::File { .. } => None,
-                    })
-                    .collect();
-            }
+        if self.shell.browse_forced {
+            return;
         }
-        if !self.shell.browse_open.remove(&dir) {
-            self.shell.browse_open.insert(dir);
+        let mut open = self.shell.browse_open_now.clone();
+        let mut closed = self.shell.browse_closed.clone();
+        if open.remove(&dir) {
+            closed.insert(dir);
+        } else {
+            closed.remove(&dir);
+            open.insert(dir);
         }
+        self.shell.browse_open = open;
+        self.shell.browse_closed = closed;
+        self.shell.browse_touched = true;
+        self.persist_browse_open();
         self.shell.browse_rows = None;
         cx.notify();
     }
 
-    /// Group the Browse hits by folder. Runs only after the index, the
-    /// filter or an open folder changed, never per frame.
+    fn persist_browse_open(&self) {
+        let Some(reg) = &self.registry else { return };
+        let list = |set: &HashSet<PathBuf>| set.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let value = serde_json::json!({ "open": list(&self.shell.browse_open), "closed": list(&self.shell.browse_closed) });
+        let _ = reg.set_setting(BROWSE_OPEN_KEY, &value.to_string());
+    }
+
+    /// The folders opened by hand in an earlier session.
+    pub(super) fn restore_browse_open(&mut self) {
+        let Some(raw) = self.registry.as_ref().and_then(|r| r.setting(BROWSE_OPEN_KEY).ok().flatten()) else { return };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
+        let set = |key: &str| -> HashSet<PathBuf> {
+            value.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|p| p.as_str().map(PathBuf::from)).collect()).unwrap_or_default()
+        };
+        self.shell.browse_open = set("open");
+        self.shell.browse_closed = set("closed");
+        self.shell.browse_touched = true;
+    }
+
+    /// The width saved by an earlier session.
+    pub(super) fn restore_panel_width(&mut self, window: &Window) {
+        let raw = self.registry.as_ref().and_then(|r| r.setting(PANEL_WIDTH_KEY).ok().flatten());
+        let wanted = raw.and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(PANEL_DEFAULT_WIDTH);
+        self.shell.panel_width = clamp_panel_width(wanted, f32::from(window.viewport_size().width));
+    }
+
+    fn commit_panel_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        self.shell.panel_width = width;
+        if let Some(reg) = &self.registry {
+            let _ = reg.set_setting(PANEL_WIDTH_KEY, &width.to_string());
+        }
+        cx.notify();
+    }
+
+    /// The pointer moved anywhere in the window during a resizer drag.
+    pub(super) fn panel_drag_move(&mut self, x: f32, window: &Window, cx: &mut Context<Self>) {
+        let Some((start_x, start_width)) = self.shell.panel_drag else { return };
+        let width = clamp_panel_width(start_width + (x - start_x), f32::from(window.viewport_size().width));
+        if (width - self.shell.panel_width).abs() >= 1. {
+            self.shell.panel_width = width;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn panel_drag_end(&mut self, cx: &mut Context<Self>) {
+        if self.shell.panel_drag.take().is_some() {
+            let width = self.shell.panel_width;
+            self.commit_panel_width(width, cx);
+        }
+    }
+
+    /// Escape during a drag puts the panel back where it started.
+    pub(super) fn panel_drag_cancel(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((_, start)) = self.shell.panel_drag.take() else { return false };
+        self.shell.panel_width = start;
+        cx.notify();
+        true
+    }
+
+    /// The 7 px grab strip over the panel's right border.
+    fn render_resizer(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let line = if self.shell.resizer_hover || self.shell.panel_drag.is_some() { p.blue.opacity(0.7) } else { gpui_kit::transparent_black() };
+        div()
+            .id("panel-resizer")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right(px(-3.))
+            .w(px(7.))
+            .cursor_col_resize()
+            .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Drag to resize · double-click to reset").build(window, cx))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                this.shell.resizer_hover = *hovered;
+                cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                if ev.click_count >= 2 {
+                    this.shell.panel_drag = None;
+                    let width = clamp_panel_width(PANEL_DEFAULT_WIDTH, f32::from(window.viewport_size().width));
+                    this.commit_panel_width(width, cx);
+                    return;
+                }
+                this.shell.panel_drag = Some((f32::from(ev.position.x), this.shell.panel_width));
+                cx.notify();
+            }))
+            .child(div().absolute().top_0().bottom_0().left(px(3.)).w(px(1.)).bg(line))
+    }
+
+    fn reveal_folder(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
+        self.shell.browse_revealed.insert(dir);
+        self.shell.browse_rows = None;
+        cx.notify();
+    }
+
+    /// Build Browse's tree and flatten what is open. Runs only after the
+    /// index, the filter, the sort or an open folder changed, never per frame.
     pub(super) fn ensure_browse_rows(&mut self) {
+        use super::folder_tree::{self as tree, FileEntry, FolderNode};
         if self.shell.browse_rows.is_some() || !(self.shell.panel_open && self.shell.view == LeftView::Browse) {
             return;
         }
-        let forced = !self.library.text().trim().is_empty();
-        let mut order: Vec<(PathBuf, Vec<usize>)> = Vec::new();
-        let mut at: HashMap<&Path, usize> = HashMap::new();
-        for (i, hit) in self.library.hits().iter().enumerate() {
-            let dir = self.library.doc(hit).dir.as_path();
-            match at.get(dir) {
-                Some(&slot) => order[slot].1.push(i),
-                None => {
-                    at.insert(dir, order.len());
-                    order.push((dir.to_path_buf(), vec![i]));
-                }
-            }
+        let entries: Vec<FileEntry> = self
+            .library
+            .hits()
+            .iter()
+            .enumerate()
+            .map(|(i, hit)| {
+                let doc = self.library.doc(hit);
+                FileEntry { hit: i, name: doc.name.clone(), dir: doc.dir.clone(), mtime_ms: doc.mtime_ms }
+            })
+            .collect();
+        let mut nodes = tree::build_folder_tree(entries);
+        if self.library.sort == SortOrder::Recent {
+            tree::sort_by_updated(&mut nodes);
         }
-        drop(at);
-        if self.library.sort == SortOrder::Name {
-            order.sort_by(|a, b| a.0.cmp(&b.0));
-        }
+        let filtering = !self.library.text().trim().is_empty() || self.library.only_format().is_some();
+        let forced = (filtering && tree::count_nodes(&nodes) <= 200).then(|| tree::paths_to_files(&nodes));
+        let open = if self.shell.browse_touched {
+            tree::open_with_ancestors(&self.shell.browse_open, &self.shell.browse_closed, &nodes)
+        } else {
+            tree::initial_open_set(&nodes)
+        };
         let home = markie_core::paths::home_dir();
         let mut rows = Vec::new();
-        for (dir, files) in order {
-            let open = forced || !self.shell.browse_touched || self.shell.browse_open.contains(&dir);
-            rows.push(BrowseRow::Folder { label: compact_home(&dir, &home, self.shell.browse_full_path).into(), count: files.len(), open, dir });
-            if open {
-                rows.extend(files.into_iter().map(|hit| BrowseRow::File { hit }));
+        fn walk(node: &FolderNode, label: Option<String>, depth: usize, open: &HashSet<PathBuf>, forced: Option<&HashSet<PathBuf>>, revealed: &HashSet<PathBuf>, rows: &mut Vec<BrowseRow>) {
+            let is_open = forced.map_or_else(|| open.contains(&node.path), |f| f.contains(&node.path));
+            rows.push(BrowseRow::Folder {
+                dir: node.path.clone(),
+                label: label.unwrap_or_else(|| node.label.clone()).into(),
+                count: node.total,
+                open: is_open,
+                depth,
+            });
+            if !is_open {
+                return;
+            }
+            let capped = !revealed.contains(&node.path) && node.files.len() + node.children.len() > tree::ROW_CAP;
+            let files = if capped { &node.files[..node.files.len().min(tree::ROW_CAP)] } else { &node.files[..] };
+            let room = if capped { tree::ROW_CAP.saturating_sub(node.files.len()) } else { node.children.len() };
+            let children = &node.children[..node.children.len().min(room)];
+            rows.extend(files.iter().map(|f| BrowseRow::File { hit: f.hit, depth: depth + 1 }));
+            for c in children {
+                walk(c, None, depth + 1, open, forced, revealed, rows);
+            }
+            let hidden = node.files.len() + node.children.len() - files.len() - children.len();
+            if hidden > 0 {
+                rows.push(BrowseRow::More { dir: node.path.clone(), hidden, depth: depth + 1 });
             }
         }
+        for node in &nodes {
+            // The root prints as a path; every level below is located by its parent.
+            let label = compact_home(&node.path, &home, self.shell.browse_full_path);
+            walk(node, Some(label), 0, &open, forced.as_ref(), &self.shell.browse_revealed, &mut rows);
+        }
+        self.shell.browse_forced = forced.is_some();
+        self.shell.browse_open_now = open;
         self.shell.browse_rows = Some(Rc::new(rows));
+    }
+
+    /// Browse's ☆ on a file or folder row.
+    fn toggle_browse_star(&mut self, path: PathBuf, kind: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(reg) = &self.registry else { return };
+        if reg.toggle_star(&path, kind).is_err() {
+            window.push_notification("Couldn't save that star.", cx);
+            return;
+        }
+        self.refresh_lists();
+        cx.notify();
     }
 
     fn show_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -542,6 +731,18 @@ impl Workspace {
                 cx,
                 |this, _, cx| this.select_view(LeftView::Vault, cx),
             ))
+            .when(super::live_docs::enabled(), |el| {
+                el.child(self.rail_button(
+                    "rail-live-docs",
+                    "markie/live-docs.svg",
+                    "Live Docs: Darkmown projects",
+                    active(LeftView::LiveDocs),
+                    false,
+                    &p,
+                    cx,
+                    |this, _, cx| this.select_view(LeftView::LiveDocs, cx),
+                ))
+            })
             .child(rule())
             .child(self.rail_button(
                 "rail-edit",
@@ -762,8 +963,10 @@ impl Workspace {
                 .bg(bg)
                 .border_r_1()
                 .border_color(p.border)
+                .relative()
                 .child(header)
                 .child(body)
+                .child(self.render_resizer(&p, cx))
                 .when(view != LeftView::Browse && super::account::signed_in_user(cx).is_none(), |el| {
                     el.child(
                         div()
@@ -986,35 +1189,63 @@ impl Workspace {
         })
     }
 
-    /// A Library row: format icon, name, type badge and where it lives.
+    /// A Library row: format icon, name, type badge, sync state and ⋯.
     fn file_row(&self, doc: &IndexedDoc, active: bool, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let path = doc.path.clone();
         let hover = p.accent.opacity(0.4);
+        let menu_open = self.shell.row_menu.as_ref().is_some_and(|(m, _)| *m == doc.path);
+        let group = SharedString::from(format!("row-group-{}", doc.path.display()));
+        let (menu_path, context_path) = (doc.path.clone(), doc.path.clone());
+        let muted = p.muted;
+        let fg = p.foreground;
         div()
             .id(SharedString::from(format!("row-{}", doc.path.display())))
+            .group(group.clone())
             .rounded(px(6.))
             .px(px(8.))
             .py(px(6.))
             .cursor_pointer()
             .when(active, |el| el.bg(p.accent))
-            .when(!active, |el| el.hover(|s| s.bg(hover)))
+            .when(!active && menu_open, |el| el.bg(hover))
+            .when(!active && !menu_open, |el| el.hover(|s| s.bg(hover)))
             .child(
                 h_flex()
                     .gap(px(6.))
                     .child(format_icon(doc.format, 15., p))
                     .child(div().flex_1().min_w_0().truncate().text_size(px(12.5)).text_color(p.foreground).child(doc.name.clone()))
                     .child(format_badge(doc.format, p))
-                    .children(self.cloud.badge(&doc.path).map(|badge| div().text_size(px(10.)).text_color(p.muted).child(badge)))
+                    .child(self.sync_status_icon(&doc.path, p))
                     .child(
                         div()
-                            .size(px(16.))
+                            .id(SharedString::from(format!("row-more-{}", doc.path.display())))
+                            .size(px(20.))
+                            .flex_none()
+                            .rounded(px(4.))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(icon("markie/on-device.svg", 13., p.muted.opacity(0.7))),
+                            .text_color(muted)
+                            .when(menu_open, |d| d.bg(hover).text_color(fg))
+                            .when(!menu_open, |d| d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)))
+                            .hover(move |s| s.text_color(fg).bg(hover))
+                            .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Actions").build(window, cx))
+                            .child("⋯")
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                let at = ev.position();
+                                this.open_row_menu(menu_path.clone(), point(at.x - px(10.), at.y + px(12.)), cx);
+                            })),
                     ),
             )
-            .on_click(cx.listener(move |this, _, window, cx| this.open_path(&path, window, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                this.shell.row_menu = None;
+                this.open_row_menu(context_path.clone(), ev.position, cx);
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.shell.row_menu = None;
+                this.open_path(&path, window, cx)
+            }))
     }
 
     /// `.markie-select-button` with its chevron.
@@ -1237,44 +1468,108 @@ impl Workspace {
                     let p = themes::palette(cx);
                     let now = chrono::Local::now();
                     range
-                        .map(|ix| match &rows[ix] {
-                            BrowseRow::Folder { dir, label, count, open } => {
-                                let dir = dir.clone();
-                                h_flex()
-                                    .id(("bfolder", ix))
-                                    .w_full()
-                                    .gap(px(4.))
-                                    .pl(px(8.))
-                                    .pr(px(8.))
-                                    .py(px(4.))
+                        .map(|ix| {
+                            // One 12 px step per level, its hairline at 6 px:
+                            // Electron's ml-[6px] border-l pl-[5px].
+                            let guides = |depth: usize| {
+                                h_flex().h_full().flex_none().children((0..depth).map(|_| {
+                                    div().w(px(12.)).h_full().flex_none().child(div().ml(px(6.)).h_full().border_l_1().border_color(p.border))
+                                }))
+                            };
+                            let star = |id: SharedString, on: bool| {
+                                div()
+                                    .id(id)
+                                    .flex_none()
+                                    .px(px(4.))
                                     .text_size(px(12.))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(p.accent.opacity(0.3)))
-                                    .child(div().w(px(12.)).text_color(p.muted).child(if *open { "▾" } else { "▸" }))
-                                    .child(div().flex_1().min_w_0().truncate().text_color(p.fg(0.9)).child(label.clone()))
-                                    .child(div().text_size(px(9.)).text_color(p.muted).child(count.to_string()))
-                                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_folder(dir.clone(), cx)))
-                            }
-                            BrowseRow::File { hit } => {
-                                let hit = this.library.hits()[*hit].clone();
-                                let doc = this.library.doc(&hit);
-                                let path = doc.path.clone();
-                                let active = current.as_ref() == Some(&doc.path);
-                                h_flex()
-                                    .id(("bfile", ix))
-                                    .w_full()
-                                    .gap(px(4.))
-                                    .pl(px(14.))
-                                    .pr(px(8.))
-                                    .py(px(4.))
-                                    .text_size(px(12.))
-                                    .cursor_pointer()
-                                    .when(active, |el| el.bg(p.accent.opacity(0.4)))
-                                    .hover(|s| s.bg(p.accent.opacity(0.3)))
-                                    .child(div().w(px(12.)))
-                                    .child(div().flex_1().min_w_0().truncate().child(doc.name.clone()))
-                                    .child(div().text_size(px(10.)).text_color(p.muted).child(updated_ago(doc.mtime_ms, now)))
-                                    .on_click(cx.listener(move |this, _, window, cx| this.open_path(&path, window, cx)))
+                                    .when(on, |d| d.text_color(p.yellow))
+                                    .when(!on, |d| d.text_color(p.muted).hover(|s| s.text_color(p.foreground)))
+                                    .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(if on { "Unstar" } else { "Star" }).build(window, cx))
+                                    .child(if on { "★" } else { "☆" })
+                            };
+                            match &rows[ix] {
+                                BrowseRow::Folder { dir, label, count, open, depth } => {
+                                    let toggle = dir.clone();
+                                    let starred = this.shell.stars.contains(dir);
+                                    let star_path = dir.clone();
+                                    h_flex()
+                                        .id(("bfolder", ix))
+                                        .w_full()
+                                        .h(px(26.))
+                                        .pl(px(4.))
+                                        .text_size(px(12.))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(p.accent.opacity(0.3)))
+                                        .child(guides(*depth))
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .gap(px(4.))
+                                                .pl(px(4.))
+                                                .pr(px(8.))
+                                                .child(div().w(px(12.)).flex_none().text_color(p.muted).child(if *open { "▾" } else { "▸" }))
+                                                .child(div().flex_1().min_w_0().truncate().text_color(p.fg(0.9)).child(label.clone()))
+                                                .child(div().flex_none().text_size(px(9.)).text_color(p.muted).child(count.to_string()))
+                                                .child(star(SharedString::from(format!("bstar-d-{ix}")), starred).on_click(cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.toggle_browse_star(star_path.clone(), "folder", window, cx);
+                                                }))),
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_folder(toggle.clone(), cx)))
+                                        .into_any_element()
+                                }
+                                BrowseRow::File { hit, depth } => {
+                                    let hit = this.library.hits()[*hit].clone();
+                                    let doc = this.library.doc(&hit);
+                                    let path = doc.path.clone();
+                                    let star_path = doc.path.clone();
+                                    let starred = this.shell.stars.contains(&doc.path);
+                                    let active = current.as_ref() == Some(&doc.path);
+                                    h_flex()
+                                        .id(("bfile", ix))
+                                        .w_full()
+                                        .h(px(26.))
+                                        .pl(px(4.))
+                                        .text_size(px(12.))
+                                        .cursor_pointer()
+                                        .when(active, |el| el.bg(p.accent.opacity(0.4)))
+                                        .hover(|s| s.bg(p.accent.opacity(0.3)))
+                                        .child(guides(*depth))
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .gap(px(4.))
+                                                .pl(px(4.))
+                                                .pr(px(8.))
+                                                .child(div().w(px(12.)).flex_none())
+                                                .child(div().flex_1().min_w_0().truncate().child(doc.name.clone()))
+                                                .child(div().flex_none().text_size(px(10.)).text_color(p.muted).child(updated_ago(doc.mtime_ms, now)))
+                                                .child(star(SharedString::from(format!("bstar-f-{ix}")), starred).on_click(cx.listener(move |this, _, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.toggle_browse_star(star_path.clone(), "file", window, cx);
+                                                }))),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| this.open_path(&path, window, cx)))
+                                        .into_any_element()
+                                }
+                                BrowseRow::More { dir, hidden, depth } => {
+                                    let dir = dir.clone();
+                                    h_flex()
+                                        .id(("bmore", ix))
+                                        .w_full()
+                                        .h(px(26.))
+                                        .pl(px(4.))
+                                        .text_size(px(11.))
+                                        .text_color(p.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(p.accent.opacity(0.3)).text_color(p.foreground))
+                                        .child(guides(*depth))
+                                        .child(h_flex().pl(px(4.)).gap(px(4.)).child(div().w(px(12.))).child(format!("Show {} more", group_thousands(*hidden))))
+                                        .on_click(cx.listener(move |this, _, _, cx| this.reveal_folder(dir.clone(), cx)))
+                                        .into_any_element()
+                                }
                             }
                         })
                         .collect::<Vec<_>>()
@@ -1313,6 +1608,9 @@ impl Workspace {
         // the sync library below takes over with the same session.
         if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
             return self.render_cloud_page();
+        }
+        if self.shell.view == LeftView::LiveDocs {
+            return self.render_live_docs(cx);
         }
         if let Some(vault) = self.render_vault() {
             return vault;
@@ -1830,5 +2128,48 @@ mod tests {
         assert_eq!(compact_home(Path::new("/tmp/x"), home, false), "/tmp/x");
         assert_eq!(compact_dir(Path::new("/Users/k/a/b/c/d"), home, 3), "…/b/c/d");
         assert_eq!(compact_dir(Path::new("/Users/k/a"), home, 3), "~/a");
+    }
+}
+
+/// `toLocaleString()` for a count: 30,000.
+fn group_thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod count_tests {
+    use super::group_thousands;
+
+    #[test]
+    fn counts_read_like_to_locale_string() {
+        assert_eq!(group_thousands(7), "7");
+        assert_eq!(group_thousands(1200), "1,200");
+        assert_eq!(group_thousands(30000), "30,000");
+        assert_eq!(group_thousands(1234567), "1,234,567");
+    }
+}
+
+#[cfg(test)]
+mod panel_width_tests {
+    use super::{clamp_panel_width, max_panel_width};
+
+    #[test]
+    fn follows_panel_width_ts() {
+        assert_eq!(max_panel_width(1280.), 520.);
+        assert_eq!(max_panel_width(800.), 360.);
+        assert_eq!(max_panel_width(300.), 200.);
+        assert_eq!(clamp_panel_width(252., 1280.), 252.);
+        assert_eq!(clamp_panel_width(900., 1280.), 520.);
+        assert_eq!(clamp_panel_width(50., 1280.), 200.);
+        assert_eq!(clamp_panel_width(f32::NAN, 1280.), 252.);
+        assert_eq!(clamp_panel_width(-4., 1280.), 252.);
     }
 }

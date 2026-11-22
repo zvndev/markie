@@ -6,7 +6,8 @@
 #     it with Markie and `open -a Markie` still opens the Electron app;
 #   - no updater, no feed, no upload step, no signing identity;
 #   - it claims no file types and no markie:// scheme, so it cannot take over
-#     what double-clicking a .md file does.
+#     what double-clicking a .md file does. It registers only its own
+#     markie-rs:// scheme, for shared links and the sign-in hand-back.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -41,6 +42,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>com.zvn.markie.rs</string>
+      <key>CFBundleURLSchemes</key><array><string>markie-rs</string></array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

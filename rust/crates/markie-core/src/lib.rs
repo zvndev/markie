@@ -29,6 +29,7 @@ pub mod formats;
 pub mod history;
 pub mod import;
 pub mod link_preview;
+pub mod links;
 pub mod index;
 pub mod outline;
 pub mod paths;

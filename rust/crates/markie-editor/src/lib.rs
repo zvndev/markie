@@ -27,6 +27,7 @@ pub mod spell;
 pub mod link_preview;
 mod link_card;
 mod rail;
+mod video;
 pub mod style;
 
 use std::cell::RefCell;
@@ -350,6 +351,8 @@ pub struct RichView {
     /// A message over the page (a refused link), and its generation, so a
     /// newer one keeps its own six seconds (`linkError` in rich-view.tsx).
     pub(crate) notice: Option<(SharedString, u64)>,
+    /// A video card's player, while it plays (`video.rs`).
+    pub(crate) video: Option<video::VideoViewer>,
     /// The toolbar's "more" popover is open.
     pub(crate) more_open: bool,
     /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
@@ -421,6 +424,7 @@ impl RichView {
             toolbar_width: px(0.),
             size_field: None,
             notice: None,
+            video: None,
             more_open: false,
             rail_hover: Default::default(),
             source_mode: false,
@@ -433,6 +437,7 @@ impl RichView {
     /// pictures.
     pub fn load(&mut self, markdown: &str, base_dir: Option<PathBuf>, cx: &mut Context<Self>) {
         self.editor = Editor::parse(markdown);
+        self.video = None;
         self.heights.clear();
         self.emitted = self.editor.version;
         self.base_dir = base_dir;
@@ -818,6 +823,9 @@ impl RichView {
         self.find_step(false, cx);
     }
     fn on_escape(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_video(cx) {
+            return;
+        }
         if self.cancel_math_field(window, cx) {
             return;
         }

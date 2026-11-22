@@ -1086,7 +1086,8 @@ impl Render for RichView {
                     .children(self.render_table_bar(cx))
                     .children(self.render_math_field(cx))
                     .children(self.render_link_card(window, cx))
-                    .children(self.render_notice(cx)),
+                    .children(self.render_notice(cx))
+                    .children(self.render_video(window, cx)),
             )
     }
 }

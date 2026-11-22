@@ -11,6 +11,8 @@ markie-rich = { path = "../markie-rich" }
 markie-math = { path = "../markie-math" }
 gpui-kit = "=0.10.0"
 markie-core.workspace = true
+markie-export = { path = "../markie-export" }
+markie-web = { path = "../markie-web", features = ["wry"] }
 url = "2"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
 yrs = "=0.28.2"

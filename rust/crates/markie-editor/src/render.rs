@@ -1059,8 +1059,8 @@ impl RichView {
             .map(|i| img(i).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).into_any_element());
         let hover_url = url.to_string();
         // `.markie-embed-card`: the thumbnail at 16:9 with a play button
-        // and a strip carrying the address and the site. Playback is phase 5,
-        // so a click on the card opens the video in the browser.
+        // and a strip carrying the address and the site. A click plays it
+        // (video.rs).
         let open_url = url.to_string();
         let width = self.store.borrow().atoms.get(&key).map(|b| b.size.width);
         let height = width.map(|w| w * (9. / 16.)).unwrap_or(px(360.));
@@ -1131,14 +1131,9 @@ impl RichView {
             .when(selected, |d| d.border_2().border_color(look.link))
             .child(track(self.store.clone(), key))
             .on_hover(cx.listener(move |this, over: &bool, _, cx| this.embed_hover(hover_url.clone(), *over, cx)))
-            .on_mouse_down(MouseButton::Left, move |ev: &MouseDownEvent, _, cx| {
-                // Only a plain web address reaches the browser.
-                if ev.click_count >= 2 {
-                    if let markie_core::links::LinkClick::Web(u) = markie_core::links::classify_click(&open_url, None) {
-                        cx.open_url(&u);
-                    }
-                }
-            })
+            // The press selects the card, as on any block; the click plays
+            // it in the video viewer (`requestVideoViewer`).
+            .on_click(cx.listener(move |this, _, window, cx| this.open_video(&open_url, window, cx)))
             .into_any_element()
     }
 

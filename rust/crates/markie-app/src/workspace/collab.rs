@@ -133,6 +133,8 @@ pub(super) struct Collab {
     /// The session ended in a way that keeps it off for this document.
     live_unavailable: bool,
     run: u64,
+    /// Whether this module made Source read-only.
+    source_locked: bool,
     _resolve: Option<Task<()>>,
     test_session_loaded: bool,
     /// Comment threads beside the document (comments.rs).
@@ -349,6 +351,14 @@ impl Workspace {
                 cx.notify();
             }
         });
+        // Source follows: read-only for a viewer or before the room is ready,
+        // and a read-only mirror whenever a rich room is live (page.tsx).
+        let rich_live = matches!(self.collab.live.as_ref().map(|l| &l.room), Some(Room::Rich(_)));
+        let lock_source = !editable || rich_live;
+        if lock_source != self.collab.source_locked {
+            self.collab.source_locked = lock_source;
+            self.editor.update(cx, |s, cx| s.set_readonly(lock_source, cx));
+        }
     }
 
     // ------------------------------------------------------------ the session

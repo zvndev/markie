@@ -99,8 +99,12 @@ run("TipTap shares a live room with Markie RS", async () => {
     WebSocketPolyfill: WebSocket as unknown as typeof globalThis.WebSocket,
     disableBc: true,
   });
+  // In the document and focusable, so the cursor plugin publishes Bob's
+  // selection itself, as it does in the app (it only does while focused).
+  const host = document.createElement("div");
+  document.body.appendChild(host);
   const editor = new Editor({
-    element: document.createElement("div"),
+    element: host,
     extensions: [
       ...richBaseExtensions({ collab: true }),
       Collaboration.configure({ document: ydoc }),
@@ -136,15 +140,18 @@ run("TipTap shares a live room with Markie RS", async () => {
   // Bob types in the same paragraph Alice is typing in.
   const jumps = rangeOf(editor, "jumps");
   editor.commands.insertContentAt(jumps.to, " TIPTAP");
-  // Bob's caret on "dog". The cursor plugin publishes while the editor has
-  // focus; jsdom has no real focus, so publish what the plugin would.
+  // Bob's caret on "dog", published by y-tiptap's cursor plugin.
   const dog = rangeOf(editor, "dog");
+  editor.view.dom.setAttribute("tabindex", "0");
+  editor.view.focus();
   editor.commands.setTextSelection(dog);
   const binding = mapping();
-  provider.awareness.setLocalStateField("cursor", {
-    anchor: absolutePositionToRelativePosition(dog.from, fragment, binding as never),
-    head: absolutePositionToRelativePosition(dog.to, fragment, binding as never),
-  });
+  const published = () => (provider.awareness.getLocalState() as { cursor?: unknown } | null)?.cursor != null;
+  try {
+    await until("the cursor plugin", published, 2_000);
+  } catch {
+    throw new Error("TipTap's cursor plugin did not publish Bob's selection (editor focused: " + editor.view.hasFocus() + ")");
+  }
   // Bob comments on "fox", as comments.tsx does (selectionToAnchor).
   const fox = rangeOf(editor, "fox");
   await api("POST", `/api/docs/${encodeURIComponent(h.docId)}/threads`, {

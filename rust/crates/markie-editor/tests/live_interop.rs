@@ -95,12 +95,16 @@ fn text_of(ed: &Editor, from: Pos, to: Pos) -> String {
     ed.units(from.block, from.leaf)[from.offset..to.offset].iter().map(|u| u.display()).collect()
 }
 
-/// Apply waiting room updates and fold them into the editor.
+/// Apply waiting room updates and fold them into the editor, once the room
+/// is the document (claimed for this model), as the app does.
 fn pump(s: &LiveSession, b: &mut RichBinding, ed: &mut Editor) {
     if s.has_inbound() {
         let caret = b.caret(ed);
         s.pump();
-        b.pull(ed, caret).expect("Markie RS draws the room");
+        b.refresh();
+        if b.has_model() {
+            b.pull(ed, caret).expect("Markie RS draws the room");
+        }
     }
 }
 
@@ -229,8 +233,15 @@ async fn markie_rs_and_tiptap_share_a_room() {
     assert!(md.contains("jumps TIPTAP over the lazy dog RUSTEDIT."), "{md}");
 
     // Bob's caret and Bob's comment, on Alice's screen.
-    until(&session, &mut binding, &mut ed, 20, "Bob's cursor", |s, b, e| {
-        s.peers().iter().any(|p| p.user.name == "Bob Tiptap" && p.cursor.as_ref().is_some_and(|c| b.resolve_cursor(e, &c.anchor, &c.head).is_some()))
+    // Bob's caret moves as TipTap focuses and then selects; wait for where it settles.
+    until(&session, &mut binding, &mut ed, 20, "Bob's cursor on \"dog\"", |s, b, e| {
+        s.peers().iter().any(|p| {
+            p.user.name == "Bob Tiptap"
+                && p.cursor.as_ref().and_then(|c| b.resolve_cursor(e, &c.anchor, &c.head)).is_some_and(|(x, y)| {
+                    let (f, t) = if x <= y { (x, y) } else { (y, x) };
+                    (f.block, f.leaf) == (t.block, t.leaf) && text_of(e, f, t) == "dog"
+                })
+        })
     })
     .await;
     let bob_peer = session.peers().into_iter().find(|p| p.user.name == "Bob Tiptap").unwrap();
@@ -239,8 +250,15 @@ async fn markie_rs_and_tiptap_share_a_room() {
     let (ca, ch) = binding.resolve_cursor(&ed, &c.anchor, &c.head).unwrap();
     let (cf, ct) = if ca <= ch { (ca, ch) } else { (ch, ca) };
     assert_eq!(text_of(&ed, cf, ct), "dog");
-    let threads = CommentsClient::new(&alice).list(&doc_id).await.unwrap();
-    let bobs = threads.iter().find(|t| t.id != rust_thread).expect("Bob's thread");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let bobs = loop {
+        let threads = CommentsClient::new(&alice).list(&doc_id).await.unwrap();
+        if let Some(t) = threads.into_iter().find(|t| t.id != rust_thread) {
+            break t;
+        }
+        assert!(Instant::now() < deadline, "Bob's thread never arrived");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
     let (bf, bt) = binding.resolve_anchor(&ed, &bobs.anchor).expect("Bob's anchor resolves");
     assert_eq!(text_of(&ed, bf, bt), "fox");
     std::fs::write(env.dir.join("rust-checked.json"), "{\"ok\": true}").unwrap();

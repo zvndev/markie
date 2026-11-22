@@ -598,7 +598,7 @@ impl Workspace {
         let Some(panel) = self.collab.comments.local.as_ref() else { return };
         let md = self.markdown_now(cx);
         let active = panel.active.clone();
-        let placed: Vec<PlacedThread> = panel.store.list(&panel.path, &md, true);
+        let placed = place(&panel.threads, &md);
         let marks = {
             let ed = &self.rich.read(cx).editor;
             let (visible, map) = Self::visible_text(ed);
@@ -657,7 +657,7 @@ impl Workspace {
         let composing = self.collab.comments.local.as_ref()?.composing.clone();
         let composer = composing.as_ref().map(|_| self.composer("local-new", "Comment…", Submit::NewLocal, window, cx));
         let panel = self.collab.comments.local.as_ref()?;
-        let placed = panel.store.list(&panel.path, &md, true);
+        let placed = place(&panel.threads, &md);
         let mut anchored: Vec<&PlacedThread> = placed.iter().filter(|p| p.thread.status == Status::Open && p.range.is_some()).collect();
         anchored.sort_by_key(|p| p.range.map(|r| r.start));
         let detached: Vec<&PlacedThread> = placed.iter().filter(|p| p.thread.status == Status::Open && p.range.is_none()).collect();
@@ -982,6 +982,12 @@ impl Workspace {
         self.collab.comments.local.as_ref()?;
         self.render_local_comments(window, cx)
     }
+}
+
+/// Threads with where their quotes are in the text now (from memory: the
+/// file is read when it changes, not on every frame).
+fn place(threads: &[LocalThread], md: &str) -> Vec<PlacedThread> {
+    threads.iter().map(|t| PlacedThread { thread: t.clone(), range: markie_cloud::comments::anchor::resolve_anchor(md, &t.anchor) }).collect()
 }
 
 fn quote(text: &str, p: &Palette) -> Div {

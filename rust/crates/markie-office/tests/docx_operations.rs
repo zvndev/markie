@@ -185,6 +185,23 @@ fn round_trips_bullet_and_numbered_definitions_and_clears_lists() {
     assert_eq!(reopen(&cleared).paragraphs[1].list_kind, None);
     assert_eq!(cleared.paragraphs[1].spacing_after_points, Some(6.0));
 }
+
+#[test]
+fn reuses_the_first_numbering_instance_in_document_order() {
+    let list = |id: &str| Operation::SetList { paragraph_id: id.into(), kind: Some(ListKind::Numbered) };
+    let original = apply(&create("One\nSeven"), &[list("p0")]);
+    let mut parts = read_zip(&export(&original), DEFAULT_ZIP_LIMITS).unwrap();
+    change_xml(&mut parts, "word/numbering.xml", |xml| {
+        let offset = xml.find("<w:num ").unwrap();
+        let first = r#"<w:num w:numId="9"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="7"/></w:lvlOverride></w:num>"#;
+        format!("{}{first}{}", &xml[..offset], &xml[offset..])
+    });
+    let original = open(&write_zip(&parts, DEFAULT_ZIP_LIMITS).unwrap());
+    let saved = reopen(&apply(&original, &[list("p1")]));
+    assert_eq!(saved.paragraphs[0].list_number, Some(1));
+    assert_eq!(saved.paragraphs[1].list_number, Some(7));
+}
+
 #[test]
 fn accepts_valid_multilevel_and_fails_closed_for_a_corrupted_level_start() {
     let original = apply(&create("A"), &[Operation::SetList { paragraph_id: "p0".into(), kind: Some(ListKind::Numbered) }]);

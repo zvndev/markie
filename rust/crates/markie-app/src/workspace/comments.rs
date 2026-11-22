@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, TextDecoration, TextDecorationCollection, Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -64,7 +64,7 @@ pub(super) fn nightly(reg: Option<&markie_core::registry::Registry>) -> bool {
 
 /// A composer: the text field and what Enter does with it.
 pub(super) struct Composer {
-    pub input: Entity<InputState>,
+    pub input: Entity<TextareaState>,
     _sub: Subscription,
 }
 
@@ -89,6 +89,10 @@ pub(super) struct Comments {
     error: Option<String>,
     // Local comments.
     local: Option<LocalPanel>,
+    /// The commented passages tinted in Source (`source-comments.ts`), and
+    /// what they were drawn for (text, threads, active), to redraw on change.
+    source_marks: Option<TextDecorationCollection>,
+    source_marks_for: Option<u64>,
 }
 
 struct LocalPanel {
@@ -107,6 +111,9 @@ struct LocalPanel {
 
 impl Workspace {
     pub(super) fn comments_reset(&mut self, cx: &mut Context<Self>) {
+        if let Some(marks) = self.collab.comments.source_marks.take() {
+            marks.clear(cx);
+        }
         self.collab.comments = Comments::default();
         self.rich.update(cx, |r, cx| {
             if !r.comment_marks.is_empty() {
@@ -116,11 +123,13 @@ impl Workspace {
         });
     }
 
-    fn composer(&mut self, key: &str, placeholder: &'static str, submit: Submit, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
+    /// A two-row text area like comments.tsx's: Enter sends, Shift+Enter
+    /// starts a new line, Escape cancels a new comment.
+    fn composer(&mut self, key: &str, placeholder: &'static str, submit: Submit, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextareaState> {
         if let Some(c) = self.collab.comments.composers.get(key) {
             return c.input.clone();
         }
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+        let input = cx.new(|cx| TextareaState::new(window, cx).rows(2).submit_on_enter(true).placeholder(placeholder));
         let sub = cx.subscribe_in(&input, window, move |this, state, ev: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { shift: false, .. } = ev {
                 let body = state.read(cx).value().trim().to_string();
@@ -159,6 +168,21 @@ impl Workspace {
                 self.local_result(r.map(|_| ()), cx);
             }
         }
+        cx.notify();
+    }
+
+    /// Cancel (or Escape) on a new comment: the composer goes.
+    fn composer_cancel(&mut self, key: &'static str, cx: &mut Context<Self>) {
+        match key {
+            "new" => self.collab.comments.composing = None,
+            "local-new" => {
+                if let Some(panel) = self.collab.comments.local.as_mut() {
+                    panel.composing = None;
+                }
+            }
+            _ => return,
+        }
+        self.collab.comments.composers.remove(key);
         cx.notify();
     }
 
@@ -368,11 +392,7 @@ impl Workspace {
             })
             // The new-thread composer.
             .when_some(composer_top.zip(composer_input), |el, (top, input)| {
-                el.child(div().absolute().top(px(top)).right(px(6.)).w(px(260.)).child(composer_box(&input, true, &p, cx.listener(|w, _, _, cx| {
-                    w.collab.comments.composing = None;
-                    w.collab.comments.composers.remove("new");
-                    cx.notify();
-                }), cx.listener(|w, _, window, cx| {
+                el.child(div().absolute().top(px(top)).right(px(6.)).w(px(260.)).child(composer_box(&input, true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get("new") {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -428,7 +448,7 @@ impl Workspace {
         Some(el.into_any_element())
     }
 
-    fn cloud_thread_card(&self, t: &CommentThread, readonly: bool, can_comment: bool, reply: Option<Entity<InputState>>, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+    fn cloud_thread_card(&self, t: &CommentThread, readonly: bool, can_comment: bool, reply: Option<Entity<TextareaState>>, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let resolved = t.status == ThreadStatus::Resolved;
         let me = self.me();
         let moderate = self.can_moderate();
@@ -499,7 +519,7 @@ impl Workspace {
             .when_some(reply.filter(|_| can_comment && !resolved), |el, input| {
                 let tid = tid2.clone();
                 let key = format!("reply-{tid}");
-                el.child(composer_box(&input, false, p, cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
+                el.child(composer_box(&input, false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get(&key) {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -545,6 +565,44 @@ impl Workspace {
             panel.threads = panel.store.threads(&panel.path);
             self.local_marks(cx);
             cx.notify();
+        } else {
+            // Source's text may have been replaced (a switch from View, a
+            // reload): draw its marks again when what they depend on moved.
+            self.source_marks(cx);
+        }
+    }
+
+    /// Tint every anchored, open passage in Source, as CodeMirror's
+    /// `commentHighlightField` does: `rgba(96,165,250,0.14)` (0.32 for the
+    /// active thread) with a 2 px `rgba(96,165,250,0.7)` underline. Not while
+    /// the document is live, when local comments are hidden.
+    fn source_marks(&mut self, cx: &mut Context<Self>) {
+        use std::hash::{Hash, Hasher};
+        let text = self.editor.read(cx).value().to_string();
+        let live = self.live_running();
+        let Some(panel) = self.collab.comments.local.as_ref() else { return };
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        panel.stamp.hash(&mut h);
+        panel.active.hash(&mut h);
+        live.hash(&mut h);
+        panel.threads.len().hash(&mut h);
+        let key = h.finish();
+        if self.collab.comments.source_marks_for == Some(key) {
+            return;
+        }
+        let decorations: Vec<TextDecoration> = if live {
+            Vec::new()
+        } else {
+            source_decorations(&panel.threads, &text, panel.active.as_deref())
+        };
+        self.collab.comments.source_marks_for = Some(key);
+        match &self.collab.comments.source_marks {
+            Some(marks) => marks.set(decorations, cx),
+            None => {
+                let marks = self.editor.update(cx, |e, cx| e.create_decorations_collection(decorations, cx));
+                self.collab.comments.source_marks = Some(marks);
+            }
         }
     }
 
@@ -619,6 +677,8 @@ impl Workspace {
             r.comment_marks = marks;
             cx.notify();
         });
+        self.collab.comments.source_marks_for = None;
+        self.source_marks(cx);
     }
 
     /// The selection in View as a quote anchor into the Markdown.
@@ -809,13 +869,7 @@ impl Workspace {
                                             .p(px(8.))
                                             .gap(px(8.))
                                             .child(quote(&anchor.exact, &p))
-                                            .child(composer_box(&input, true, &p, cx.listener(|w, _, _, cx| {
-                                                if let Some(panel) = w.collab.comments.local.as_mut() {
-                                                    panel.composing = None;
-                                                }
-                                                w.collab.comments.composers.remove("local-new");
-                                                cx.notify();
-                                            }), cx.listener(|w, _, window, cx| {
+                                            .child(composer_box(&input, true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, window, cx| {
                                                 if let Some(c) = w.collab.comments.composers.get("local-new") {
                                                     let body = c.input.read(cx).value().trim().to_string();
                                                     if !body.is_empty() {
@@ -865,7 +919,7 @@ impl Workspace {
         Some(el.into_any_element())
     }
 
-    fn local_thread_card(&mut self, pt: &PlacedThread, active: bool, can_comment: bool, reply: Option<Entity<InputState>>, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+    fn local_thread_card(&mut self, pt: &PlacedThread, active: bool, can_comment: bool, reply: Option<Entity<TextareaState>>, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let t = &pt.thread;
         let resolved = t.status == Status::Resolved;
         let (id1, id2, id3) = (t.id.clone(), t.id.clone(), t.id.clone());
@@ -936,7 +990,7 @@ impl Workspace {
             .when_some(reply.filter(|_| can_comment && !resolved), |el, input| {
                 let tid = t.id.clone();
                 let key = format!("local-reply-{tid}");
-                el.child(composer_box(&input, false, p, cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
+                el.child(composer_box(&input, false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get(&key) {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -983,6 +1037,47 @@ impl Workspace {
     }
 }
 
+/// UTF-16 offsets (the anchors' unit) to UTF-8 byte offsets (the editor's).
+fn utf8_offsets(text: &str) -> Vec<usize> {
+    let mut map = Vec::with_capacity(text.len() + 1);
+    for (byte, ch) in text.char_indices() {
+        for _ in 0..ch.len_utf16() {
+            map.push(byte);
+        }
+    }
+    map.push(text.len());
+    map
+}
+
+/// The Source decorations for the open, anchored threads in `text`.
+fn source_decorations(threads: &[LocalThread], text: &str, active: Option<&str>) -> Vec<TextDecoration> {
+    let map = utf8_offsets(text);
+    let blue = |a: f32| Hsla::from(rgba(0x60a5fa00 | ((a * 255.).round() as u32)));
+    let mut marks: Vec<(std::ops::Range<usize>, bool)> = place(threads, text)
+        .into_iter()
+        .filter(|p| p.thread.status == Status::Open)
+        .filter_map(|p| {
+            let r = p.range?;
+            let (from, to) = (*map.get(r.start)?, *map.get(r.end)?);
+            (to > from).then(|| (from..to, active == Some(p.thread.id.as_str())))
+        })
+        .collect();
+    marks.sort_by_key(|(r, _)| (r.start, r.end));
+    marks
+        .into_iter()
+        .map(|(range, on)| {
+            TextDecoration::new(
+                range,
+                HighlightStyle {
+                    background_color: Some(blue(if on { 0.32 } else { 0.14 })),
+                    underline: Some(UnderlineStyle { thickness: px(2.), color: Some(blue(0.7)), wavy: false }),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect()
+}
+
 /// Threads with where their quotes are in the text now (from memory: the
 /// file is read when it changes, not on every frame).
 fn place(threads: &[LocalThread], md: &str) -> Vec<PlacedThread> {
@@ -1022,8 +1117,20 @@ fn comment_row(name: &str, time: &str, body: &str, p: &Palette) -> Div {
 }
 
 /// The comment composer: the field, Cancel (when there is one) and Send.
-fn composer_box(input: &Entity<InputState>, cancel: bool, p: &Palette, on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, on_send: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Div {
+fn composer_box(
+    input: &Entity<TextareaState>,
+    cancel: bool,
+    p: &Palette,
+    on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_escape: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    on_send: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
     v_flex()
+        .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
+            if cancel && ev.keystroke.key == "escape" {
+                on_escape(ev, window, cx);
+            }
+        })
         .rounded(px(8.))
         .border_1()
         .border_color(p.border)
@@ -1031,7 +1138,7 @@ fn composer_box(input: &Entity<InputState>, cancel: bool, p: &Palette, on_cancel
         .gap(px(6.))
         .bg(p.surface2)
         .shadow_xl()
-        .child(div().rounded(px(6.)).border_1().border_color(p.border).bg(p.background).px(px(8.)).py(px(4.)).child(Input::new(input).appearance(false).text_size(px(12.))))
+        .child(div().rounded(px(6.)).border_1().border_color(p.border).bg(p.background).px(px(8.)).py(px(6.)).text_size(px(12.)).text_color(p.foreground).child(Textarea::new(input)))
         .child(
             h_flex()
                 .justify_end()
@@ -1061,6 +1168,22 @@ fn unused(_: Value) {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn source_marks_cover_the_quote_in_bytes() {
+        use markie_cloud::comments::anchor::make_anchor;
+        use markie_cloud::comments::local::{LocalThread, Status};
+        let text = "# Café\n\nThe quick brown fox — ships.\n";
+        let quote = "quick brown fox";
+        let start16 = text[..text.find(quote).unwrap()].encode_utf16().count();
+        let anchor = make_anchor(text, start16, start16 + quote.encode_utf16().count()).unwrap();
+        let thread = |id: &str, status| LocalThread { id: id.into(), anchor: anchor.clone(), status, created_at: String::new(), comments: vec![], resolved_at: None, resolved_by: None };
+        let marks = super::source_decorations(&[thread("t1", Status::Open), thread("t2", Status::Resolved)], text, Some("t1"));
+        assert_eq!(marks.len(), 1, "resolved threads are not tinted");
+        let range = marks[0].range.clone();
+        assert_eq!(&text[range], quote);
+        assert_eq!(super::utf8_offsets("é").as_slice(), &[0, 2]);
+    }
+
     #[test]
     fn times_read_like_electrons() {
         let s = super::fmt_time("2026-11-22T15:04:00.000Z");

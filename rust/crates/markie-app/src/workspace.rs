@@ -45,7 +45,9 @@ mod library_rows;
 mod live_docs;
 mod import_copy;
 mod cloud;
+mod cloud_drive;
 mod cloud_office;
+mod cloud_page;
 mod cloud_resources;
 mod cloud_ui;
 mod darkmown;
@@ -193,7 +195,7 @@ impl Workspace {
                 .searchable(true)
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
-        let cloud_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search cloud documents"));
+        let cloud_search = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by name or folder"));
         let (rich, rich_sub) = Self::new_rich(window, cx);
 
         let mut subscriptions = vec![
@@ -300,6 +302,8 @@ impl Workspace {
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
+        let focus = this.watch_rich_focus(window, cx);
+        this._subscriptions.extend(focus);
         this.start_agent_bridge(window, cx);
         this.start_cloud_poll(cx);
         if let Some(reg) = &this.registry {

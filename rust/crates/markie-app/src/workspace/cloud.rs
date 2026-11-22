@@ -8,7 +8,7 @@ use markie_cloud::http::Transport;
 use markie_cloud::platform::{Area, PlatformClient, SnapshotMeta};
 use markie_cloud::registry::ServerStore;
 use markie_cloud::sync::{self, LibraryState, PushResult, SyncEngine, SyncRecord, SyncState};
-use markie_cloud::tokens::{KeyringTokenStore, MemoryTokenStore, TokenStore};
+use markie_cloud::tokens::TokenStore;
 use markie_cloud::{CloudClient, DEFAULT_SERVER, assets, links};
 use markie_core::{document, formats, history::Writer, paths, registry::Registry};
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ pub(super) struct Binding {
 }
 
 impl Binding {
-    fn new(user: &str, record: SyncRecord) -> Self {
+    pub(super) fn new(user: &str, record: SyncRecord) -> Self {
         Self {
             user: user.into(),
             record,
@@ -61,7 +61,7 @@ impl Binding {
         }
     }
 
-    fn origin(&self) -> &str {
+    pub(super) fn origin(&self) -> &str {
         self.record
             .cloud_origin
             .as_deref()
@@ -82,7 +82,7 @@ impl Scope {
     pub fn active(&self) -> bool {
         self.client.session().is_some()
     }
-    fn matches(&self, binding: &Binding) -> bool {
+    pub(super) fn matches(&self, binding: &Binding) -> bool {
         self.user == binding.user && self.origin() == binding.origin()
     }
     fn engine(&self) -> SyncEngine<'_> {
@@ -97,6 +97,11 @@ pub(super) struct Listing {
     pub snapshots: Vec<SnapshotMeta>,
     pub areas: Vec<Area>,
     pub error: Option<String>,
+    /// `GET /api/docs/shared-by-me`; None while unknown.
+    pub shared_by_me: Option<Vec<markie_cloud::sharing::SharedByMeDoc>>,
+    pub shared_by_me_error: bool,
+    /// Why the snapshot list did not load.
+    pub snapshot_error: Option<String>,
 }
 
 pub(super) struct CloudWorkspace {
@@ -109,25 +114,52 @@ pub(super) struct CloudWorkspace {
     pub checking: bool,
     pub selection: Option<String>,
     pub area: Option<String>,
-    pub source: super::cloud_ui::Source,
+    /// The Cloud page's type and order menus, source chips and open menu.
+    pub type_filter: Option<formats::FormatKind>,
+    pub sort: super::cloud_page::Sort,
+    pub sources: Vec<super::cloud_page::Source>,
+    pub menu: Option<super::cloud_page::Menu>,
     pub busy: HashSet<PathBuf>,
     pub resource_epoch: u64,
     pub pending_link: Option<PathBuf>,
+    /// The account the sign-in sheet last reported (None inside: signed out).
+    pub account_seen: Option<Option<String>>,
     suspend_push: bool,
     queued: HashSet<PathBuf>,
     cursors: HashMap<String, usize>,
 }
 
 impl CloudWorkspace {
+    /// The sessions are the sign-in sheet's own (`account::shared_tokens`),
+    /// and a local test server named by `MARKIE_RS_CLOUD_SERVER` is trusted
+    /// for the run, so a sign-in in the sheet is a scope here at once.
     pub fn new(data: &Path, registry: Option<&Registry>) -> Self {
         let scratch = std::env::var_os("MARKIE_RS_DATA_DIR").is_some();
-        let tokens: Arc<dyn TokenStore> = if scratch {
-            Arc::new(MemoryTokenStore::new())
-        } else {
-            Arc::new(KeyringTokenStore::new(paths::APP_NAME))
-        };
+        let config = super::account::server_config();
+        Self::with_tokens(
+            data,
+            registry,
+            super::account::shared_tokens(),
+            scratch,
+            config.dev.then_some(config.origin.as_str()),
+        )
+    }
+
+    pub fn with_tokens(
+        data: &Path,
+        registry: Option<&Registry>,
+        tokens: Arc<dyn TokenStore>,
+        scratch: bool,
+        local_server: Option<&str>,
+    ) -> Self {
+        let mut servers = ServerStore::open(Some(data.join("servers.json")), scratch || local_server.is_some());
+        if let Some(origin) = local_server
+            && let Err(e) = servers.pin_local(origin)
+        {
+            eprintln!("markie-rs: the test server was not trusted: {e}");
+        }
         Self {
-            servers: ServerStore::open(Some(data.join("servers.json")), scratch),
+            servers,
             tokens,
             transport: Transport::new(),
             bindings: registry
@@ -140,10 +172,18 @@ impl CloudWorkspace {
             checking: false,
             selection: None,
             area: None,
-            source: Default::default(),
+            type_filter: None,
+            sort: Default::default(),
+            sources: super::cloud_page::sources_from_setting(
+                registry
+                    .and_then(|r| r.setting(super::cloud_page::SOURCES_SETTING).ok().flatten())
+                    .as_deref(),
+            ),
+            menu: None,
             busy: HashSet::new(),
             resource_epoch: 0,
             pending_link: None,
+            account_seen: None,
             suspend_push: false,
             queued: HashSet::new(),
             cursors: HashMap::new(),
@@ -171,6 +211,62 @@ impl CloudWorkspace {
             .iter()
             .filter_map(|origin| self.scope(origin))
             .collect()
+    }
+
+    /// Where a new cloud copy goes when nothing chose a server: Markie
+    /// Cloud, or the local test server `MARKIE_RS_CLOUD_SERVER` names
+    /// (Electron's primary server).
+    pub fn primary_origin(&self) -> String {
+        super::account::server_config().origin
+    }
+
+    pub fn primary_scope(&self) -> Option<Scope> {
+        self.scope(&self.primary_origin())
+    }
+
+    /// A client for `origin` whether or not anyone is signed in there.
+    pub fn client(&self, origin: &str) -> Option<CloudClient> {
+        CloudClient::new(origin, self.servers.trust_handle(), self.tokens.clone(), self.transport.clone()).ok()
+    }
+
+    /// The key a file's binding is stored under: the path itself, or the
+    /// binding whose path resolves to the same file.
+    pub fn binding_key(&self, path: &Path) -> Option<PathBuf> {
+        if self.bindings.contains_key(path) {
+            return Some(path.to_owned());
+        }
+        let real = path.canonicalize().ok()?;
+        self.bindings
+            .keys()
+            .find(|k| k.canonicalize().ok().as_deref() == Some(real.as_path()))
+            .cloned()
+    }
+
+    /// The document's private page, `/d/:id` on its server's docs origin
+    /// (markiedocs.com for Markie Cloud), when the file is in the cloud. It
+    /// opens for the owner and the people it is shared with, after they sign
+    /// in (library.tsx `copyPrivateLink`).
+    pub fn private_link(&self, path: &Path) -> Option<String> {
+        let binding = self.bindings.get(&self.binding_key(path)?)?;
+        if binding.record.state == SyncState::LocalOnly {
+            return None;
+        }
+        let id = binding.record.cloud_doc_id.as_deref()?;
+        Some(markie_cloud::sharing::view::private_url(binding.origin(), id))
+    }
+
+    /// Mark or clear a file as having a cloud request in flight. A request
+    /// that finds it busy waits its turn (`cloud_text`) or is refused.
+    pub fn set_busy(&mut self, path: &Path, busy: bool) {
+        if busy {
+            self.busy.insert(path.to_owned());
+        } else {
+            self.busy.remove(path);
+        }
+    }
+
+    pub fn take_queued(&mut self, path: &Path) -> bool {
+        self.queued.remove(path)
     }
 
     pub fn selected_scope(&self) -> Option<Scope> {
@@ -264,6 +360,12 @@ pub(super) enum TextAction {
 }
 
 impl TextAction {
+    /// Whether the action turns sync on or off, after which the document's
+    /// role and live session are asked for again.
+    pub(super) fn changes_sync(self) -> bool {
+        matches!(self, Self::Enable | Self::Pause | Self::Delete)
+    }
+
     fn sends_text(self) -> bool {
         matches!(
             self,
@@ -321,8 +423,75 @@ fn landing_dir_at(mut dir: PathBuf) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{landing_dir_at, path_occupied};
+    use super::{CloudWorkspace, TextAction, landing_dir_at, path_occupied};
+    use markie_cloud::tokens::{self, MemoryTokenStore, TokenStore};
     use markie_cloud::{assets, sync};
+    use std::sync::Arc;
+
+    /// Copy link is the document's `/d/:id` page on its server's docs origin,
+    /// markiedocs.com for Markie Cloud, and only while it has a cloud copy.
+    #[test]
+    fn copy_link_is_the_private_page_on_the_docs_origin() {
+        use super::Binding;
+        use markie_cloud::sync::{SyncRecord, SyncState};
+        let data = tempfile::tempdir().unwrap();
+        let store: Arc<dyn TokenStore> = Arc::new(MemoryTokenStore::new());
+        let mut cloud = CloudWorkspace::with_tokens(data.path(), None, store, true, Some("http://localhost:18787"));
+        let local = std::path::PathBuf::from("/notes/a.md");
+        let record = |origin: Option<&str>, id: Option<&str>, state| SyncRecord {
+            cloud_origin: origin.map(str::to_string),
+            cloud_doc_id: id.map(str::to_string),
+            state,
+            ..Default::default()
+        };
+        cloud.bindings.insert(local.clone(), Binding::new("u1", record(None, Some("d 1"), SyncState::Synced)));
+        assert_eq!(cloud.private_link(&local).as_deref(), Some("https://markiedocs.com/d/d%201"));
+        cloud.bindings.insert(local.clone(), Binding::new("u1", record(Some("http://localhost:18787"), Some("d2"), SyncState::Paused)));
+        assert_eq!(cloud.private_link(&local).as_deref(), Some("http://localhost:18787/d/d2"));
+        cloud.bindings.insert(local.clone(), Binding::new("u1", record(None, None, SyncState::LocalOnly)));
+        assert_eq!(cloud.private_link(&local), None);
+        assert_eq!(cloud.private_link(std::path::Path::new("/notes/other.md")), None);
+    }
+
+    /// Turning sync on or off re-checks the open document's access and live
+    /// session (refreshCollab); a push, retry or pull does not.
+    #[test]
+    fn only_sync_on_and_off_recheck_collaboration() {
+        let all = [
+            TextAction::Enable,
+            TextAction::Push,
+            TextAction::Repair,
+            TextAction::Pause,
+            TextAction::Delete,
+            TextAction::Pull,
+            TextAction::KeepBoth,
+            TextAction::Overwrite,
+        ];
+        let rechecks: Vec<_> = all.into_iter().filter(|a| a.changes_sync()).collect();
+        assert_eq!(rechecks, [TextAction::Enable, TextAction::Pause, TextAction::Delete]);
+    }
+
+    /// What the sign-in sheet writes is what the sync workspace reads: a
+    /// confirmed session on the local test server becomes a scope at once.
+    #[test]
+    fn a_sign_in_in_the_shared_store_is_a_sync_scope() {
+        let data = tempfile::tempdir().unwrap();
+        let store: Arc<dyn TokenStore> = Arc::new(MemoryTokenStore::new());
+        let origin = "http://localhost:18787";
+        let cloud = CloudWorkspace::with_tokens(data.path(), None, store.clone(), true, Some(origin));
+        assert!(cloud.scopes().is_empty(), "nobody is signed in yet");
+        // The sheet stores the token, then /api/me confirms the account.
+        tokens::set_token(store.as_ref(), origin, Some("t1")).unwrap();
+        assert!(cloud.scope(origin).is_none(), "an unconfirmed token is not an account");
+        tokens::confirm(store.as_ref(), origin, "t1", "user-1").unwrap();
+        let scope = cloud.selected_scope().expect("the signed-in server is the selected scope");
+        assert_eq!((scope.origin(), scope.user.as_str()), (origin, "user-1"));
+        // Signing out in the sheet ends the scope here too.
+        tokens::set_token(store.as_ref(), origin, None).unwrap();
+        assert!(cloud.scopes().is_empty());
+        // A pinned test server is never written to the scratch server list.
+        assert!(!data.path().join("servers.json").exists());
+    }
 
     #[test]
     fn cloud_landing_is_isolated_and_exclusive() {
@@ -561,7 +730,7 @@ impl TextWork {
 }
 
 impl Workspace {
-    fn store_binding(&mut self, path: &Path, binding: Binding) -> Result<(), String> {
+    pub(super) fn store_binding(&mut self, path: &Path, binding: Binding) -> Result<(), String> {
         let registry = self
             .registry
             .as_ref()
@@ -743,6 +912,12 @@ impl Workspace {
                     {
                         workspace.refresh_cloud_resources(cx);
                     }
+                    // Turning sync on or off changes who the server says this
+                    // person is to the document, and whether it goes live:
+                    // the Library's onSyncChanged runs refreshCollab (page.tsx).
+                    if action.changes_sync() {
+                        workspace.collab_after_sync_change(&path, cx);
+                    }
                 }
                 if workspace.cloud.queued.remove(&path) {
                     workspace.cloud_after_save(&path, cx);
@@ -794,7 +969,53 @@ impl Workspace {
         Ok(())
     }
 
+    /// Someone signed in or out in the sheet: list that account's cloud, and
+    /// ask again who this person is to the open document ("sign-in/out
+    /// changes live eligibility", page.tsx).
+    pub(super) fn on_account_changed(&mut self, cx: &mut Context<Self>) {
+        self.cloud.selection = None;
+        self.cloud.area = None;
+        self.refresh_cloud(false, cx);
+        if self.doc.is_some() {
+            self.collab_on_open(cx);
+        }
+    }
+
+    /// Copy or open a cloud `.wd`'s hosted Live Doc address
+    /// (server/src/live-docs.ts), asked of the document's own server with
+    /// the account it is bound to (library.tsx `copyLiveDoc`, `openLiveDoc`).
+    pub(super) fn live_doc_address(&mut self, path: &Path, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        const MISSING: &str = "This document has no Live Doc address on its server yet.";
+        let Some((scope, id)) = self.cloud.binding_key(path).and_then(|key| self.cloud.bound_scope(&key)) else {
+            window.push_notification(MISSING, cx);
+            return;
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            let address = network(async move { markie_cloud::sharing::SharesClient::new(&scope.client).live_doc_address(&id).await.ok() })
+                .await
+                .ok()
+                .flatten();
+            let _ = cx.update(|window, cx| match address {
+                None => window.push_notification(MISSING, cx),
+                Some(address) if open => cx.open_url(&address.url),
+                Some(address) => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(address.url.clone()));
+                    window.push_notification(
+                        if address.shared {
+                            "Live Doc address copied. It opens for you and everyone it's shared with, after they sign in."
+                        } else {
+                            "Live Doc address copied. It opens only for you, after you sign in."
+                        },
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn start_cloud_poll(&mut self, cx: &mut Context<Self>) {
+        self.start_test_drive(cx);
         self.refresh_cloud(true, cx);
         cx.spawn(async move |weak, cx| {
             loop {
@@ -846,8 +1067,9 @@ impl Workspace {
                 for (scope, known) in requests {
                     let docs = DocsClient::new(&scope.client);
                     let platform = PlatformClient(&scope.client);
-                    let (legacy, snapshots, areas) =
-                        tokio::join!(docs.list(), platform.list(), platform.areas());
+                    let shares = markie_cloud::sharing::SharesClient::new(&scope.client);
+                    let (legacy, snapshots, areas, by_me) =
+                        tokio::join!(docs.list(), platform.list(), platform.areas(), shares.shared_by_me());
                     let mut landed = Vec::new();
                     if let Ok(list) = &legacy {
                         for row in sync::arriving(list, &known).into_iter().take(25) {
@@ -857,12 +1079,16 @@ impl Workspace {
                         }
                     }
                     let error = legacy.as_ref().err().map(ToString::to_string);
+                    let snapshot_error = snapshots.as_ref().err().map(ToString::to_string);
                     let listing = Listing {
                         user: scope.user.clone(),
                         docs: legacy.ok(),
                         snapshots: snapshots.unwrap_or_default(),
                         areas: areas.unwrap_or_default(),
                         error,
+                        shared_by_me_error: by_me.is_err(),
+                        shared_by_me: by_me.ok(),
+                        snapshot_error,
                     };
                     response.push((scope, listing, landed));
                 }
@@ -889,6 +1115,14 @@ impl Workspace {
                                 this.cloud.notice = Some(error);
                             }
                         }
+                        if std::env::var("MARKIE_RS_COLLAB_DEBUG").is_ok_and(|v| v == "1") {
+                            eprintln!(
+                                "markie-rs cloud: listed {} for this account: {} documents, {} snapshots",
+                                scope.origin(),
+                                listing.docs.as_ref().map_or(0, Vec::len),
+                                listing.snapshots.len()
+                            );
+                        }
                         this.cloud
                             .listings
                             .insert(scope.origin().to_owned(), listing);
@@ -897,6 +1131,8 @@ impl Workspace {
                         }
                     }
                     this.refresh_lists();
+                    // The requests waiting for the Cloud page's account.
+                    this.people_refresh(cx);
                 }
                 cx.notify();
             });

@@ -70,9 +70,10 @@ Evidence, in `.autoloop/runs/cloud-sign-in/` (gitignored). Library lists are blu
 
 ### Still different from Electron
 
-- No dimmed, blurred backdrop under the sheet. GPUI's dialog overlay is transparent in the current theme mapping.
-- The Cloud page has the search filter only: no type and order menus, no source chips, no document snapshots section.
-- Linking and unlinking sign-ins, removing or blocking people, and the sync switch stay in Electron for now.
+- The backdrop under the sheet is dimmed but not blurred: GPUI has no backdrop blur, so the dim is 72% instead of Chromium's 58% with a blur. (Was: no backdrop. Fixed in [INTEGRATION-CLOUD.md](INTEGRATION-CLOUD.md).)
+- The Cloud page now has the area picker, type and order menus, source chips, share requests and the snapshots section (INTEGRATION-CLOUD.md). Creating a new cloud area from the picker is not built.
+- Linking and unlinking sign-ins, removing, blocking and unblocking people, and the sync switch are built (INTEGRATION-CLOUD.md). Linking was proven against a mock server only; a local server has no linked sign-ins.
+- Scratch runs (`MARKIE_RS_DATA_DIR`) keep the session in memory, shared by every part of the app; only a real run uses the Keychain. A scratch session does not survive a relaunch.
 - Production's verified-identity code flow is covered by mock tests only. The local server offers the legacy code route.
 - Reset password works in the crate's end-to-end test; the form was not driven through it on screen.
 - A browser sign-in does not survive quitting Markie RS before it comes back. The nonce is in memory.

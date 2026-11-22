@@ -424,7 +424,7 @@ async fn open_cloud_doc(link: &str, window: AnyWindowHandle, workspace: Entity<W
         .background_executor()
         .spawn(async move {
             for _ in 0..8 {
-                if markie_cloud::tokens::TokenStore::get(&session_store(), &server_for_wait).ok().flatten().is_some() {
+                if session_store().get(&server_for_wait).ok().flatten().is_some() {
                     return true;
                 }
                 std::thread::sleep(Duration::from_millis(250));
@@ -450,7 +450,7 @@ async fn open_cloud_doc(link: &str, window: AnyWindowHandle, workspace: Entity<W
         .spawn(async move {
             block_on(async move {
                 use std::sync::{Arc, RwLock};
-                let tokens: Arc<dyn markie_cloud::tokens::TokenStore> = Arc::new(session_store());
+                let tokens = session_store();
                 let client = markie_cloud::CloudClient::new(&server, Arc::new(RwLock::new(trust)), tokens, markie_cloud::http::Transport::new())
                     .map_err(|e| e.to_string())?;
                 let doc = markie_cloud::docs::DocsClient::new(&client).get(&id).await.map_err(|e| e.to_string())?;
@@ -479,10 +479,10 @@ async fn open_cloud_doc(link: &str, window: AnyWindowHandle, workspace: Entity<W
     Ok(())
 }
 
-/// Markie RS's own sign-ins, under its own Keychain service name. The cloud
-/// sign-in code writes the same service.
-pub fn session_store() -> markie_cloud::tokens::KeyringTokenStore {
-    markie_cloud::tokens::KeyringTokenStore::new(markie_core::paths::APP_NAME)
+/// Markie RS's own sign-ins: the one store the sign-in sheet writes
+/// (`account::shared_tokens`), never the Electron app's.
+pub fn session_store() -> std::sync::Arc<dyn markie_cloud::tokens::TokenStore> {
+    crate::workspace::account::shared_tokens()
 }
 
 #[cfg(test)]

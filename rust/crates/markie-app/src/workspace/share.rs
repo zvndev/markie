@@ -144,6 +144,52 @@ impl Workspace {
         cx.notify();
     }
 
+    /// "Manage" on a Cloud page row: the share dialog for that cloud
+    /// document, whether or not it is the open one (handleManageShare).
+    pub(super) fn manage_cloud_share(&mut self, doc_id: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let open_is_it = self.collab.cloud.as_ref().is_some_and(|c| c.doc_id == doc_id);
+        if open_is_it {
+            self.open_share(window, cx);
+            return;
+        }
+        let Some(scope) = self.cloud.selected_scope() else { return };
+        let user = super::account::signed_in_user(cx)
+            .filter(|u| u.id == scope.user)
+            .unwrap_or_else(|| markie_cloud::auth::MarkieUser { id: scope.user.clone(), email: String::new(), name: None });
+        let account = Arc::new(super::collab::CloudAccount { client: Arc::new(scope.client.clone()), user });
+        let doc = super::collab::CloudDoc { account, doc_id, name: name.clone() };
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Add people by email"));
+        let subs = vec![cx.subscribe_in(&query, window, |w, state, ev: &InputEvent, window, cx| w.share_field_event(state, ev, window, cx))];
+        self.collab.share = Some(ShareSheet {
+            gate: Gate::Ready,
+            doc: Some(doc),
+            file_name: name,
+            body: String::new(),
+            access: None,
+            members: None,
+            public_url: None,
+            rotated: None,
+            loaded: false,
+            contacts: Vec::new(),
+            pending: Vec::new(),
+            query: query.clone(),
+            role: Role::Viewer,
+            menu: None,
+            highlight: 0,
+            error: None,
+            flash: None,
+            busy: false,
+            link_busy: false,
+            copied: false,
+            row_busy: None,
+            _subs: subs,
+            _task: None,
+        });
+        self.share_load(cx);
+        query.update(cx, |s, cx| s.focus(window, cx));
+        cx.notify();
+    }
+
     /// The server answered while the sheet waited: show the dialog.
     pub(super) fn share_cloud_ready(&mut self, cx: &mut Context<Self>) {
         let cloud = self.collab.cloud.clone();
@@ -1002,11 +1048,12 @@ impl Workspace {
 
 // ------------------------------------------------------------ people
 
-/// The recipient's side of sharing, for the Cloud page and the account sheet
-/// (embedded by that work; nothing in this branch opens it yet).
+/// The recipient's side of sharing: the requests on the Cloud page
+/// (`ShareRequestsPanel`), for the account the Cloud page shows.
 #[derive(Default)]
-#[allow(dead_code)]
 pub struct PeopleState {
+    /// Whose requests these are (origin and user). A change drops them.
+    pub account: Option<(String, String)>,
     pub requests: Vec<ShareRequest>,
     pub count: usize,
     pub people: Option<People>,
@@ -1015,11 +1062,23 @@ pub struct PeopleState {
     pub notice: Option<String>,
 }
 
-#[allow(dead_code)]
 impl Workspace {
-    /// Load requests and people for the open document's account.
+    /// The account the Cloud page shows, and a client for it.
+    fn people_account(&self) -> Option<((String, String), Arc<CloudClient>)> {
+        let scope = self.cloud.selected_scope()?;
+        Some(((scope.origin().to_string(), scope.user.clone()), Arc::new(scope.client)))
+    }
+
+    /// Load the requests waiting for the Cloud page's account. A failed
+    /// request keeps what is on screen rather than calling it empty.
     pub fn people_refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(client) = self.collab.cloud.as_ref().map(|c| c.account.client.clone()) else { return };
+        let Some((account, client)) = self.people_account() else {
+            self.collab.people = None;
+            return;
+        };
+        if self.collab.people.as_ref().is_some_and(|st| st.account.as_ref() != Some(&account)) {
+            self.collab.people = None;
+        }
         let task = runtime::handle().spawn(async move {
             let people = PeopleClient::new(&client);
             (people.requests().await.ok(), people.people().await.ok())
@@ -1027,10 +1086,17 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let Ok((requests, people)) = task.await else { return };
             this.update(cx, |w, cx| {
+                if w.people_account().map(|(a, _)| a) != Some(account.clone()) {
+                    return;
+                }
                 let st = w.collab.people.get_or_insert_with(PeopleState::default);
+                st.account = Some(account);
                 if let Some((list, count)) = requests {
                     st.count = count.max(list.len());
                     st.requests = list;
+                    if std::env::var("MARKIE_RS_COLLAB_DEBUG").is_ok_and(|v| v == "1") {
+                        eprintln!("markie-rs cloud: {} share requests waiting for this account", st.count);
+                    }
                 }
                 if people.is_some() {
                     st.people = people;
@@ -1043,7 +1109,7 @@ impl Workspace {
     }
 
     fn people_act(&mut self, kind: &'static str, id: String, done: String, failed: &'static str, cx: &mut Context<Self>) {
-        let Some(client) = self.collab.cloud.as_ref().map(|c| c.account.client.clone()) else { return };
+        let Some((_, client)) = self.people_account() else { return };
         let st = self.collab.people.get_or_insert_with(PeopleState::default);
         st.busy = true;
         st.error = None;
@@ -1070,6 +1136,11 @@ impl Workspace {
                     }
                 }
                 w.people_refresh(cx);
+                // Accepting or blocking someone lands or removes their
+                // documents: list the cloud again (onPeopleChanged).
+                if ok && matches!(kind, "accept" | "block") {
+                    w.refresh_cloud(false, cx);
+                }
             })
             .ok();
         })
@@ -1081,7 +1152,8 @@ impl Workspace {
     /// Nothing while there are none.
     pub fn render_share_requests(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = themes::palette(cx);
-        let st = self.collab.people.as_ref()?;
+        let account = self.people_account().map(|(a, _)| a);
+        let st = self.collab.people.as_ref().filter(|st| account.is_some() && st.account == account)?;
         if st.requests.is_empty() {
             return st.notice.clone().map(|n| div().mb(px(8.)).px(px(8.)).text_size(px(11.)).text_color(p.muted).child(n).into_any_element());
         }
@@ -1134,56 +1206,8 @@ impl Workspace {
                 .into_any_element(),
         )
     }
-
-    /// Accepted people (Remove, Block) and blocked people (Unblock).
-    pub fn render_people_settings(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = themes::palette(cx);
-        let st = self.collab.people.as_ref();
-        let busy = st.is_some_and(|s| s.busy);
-        let people = st.and_then(|s| s.people.clone());
-        v_flex()
-            .mt(px(16.))
-            .border_t_1()
-            .border_color(p.border)
-            .pt(px(12.))
-            .child(div().mb(px(4.)).text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Accepted people"))
-            .child(div().mb(px(8.)).text_size(px(11.)).text_color(p.muted).child(sv::PEOPLE_INTRO))
-            .when(people.is_none(), |el| el.child(div().text_size(px(11.5)).text_color(p.muted).child("Couldn't load the people you accepted.")))
-            .when_some(people.clone(), |el, ppl| {
-                el.when(ppl.accepted.is_empty(), |el| el.child(div().text_size(px(11.5)).text_color(p.muted).child(sv::PEOPLE_EMPTY)))
-                    .children(ppl.accepted.iter().enumerate().map(|(i, person)| {
-                        let who = sv::who(person.name.as_deref(), &person.email);
-                        let (id1, id2, w1, w2) = (person.id.clone(), person.id.clone(), who.clone(), who.clone());
-                        person_row(&who, person.name.as_ref().map(|_| person.email.as_str()), &p)
-                            .child(people_button(&format!("ppl-remove-{i}"), "Remove", false, busy, &p).on_click(cx.listener(move |w, _, _, cx| w.people_act("remove", id1.clone(), format!("Removed {w1}."), "Couldn't remove them. Try again.", cx))))
-                            .child(people_button(&format!("ppl-block-{i}"), "Block", false, busy, &p).on_click(cx.listener(move |w, _, _, cx| w.people_act("block", id2.clone(), format!("Blocked {w2}."), "Couldn't block them. Try again.", cx))))
-                    }))
-                    .when(!ppl.blocked.is_empty(), |el| {
-                        el.child(div().mt(px(12.)).mb(px(4.)).text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Blocked")).children(ppl.blocked.iter().enumerate().map(|(i, person)| {
-                            let who = sv::who(person.name.as_deref(), &person.email);
-                            let (id, w1) = (person.id.clone(), who.clone());
-                            person_row(&who, person.name.as_ref().map(|_| person.email.as_str()), &p).child(
-                                people_button(&format!("ppl-unblock-{i}"), "Unblock", false, busy, &p)
-                                    .on_click(cx.listener(move |w, _, _, cx| w.people_act("unblock", id.clone(), format!("Unblocked {w1}. What they share shows up in Requests."), "Couldn't unblock them. Try again.", cx))),
-                            )
-                        }))
-                    })
-            })
-            .when_some(st.and_then(|s| s.error.clone()), |el, e| el.child(div().mt(px(6.)).text_size(px(11.)).text_color(p.red).child(e)))
-            .when_some(st.and_then(|s| s.notice.clone()), |el, n| el.child(div().mt(px(6.)).text_size(px(11.)).text_color(p.muted).child(n)))
-            .into_any_element()
-    }
 }
 
-#[allow(dead_code)]
-fn person_row(who: &str, email: Option<&str>, p: &Palette) -> Div {
-    h_flex()
-        .gap(px(8.))
-        .py(px(2.))
-        .child(v_flex().min_w_0().flex_1().child(div().truncate().text_size(px(12.)).text_color(p.foreground).child(who.to_string())).when_some(email, |el, e| el.child(div().truncate().text_size(px(10.5)).text_color(p.muted).child(e.to_string()))))
-}
-
-#[allow(dead_code)]
 fn people_button(id: &str, label: &'static str, primary: bool, busy: bool, p: &Palette) -> Stateful<Div> {
     div()
         .id(SharedString::from(id.to_string()))

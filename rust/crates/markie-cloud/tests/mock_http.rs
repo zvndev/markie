@@ -219,3 +219,98 @@ async fn comment_threads_parse() {
     assert_eq!(threads[0].comments[0].body, "Hi");
     assert_eq!(threads[0].anchor["to"], 4);
 }
+
+/// Linked sign-ins: each change takes its own step-up proof, and every call
+/// goes to this server with this account's token (account-identities.ts).
+#[tokio::test]
+async fn linked_sign_ins_take_a_proof_per_change() {
+    use markie_cloud::account::{self, LinkProvider, LinkStatus, StepUp};
+    let server = MockServer::start().await;
+    let tokens = Arc::new(MemoryTokenStore::new());
+    set_token(tokens.as_ref(), &server.uri(), Some("tok")).unwrap();
+    let auth = || header("authorization", "Bearer tok");
+    Mock::given(method("POST")).and(path("/api/account/identities/step-up/start")).and(auth()).and(body_partial_json(json!({ "scope": "google-link" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "challengeId": "ch_1", "expiresInSeconds": 300 }))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/api/account/identities/step-up/verify")).and(auth()).and(body_partial_json(json!({ "challengeId": "ch_1", "code": "123456" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "proofId": "pr_1" }))).expect(1).mount(&server).await;
+    let secret = "s".repeat(43);
+    let link = format!("{}/account/link-google#in_1.{secret}", server.uri());
+    Mock::given(method("POST")).and(path("/api/account/identities/google/start")).and(auth()).and(body_partial_json(json!({ "proofId": "pr_1" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "intentId": "in_1", "browserUrl": link }))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/api/account/identities/google/in_1")).and(auth())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "intentId": "in_1", "status": "complete" }))).expect(1).mount(&server).await;
+    Mock::given(method("DELETE")).and(path("/api/account/identities/id_2")).and(auth()).and(body_partial_json(json!({ "proofId": "pr_9" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "ok": true }))).expect(1).mount(&server).await;
+    Mock::given(method("DELETE")).and(path("/api/account/identities/apple-provider/pv_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "ok": true, "signedOut": true }))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/api/account/identities/email/start"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "code": "email-taken" }))).expect(1).mount(&server).await;
+    let c = client(&server, tokens.clone());
+
+    let challenge = account::start_step_up(&c, StepUp::Link(LinkProvider::Google)).await.unwrap();
+    assert_eq!(challenge.challenge_id, "ch_1");
+    let proof = account::verify_step_up(&c, "ch_1", "123456").await.unwrap();
+    let started = account::start_provider_link(&c, LinkProvider::Google, &proof).await.unwrap();
+    assert_eq!(started.intent_id, "in_1");
+    assert_eq!(account::provider_link_status(&c, LinkProvider::Google, "in_1").await.unwrap(), LinkStatus::Complete);
+    account::unlink(&c, "id_2", "pr_9").await.unwrap();
+    account::unlink_provider(&c, LinkProvider::Apple, "pv_1", "pr_8").await.unwrap();
+    let taken = account::start_email(&c, "other@example.com", "pr_1").await.unwrap_err();
+    assert_eq!(taken.message, "That email already belongs to another account. Accounts were not merged.");
+    // A server without the feature reads muted.
+    let none = account::start_step_up(&c, StepUp::EmailAdd).await.unwrap_err();
+    assert!(none.unsupported(), "{none:?}");
+}
+
+/// A linking page on another origin is refused before anything opens.
+#[tokio::test]
+async fn a_foreign_linking_page_is_refused() {
+    use markie_cloud::account::{self, LinkProvider};
+    let server = MockServer::start().await;
+    let tokens = Arc::new(MemoryTokenStore::new());
+    set_token(tokens.as_ref(), &server.uri(), Some("tok")).unwrap();
+    let secret = "s".repeat(43);
+    Mock::given(method("POST")).and(path("/api/account/identities/apple/start"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "intentId": "in_1", "browserUrl": format!("https://evil.example.com/account/link-apple#in_1.{secret}") })))
+        .mount(&server).await;
+    let c = client(&server, tokens);
+    let refused = account::start_provider_link(&c, LinkProvider::Apple, "pr_1").await.unwrap_err();
+    assert_eq!(refused.message, "The server returned invalid account information.");
+}
+
+/// The Library menu's Live Doc address: `GET /api/docs/:id/live-doc`, read as
+/// auth-client.ts `liveDocAddress` reads it.
+#[tokio::test]
+async fn live_doc_addresses_say_who_can_open_them() {
+    let server = MockServer::start().await;
+    let tokens = Arc::new(MemoryTokenStore::new());
+    set_token(tokens.as_ref(), &server.uri(), Some("tok")).unwrap();
+    Mock::given(method("GET")).and(path("/api/docs/doc-1/live-doc")).and(header("authorization", "Bearer tok"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "https://live.example.com/w/abc", "access": "shared", "network": ["https://api.example.com", "http://bad"] })))
+        .mount(&server).await;
+    Mock::given(method("GET")).and(path("/api/docs/doc-2/live-doc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "https://live.example.com/w/def", "access": "private" })))
+        .mount(&server).await;
+    // The shape a local server with Live Docs on sends (checked against one).
+    Mock::given(method("GET")).and(path("/api/docs/doc-5/live-doc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "http://abc123.localhost:18932/", "access": "private", "network": null })))
+        .mount(&server).await;
+    Mock::given(method("GET")).and(path("/api/docs/doc-3/live-doc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "javascript:alert(1)", "access": "private" })))
+        .mount(&server).await;
+    let c = client(&server, tokens);
+    let shares = SharesClient::new(&c);
+    let shared = shares.live_doc_address("doc-1").await.unwrap();
+    assert_eq!(shared.url, "https://live.example.com/w/abc");
+    assert!(shared.shared);
+    assert_eq!(shared.network, Some(vec!["https://api.example.com".to_string()]));
+    let private = shares.live_doc_address("doc-2").await.unwrap();
+    assert!(!private.shared);
+    assert_eq!(private.network, Some(vec![]), "a server that sends no list reaches nothing");
+    // Only an https (or local http) page is ever handed to the browser.
+    assert!(shares.live_doc_address("doc-3").await.is_err());
+    let local = shares.live_doc_address("doc-5").await.unwrap();
+    assert_eq!((local.url.as_str(), local.shared, local.network.clone()), ("http://abc123.localhost:18932/", false, None));
+    // No address on the server (Live Docs off answers 404): the menu says so.
+    assert!(shares.live_doc_address("doc-4").await.is_err());
+}

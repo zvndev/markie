@@ -2,6 +2,7 @@
 """Generate the benchmark fixtures into <out-dir>.
 
   gen-fixtures.py <out-dir>
+  gen-fixtures.py --tree <dir>     the index benchmark's folder tree
 
 Writes doc-10k.md, doc-1m.md, doc-10m.md (sizes in bytes: 10,240, 1,048,576
 and 10,485,760, give or take one block), doc-900k.md (the largest size the
@@ -116,7 +117,34 @@ def docx(path: str, pages: int) -> None:
         z.writestr("word/_rels/document.xml.rels", doc_rels)
 
 
+def tree(root: str) -> None:
+    """A fixed home-like folder for the index benchmark: 400 folders of 50
+    documents (Markdown, text, CSV, JSON), plus vendored and hidden folders
+    the walk must prune. About 20,000 indexable files."""
+    if os.path.exists(os.path.join(root, ".done")):
+        return
+    rng = random.Random(7)
+    exts = ["md", "md", "md", "txt", "csv", "json"]
+    for d in range(400):
+        base = os.path.join(root, f"projects/p{d // 20:02d}/notes-{d:03d}")
+        os.makedirs(base, exist_ok=True)
+        for f in range(50):
+            ext = exts[f % len(exts)]
+            with open(os.path.join(base, f"doc-{f:02d}.{ext}"), "w") as fh:
+                fh.write(f"# Note {d}-{f}\n\n" + " ".join(sentence(rng) for _ in range(rng.randint(2, 20))))
+        for noise in ("node_modules/pkg", ".git/objects"):
+            nd = os.path.join(base, noise)
+            os.makedirs(nd, exist_ok=True)
+            for f in range(10):
+                with open(os.path.join(nd, f"x{f}.md"), "w") as fh:
+                    fh.write("pruned")
+    open(os.path.join(root, ".done"), "w").close()
+
+
 def main() -> None:
+    if sys.argv[1] == "--tree":
+        tree(sys.argv[2])
+        return
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
     for name, size in (("doc-10k", 10 * 1024), ("doc-900k", 900 * 1000), ("doc-1m", 1024 * 1024), ("doc-10m", 10 * 1024 * 1024)):

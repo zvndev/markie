@@ -332,90 +332,116 @@ def window_size(pid: int) -> tuple[int, int] | None:
     return int(rows[0]["w"]), int(rows[0]["h"])
 
 
-def bench_typing(out: Path, runs: int, label: str):
+def rs_session(out: Path, app: str, label: str, file: Path, logf: Path, load_limit: float, body):
+    """Launch one Markie RS build on `file`, wait for the open and the startup
+    scan (the Library full, as a user has it, and the scan no longer
+    competing for the CPU), run `body(pid)`, quit."""
+    data = out / "data" / f"{app}-{label}"
+    seed_rs_data(data)
+    wait_quiet(load_limit)
+    res = timed_launch(app, file, data, logf)
+    pid = res["pid"]
+    try:
+        wait_for(lambda: any(e["event"] == "open" for e in perf_events(logf)), 15)
+        wait_for(lambda: any(e["event"] == "scan" for e in perf_events(logf)), 60)
+        time.sleep(0.5)
+        return body(pid)
+    except subprocess.CalledProcessError as e:
+        log(f"  {app}: input refused ({(e.stderr or b'').decode(errors='replace').strip()}); run skipped")
+        return None
+    finally:
+        kill_tree(pid)
+        time.sleep(0.5)
+
+
+def bench_typing(out: Path, runs: int, label: str, apps: list[str], load_limit: float):
     fx = fixtures(out)
     results = load(out, f"typing-{label}") or {}
     for name in ("doc-10k.md", "doc-900k.md", "doc-1m.md"):
-        data = out / "data" / f"rs-{label}"
-        seed_rs_data(data)
-        rows = []
+        rows: dict[str, list] = {app: [] for app in apps}
         for i in range(runs):
-            # Type into a scratch copy, so the fixture never changes.
-            copy = out / "scratch" / f"type-{i}-{name}"
-            copy.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fx / name, copy)
-            logf = out / "logs" / f"{label}-typing-{name}-{i}.log"
-            res = timed_launch("rs", copy, data, logf)
-            pid = res["pid"]
-            try:
-                wait_for(lambda: any(e["event"] == "open" for e in perf_events(logf)), 10)
-                # With the Library full, as a user has it, and the startup
-                # scan finished so it does not compete for the CPU.
-                wait_for(lambda: any(e["event"] == "scan" for e in perf_events(logf)), 60)
-                time.sleep(0.5)
-                # Click into the text, move to the end of that line, type.
-                act(pid, "click", "700", "260")
-                act(pid, "keys", "key code 119")  # End
-                before = len([e for e in perf_events(logf) if e["event"] == "key"])
-                act(pid, "type", " the quick brown fox jumps over the lazy dog")
-                time.sleep(0.5)
-                keys = [e for e in perf_events(logf) if e["event"] == "key"][before:]
-                rows.append({"ms": [k["ms"] for k in keys], "cost": [k["cost"] for k in keys]})
-                med = statistics.median([k["ms"] for k in keys]) if keys else None
-                log(f"typing {name} run {i + 1}: {len(keys)} keys, median {med} ms")
-            finally:
-                kill_tree(pid)
-                time.sleep(0.5)
-        results[name] = rows
+            for app in apps:
+                # Type into a scratch copy, so the fixture never changes.
+                copy = out / "scratch" / f"type-{app}-{i}-{name}"
+                copy.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(fx / name, copy)
+                logf = out / "logs" / f"{label}-typing-{app}-{name}-{i}.log"
+
+                def body(pid, logf=logf):
+                    # Click into the text, go to the end of that line, type.
+                    act(pid, "click", "700", "260")
+                    act(pid, "keys", "key code 119")  # End
+                    before = len([e for e in perf_events(logf) if e["event"] == "key"])
+                    act(pid, "type", " the quick brown fox jumps over the lazy dog")
+                    time.sleep(0.6)
+                    keys = [e for e in perf_events(logf) if e["event"] == "key"][before:]
+                    return {"ms": [k["ms"] for k in keys], "cost": [k["cost"] for k in keys], "load1": load1()}
+
+                r = rs_session(out, app, label, copy, logf, load_limit, body)
+                if r and r["ms"]:
+                    rows[app].append(r)
+                    log(f"typing {app} {name} run {i + 1}: {len(r['ms'])} frames for 44 keys, "
+                        f"median {statistics.median(r['ms']):.1f} ms, load {r['load1']:.0f}")
+        for app in apps:
+            results[f"{app}/{name}"] = rows[app]
         save(out, f"typing-{label}", results)
 
 
-def bench_scroll(out: Path, runs: int, label: str):
+def bench_scroll(out: Path, runs: int, label: str, apps: list[str], load_limit: float):
     fx = fixtures(out)
     results = load(out, f"scroll-{label}") or {}
     for name in ("doc-1m.md", "doc-900k.md"):
-        data = out / "data" / f"rs-{label}"
-        seed_rs_data(data)
-        rows = []
+        rows: dict[str, list] = {app: [] for app in apps}
         for i in range(runs):
-            logf = out / "logs" / f"{label}-scroll-{name}-{i}.log"
-            res = timed_launch("rs", fx / name, data, logf)
-            pid = res["pid"]
-            try:
-                wait_for(lambda: any(e["event"] == "open" for e in perf_events(logf)), 10)
-                # With the Library full, as a user has it, and the startup
-                # scan finished so it does not compete for the CPU.
-                wait_for(lambda: any(e["event"] == "scan" for e in perf_events(logf)), 60)
-                time.sleep(0.5)
-                # 240 wheel events, 8 ms apart, over the document: 4 down, then up.
-                act(pid, "scroll", "700", "400", "-60", "240", "8")
-                time.sleep(0.4)
-                frames = [e for e in perf_events(logf) if e["event"] == "scroll_frame"]
-                rows.append({"cost": [f["cost"] for f in frames], "gap": [f["gap"] for f in frames[1:]]})
-                log(f"scroll {name} run {i + 1}: {len(frames)} frames, median cost "
-                    f"{statistics.median([f['cost'] for f in frames]) if frames else None} ms")
-            finally:
-                kill_tree(pid)
-                time.sleep(0.5)
-        results[name] = rows
+            for app in apps:
+                logf = out / "logs" / f"{label}-scroll-{app}-{name}-{i}.log"
+
+                def body(pid, logf=logf):
+                    # 240 wheel events, 8 ms apart, over the document: down, then up.
+                    act(pid, "scroll", "700", "400", "-60", "240", "8")
+                    time.sleep(0.4)
+                    frames = [e for e in perf_events(logf) if e["event"] == "scroll_frame"]
+                    return {"cost": [f["cost"] for f in frames], "gap": [f["gap"] for f in frames[1:]], "load1": load1()}
+
+                r = rs_session(out, app, label, fx / name, logf, load_limit, body)
+                if r and r["cost"]:
+                    rows[app].append(r)
+                    log(f"scroll {app} {name} run {i + 1}: {len(r['cost'])} frames, median cost "
+                        f"{statistics.median(r['cost']):.2f} ms, load {r['load1']:.0f}")
+        for app in apps:
+            results[f"{app}/{name}"] = rows[app]
         save(out, f"scroll-{label}", results)
 
 
 # ---------------------------------------------------------------- index / search
 
-def bench_index(out: Path, runs: int, label: str):
-    r = subprocess.run(["cargo", "run", "--release", "-q", "-p", "markie-core", "--example", "perf_index", "--", str(runs)],
-                       cwd=RUST, capture_output=True, text=True, check=True)
-    rs = json.loads(r.stdout.strip().splitlines()[-1])
+def bench_index(out: Path, runs: int, label: str, load_limit: float):
     el_dir = out / "electron-app"
     if not (el_dir / "electron" / "mdindex.js").exists():
         subprocess.run(["node", str(HERE / "asar-extract.cjs"), str(EL_ASAR), str(el_dir), "electron/"], check=True,
                        capture_output=True)
-    r = subprocess.run(["node", str(HERE / "electron-index.cjs"), str(el_dir), str(runs)], capture_output=True, text=True, check=True)
-    el = json.loads(r.stdout.strip().splitlines()[-1])
-    save(out, f"index-{label}", {"rs": rs, "electron": el})
-    log(f"index: rs median {statistics.median(rs['scan_ms']):.0f} ms ({rs['files']} files), "
-        f"electron median {statistics.median(el['scan_ms']):.0f} ms ({el['files']} files)")
+    tree = out / "tree"
+    subprocess.run([sys.executable, str(HERE / "gen-fixtures.py"), "--tree", str(tree)], check=True)
+    subprocess.run(["cargo", "build", "--release", "-q", "-p", "markie-core", "--example", "perf_index"], cwd=RUST, check=True)
+    rs_bin = RUST / "target" / "release" / "examples" / "perf_index"
+    result = {}
+    # The fixed tree first (both walk all of it), then the real home folder
+    # (both stop at their 30 s budget, so the number is files found).
+    for where, home in (("tree", str(tree)), ("home", None)):
+        env = dict(os.environ)
+        if home:
+            env["MARKIE_BENCH_HOME"] = home
+        else:
+            env.pop("MARKIE_BENCH_HOME", None)
+        wait_quiet(load_limit)
+        rs = json.loads(subprocess.run([str(rs_bin), str(runs)], env=env, capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1])
+        wait_quiet(load_limit)
+        el = json.loads(subprocess.run(["node", str(HERE / "electron-index.cjs"), str(el_dir), str(runs)], env=env,
+                                       capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1])
+        result[where] = {"rs": rs, "electron": el, "load1": load1()}
+        log(f"index {where}: rs median {statistics.median(rs['scan_ms']):.0f} ms ({rs['files']} files), "
+            f"electron median {statistics.median(el['scan_ms']):.0f} ms ({el['files']} files)")
+        save(out, f"index-{label}", result)
 
 
 # ---------------------------------------------------------------- summary
@@ -453,8 +479,8 @@ def summary(out: Path, label: str):
             lines.append(f"\nLoad average during samples: {stat(loads)}")
     typing = load(out, f"typing-{label}")
     if typing:
-        lines.append(f"\n## Keystroke to frame, Markie RS ({label}): per-run medians, ms\n")
-        lines.append("| Fixture | key to painted frame | frame cost | p95 key to frame |")
+        lines.append(f"\n## Keystroke to frame ({label}): median of per-run medians (min to max), ms\n")
+        lines.append("| Build / fixture | key to painted frame | frame cost | p95 key to frame |")
         lines.append("|---|---|---|---|")
         for name, rows in typing.items():
             meds = [statistics.median(r["ms"]) for r in rows if r["ms"]]
@@ -463,8 +489,8 @@ def summary(out: Path, label: str):
             lines.append(f"| {name} | {stat(meds)} | {stat(costs)} | {stat(p95)} |")
     scroll = load(out, f"scroll-{label}")
     if scroll:
-        lines.append(f"\n## Scrolling, Markie RS ({label}): per-run values, ms\n")
-        lines.append("| Fixture | median frame cost | p95 frame cost | median gap between frames | frames over 16.7 ms |")
+        lines.append(f"\n## Scrolling ({label}): per-run values, ms\n")
+        lines.append("| Build / fixture | median frame cost | p95 frame cost | median gap between frames | frames over 16.7 ms |")
         lines.append("|---|---|---|---|---|")
         for name, rows in scroll.items():
             med = [statistics.median(r["cost"]) for r in rows if r["cost"]]
@@ -474,14 +500,18 @@ def summary(out: Path, label: str):
             lines.append(f"| {name} | {stat(med)} | {stat(p95)} | {stat(gap)} | {stat(slow)} % |")
     index = load(out, f"index-{label}")
     if index:
-        rs, el = index["rs"], index["electron"]
         lines.append(f"\n## Device index and search ({label}): median (min to max), ms\n")
-        lines.append(f"Scan: Electron {stat(el['scan_ms'])} for {el['files']} files; "
-                     f"Markie RS {stat(rs['scan_ms'])} for {rs['files']} files.\n")
-        lines.append("| Query | Electron filter | Markie RS search | Electron hits | RS hits |")
-        lines.append("|---|---|---|---|---|")
-        for qe, qr in zip(el["queries"], rs["queries"]):
-            lines.append(f"| `{qe['query']}` | {stat(qe['ms'])} | {stat(qr['ms'])} | {qe['hits']} | {qr['hits']} |")
+        for where, title in (("tree", "Fixed 20,000-file tree"), ("home", "Home folder (both stop at their 30 s budget)")):
+            if where not in index:
+                continue
+            rs, el = index[where]["rs"], index[where]["electron"]
+            lines.append(f"**{title}.** Scan: Electron {stat(el['scan_ms'])} for {el['files']} files; "
+                         f"Markie RS {stat(rs['scan_ms'])} for {rs['files']} files.\n")
+            lines.append("| Query | Electron filter | Markie RS search | Electron hits | RS hits |")
+            lines.append("|---|---|---|---|---|")
+            for qe, qr in zip(el["queries"], rs["queries"]):
+                lines.append(f"| `{qe['query']}` | {stat(qe['ms'])} | {stat(qr['ms'])} | {qe['hits']} | {qr['hits']} |")
+            lines.append("")
     print("\n".join(lines))
 
 
@@ -511,11 +541,11 @@ def main():
     if a.what in ("all", "launch"):
         bench_launch(out, a.runs, not a.no_idle, apps, a.label, a.fixtures.split(","), a.load_limit)
     if a.what in ("all", "typing"):
-        bench_typing(out, a.runs, a.label)
+        bench_typing(out, a.runs, a.label, [x for x in apps if is_rs(x)], a.load_limit)
     if a.what in ("all", "scroll"):
-        bench_scroll(out, a.runs, a.label)
+        bench_scroll(out, a.runs, a.label, [x for x in apps if is_rs(x)], a.load_limit)
     if a.what in ("all", "index"):
-        bench_index(out, a.runs, a.label)
+        bench_index(out, a.runs, a.label, a.load_limit)
     summary(out, a.label)
 
 

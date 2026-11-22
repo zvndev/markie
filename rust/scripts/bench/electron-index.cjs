@@ -2,6 +2,7 @@
 //
 //   node electron-index.cjs <repo-root> [runs] [query…]
 //
+// MARKIE_BENCH_HOME=<dir> scans that folder as the home instead.
 // Runs the app's own `electron/mdindex.js` rescan over the home folder (read
 // only, its default budget), then the Library filter from
 // `src/components/browse-view.tsx` (path, snippet and format substring
@@ -31,7 +32,7 @@ function filter(rows, filterText) {
   let snap = null;
   for (let i = 0; i < runs; i++) {
     const t = performance.now();
-    snap = await mdindex.rescan({ roots: [] });
+    snap = await mdindex.rescan(process.env.MARKIE_BENCH_HOME ? { roots: [], home: process.env.MARKIE_BENCH_HOME } : { roots: [] });
     scans.push(performance.now() - t);
   }
   const rows = snap.files;

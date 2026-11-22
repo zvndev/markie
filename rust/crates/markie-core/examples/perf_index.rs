@@ -2,6 +2,7 @@
 //!
 //!   cargo run --release -p markie-core --example perf_index -- [runs] [query…]
 //!
+//! MARKIE_BENCH_HOME=<dir> scans that folder as the home instead.
 //! Scans the home folder `runs` times (read only, the app's own budget and
 //! rules), then runs each query against the last snapshot. Prints one JSON
 //! object: scan times, file counts, and per-query latencies in ms.
@@ -9,7 +10,7 @@
 use std::time::Instant;
 
 use markie_core::index::{ScanOptions, scan};
-use markie_core::search::{LibraryQuery, search_library};
+use markie_core::search::{LibraryQuery, SearchIndex};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -18,7 +19,9 @@ fn main() {
     if queries.is_empty() {
         queries = ["readme", "plan", "markie perf", "zzzz-no-match", "a"].map(String::from).to_vec();
     }
-    let home = dirs::home_dir().expect("home folder");
+    let home = std::env::var_os("MARKIE_BENCH_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().expect("home folder"));
     let opts = ScanOptions::from_env(&home, Vec::new());
 
     let mut scans = Vec::new();
@@ -32,6 +35,11 @@ fn main() {
     let snap = snapshot.expect("at least one run");
     let with_snippets = snap.files.iter().filter(|f| f.snippet.is_some()).count();
 
+    // The app builds the index once per snapshot, off the main thread; each
+    // keystroke in the search box is one `search`.
+    let t = Instant::now();
+    let index = SearchIndex::new(&snap.files);
+    let index_ms = t.elapsed().as_secs_f64() * 1000.0;
     let mut query_rows = Vec::new();
     for q in &queries {
         let query = LibraryQuery { text: q.clone(), formats: Vec::new() };
@@ -39,7 +47,7 @@ fn main() {
         let mut hits = 0;
         for _ in 0..runs.max(5) {
             let t = Instant::now();
-            hits = search_library(&snap.files, &query).len();
+            hits = index.search(&snap.files, &query).len();
             times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         query_rows.push(serde_json::json!({ "query": q, "ms": times, "hits": hits }));
@@ -49,6 +57,7 @@ fn main() {
         "files": snap.files.len(),
         "dirs": snap.dirs,
         "snippets": with_snippets,
+        "index_build_ms": index_ms,
         "truncated": format!("{:?}", snap.truncated),
         "queries": query_rows,
     });

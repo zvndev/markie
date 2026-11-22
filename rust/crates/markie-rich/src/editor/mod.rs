@@ -20,6 +20,9 @@ pub mod tree;
 mod ops;
 mod format;
 mod clip;
+mod rules;
+mod keys;
+mod table;
 
 use std::ops::Range;
 
@@ -91,6 +94,9 @@ pub struct Editor {
     pending: Option<[(usize, Vec<usize>, usize); 2]>,
     /// Set when an edit re-derived leaves part way through.
     leaves_dirty: bool,
+    /// The selection version right after an input rule ran, so Backspace
+    /// straight after it can take the rule back (`rules.rs`).
+    rule_undo: Option<u64>,
 }
 
 const MAX_UNDO: usize = 500;
@@ -127,6 +133,7 @@ impl Editor {
             goal_x: None,
             pending: None,
             leaves_dirty: false,
+            rule_undo: None,
         };
         let first = ed.first_text_pos().unwrap_or_default();
         ed.anchor = first;

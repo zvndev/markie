@@ -46,7 +46,7 @@ fn step(ed: &mut Editor, r: &mut Rng) {
             ed.set_caret(p, true);
         }
         6..=8 => {
-            let words = ["a", "word ", " ", "é", "🎉", "$", "x$", "# ", "- ", "1. ", "> ", "[ ] ", "*", "`"];
+            let words = ["a", "word ", " ", "é", "🎉", "$", "x$", "# ", "- ", "1. ", "> ", "[ ] ", "*", "`", "**", "_", "~~", "==", "```", "---", "![a](b.png)"];
             ed.insert_text(words[r.below(words.len())]);
         }
         9 | 10 => ed.backspace(),

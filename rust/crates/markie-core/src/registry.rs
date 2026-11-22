@@ -119,6 +119,14 @@ impl Registry {
         &self.db
     }
 
+    /// `trashFile` for a file that is already gone: the row leaves the
+    /// Library, with its star.
+    pub fn forget(&self, path: &Path) -> Result<()> {
+        self.db.execute("DELETE FROM files WHERE path = ?1", params![key(path)])?;
+        self.db.execute("DELETE FROM md_stars WHERE path = ?1", params![key(path)])?;
+        Ok(())
+    }
+
     pub fn track_opened(&self, path: &Path) -> Result<()> {
         let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         self.db.execute(
@@ -363,6 +371,17 @@ mod tests {
                 assert_eq!(n, 1, "{table}");
             }
         }
+    }
+
+    #[test]
+    fn forgetting_a_missing_file_drops_its_row() {
+        let reg = Registry::in_memory().unwrap();
+        let gone = Path::new("/nowhere/gone.md");
+        reg.track_opened(gone).unwrap();
+        reg.toggle_star(gone, "file").unwrap();
+        reg.forget(gone).unwrap();
+        assert!(reg.recent(10).unwrap().is_empty());
+        assert!(!reg.is_starred(gone).unwrap());
     }
 
     #[test]

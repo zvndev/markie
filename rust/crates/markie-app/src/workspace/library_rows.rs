@@ -112,6 +112,8 @@ pub(super) enum RowAction {
     ManageSharing,
     SyncOff,
     Delete,
+    /// The file is gone: "Remove from Library".
+    Forget,
 }
 
 pub(super) struct Entry {
@@ -141,6 +143,12 @@ pub(super) struct CloudLinks {
 /// `rowMenuEntries`: the links, copy path, then the sync action this state
 /// calls for, then sharing, then deletion on its own at the bottom.
 pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool, links: CloudLinks) -> Vec<Entry> {
+    row_entries_for(status, signed_in, classic, links, true)
+}
+
+/// `rowMenuEntries` with `item.exists`: a file that is gone offers no backup
+/// or sync-on, and "Remove from Library" in place of "Delete file…".
+pub(super) fn row_entries_for(status: SyncStatus, signed_in: bool, classic: bool, links: CloudLinks, exists: bool) -> Vec<Entry> {
     let e = |action, label, icon, tone| Entry { action, label, icon, tone, separated: false };
     let mut entries = Vec::new();
     if links.private_link {
@@ -155,9 +163,9 @@ pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool, li
     let in_cloud = !matches!(status, SyncStatus::LocalOnly);
     if signed_in {
         match status {
-            SyncStatus::Unpushed => sync.push(e(RowAction::RetryBackup, "Retry backup", ICON_RETRY, Tone::Accent)),
-            SyncStatus::LocalOnly if classic => sync.push(e(RowAction::SyncOn, "Sync to cloud", ICON_UPLOAD, Tone::Default)),
-            SyncStatus::Paused if classic => sync.push(e(RowAction::Resume, "Resume sync", ICON_UPLOAD, Tone::Default)),
+            SyncStatus::Unpushed if exists => sync.push(e(RowAction::RetryBackup, "Retry backup", ICON_RETRY, Tone::Accent)),
+            SyncStatus::LocalOnly if classic && exists => sync.push(e(RowAction::SyncOn, "Sync to cloud", ICON_UPLOAD, Tone::Default)),
+            SyncStatus::Paused if classic && exists => sync.push(e(RowAction::Resume, "Resume sync", ICON_UPLOAD, Tone::Default)),
             SyncStatus::Behind => sync.push(e(RowAction::Pull, "Pull latest", ICON_DOWNLOAD, Tone::Accent)),
             SyncStatus::Conflict => sync.push(e(RowAction::Review, "Review changes…", ICON_REVIEW, Tone::Accent)),
             _ => {}
@@ -173,7 +181,11 @@ pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool, li
         first.separated = true;
     }
     entries.extend(sync);
-    entries.push(Entry { action: RowAction::Delete, label: "Delete file…", icon: ICON_TRASH, tone: Tone::Danger, separated: true });
+    entries.push(if exists {
+        Entry { action: RowAction::Delete, label: "Delete file…", icon: ICON_TRASH, tone: Tone::Danger, separated: true }
+    } else {
+        Entry { action: RowAction::Forget, label: "Remove from Library", icon: ICON_REMOVE, tone: Tone::Default, separated: true }
+    });
     entries
 }
 
@@ -184,6 +196,7 @@ const ICON_UPLOAD: &str = r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 
 const ICON_DOWNLOAD: &str = r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M12 10v5M9.8 12.8 12 15l2.2-2.2"/>"#;
 const ICON_REVIEW: &str = r#"<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4M12 16.8v.2"/>"#;
 const ICON_CLOUD_OFF: &str = r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>"#;
+const ICON_REMOVE: &str = r#"<circle cx="12" cy="12" r="8"/><path d="M8.5 12h7"/>"#;
 const ICON_TRASH: &str = r#"<path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6 7l1 12.5h10L18 7"/><path d="M10 11v5M14 11v5"/>"#;
 
 impl Workspace {
@@ -241,6 +254,14 @@ impl Workspace {
                 window.push_notification("Path copied. Paste it anywhere.", cx);
             }
             RowAction::Delete => self.show_dialog(Overlay::Trash { path }, window, cx),
+            RowAction::Forget => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                match self.registry.as_ref().map(|r| r.forget(&path)) {
+                    Some(Ok(())) => window.push_notification(format!("Removed {name} from your library."), cx),
+                    _ => window.push_notification("Couldn't delete the file.", cx),
+                }
+                self.refresh_lists();
+            }
             RowAction::Review => self.open_path(&path, window, cx),
             RowAction::ManageSharing => {
                 self.open_path(&path, window, cx);
@@ -260,7 +281,8 @@ impl Workspace {
         let p = themes::palette(cx);
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let signed_in = super::account::signed_in_user(cx).is_some();
-        let entries = row_entries(self.row_status(&path), signed_in, classic(&name), self.row_links(&path, &name));
+        let exists = !self.shell.recent.is_missing(&path);
+        let entries = row_entries_for(self.row_status(&path), signed_in, classic(&name), self.row_links(&path, &name), exists);
         let hover = p.accent.opacity(0.85);
         let items = entries.into_iter().enumerate().map(|(i, entry)| {
             let color = match entry.tone {
@@ -316,7 +338,7 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{CloudLinks, RowAction, SyncStatus, classic, row_entries};
+    use super::{CloudLinks, RowAction, SyncStatus, classic, row_entries, row_entries_for};
 
     fn actions(status: SyncStatus, signed_in: bool, classic: bool) -> Vec<RowAction> {
         row_entries(status, signed_in, classic, CloudLinks::default()).into_iter().map(|e| e.action).collect()
@@ -383,6 +405,16 @@ mod tests {
         assert!(e[1].separated);
         assert!(!e[2].separated);
         assert!(e.last().unwrap().separated);
+    }
+
+    #[test]
+    fn a_file_that_is_gone_is_removed_from_the_library_not_deleted() {
+        let got = row_entries_for(SyncStatus::LocalOnly, true, true, CloudLinks::default(), false);
+        let actions: Vec<_> = got.iter().map(|e| e.action).collect();
+        assert_eq!(actions, [RowAction::CopyPath, RowAction::Forget]);
+        assert_eq!(got[1].label, "Remove from Library");
+        let unpushed: Vec<_> = row_entries_for(SyncStatus::Unpushed, true, true, CloudLinks::default(), false).iter().map(|e| e.action).collect();
+        assert!(!unpushed.contains(&RowAction::RetryBackup));
     }
 
     #[test]

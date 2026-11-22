@@ -1208,6 +1208,7 @@ impl Workspace {
         let menu_open = self.shell.row_menu.as_ref().is_some_and(|(m, _)| *m == doc.path);
         let group = SharedString::from(format!("row-group-{}", doc.path.display()));
         let (menu_path, context_path) = (doc.path.clone(), doc.path.clone());
+        let missing = self.shell.recent.is_missing(&doc.path);
         let muted = p.muted;
         let fg = p.foreground;
         div()
@@ -1250,13 +1251,18 @@ impl Workspace {
                             })),
                     ),
             )
+            // library.tsx: a row whose file is gone says so.
+            .when(missing, |el| el.child(div().pl(px(21.)).text_size(px(10.)).text_color(p.red).child("Missing on disk")))
             .on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                 this.shell.row_menu = None;
                 this.open_row_menu(context_path.clone(), ev.position, cx);
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.shell.row_menu = None;
-                this.open_path(&path, window, cx)
+                // Electron opens a row only while its file exists.
+                if !missing {
+                    this.open_path(&path, window, cx)
+                }
             }))
     }
 

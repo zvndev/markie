@@ -74,6 +74,9 @@ pub struct Library {
     pub truncated: bool,
     /// When each Recent row was last opened, in ms (`lastOpenedAt`).
     opened_at: HashMap<PathBuf, f64>,
+    /// Recent rows whose file is gone (`exists: false`): still listed,
+    /// "Missing on disk".
+    missing: std::collections::HashSet<PathBuf>,
 }
 
 impl Library {
@@ -151,9 +154,23 @@ impl Library {
 
     /// Recent and starred lists come from the registry as paths.
     pub fn set_lists(&mut self, recent: Vec<std::path::PathBuf>, starred: Vec<std::path::PathBuf>) {
-        self.recent = recent.into_iter().filter_map(|p| row_for(&p)).collect();
+        self.missing.clear();
+        self.recent = recent
+            .into_iter()
+            .map(|p| {
+                row_for(&p).unwrap_or_else(|| {
+                    self.missing.insert(p.clone());
+                    missing_row(&p)
+                })
+            })
+            .collect();
         self.starred = starred.into_iter().filter_map(|p| row_for(&p)).collect();
         self.refresh();
+    }
+
+    /// The row's file is gone from disk.
+    pub fn is_missing(&self, path: &std::path::Path) -> bool {
+        self.missing.contains(path)
     }
 
     pub fn set_text(&mut self, text: &str) {
@@ -326,6 +343,19 @@ pub fn query_rows(docs: &[IndexedDoc], query: &LibraryQuery, sort: SortOrder, op
     hits
 }
 
+/// A registry row whose file is no longer on disk.
+fn missing_row(path: &std::path::Path) -> IndexedDoc {
+    IndexedDoc {
+        path: path.to_path_buf(),
+        name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        dir: path.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
+        mtime_ms: 0.0,
+        size: 0,
+        format: markie_core::formats::classify(&path.to_string_lossy()),
+        snippet: None,
+    }
+}
+
 /// A Library row for a path that is not necessarily in the device index.
 fn row_for(path: &std::path::Path) -> Option<IndexedDoc> {
     let meta = std::fs::metadata(path).ok()?;
@@ -449,6 +479,20 @@ mod tests {
             let want: Vec<String> = case["paths"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()).collect();
             assert_eq!(got, want, "{case}");
         }
+    }
+
+    #[test]
+    fn recent_files_that_are_gone_stay_listed_as_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here.md");
+        std::fs::write(&here, "x").unwrap();
+        let gone = dir.path().join("gone.md");
+        let mut lib = Library::default();
+        lib.set_lists(vec![gone.clone(), here.clone()], Vec::new());
+        lib.set_tab(LibraryTab::Recent);
+        let names: Vec<_> = lib.hits().iter().map(|h| lib.doc(h).name.clone()).collect();
+        assert_eq!(names, ["gone.md", "here.md"]);
+        assert!(lib.is_missing(&gone) && !lib.is_missing(&here));
     }
 
     #[test]

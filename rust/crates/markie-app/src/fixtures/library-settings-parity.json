@@ -1,0 +1,1179 @@
+{
+ "palette": {
+  "commands": [
+   {
+    "title": "Open File…",
+    "group": "File",
+    "keywords": ""
+   },
+   {
+    "title": "New Markdown document",
+    "group": "File",
+    "keywords": "md markdown"
+   },
+   {
+    "title": "New Word document",
+    "group": "File",
+    "keywords": "docx office"
+   },
+   {
+    "title": "Save",
+    "group": "File",
+    "keywords": ""
+   },
+   {
+    "title": "Save As…",
+    "group": "File",
+    "keywords": ""
+   },
+   {
+    "title": "Duplicate (Fork)",
+    "group": "File",
+    "keywords": "copy fork duplicate"
+   },
+   {
+    "title": "Reveal in Finder",
+    "group": "File",
+    "keywords": "finder explorer folder show reveal drag locate"
+   },
+   {
+    "title": "Export PDF (Dark)",
+    "group": "File",
+    "keywords": "print"
+   },
+   {
+    "title": "Rich Mode",
+    "group": "View",
+    "keywords": "preview rich wysiwyg formatted view"
+   },
+   {
+    "title": "Source Mode",
+    "group": "View",
+    "keywords": "source raw markdown edit"
+   },
+   {
+    "title": "Split Mode",
+    "group": "View",
+    "keywords": "both side by side"
+   },
+   {
+    "title": "Statistics",
+    "group": "View",
+    "keywords": "words count reading"
+   },
+   {
+    "title": "Find…",
+    "group": "View",
+    "keywords": "search find text"
+   },
+   {
+    "title": "Find and Replace…",
+    "group": "View",
+    "keywords": "search find replace all substitute"
+   },
+   {
+    "title": "Copy File Path",
+    "group": "File",
+    "keywords": "link location terminal clipboard"
+   },
+   {
+    "title": "Format Tables",
+    "group": "Format",
+    "keywords": "align prettify pipes"
+   },
+   {
+    "title": "Theme: Paper",
+    "group": "Theme",
+    "keywords": "template style color font typography Warm print"
+   },
+   {
+    "title": "Theme Settings…",
+    "group": "Theme",
+    "keywords": "color font preset style"
+   },
+   {
+    "title": "Settings…",
+    "group": "File",
+    "keywords": "account sign in sync login"
+   },
+   {
+    "title": "Search All Documents…",
+    "group": "File",
+    "keywords": "find files everywhere full text docx rtf word grep content global"
+   },
+   {
+    "title": "Library…",
+    "group": "File",
+    "keywords": "documents cloud sync files recent projects organize workspace group"
+   },
+   {
+    "title": "Keyboard Shortcuts",
+    "group": "Help",
+    "keywords": "help keys"
+   }
+  ],
+  "results": {
+   "sav": [
+    "Save",
+    "Save As…",
+    "Rich Mode"
+   ],
+   "s": [
+    "Save",
+    "Save As…",
+    "Settings…",
+    "Split Mode",
+    "Statistics",
+    "Source Mode",
+    "Search All Documents…",
+    "Find…",
+    "Find and Replace…",
+    "Theme Settings…",
+    "Keyboard Shortcuts",
+    "Reveal in Finder",
+    "Theme: Paper",
+    "Library…",
+    "Format Tables",
+    "Rich Mode"
+   ],
+   "find": [
+    "Find…",
+    "Find and Replace…",
+    "Reveal in Finder",
+    "Search All Documents…"
+   ],
+   "the": [
+    "Theme: Paper",
+    "Theme Settings…",
+    "Split Mode"
+   ],
+   "mode": [
+    "Rich Mode",
+    "Split Mode",
+    "Source Mode",
+    "New Markdown document",
+    "Library…"
+   ],
+   "fk": [
+    "Duplicate (Fork)",
+    "Export PDF (Dark)",
+    "Library…"
+   ],
+   "theme": [
+    "Theme: Paper",
+    "Theme Settings…"
+   ],
+   "view": [
+    "Rich Mode",
+    "Source Mode",
+    "Split Mode",
+    "Statistics",
+    "Find…",
+    "Find and Replace…"
+   ],
+   "set": [
+    "Settings…",
+    "Theme Settings…",
+    "Search All Documents…",
+    "Find…",
+    "Source Mode",
+    "Find and Replace…",
+    "Reveal in Finder",
+    "Theme: Paper",
+    "Library…"
+   ],
+   "doc": [
+    "New Word document",
+    "Library…",
+    "New Markdown document",
+    "Search All Documents…",
+    "Keyboard Shortcuts",
+    "Reveal in Finder"
+   ],
+   "x": [
+    "Export PDF (Dark)",
+    "New Word document",
+    "Reveal in Finder",
+    "Find…",
+    "Search All Documents…"
+   ],
+   "sh": [
+    "Keyboard Shortcuts",
+    "Reveal in Finder",
+    "Search All Documents…",
+    "Find…",
+    "Find and Replace…",
+    "Theme: Paper"
+   ],
+   "file": [
+    "Open File…",
+    "Copy File Path",
+    "Search All Documents…",
+    "Library…",
+    "New Markdown document",
+    "New Word document",
+    "Save",
+    "Save As…",
+    "Duplicate (Fork)",
+    "Reveal in Finder",
+    "Export PDF (Dark)",
+    "Settings…",
+    "Find and Replace…"
+   ],
+   "copy": [
+    "Copy File Path",
+    "Duplicate (Fork)",
+    "Theme Settings…",
+    "Theme: Paper"
+   ],
+   "zzz": [],
+   "Save": [
+    "Save",
+    "Save As…",
+    "Rich Mode"
+   ]
+  }
+ },
+ "library": {
+  "rows": [
+   {
+    "path": "/w/Notes/Trip.md",
+    "at": 1700000009000
+   },
+   {
+    "path": "/w/Notes/budget.xlsx",
+    "at": 1700000008000
+   },
+   {
+    "path": "/w/b.docx",
+    "at": 1700000007000
+   },
+   {
+    "path": "/w/a.doc",
+    "at": 1700000007000
+   },
+   {
+    "path": "/w/Notes/trip plan.txt",
+    "at": 1700000006000
+   },
+   {
+    "path": "/w/zeta.rtf",
+    "at": 1700000005000
+   },
+   {
+    "path": "/w/Alpha.odt",
+    "at": 1700000004000
+   },
+   {
+    "path": "/w/data.csv",
+    "at": 1700000003000
+   },
+   {
+    "path": "/w/page.html",
+    "at": 1700000002000
+   },
+   {
+    "path": "/w/alpha.md",
+    "at": 1700000001000
+   },
+   {
+    "path": "/w/x/Beta.wd",
+    "at": 1700000000000
+   }
+  ],
+  "cases": [
+   {
+    "search": "",
+    "format": "all",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/budget.xlsx",
+     "/w/b.docx",
+     "/w/a.doc",
+     "/w/Notes/trip plan.txt",
+     "/w/zeta.rtf",
+     "/w/Alpha.odt",
+     "/w/data.csv",
+     "/w/page.html",
+     "/w/alpha.md",
+     "/w/x/Beta.wd"
+    ]
+   },
+   {
+    "search": "",
+    "format": "all",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/budget.xlsx",
+     "/w/a.doc",
+     "/w/b.docx",
+     "/w/Notes/trip plan.txt",
+     "/w/zeta.rtf",
+     "/w/Alpha.odt",
+     "/w/data.csv",
+     "/w/page.html",
+     "/w/alpha.md",
+     "/w/x/Beta.wd"
+    ]
+   },
+   {
+    "search": "",
+    "format": "all",
+    "sort": "name",
+    "paths": [
+     "/w/a.doc",
+     "/w/alpha.md",
+     "/w/Alpha.odt",
+     "/w/b.docx",
+     "/w/x/Beta.wd",
+     "/w/Notes/budget.xlsx",
+     "/w/data.csv",
+     "/w/page.html",
+     "/w/Notes/trip plan.txt",
+     "/w/Notes/Trip.md",
+     "/w/zeta.rtf"
+    ]
+   },
+   {
+    "search": "",
+    "format": "all",
+    "sort": "type",
+    "paths": [
+     "/w/data.csv",
+     "/w/x/Beta.wd",
+     "/w/a.doc",
+     "/w/b.docx",
+     "/w/page.html",
+     "/w/alpha.md",
+     "/w/Notes/Trip.md",
+     "/w/Alpha.odt",
+     "/w/Notes/budget.xlsx",
+     "/w/zeta.rtf",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "",
+    "format": "markdown",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "",
+    "format": "markdown",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "",
+    "format": "markdown",
+    "sort": "name",
+    "paths": [
+     "/w/alpha.md",
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "",
+    "format": "markdown",
+    "sort": "type",
+    "paths": [
+     "/w/alpha.md",
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "",
+    "format": "other",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "",
+    "format": "other",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "",
+    "format": "other",
+    "sort": "name",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "",
+    "format": "other",
+    "sort": "type",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "",
+    "format": "doc",
+    "sort": "default",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "",
+    "format": "doc",
+    "sort": "recent",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "",
+    "format": "doc",
+    "sort": "name",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "",
+    "format": "doc",
+    "sort": "type",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "all",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "all",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "all",
+    "sort": "name",
+    "paths": [
+     "/w/Notes/trip plan.txt",
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "all",
+    "sort": "type",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "markdown",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "markdown",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "markdown",
+    "sort": "name",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "markdown",
+    "sort": "type",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "trip",
+    "format": "other",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "trip",
+    "format": "other",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "trip",
+    "format": "other",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "trip",
+    "format": "other",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "trip",
+    "format": "doc",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "trip",
+    "format": "doc",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "trip",
+    "format": "doc",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "trip",
+    "format": "doc",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "all",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "all",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "all",
+    "sort": "name",
+    "paths": [
+     "/w/Notes/trip plan.txt",
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "all",
+    "sort": "type",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "markdown",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "markdown",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "markdown",
+    "sort": "name",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "markdown",
+    "sort": "type",
+    "paths": [
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "notes trip",
+    "format": "other",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "other",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "other",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "other",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "doc",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "doc",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "doc",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "notes trip",
+    "format": "doc",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "all",
+    "sort": "default",
+    "paths": [
+     "/w/Alpha.odt",
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "all",
+    "sort": "recent",
+    "paths": [
+     "/w/Alpha.odt",
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "all",
+    "sort": "name",
+    "paths": [
+     "/w/alpha.md",
+     "/w/Alpha.odt"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "all",
+    "sort": "type",
+    "paths": [
+     "/w/alpha.md",
+     "/w/Alpha.odt"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "markdown",
+    "sort": "default",
+    "paths": [
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "markdown",
+    "sort": "recent",
+    "paths": [
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "markdown",
+    "sort": "name",
+    "paths": [
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "markdown",
+    "sort": "type",
+    "paths": [
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "ALPHA",
+    "format": "other",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "other",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "other",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "other",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "doc",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "doc",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "doc",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "ALPHA",
+    "format": "doc",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "w",
+    "format": "all",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/budget.xlsx",
+     "/w/b.docx",
+     "/w/a.doc",
+     "/w/Notes/trip plan.txt",
+     "/w/zeta.rtf",
+     "/w/Alpha.odt",
+     "/w/data.csv",
+     "/w/page.html",
+     "/w/alpha.md",
+     "/w/x/Beta.wd"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "all",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/Notes/budget.xlsx",
+     "/w/a.doc",
+     "/w/b.docx",
+     "/w/Notes/trip plan.txt",
+     "/w/zeta.rtf",
+     "/w/Alpha.odt",
+     "/w/data.csv",
+     "/w/page.html",
+     "/w/alpha.md",
+     "/w/x/Beta.wd"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "all",
+    "sort": "name",
+    "paths": [
+     "/w/a.doc",
+     "/w/alpha.md",
+     "/w/Alpha.odt",
+     "/w/b.docx",
+     "/w/x/Beta.wd",
+     "/w/Notes/budget.xlsx",
+     "/w/data.csv",
+     "/w/page.html",
+     "/w/Notes/trip plan.txt",
+     "/w/Notes/Trip.md",
+     "/w/zeta.rtf"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "all",
+    "sort": "type",
+    "paths": [
+     "/w/data.csv",
+     "/w/x/Beta.wd",
+     "/w/a.doc",
+     "/w/b.docx",
+     "/w/page.html",
+     "/w/alpha.md",
+     "/w/Notes/Trip.md",
+     "/w/Alpha.odt",
+     "/w/Notes/budget.xlsx",
+     "/w/zeta.rtf",
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "markdown",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "markdown",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/Trip.md",
+     "/w/alpha.md"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "markdown",
+    "sort": "name",
+    "paths": [
+     "/w/alpha.md",
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "markdown",
+    "sort": "type",
+    "paths": [
+     "/w/alpha.md",
+     "/w/Notes/Trip.md"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "other",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "other",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "other",
+    "sort": "name",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "other",
+    "sort": "type",
+    "paths": [
+     "/w/Notes/budget.xlsx"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "doc",
+    "sort": "default",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "doc",
+    "sort": "recent",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "doc",
+    "sort": "name",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "w",
+    "format": "doc",
+    "sort": "type",
+    "paths": [
+     "/w/a.doc"
+    ]
+   },
+   {
+    "search": "plan notes",
+    "format": "all",
+    "sort": "default",
+    "paths": [
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "plan notes",
+    "format": "all",
+    "sort": "recent",
+    "paths": [
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "plan notes",
+    "format": "all",
+    "sort": "name",
+    "paths": [
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "plan notes",
+    "format": "all",
+    "sort": "type",
+    "paths": [
+     "/w/Notes/trip plan.txt"
+    ]
+   },
+   {
+    "search": "plan notes",
+    "format": "markdown",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "markdown",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "markdown",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "markdown",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "other",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "other",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "other",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "other",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "doc",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "doc",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "doc",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "plan notes",
+    "format": "doc",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "all",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "all",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "all",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "all",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "markdown",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "markdown",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "markdown",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "markdown",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "other",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "other",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "other",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "other",
+    "sort": "type",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "doc",
+    "sort": "default",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "doc",
+    "sort": "recent",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "doc",
+    "sort": "name",
+    "paths": []
+   },
+   {
+    "search": "nope",
+    "format": "doc",
+    "sort": "type",
+    "paths": []
+   }
+  ]
+ }
+}

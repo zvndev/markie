@@ -72,6 +72,8 @@ pub struct Library {
     hits: Vec<Hit>,
     pub scanning: bool,
     pub truncated: bool,
+    /// When each Recent row was last opened, in ms (`lastOpenedAt`).
+    opened_at: HashMap<PathBuf, f64>,
 }
 
 impl Library {
@@ -140,6 +142,11 @@ impl Library {
     pub fn set_tab(&mut self, tab: LibraryTab) {
         self.tab = tab;
         self.refresh();
+    }
+
+    /// The registry's `last_opened_at` per path, for "Most recent".
+    pub fn set_opened_at(&mut self, opened: impl IntoIterator<Item = (PathBuf, String)>) {
+        self.opened_at = opened.into_iter().map(|(p, at)| (p, markie_core::clock::parse_iso(&at).map_or(0., |ms| ms as f64))).collect();
     }
 
     /// Recent and starred lists come from the registry as paths.
@@ -243,11 +250,13 @@ impl Library {
             self.hits = b.hits.clone();
             return;
         }
-        let mut hits = search_library(self.source(), &self.query);
-        if self.tab != LibraryTab::All && self.query.text.trim().is_empty() {
-            // Recent keeps the registry's order (newest open first), not mtime.
-            hits.sort_by_key(|h| h.index);
+        if self.tab != LibraryTab::All {
+            // The Library panel's lists filter and sort like Electron's
+            // `queryLibraryDocuments`, never ranking or reading bodies.
+            self.hits = query_rows(self.source(), &self.query, self.sort, &self.opened_at);
+            return;
         }
+        let mut hits = search_library(self.source(), &self.query);
         let docs = self.source();
         match self.sort {
             SortOrder::Default => {}
@@ -257,6 +266,64 @@ impl Library {
         }
         self.hits = hits;
     }
+}
+
+/// `LibraryFormat` ids, which Electron's Type sort compares as text.
+pub fn library_format_id(kind: FormatKind) -> &'static str {
+    match kind {
+        FormatKind::Markdown => "markdown",
+        FormatKind::Darkmown => "darkmown",
+        FormatKind::Text => "text",
+        FormatKind::Csv => "csv",
+        FormatKind::Json => "json",
+        FormatKind::Yaml => "yaml",
+        FormatKind::Xml => "xml",
+        FormatKind::Docx => "docx",
+        FormatKind::Doc => "doc",
+        FormatKind::Rtf => "rtf",
+        FormatKind::Html => "html",
+        FormatKind::Odt => "odt",
+        FormatKind::Unsupported => "other",
+    }
+}
+
+/// `matchesLibraryDocument` for a native row: the type, then every word in
+/// the name or the path. Native rows carry no body, so none is searched.
+fn matches_row(doc: &IndexedDoc, query: &LibraryQuery) -> bool {
+    if !query.formats.is_empty() && !query.formats.contains(&doc.format) {
+        return false;
+    }
+    let words: Vec<String> = query.text.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return true;
+    }
+    let fields = [doc.name.to_lowercase(), doc.path.to_string_lossy().to_lowercase()];
+    words.iter().all(|w| fields.iter().any(|f| f.contains(w.as_str())))
+}
+
+/// `queryLibraryDocuments` over rows in the panel's order (newest open
+/// first): filter, then a stable sort by `compareLibraryDocuments`. Its key
+/// is the path; "Most recent" compares `lastOpenedAt` (0 when unknown).
+pub fn query_rows(docs: &[IndexedDoc], query: &LibraryQuery, sort: SortOrder, opened_at: &HashMap<PathBuf, f64>) -> Vec<Hit> {
+    let mut hits: Vec<Hit> = (0..docs.len())
+        .filter(|&i| matches_row(&docs[i], query))
+        .map(|index| Hit { index, score: 0, excerpt: None, marks: Vec::new() })
+        .collect();
+    let lower = |i: usize| docs[i].name.to_lowercase();
+    let key = |i: usize| docs[i].path.to_string_lossy().into_owned();
+    let tie = |a: usize, b: usize| lower(a).cmp(&lower(b)).then_with(|| key(a).to_lowercase().cmp(&key(b).to_lowercase())).then_with(|| key(a).cmp(&key(b)));
+    match sort {
+        SortOrder::Default => {}
+        SortOrder::Recent => {
+            let at = |i: usize| opened_at.get(&docs[i].path).copied().filter(|t| t.is_finite() && *t > 0.).unwrap_or(0.);
+            hits.sort_by(|a, b| at(b.index).total_cmp(&at(a.index)).then_with(|| tie(a.index, b.index)))
+        }
+        SortOrder::Name => hits.sort_by(|a, b| tie(a.index, b.index)),
+        SortOrder::Type => hits.sort_by(|a, b| {
+            library_format_id(docs[a.index].format).cmp(library_format_id(docs[b.index].format)).then_with(|| tie(a.index, b.index))
+        }),
+    }
+    hits
 }
 
 /// A Library row for a path that is not necessarily in the device index.
@@ -338,5 +405,61 @@ mod tests {
         assert!(lib.body_search().is_none(), "already answered");
         lib.set_text("zebr");
         assert!(lib.body_search().is_some());
+    }
+
+    /// Electron's `queryLibraryDocuments`, run by
+    /// rust/scripts/parity/library-settings-parity.mjs on the same rows.
+    #[test]
+    fn recent_query_matches_electrons_query_library_documents() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!("fixtures/library-settings-parity.json")).unwrap();
+        let opened: HashMap<PathBuf, f64> = fixture["library"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (PathBuf::from(r["path"].as_str().unwrap()), r["at"].as_f64().unwrap()))
+            .collect();
+        let rows: Vec<IndexedDoc> = fixture["library"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                let path = PathBuf::from(r["path"].as_str().unwrap());
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                IndexedDoc { dir: path.parent().unwrap().into(), format: markie_core::formats::classify(&name), name, path, mtime_ms: 0., size: 1, snippet: None }
+            })
+            .collect();
+        let format_of = |id: &str| match id {
+            "all" => None,
+            "markdown" => Some(FormatKind::Markdown),
+            "other" => Some(FormatKind::Unsupported),
+            "doc" => Some(FormatKind::Doc),
+            other => panic!("{other}"),
+        };
+        let sort_of = |id: &str| match id {
+            "default" => SortOrder::Default,
+            "recent" => SortOrder::Recent,
+            "name" => SortOrder::Name,
+            _ => SortOrder::Type,
+        };
+        let cases = fixture["library"]["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 112);
+        for case in cases {
+            let query = LibraryQuery { text: case["search"].as_str().unwrap().into(), formats: format_of(case["format"].as_str().unwrap()).into_iter().collect() };
+            let got: Vec<String> = query_rows(&rows, &query, sort_of(case["sort"].as_str().unwrap()), &opened).iter().map(|h| rows[h.index].path.to_string_lossy().into_owned()).collect();
+            let want: Vec<String> = case["paths"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()).collect();
+            assert_eq!(got, want, "{case}");
+        }
+    }
+
+    #[test]
+    fn the_recent_tab_filters_without_ranking_or_reading_bodies() {
+        let mut lib = Library::default();
+        let mut with_body = doc("z.md", 1.0, FormatKind::Markdown);
+        with_body.snippet = Some("alpha inside".into());
+        lib.recent = vec![doc("b alpha.md", 1.0, FormatKind::Markdown), doc("alpha.md", 2.0, FormatKind::Markdown), with_body];
+        lib.set_tab(LibraryTab::Recent);
+        lib.set_text("alpha");
+        let names: Vec<_> = lib.hits().iter().map(|h| lib.doc(h).name.clone()).collect();
+        assert_eq!(names, ["b alpha.md", "alpha.md"], "panel order kept, the body is not searched");
     }
 }

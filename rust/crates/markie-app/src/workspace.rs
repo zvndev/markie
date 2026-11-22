@@ -60,6 +60,7 @@ mod projects;
 mod rail;
 mod rich;
 mod text_view;
+mod welcome;
 mod untitled;
 mod settings;
 mod shortcuts;
@@ -178,6 +179,8 @@ pub struct Workspace {
     /// The vault page (workspace/vault.rs), made the first time the Vault view opens.
     vault: Option<Entity<vault::VaultPage>>,
     _subscriptions: Vec<Subscription>,
+    /// When the device index last began a walk.
+    last_scan_at: Option<std::time::Instant>,
 }
 
 impl Workspace {
@@ -186,6 +189,15 @@ impl Workspace {
             .map(Rc::new)
             .map_err(|e| eprintln!("markie-rs: registry unavailable: {e:#}"))
             .ok();
+        // Electron's library startup: with no live root, ~/Documents/Markie
+        // is made and registered, so new documents have a home.
+        if let Some(reg) = &registry {
+            if let Err(e) = markie_core::workspace_ops::ensure_default_root(reg, &paths::default_root()) {
+                eprintln!("markie-rs: Markie couldn't set up its default workspace: {e:#}");
+            }
+            // `seedWorkspaceExamples`: the Darkmown example, offered once.
+            markie_core::workspace_ops::seed_examples(&paths::default_root(), &paths::data_dir().join("seeded-examples.json"));
+        }
 
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -226,6 +238,13 @@ impl Workspace {
             chrome::ColorMode::parse(registry.as_ref().and_then(|r| r.setting("color_mode").ok().flatten()).as_deref());
         chrome::apply_color_mode(color_mode, window, cx);
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| this.on_appearance_changed(window, cx)));
+        // Electron's window "focus": the index walks again, at most every
+        // five minutes (MD_RESCAN_INTERVAL_MS).
+        subscriptions.push(cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() && rescan_on_focus(this.last_scan_at, std::time::Instant::now()) {
+                this.rescan(cx);
+            }
+        }));
         let (shell, shell_subs) = rail::Shell::new(color_mode, template, window, cx);
         subscriptions.extend(shell_subs);
         let (projects, projects_sub) = projects::Projects::new(window, cx);
@@ -300,6 +319,7 @@ impl Workspace {
             vault: None,
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
+            last_scan_at: None,
         };
         this.start_disk_poll(cx);
         let focus = this.watch_rich_focus(window, cx);
@@ -336,8 +356,10 @@ impl Workspace {
             // Electron offers the untitled journal entry when the launch opens
             // no document: an empty untitled buffer shows the recovery strip.
             this.open_untitled(untitled::untitled_name("md"), String::new(), window, cx);
-        } else if let Some(path) = this.most_recent() {
-            this.open_path(&path, window, cx);
+        } else {
+            // Electron never reopens the last document at launch: the first
+            // launch shows the welcome, every other one an empty page.
+            this.open_launch_page(window, cx);
         }
         this.rescan(cx);
         this
@@ -345,7 +367,9 @@ impl Workspace {
 
     fn refresh_lists(&mut self) {
         let Some(reg) = &self.registry else { return };
-        let recent = reg.recent(200).unwrap_or_default().into_iter().map(|r| r.path).collect();
+        let rows = reg.recent(200).unwrap_or_default();
+        self.shell.recent.set_opened_at(rows.iter().map(|r| (r.path.clone(), r.last_opened_at.clone())));
+        let recent = rows.into_iter().map(|r| r.path).collect();
         let starred = reg.stars().unwrap_or_default();
         self.library.set_lists(Vec::new(), starred.clone());
         self.shell.stars = starred.iter().cloned().collect();
@@ -405,21 +429,12 @@ impl Workspace {
         cx.notify();
     }
 
-    fn most_recent(&self) -> Option<PathBuf> {
-        self.registry
-            .as_ref()?
-            .recent(5)
-            .ok()?
-            .into_iter()
-            .map(|r| r.path)
-            .find(|p| p.exists())
-    }
-
     fn rescan(&mut self, cx: &mut Context<Self>) {
         if self.library.scanning {
             return;
         }
         self.library.scanning = true;
+        self.last_scan_at = Some(std::time::Instant::now());
         let roots = self
             .registry
             .as_ref()
@@ -1180,6 +1195,29 @@ impl Focusable for Workspace {
     }
 }
 
+/// `MD_RESCAN_INTERVAL_MS`.
+const RESCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// The focus rule in electron/main.js: only after this session has walked
+/// once, and not within five minutes of the last walk.
+fn rescan_on_focus(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_some_and(|at| now.duration_since(at) >= RESCAN_INTERVAL)
+}
+
+#[cfg(test)]
+mod rescan_tests {
+    use super::{RESCAN_INTERVAL, rescan_on_focus};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn focus_walks_again_only_after_five_minutes() {
+        let now = Instant::now();
+        assert!(!rescan_on_focus(None, now), "no walk asked for yet");
+        assert!(!rescan_on_focus(Some(now), now + Duration::from_secs(299)));
+        assert!(rescan_on_focus(Some(now), now + RESCAN_INTERVAL));
+    }
+}
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(path) = self.cloud.pending_link.take() {
@@ -1243,6 +1281,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_export_pdf_dark))
             .on_action(cx.listener(Self::on_export_pdf_light))
             .on_action(cx.listener(Self::on_export_html))
+            // page.tsx `handleDrop`: a file dropped on the window opens.
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| this.drop_on_window(paths.paths().to_vec(), window, cx)))
             // The Library panel's resizer drag follows the pointer anywhere.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 if this.shell.panel_drag.is_some() {

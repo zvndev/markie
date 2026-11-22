@@ -941,7 +941,19 @@ impl Workspace {
                     ))),
             );
         let body = match view {
-            LeftView::Library => self.render_library_view(&p, cx).into_any_element(),
+            // library.tsx `onDrop`: the panel takes the files it can open.
+            LeftView::Library => div()
+                .id("library-drop")
+                .size_full()
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .child(self.render_library_view(&p, cx))
+                .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                    cx.stop_propagation();
+                    this.drop_on_library(paths.paths().to_vec(), window, cx);
+                }))
+                .into_any_element(),
             LeftView::Browse => self.render_browse_view(&p, cx).into_any_element(),
             _ => self.render_skills_panel(),
         };
@@ -1956,6 +1968,7 @@ const TYPE_MENU: &[FormatKind] = &[
     FormatKind::Yaml,
     FormatKind::Xml,
     FormatKind::Html,
+    FormatKind::Unsupported,
 ];
 
 fn type_menu_label(kind: Option<FormatKind>) -> &'static str {

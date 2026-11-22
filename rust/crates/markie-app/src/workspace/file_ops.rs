@@ -11,6 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use markie_core::document;
+use markie_core::formats::FormatKind;
 use markie_office::model::Format;
 use markie_office::rich_document::{create_rich_document, export_rich_document};
 
@@ -88,6 +89,26 @@ fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// What a drop on the window opens (page.tsx `handleDrop`): the first file,
+/// when it is one Markie opens as a document.
+pub(super) fn window_drop_target(paths: &[PathBuf]) -> Option<PathBuf> {
+    let first = paths.first()?;
+    (first.is_file() && markie_core::formats::classify(&first.to_string_lossy()) != FormatKind::Unsupported).then(|| first.clone())
+}
+
+/// `LIBRARY_DROP_REFUSED`: library.tsx's notice when nothing dropped opens.
+pub(super) const LIBRARY_DROP_REFUSED: &str = "Drop a supported Word, Markdown, text or document file here.";
+
+/// What a drop on the Library panel adds (library.tsx `onDrop`): every
+/// dropped file of a format Markie opens, in order.
+pub(super) fn library_drop_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter(|p| p.is_file() && markie_core::formats::classify(&p.to_string_lossy()) != FormatKind::Unsupported)
+        .cloned()
+        .collect()
+}
+
 impl Workspace {
     /// The open document's file; none for an untitled buffer.
     pub(super) fn file_path(&self) -> Option<PathBuf> {
@@ -105,6 +126,31 @@ impl Workspace {
             .and_then(|r| r.roots().ok())
             .and_then(|r| r.into_iter().next())
             .unwrap_or_else(|| paths::home_dir().join("Documents"))
+    }
+
+    /// A file dropped anywhere on the window opens.
+    pub(super) fn drop_on_window(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = window_drop_target(&paths) {
+            self.open_path(&path, window, cx);
+        }
+    }
+
+    /// `addPaths`: each file is recorded in the Library, and the last one
+    /// stays open.
+    pub(super) fn drop_on_library(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = library_drop_paths(&paths);
+        let Some((last, rest)) = paths.split_last() else {
+            window.push_notification(LIBRARY_DROP_REFUSED, cx);
+            return;
+        };
+        if let Some(reg) = &self.registry {
+            for p in rest {
+                let _ = reg.track_opened(p);
+            }
+        }
+        self.open_path(last, window, cx);
+        self.refresh_lists();
+        cx.notify();
     }
 
     pub(super) fn on_new(&mut self, _: &NewDocument, window: &mut Window, cx: &mut Context<Self>) {
@@ -659,7 +705,24 @@ fn danger_button(id: &'static str, label: &'static str, t: &Tokens) -> Stateful<
 #[cfg(test)]
 mod tests {
     // Not `super::*`: GPUI's glob export brings its own `test` attribute.
-    use super::{DATA_TYPES, WRITING_TYPES, blank_bytes, copy_path, renamed_path};
+    use super::{DATA_TYPES, WRITING_TYPES, blank_bytes, copy_path, library_drop_paths, renamed_path, window_drop_target};
+
+    #[test]
+    fn drops_open_what_electron_opens() {
+        let dir = std::env::temp_dir().join(format!("markie-rs-drop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (md, png, docx, folder) = (dir.join("a.md"), dir.join("b.png"), dir.join("c.docx"), dir.join("sub"));
+        std::fs::create_dir_all(&folder).unwrap();
+        for f in [&md, &png, &docx] {
+            std::fs::write(f, "x").unwrap();
+        }
+        assert_eq!(window_drop_target(&[md.clone(), docx.clone()]), Some(md.clone()), "the window opens the first file");
+        assert_eq!(window_drop_target(&[png.clone(), md.clone()]), None, "a picture is not a document");
+        assert_eq!(window_drop_target(&[folder.clone()]), None);
+        assert_eq!(library_drop_paths(&[png.clone(), md.clone(), folder.clone(), docx.clone()]), vec![md, docx]);
+        assert!(library_drop_paths(&[png]).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn copies_and_renames() {

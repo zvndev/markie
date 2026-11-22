@@ -126,6 +126,13 @@ pub async fn reconcile(
 }
 
 pub async fn fetch(docs: &DocsClient<'_>, id: &str) -> Result<Vec<Link>> {
+    Ok(fetch_all(docs, id).await?.0)
+}
+
+/// The server's answer for a document's links: the ones this account may
+/// follow, and the references it knows but would not name a target for
+/// (doc-link-open.js "none": "This document isn't shared with you.").
+pub async fn fetch_all(docs: &DocsClient<'_>, id: &str) -> Result<(Vec<Link>, Vec<String>)> {
     let value = docs.links(id).await?;
     #[derive(Deserialize)]
     struct Answer {
@@ -136,15 +143,15 @@ pub async fn fetch(docs: &DocsClient<'_>, id: &str) -> Result<Vec<Link>> {
     let links: Vec<Answer> =
         serde_json::from_value(value.get("links").cloned().ok_or(CloudError::Unreadable)?)
             .map_err(|_| CloudError::Unreadable)?;
-    Ok(links
-        .into_iter()
-        .filter_map(|row| {
-            Some(Link {
-                reference: row.reference,
-                target: row.target?,
-            })
-        })
-        .collect())
+    let mut open = Vec::new();
+    let mut refused = Vec::new();
+    for row in links {
+        match row.target.filter(|t| !t.is_empty()) {
+            Some(target) => open.push(Link { reference: row.reference, target }),
+            None => refused.push(row.reference),
+        }
+    }
+    Ok((open, refused))
 }
 
 #[cfg(test)]

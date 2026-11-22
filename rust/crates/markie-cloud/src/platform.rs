@@ -59,6 +59,20 @@ pub struct Area {
     pub label: String,
 }
 
+/// The sentence `createArea` refuses a bad label with.
+pub const AREA_LABEL_REFUSAL: &str = "Use a cloud area label between 1 and 80 characters.";
+
+/// A trimmed area label `createArea` accepts: 1 to 80 UTF-16 units, no
+/// control characters.
+pub fn area_label(label: &str) -> std::result::Result<String, &'static str> {
+    let trimmed = label.trim();
+    let n = trimmed.encode_utf16().count();
+    if n == 0 || n > 80 || trimmed.chars().any(|c| (c as u32) < 0x20) {
+        return Err(AREA_LABEL_REFUSAL);
+    }
+    Ok(trimmed.to_string())
+}
+
 pub fn supported_name(name: &str) -> Option<FormatKind> {
     let format = classify(name);
     (!name.trim().is_empty()
@@ -322,6 +336,18 @@ impl PlatformClient<'_> {
         Ok(areas)
     }
 
+    /// `createArea` (account-identities.ts): a label of 1 to 80 characters
+    /// with no control characters, refused before any request otherwise.
+    pub async fn create_area(&self, label: &str) -> Result<Area> {
+        let trimmed = area_label(label).map_err(|m| CloudError::Invalid(m.into()))?;
+        let answer = self.0.post("/api/account/cloud-areas", json!({ "label": trimmed })).await?.into_ok()?;
+        let area: Area = field(answer.json()?, "area")?;
+        if !valid_id(&area.id) {
+            return Err(CloudError::Unreadable);
+        }
+        Ok(area)
+    }
+
     pub async fn place(&self, id: &str, area: &str) -> Result<()> {
         if !valid_id(id) || !valid_id(area) {
             return Err(CloudError::Refused);
@@ -334,5 +360,19 @@ impl PlatformClient<'_> {
             .await?
             .into_ok()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn area_labels_follow_create_area() {
+        assert_eq!(area_label("  Team docs  ").unwrap(), "Team docs");
+        assert_eq!(area_label("   "), Err(AREA_LABEL_REFUSAL));
+        assert_eq!(area_label(&"x".repeat(81)), Err(AREA_LABEL_REFUSAL));
+        assert!(area_label(&"x".repeat(80)).is_ok());
+        assert_eq!(area_label("a\u{7}b"), Err(AREA_LABEL_REFUSAL));
     }
 }

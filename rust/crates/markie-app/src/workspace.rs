@@ -162,6 +162,16 @@ impl Workspace {
         subscriptions.extend(shell_subs);
         let (projects, projects_sub) = projects::Projects::new(window, cx);
         subscriptions.push(projects_sub);
+        // Closing flushes pending saves first (Electron's close-flush.js).
+        subscriptions.push(cx.on_app_quit(|this, cx| {
+            this.flush_pending(cx);
+            async {}
+        }));
+        let weak = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            weak.update(cx, |this, cx| this.flush_pending(cx)).ok();
+            true
+        });
 
         let mut library = Library::default();
         if let Some(snapshot) = registry.as_ref().and_then(|r| r.load_snapshot().ok().flatten()) {
@@ -555,6 +565,15 @@ impl Workspace {
             })
             .ok();
         });
+    }
+
+    /// Write whatever autosave still owes, now. Never a dialog.
+    fn flush_pending(&mut self, cx: &mut Context<Self>) {
+        let office_dirty = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
+        if self.autosave.is_pending() || self.dirty || office_dirty {
+            self.autosave.cancel();
+            self.autosave_now(cx);
+        }
     }
 
     /// Autosave never opens a dialog: a failure leaves a crash draft and the

@@ -17,6 +17,9 @@ markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }
 markie-cloud = { path = "../markie-cloud" }
+markie-export = { path = "../markie-export" }
+markie-web = { path = "../markie-web", features = ["wry"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 anyhow.workspace = true
 serde_json.workspace = true
@@ -45,5 +48,7 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", features = ["NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSResponder", "NSView", "NSWindow", "NSPrintInfo", "NSPrintOperation"] }
+objc2-foundation = { version = "0.3.2", features = ["NSData"] }
+objc2-pdf-kit = { version = "0.3.2", features = ["PDFDocument", "objc2-app-kit"] }
 raw-window-handle = "0.6"

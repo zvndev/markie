@@ -59,14 +59,8 @@ pub(super) enum CopyState {
     Copied,
 }
 
-/// Export targets. Each is either wired to code Markie RS has, or shown
-/// disabled until its writer exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExportTarget {
-    Html,
-    Txt,
-    Md,
-}
+/// The Export menu's targets are `export.rs`'s kinds.
+use super::export::ExportKind as ExportTarget;
 
 // ------------------------------------------------------------------ helpers
 
@@ -236,26 +230,7 @@ impl Workspace {
     }
 
     fn export(&mut self, target: ExportTarget, window: &mut Window, cx: &mut Context<Self>) {
-        self.shell.menu = None;
-        let Some(doc) = &self.doc else { return };
-        let markdown = doc.format == FormatKind::Markdown;
-        let text = self.current_text(cx);
-        let stem = doc.path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
-        let dir = doc.path.parent().map(PathBuf::from).unwrap_or_else(markie_core::paths::home_dir);
-        let (bytes, ext) = match target {
-            ExportTarget::Html => (export_html(&stem, &text, markdown), "html"),
-            ExportTarget::Txt => (markdown_to_plain(&text), "txt"),
-            ExportTarget::Md => (text, "md"),
-        };
-        let rx = cx.prompt_for_new_path(&dir, Some(&format!("{stem}.{ext}")));
-        cx.spawn_in(window, async move |_, cx| {
-            if let Ok(Ok(Some(path))) = rx.await {
-                if let Err(e) = std::fs::write(&path, bytes) {
-                    cx.update(|window, cx| window.push_notification(format!("Markie could not export: {e}"), cx)).ok();
-                }
-            }
-        })
-        .detach();
+        self.export_document(target, window, cx);
     }
 
     // ------------------------------------------------------------ render
@@ -539,7 +514,10 @@ impl Workspace {
         );
         if document_mode {
             panel = panel
-                .child(item("ex-docpdf", "markie/download.svg", "Export PDF…", false))
+                .child(
+                    item("ex-docpdf", "markie/download.svg", "Export PDF…", true)
+                        .on_click(cx.listener(|this, _, w, cx| this.export(ExportTarget::OfficePdf, w, cx))),
+                )
                 .child(note(
                     "PDF uses document typography and page setup. Review comments are not included. Page breaks can vary with installed fonts and printer settings.",
                     240.,
@@ -548,16 +526,16 @@ impl Workspace {
             // Markdown offers everything but itself; plain text everything but .txt.
             let formats: Vec<(&'static str, &'static str, Option<ExportTarget>)> = if markdown {
                 vec![
-                    ("ex-docx", "Word (.docx)", None),
-                    ("ex-rtf", "RTF (.rtf)", None),
-                    ("ex-odt", "OpenDocument (.odt)", None),
+                    ("ex-docx", "Word (.docx)", Some(ExportTarget::Docx)),
+                    ("ex-rtf", "RTF (.rtf)", Some(ExportTarget::Rtf)),
+                    ("ex-odt", "OpenDocument (.odt)", Some(ExportTarget::Odt)),
                     ("ex-txt", "Plain text (.txt)", Some(ExportTarget::Txt)),
                 ]
             } else {
                 vec![
-                    ("ex-docx", "Word (.docx)", None),
-                    ("ex-rtf", "RTF (.rtf)", None),
-                    ("ex-odt", "OpenDocument (.odt)", None),
+                    ("ex-docx", "Word (.docx)", Some(ExportTarget::Docx)),
+                    ("ex-rtf", "RTF (.rtf)", Some(ExportTarget::Rtf)),
+                    ("ex-odt", "OpenDocument (.odt)", Some(ExportTarget::Odt)),
                     ("ex-md", "Markdown (.md)", Some(ExportTarget::Md)),
                 ]
             };
@@ -573,8 +551,14 @@ impl Workspace {
                         .text_color(p.muted.opacity(0.8))
                         .child("EXPORT AS"),
                 )
-                .child(item("ex-pdf-dark", "markie/download.svg", "PDF (Dark)", false))
-                .child(item("ex-pdf-light", "markie/download.svg", "PDF (Light)", false))
+                .child(
+                    item("ex-pdf-dark", "markie/download.svg", "PDF (Dark)", is_text)
+                        .when(is_text, |el| el.on_click(cx.listener(|this, _, w, cx| this.export(ExportTarget::PdfDark, w, cx)))),
+                )
+                .child(
+                    item("ex-pdf-light", "markie/download.svg", "PDF (Light)", is_text)
+                        .when(is_text, |el| el.on_click(cx.listener(|this, _, w, cx| this.export(ExportTarget::PdfLight, w, cx)))),
+                )
                 .child(
                     item("ex-html", "markie/code.svg", "HTML (.html)", is_text)
                         .when(is_text, |el| el.on_click(cx.listener(|this, _, w, cx| this.export(ExportTarget::Html, w, cx)))),
@@ -732,6 +716,8 @@ pub(super) fn apply_color_mode(mode: ColorMode, window: &mut Window, cx: &mut Ap
 
 /// A standalone HTML page. Markdown is rendered; plain text is escaped into
 /// a preformatted block.
+// Kept for the shell's own tests; exports now come from workspace/export.rs.
+#[cfg_attr(not(test), allow(dead_code))]
 fn export_html(title: &str, text: &str, markdown: bool) -> String {
     let body = if markdown {
         let body = &text[markie_core::outline::front_matter_len(text)..];
@@ -751,11 +737,15 @@ fn export_html(title: &str, text: &str, markdown: bool) -> String {
     )
 }
 
+// Kept for the shell's own tests; exports now come from workspace/export.rs.
+#[cfg_attr(not(test), allow(dead_code))]
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// Markdown as plain text: the words, list markers and link addresses.
+// Kept for the shell's own tests; exports now come from workspace/export.rs.
+#[cfg_attr(not(test), allow(dead_code))]
 fn markdown_to_plain(text: &str) -> String {
     use pulldown_cmark::{Event, Tag, TagEnd};
     let body = &text[markie_core::outline::front_matter_len(text)..];

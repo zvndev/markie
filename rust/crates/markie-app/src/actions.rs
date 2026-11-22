@@ -33,5 +33,9 @@ actions!(
         PageNarrower,
         ToggleLibrary,
         Quit,
+        Print,
+        ExportPdfDark,
+        ExportPdfLight,
+        ExportHtml,
     ]
 );

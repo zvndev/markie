@@ -24,7 +24,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-n", NewDocument, None),
         KeyBinding::new("cmd-s", Save, None),
         KeyBinding::new("cmd-e", ToggleMode, None),
-        KeyBinding::new("cmd-p", FocusSearch, None),
+        // Electron: ⌘P prints (File menu); search is ⇧⌘F.
+        KeyBinding::new("cmd-p", Print, None),
         KeyBinding::new("cmd-shift-f", FocusSearch, None),
         KeyBinding::new("cmd-k", CommandPalette, None),
         KeyBinding::new("cmd-shift-d", DuplicateDocument, None),
@@ -74,6 +75,17 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Reveal in Finder", RevealDocument),
                 MenuItem::action("Copy Path", CopyPath),
                 MenuItem::action("Move to Trash", TrashDocument),
+                MenuItem::separator(),
+                MenuItem::action("Print…", Print),
+                MenuItem::submenu(Menu {
+                    name: "Export".into(),
+                    items: vec![
+                        MenuItem::action("PDF (Dark)…", ExportPdfDark),
+                        MenuItem::action("PDF (Light)…", ExportPdfLight),
+                        MenuItem::action("HTML…", ExportHtml),
+                    ],
+                    disabled: false,
+                }),
             ],
             disabled: false,
         },

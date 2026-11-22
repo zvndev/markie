@@ -36,6 +36,8 @@ mod cloud;
 mod cloud_office;
 mod cloud_resources;
 mod cloud_ui;
+mod darkmown;
+mod export;
 mod office;
 mod palette;
 mod panels;
@@ -90,6 +92,8 @@ pub struct Workspace {
     library: Library,
     /// Title bar, rail and side panel state.
     shell: rail::Shell,
+    /// The open `.wd` document's preview (`workspace/darkmown.rs`).
+    darkmown: darkmown::DarkmownState,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
@@ -190,6 +194,7 @@ impl Workspace {
             cloud_search,
             library,
             shell,
+            darkmown: Default::default(),
             editor,
             preview,
             rich,
@@ -1054,6 +1059,7 @@ impl Workspace {
                     .into_any_element()
             }
             // Literal text formats look like Electron's TextDocumentEditor.
+            (DocKind::Text { .. }, _) if doc.format == FormatKind::Darkmown && !doc.large => self.render_darkmown(cx),
             (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => self.render_text(cx),
             _ => div()
                 .size_full()
@@ -1096,6 +1102,7 @@ impl Render for Workspace {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         self.ensure_browse_rows();
+        self.sync_darkmown(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
         let history = match self.side {
@@ -1136,6 +1143,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open_account))
             .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
+            .on_action(cx.listener(Self::on_print))
+            .on_action(cx.listener(Self::on_export_pdf_dark))
+            .on_action(cx.listener(Self::on_export_pdf_light))
+            .on_action(cx.listener(Self::on_export_html))
             .relative()
             .size_full()
             .bg(cx.theme().background)

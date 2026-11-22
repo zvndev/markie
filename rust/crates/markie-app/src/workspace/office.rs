@@ -17,7 +17,7 @@ use markie_office::rich_document::{create_rich_document, open_rich_document};
 use markie_office_view::editor::WordEditor;
 use markie_office_view::{WordView, WordViewEvent};
 
-use super::{DocKind, OpenDoc, Workspace};
+use super::{DocKind, Mode, OpenDoc, Workspace};
 
 pub(super) enum Source {
     /// DOCX, RTF or ODT, saved in its own format.
@@ -50,6 +50,91 @@ fn engine_format(format: FormatKind) -> Option<Format> {
         FormatKind::Rtf => Some(Format::Rtf),
         FormatKind::Odt => Some(Format::Odt),
         _ => None,
+    }
+}
+
+fn first_save_path(mut path: PathBuf, key: &Path, format: FormatKind) -> Option<PathBuf> {
+    if path.extension().is_none() && let Some(ext) = key.extension() {
+        path.set_extension(ext);
+    }
+    (markie_core::formats::classify(&path.to_string_lossy()) == format).then_some(path)
+}
+
+impl Workspace {
+    pub(super) fn open_untitled_office(&mut self, name: String, format: FormatKind, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) {
+        let Some(engine) = engine_format(format) else { return };
+        let document = match open_rich_document(engine, bytes) {
+            Ok(document) => document,
+            Err(error) => return window.push_notification(error.message, cx),
+        };
+        self.invalidate_import();
+        self.settle(window, cx);
+        let (view, subscription) = view_for(WordEditor::new(document), window, cx);
+        let office = OfficeDoc { view, source: Source::Rich, _subscription: subscription };
+        office.focus(window, cx);
+        // A distinct recovery key, not a document file. Nothing touches the
+        // user's filesystem until the first Save chooses a destination.
+        let key = markie_core::paths::data_dir()
+            .join("unsaved-office")
+            .join(format!("{}-{}", markie_core::clock::now_ms(), self.import_epoch))
+            .join(&name);
+        self.doc = Some(OpenDoc { path: key, format, large: false, kind: DocKind::Office(office), untitled: true });
+        self.mode = Mode::View;
+        self.dirty = false;
+        self.doc_notes.clear();
+        self.words = 0;
+        self.sections.clear();
+        self.disk_missing = false;
+        self.disk_conflict = None;
+        self.autosave.cancel();
+        self.viewing_version = None;
+        self.collab_on_open(cx);
+        window.set_window_title(&name);
+        cx.notify();
+    }
+
+    pub(super) fn save_untitled_office(&mut self, key: PathBuf, format: FormatKind, view: Entity<WordView>, window: &mut Window, cx: &mut Context<Self>) {
+        let name = key.file_name().map(|n| n.to_string_lossy());
+        let rx = cx.prompt_for_new_path(&self.default_dir(), name.as_deref());
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = rx.await else { return };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(path) = first_save_path(path, &key, format) else {
+                    window.push_notification("Choose the original file type when saving this document.", cx);
+                    return;
+                };
+                let bytes = match view.read(cx).editor.export() {
+                    Ok(bytes) => bytes,
+                    Err(error) => return window.push_notification(error.to_string(), cx),
+                };
+                if let Err(error) = markie_core::save::atomic_write(&path, &bytes) {
+                    window.push_notification(format!("Markie could not save: {error}"), cx);
+                    return;
+                }
+                view.update(cx, |view, _| view.editor.mark_saved());
+                this.keep_office_bytes(&path, format, &bytes, true);
+                if this.doc.as_ref().is_some_and(|d| d.untitled && d.path == key) {
+                    this.open_path(&path, window, cx);
+                }
+                this.rescan(cx);
+            });
+        }).detach();
+    }
+}
+
+#[cfg(test)]
+mod first_save_tests {
+    use super::*;
+    use ::core::prelude::v1::test;
+
+    #[test]
+    fn unsaved_office_session_only_saves_to_its_original_format() {
+        for (key, format) in [("Untitled.docx", FormatKind::Docx), ("Untitled.rtf", FormatKind::Rtf), ("Untitled.odt", FormatKind::Odt)] {
+            let key = Path::new(key);
+            let wanted = PathBuf::from("Chosen").with_extension(key.extension().unwrap());
+            assert_eq!(first_save_path("Chosen".into(), key, format), Some(wanted));
+            assert!(first_save_path("Wrong.txt".into(), key, format).is_none());
+        }
     }
 }
 
@@ -208,6 +293,9 @@ impl Workspace {
     pub(super) fn keep_office_revision(&mut self, on_disk: bool, cx: &mut Context<Self>) {
         let Some(OpenDoc { path, format, kind: DocKind::Office(office), .. }) = &self.doc else { return };
         if !matches!(office.source, Source::Rich) {
+            return;
+        }
+        if self.is_untitled() && !office.is_dirty(cx) {
             return;
         }
         let Ok(bytes) = office.view.read(cx).editor.export() else { return };

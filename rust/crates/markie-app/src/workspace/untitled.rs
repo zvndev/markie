@@ -48,6 +48,10 @@ impl Workspace {
     /// Before another document replaces this one. A file saves as before; an
     /// untitled buffer goes to the journal, the only copy there will be.
     pub(super) fn settle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
+            self.office_flush_recovery(cx);
+            return;
+        }
         if self.is_untitled() {
             if self.dirty {
                 let text = self.current_text(cx);
@@ -55,7 +59,7 @@ impl Workspace {
             }
             return;
         }
-        if self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)) {
+        if self.dirty {
             self.save(window, cx);
         }
     }
@@ -125,6 +129,9 @@ impl Workspace {
     /// document, and the journal entry is spent.
     pub(super) fn save_untitled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
+        if let DocKind::Office(office) = &doc.kind {
+            return self.save_untitled_office(doc.path.clone(), doc.format, office.view.clone(), window, cx);
+        }
         let name = doc.path.to_string_lossy().into_owned();
         let text = self.current_text(cx);
         let dir = self.default_dir();

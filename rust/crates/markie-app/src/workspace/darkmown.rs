@@ -79,6 +79,13 @@ impl Default for DarkmownState {
     }
 }
 
+/// `MARKIE_RS_DEBUG_WD=1` traces compiles and frame updates to stderr.
+fn trace(message: impl FnOnce() -> String) {
+    if std::env::var("MARKIE_RS_DEBUG_WD").is_ok_and(|v| v == "1") {
+        eprintln!("markie-rs wd: {}", message());
+    }
+}
+
 fn hash(text: &str) -> u64 {
     let mut h = DefaultHasher::new();
     text.hash(&mut h);
@@ -124,7 +131,10 @@ impl Workspace {
         let running = self.darkmown.compiler.as_ref().is_some_and(|(_, _, k)| *k == h);
         if !have && !running {
             match Compiler::start(window, &text) {
-                Ok(c) => self.darkmown.compiler = Some((c, Instant::now(), h)),
+                Ok(c) => {
+                    trace(|| format!("compile started for {h:x}"));
+                    self.darkmown.compiler = Some((c, Instant::now(), h))
+                }
                 Err(e) => self.darkmown.compiled = Some((h, Err(e))),
             }
         }
@@ -134,7 +144,10 @@ impl Workspace {
         if self.darkmown.frame.is_none() {
             let start = self.darkmown.bounds.get().map(island_bounds).unwrap_or(IslandBounds { x: 0.0, y: 0.0, width: 1.0, height: 1.0 });
             match DarkmownFrame::new(window, start, self.darkmown.scopes.clone(), |_| {}) {
-                Ok(f) => self.darkmown.frame = Some(Rc::new(f)),
+                Ok(f) => {
+                    trace(|| "preview frame created".into());
+                    self.darkmown.frame = Some(Rc::new(f))
+                }
                 Err(e) => self.darkmown.error = Some(format!("The preview could not start: {e}")),
             }
         }
@@ -152,7 +165,8 @@ impl Workspace {
                         Ok(preview) => {
                             self.darkmown.warnings = preview.warnings;
                             self.darkmown.error = None;
-                            let _ = frame.set_preview(&preview.src_doc, frame_sandbox(trusted, links), dark);
+                            let shown = frame.set_preview(&preview.src_doc, frame_sandbox(trusted, links), dark);
+                            trace(|| format!("frame shows {h:x} trusted={trusted} sandbox={:?} warnings={} {:?}", frame_sandbox(trusted, links), self.darkmown.warnings.len(), shown.is_ok()));
                             self.darkmown.projected_dark = Some(dark);
                         }
                         Err(e) => {
@@ -180,28 +194,48 @@ impl Workspace {
         }
     }
 
-    fn poll_compiler(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Takes a finished compile, or times it out. True when nothing is pending.
+    fn take_compile(&mut self) -> bool {
         if let Some((compiler, started, h)) = &self.darkmown.compiler {
             if let Some(result) = compiler.take() {
+                trace(|| format!("compiled {h:x} in {:?}: {}", started.elapsed(), match &result { Ok(c) => format!("ok, title {:?}, {} bytes", c.title, c.body_html.len()), Err(e) => format!("error {e}") }));
                 self.darkmown.compiled = Some((*h, result));
                 self.darkmown.compiler = None;
             } else if started.elapsed() > Duration::from_secs(10) {
+                trace(|| format!("compile {h:x} timed out"));
                 self.darkmown.compiled = Some((*h, Err(TIME_BUDGET.into())));
                 self.darkmown.compiler = None;
             }
         }
-        if self.darkmown.compiler.is_some() && !self.darkmown.polling {
-            self.darkmown.polling = true;
-            cx.spawn_in(window, async move |this, cx| {
-                cx.background_executor().timer(Duration::from_millis(30)).await;
-                this.update(cx, |this, cx| {
-                    this.darkmown.polling = false;
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
+        self.darkmown.compiler.is_none()
+    }
+
+    /// Polls the compiler on its own schedule, not on renders: a window that
+    /// is not drawing still finishes its compile.
+    fn poll_compiler(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.take_compile() || self.darkmown.polling {
+            return;
         }
+        self.darkmown.polling = true;
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(30)).await;
+                let done = this
+                    .update(cx, |this, cx| {
+                        let done = this.take_compile();
+                        if done {
+                            this.darkmown.polling = false;
+                            cx.notify();
+                        }
+                        done
+                    })
+                    .unwrap_or(true);
+                if done {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     pub(super) fn darkmown_command(&mut self, mode: Mode, cx: &mut Context<Self>) {

@@ -283,7 +283,8 @@ pub fn print_pdf(_bytes: &[u8]) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Not `super::*`: GPUI's glob export brings its own `test` attribute.
+    use super::{Guard, is_exporting};
 
     #[test]
     fn one_export_at_a_time() {

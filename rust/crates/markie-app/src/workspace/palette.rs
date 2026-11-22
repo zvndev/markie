@@ -47,6 +47,7 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
         cmd("Reveal in Finder", "File", Some("⌥⌘R"), "finder explorer folder show reveal drag locate", action(RevealDocument)),
         cmd("Rich Mode", "View", Some("⌘1"), "preview rich wysiwyg formatted view", Rc::new(|ws, w, cx| ws.set_mode(Mode::View, w, cx))),
         cmd("Source Mode", "View", Some("⌘2"), "source raw markdown edit", Rc::new(|ws, w, cx| ws.set_mode(Mode::Source, w, cx))),
+        cmd("Split Mode", "View", Some("⌘3"), "both side by side", Rc::new(|ws, w, cx| ws.set_mode(Mode::Split, w, cx))),
         cmd("Statistics", "View", Some("⇧⌘I"), "words count reading", action(ToggleStats)),
         cmd("Command Palette", "View", Some("⌘K"), "", Rc::new(|_, _, _| {})),
         cmd("Copy File Path", "File", None, "link location terminal clipboard", action(CopyPath)),

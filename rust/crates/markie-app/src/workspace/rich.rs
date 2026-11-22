@@ -43,14 +43,14 @@ impl Workspace {
 
     /// Is View mode showing the rich editor for the open document?
     pub(super) fn rich_active(&self) -> bool {
-        self.mode == Mode::View
+        matches!(self.mode, Mode::View | Mode::Split)
             && matches!(self.doc.as_ref(), Some(OpenDoc { format: FormatKind::Markdown, large: false, kind: DocKind::Text { .. }, .. }))
     }
 
     /// The document's text as it would be saved, from whichever editor
     /// holds the latest edits.
     pub(super) fn current_text(&self, cx: &App) -> String {
-        if self.rich_active() {
+        if self.rich_active() && !(self.mode == Mode::Split && self.split_source_latest) {
             self.rich.read(cx).markdown()
         } else {
             self.editor.read(cx).value().to_string()
@@ -69,6 +69,7 @@ impl Workspace {
         let text = self.rich.read(cx).markdown();
         self.dirty = &text != saved;
         self.update_stats(&text);
+        self.split_source_follow(text);
         // A live room that cannot carry this file leaves the file alone.
         if self.live_holds_file() {
             cx.notify();

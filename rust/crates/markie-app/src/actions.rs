@@ -37,6 +37,7 @@ actions!(
         ShowAbout,
         RichMode,
         SourceMode,
+        SplitMode,
         MoveDocument,
         Print,
         ExportPdfDark,

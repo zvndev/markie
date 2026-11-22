@@ -68,10 +68,14 @@ enum SidePanel {
     Stats,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
+    /// ⌘1: the rich editor (Electron's "preview").
     View,
+    /// ⌘2: the Markdown source (Electron's "edit").
     Source,
+    /// ⌘3: source on the left, rich on the right (Electron's "split").
+    Split,
 }
 
 /// The document in the pane, and how to write it back.
@@ -114,6 +118,12 @@ pub struct Workspace {
     rich: Entity<markie_editor::RichView>,
     doc: Option<OpenDoc>,
     mode: Mode,
+    /// In Split, the pane whose text is newest: the source editor (true) or
+    /// the rich editor (false). Electron's `lastPane`.
+    split_source_latest: bool,
+    /// Text Split just copied into the other pane, so its change event is
+    /// not copied back.
+    split_echo: Option<String>,
     dirty: bool,
     words: usize,
     reading_minutes: usize,
@@ -236,6 +246,8 @@ impl Workspace {
             rich,
             doc: None,
             mode: Mode::View,
+            split_source_latest: false,
+            split_echo: None,
             dirty: false,
             words: 0,
             reading_minutes: 0,
@@ -482,6 +494,11 @@ impl Workspace {
                 } else if matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && self.doc.is_none() {
                     self.mode = Mode::View;
                 }
+                if !mode_allowed(doc.format, large, self.mode) {
+                    self.mode = Mode::View;
+                }
+                self.split_source_latest = false;
+                self.split_echo = None;
                 if let DocKind::Text { saved, .. } = &kind {
                     if doc.format == FormatKind::Csv && !large {
                         self.csv_rows = Some(Rc::new(markie_core::csv::parse(saved)));
@@ -561,9 +578,18 @@ impl Workspace {
     }
 
     fn on_edit(&mut self, cx: &mut Context<Self>) {
-        self.live_source_edit(cx);
-        let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         let text = self.editor.read(cx).value().to_string();
+        if self.split_echo.as_deref() == Some(text.as_str()) {
+            // The rich pane's own edit, copied over: nothing new to save.
+            self.split_echo = None;
+            return;
+        }
+        self.live_source_edit(cx);
+        if self.mode == Mode::Split {
+            self.split_source_latest = true;
+            self.split_rich_follow(&text, cx);
+        }
+        let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         self.dirty = &text != saved;
         self.update_stats(&text);
         if self.dirty && self.disk_conflict.is_none() {
@@ -708,37 +734,65 @@ impl Workspace {
         handle.focus(window, cx);
     }
 
+    /// ⌘E: Source from View or Split, View from Source.
     fn toggle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = if self.mode == Mode::Source { Mode::View } else { Mode::Source };
+        self.set_mode(next, window, cx);
+    }
+
+    /// ⌘1, ⌘2 and ⌘3. Like Electron's `requestMode`, a large or literal
+    /// text document stays in Source, and only Markdown splits.
+    fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        if !matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) || doc.large {
+        if self.mode == mode || !mode_allowed(doc.format, doc.large, mode) || !matches!(doc.kind, DocKind::Text { .. }) {
             return;
         }
         let format = doc.format;
-        self.mode = match self.mode {
-            Mode::View => {
-                if self.rich_active() {
-                    self.rich_to_source(window, cx);
-                }
-                self.focus_editor(window, cx);
-                Mode::Source
-            }
-            Mode::Source => {
-                let text = self.editor.read(cx).value().to_string();
-                self.set_preview(&text, format, cx);
-                self.mode = Mode::View;
-                if self.rich_active() {
-                    self.focus_rich(window, cx);
-                }
-                Mode::View
-            }
+        let was = self.mode;
+        let source_latest = match was {
+            Mode::Source => true,
+            Mode::Split => self.split_source_latest,
+            Mode::View => false,
         };
+        if source_latest {
+            let text = self.editor.read(cx).value().to_string();
+            self.mode = mode;
+            if mode != Mode::Source {
+                self.set_preview(&text, format, cx);
+            }
+        } else {
+            if self.rich_active() && mode != Mode::View {
+                self.rich_to_source(window, cx);
+            }
+            self.mode = mode;
+        }
+        self.split_source_latest = mode == Mode::Split && source_latest;
+        match mode {
+            Mode::Source => self.focus_editor(window, cx),
+            Mode::Split if was == Mode::Source => self.focus_editor(window, cx),
+            _ if self.rich_active() => self.focus_rich(window, cx),
+            _ => {}
+        }
         cx.notify();
     }
 
-    fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
-        if self.mode != mode {
-            self.toggle_mode(window, cx);
+    /// A source edit in Split: the rich pane shows it, keeping its scroll.
+    fn split_rich_follow(&mut self, text: &str, cx: &mut Context<Self>) {
+        let parsed = markie_rich::editor::Editor::parse(text);
+        self.rich.update(cx, |r, cx| {
+            r.editor = parsed;
+            r.remote_changed(cx);
+        });
+    }
+
+    /// A rich edit in Split: the source pane shows it.
+    pub(super) fn split_source_follow(&mut self, text: String) {
+        if self.mode != Mode::Split {
+            return;
         }
+        self.split_source_latest = false;
+        self.split_echo = Some(text.clone());
+        self.pending_editor_text = Some(text);
     }
 
     fn on_open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
@@ -846,6 +900,34 @@ impl Workspace {
 
     // ---------------------------------------------------------------- render
 
+    /// Split: the source pane at 0.96fr with its hairline on the right, the
+    /// rich pane at 1.04fr, as `markie-document-area--split` lays them out.
+    fn render_split(&self, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_rich_appearance(cx);
+        let theme = cx.theme();
+        h_flex()
+            .size_full()
+            .bg(theme.background)
+            .child(
+                div()
+                    .h_full()
+                    .min_w_0()
+                    .w(relative(0.48))
+                    .border_r_1()
+                    .border_color(theme.border)
+                    .overflow_hidden()
+                    .child(
+                        Editor::new(&self.editor)
+                            .bordered(false)
+                            .h(relative(1.))
+                            .font_family(markie_editor::MONO)
+                            .text_size(px(14. * self.zoom)),
+                    ),
+            )
+            .child(div().h_full().min_w_0().w(relative(0.52)).overflow_hidden().child(self.rich.clone()))
+            .into_any_element()
+    }
+
     fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
@@ -919,6 +1001,7 @@ impl Workspace {
                     )
                     .into_any_element()
             }
+            (DocKind::Text { .. }, Mode::Split) if doc.format == FormatKind::Markdown && !doc.large => self.render_split(cx),
             (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Csv => self.render_csv(cx),
             (DocKind::Text { .. }, Mode::View) if doc.format == FormatKind::Markdown && !doc.large => {
                 self.sync_rich_appearance(cx);
@@ -974,6 +1057,45 @@ impl Workspace {
         }
     }
 
+}
+
+/// May `format` show in `mode`? Electron's `requestMode`: large and literal
+/// text documents only edit as source; Markdown also splits.
+fn mode_allowed(format: FormatKind, large: bool, mode: Mode) -> bool {
+    match mode {
+        Mode::Source => true,
+        Mode::View => !large && matches!(format, FormatKind::Markdown | FormatKind::Csv),
+        Mode::Split => !large && format == FormatKind::Markdown,
+    }
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::{FormatKind, Mode, mode_allowed};
+
+    #[test]
+    fn markdown_takes_every_mode() {
+        for mode in [Mode::View, Mode::Source, Mode::Split] {
+            assert!(mode_allowed(FormatKind::Markdown, false, mode), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn large_and_literal_text_stay_in_source() {
+        for format in [FormatKind::Markdown, FormatKind::Csv] {
+            assert!(!mode_allowed(format, true, Mode::View));
+            assert!(!mode_allowed(format, true, Mode::Split));
+            assert!(mode_allowed(format, true, Mode::Source));
+        }
+        assert!(!mode_allowed(FormatKind::Text, false, Mode::View));
+        assert!(!mode_allowed(FormatKind::Json, false, Mode::Split));
+    }
+
+    #[test]
+    fn csv_views_but_does_not_split() {
+        assert!(mode_allowed(FormatKind::Csv, false, Mode::View));
+        assert!(!mode_allowed(FormatKind::Csv, false, Mode::Split));
+    }
 }
 
 impl Focusable for Workspace {

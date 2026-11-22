@@ -51,6 +51,7 @@ fn bind_keys(cx: &mut App) {
         // Electron's mode and help shortcuts (src/app/page.tsx).
         KeyBinding::new("cmd-1", RichMode, None),
         KeyBinding::new("cmd-2", SourceMode, None),
+        KeyBinding::new("cmd-3", SplitMode, None),
         KeyBinding::new("cmd-/", ShowShortcuts, None),
     ]);
     markie_office_view::actions::bind_keys(cx);
@@ -105,6 +106,9 @@ fn set_menus(cx: &mut App) {
             items: vec![
                 MenuItem::action("Command Palette", CommandPalette),
                 MenuItem::action("Library", ToggleLibrary),
+                MenuItem::action("Rich Text", RichMode),
+                MenuItem::action("Markdown Source", SourceMode),
+                MenuItem::action("Split", SplitMode),
                 MenuItem::action("Toggle View and Source", ToggleMode),
                 MenuItem::action("Outline", ToggleOutline),
                 MenuItem::action("Statistics", ToggleStats),

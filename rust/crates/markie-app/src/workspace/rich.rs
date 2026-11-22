@@ -66,6 +66,7 @@ impl Workspace {
         let text = self.rich.read(cx).markdown();
         self.dirty = &text != saved;
         self.update_stats(&text);
+        self.schedule_journal(&text, cx);
         self.split_source_follow(text);
         // A live room that cannot carry this file leaves the file alone.
         if self.live_holds_file() {
@@ -124,7 +125,10 @@ impl Workspace {
     pub(super) fn sync_rich_appearance(&self, cx: &mut Context<Self>) {
         let (z, w) = (self.zoom, self.page_width);
         let style = doc_style(cx);
+        // `showFormatRail`: the pencil is the chosen view and the rich pane shows.
+        let rail = self.shell.format_rail_on();
         self.rich.update(cx, |r, cx| {
+            r.set_format_rail(rail, cx);
             if (r.zoom - z).abs() > f32::EPSILON || (r.page_width - w).abs() > f32::EPSILON {
                 r.set_appearance(z, w, cx);
             }

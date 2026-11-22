@@ -41,3 +41,4 @@ pub mod save;
 pub mod search;
 pub mod stats;
 pub mod theme;
+pub mod workspace_ops;

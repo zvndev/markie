@@ -184,6 +184,48 @@ impl Registry {
         Ok(())
     }
 
+    /// Every table with a `path` column: they all follow a moved file.
+    fn path_keyed_tables(&self) -> Result<Vec<String>> {
+        let mut stmt = self.db.prepare(
+            "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) p
+             WHERE m.type = 'table' AND p.name = 'path'",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// `registry.movePath`: a stale row at the destination loses.
+    pub fn move_path(&self, from: &Path, to: &Path) -> Result<()> {
+        let name = to.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute("UPDATE OR REPLACE files SET path = ?1, name = ?2 WHERE path = ?3", params![key(to), name, key(from)])?;
+        for table in self.path_keyed_tables()? {
+            if table != "files" {
+                tx.execute(&format!("UPDATE OR REPLACE \"{table}\" SET path = ?1 WHERE path = ?2"), params![key(to), key(from)])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// `registry.movePrefix`: everything under a moved folder.
+    pub fn move_prefix(&self, from: &str, to: &str) -> Result<()> {
+        let (from, to) = if cfg!(windows) { (from.to_lowercase(), to.to_lowercase()) } else { (from.to_string(), to.to_string()) };
+        let tx = self.db.unchecked_transaction()?;
+        for table in self.path_keyed_tables()? {
+            let paths: Vec<String> = {
+                let mut stmt = tx.prepare(&format!("SELECT path FROM \"{table}\" WHERE substr(path, 1, ?1) = ?2"))?;
+                stmt.query_map(params![from.len() as i64, from], |r| r.get(0))?.collect::<Result<_, _>>()?
+            };
+            for p in paths {
+                let next = format!("{to}{}", &p[from.len()..]);
+                tx.execute(&format!("UPDATE OR REPLACE \"{table}\" SET path = ?1 WHERE path = ?2"), params![next, p])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn toggle_star(&self, path: &Path, kind: &str) -> Result<bool> {
         let k = key(path);
         let removed = self.db.execute("DELETE FROM md_stars WHERE path = ?1", [&k])?;

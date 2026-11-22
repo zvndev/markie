@@ -247,7 +247,7 @@ impl Workspace {
             signed_in: false,
         });
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.w(px(520.)).child(panel.clone())
+            dialog.w(px(520.)).close_button(false).child(panel.clone())
         });
     }
 }

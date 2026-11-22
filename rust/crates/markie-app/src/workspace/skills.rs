@@ -2,7 +2,7 @@
 use super::Workspace;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use markie_agent::skills::{self, Kind, Row, Tool};
 use markie_core::{
@@ -12,7 +12,10 @@ use markie_core::{
 use std::{collections::BTreeSet, path::PathBuf};
 
 impl Workspace {
-    pub(crate) fn open_skills(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn prepare_skills(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.skills.is_some() {
+            return;
+        }
         let input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter skills and agent files"));
         let home = paths::home_dir();
@@ -50,13 +53,24 @@ impl Workspace {
             panel.load(snapshot, cx);
             panel
         });
-        window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title("Skills").w(px(600.)).child(panel.clone())
-        });
+        self.skills = Some(panel);
+    }
+
+    pub(super) fn render_skills_panel(&self) -> AnyElement {
+        self.skills
+            .clone()
+            .map(IntoElement::into_any_element)
+            .unwrap_or_else(|| {
+                div()
+                    .p_3()
+                    .text_xs()
+                    .child("Looking for agent files…")
+                    .into_any_element()
+            })
     }
 }
 
-struct SkillsPanel {
+pub(super) struct SkillsPanel {
     input: Entity<InputState>,
     roots: Vec<(Tool, PathBuf)>,
     opts: ScanOptions,
@@ -129,7 +143,7 @@ impl SkillsPanel {
 }
 
 impl Render for SkillsPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let q = self.input.read(cx).value().trim().to_lowercase();
         let mut content = v_flex().gap_2();
         let mut found = 0;
@@ -207,6 +221,9 @@ impl Render for SkillsPanel {
             }));
         }
         v_flex()
+            .size_full()
+            .min_h_0()
+            .p_2()
             .gap_2()
             .child(
                 h_flex()
@@ -246,7 +263,8 @@ impl Render for SkillsPanel {
             .child(
                 div()
                     .id("skills-scroll")
-                    .max_h(window.viewport_size().height * 0.68)
+                    .flex_1()
+                    .min_h_0()
                     .overflow_y_scroll()
                     .child(content),
             )
@@ -276,7 +294,6 @@ impl SkillsPanel {
                     let _ = this.workspace.update(cx, |ws, cx| {
                         ws.open_external(vec![path.clone()], window, cx)
                     });
-                    window.close_dialog(cx);
                 })),
         );
         if let Some(s) = &row.description {

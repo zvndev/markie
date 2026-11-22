@@ -147,6 +147,8 @@ pub(super) struct CloudLinks {
 
 /// `rowMenuEntries`: the links, copy path, then the sync action this state
 /// calls for, then sharing, then deletion on its own at the bottom.
+/// For a file on disk (the tests' shorthand).
+#[cfg(test)]
 pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool, links: CloudLinks) -> Vec<Entry> {
     row_entries_for(status, signed_in, classic, links, true)
 }

@@ -131,6 +131,7 @@ pub struct WordView {
     pub zoom: f32,
     pub paper: PaperTone,
     pub(crate) tool: Option<Tool>,
+    menu_suspended: bool,
     pub(crate) inputs: Inputs,
     pub(crate) find_index: usize,
     pub(crate) find_receipt: Option<String>,
@@ -245,6 +246,7 @@ impl WordView {
             zoom: 1.0,
             paper: PaperTone::Theme,
             tool: None,
+            menu_suspended: false,
             inputs,
             find_index: 0,
             find_receipt: None,
@@ -286,6 +288,7 @@ impl WordView {
     pub fn command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_composition();
         match id {
+            "find" => self.open_tool(Tool::Find, window, cx),
             "view-page" => self.mode = ViewMode::Page,
             "view-continuous" => self.mode = ViewMode::Continuous,
             "view-outline" => self.outline = !self.outline,
@@ -302,6 +305,22 @@ impl WordView {
             },
         }
         self.edited(window, cx);
+    }
+
+    pub fn set_menu_suspended(&mut self, suspended: bool, cx: &mut Context<Self>) {
+        if self.menu_suspended != suspended {
+            self.menu_suspended = suspended;
+            cx.notify();
+        }
+    }
+
+    pub fn palette_commands(&self) -> Vec<&'static str> {
+        if self.tool.is_some() {
+            return Vec::new();
+        }
+        let mut commands = available_commands(&self.editor);
+        commands.push("find");
+        commands
     }
 
     // ----- composition and display text ----------------------------------
@@ -1621,7 +1640,8 @@ impl WordView {
                 cx.notify();
             }
         }));
-        let editing = actions::register_commands(editing, &menu_commands(&self.editor, self.tool), cx)
+        let menu = if self.menu_suspended { Vec::new() } else { menu_commands(&self.editor, self.tool) };
+        let editing = actions::register_commands(editing, &menu, cx)
             .relative()
             .flex_1()
             .h_full()

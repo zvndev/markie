@@ -41,6 +41,7 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
     let mut list = vec![
         cmd("Open File…", "File", Some("⌘O"), "", action(Open)),
         cmd("New Markdown document", "File", None, "md markdown", Rc::new(|ws, w, cx| ws.create_document("md", w, cx))),
+        cmd("New Word document", "File", None, "docx word", Rc::new(|ws, w, cx| ws.create_document("docx", w, cx))),
         cmd("New text document", "File", None, "txt plain", Rc::new(|ws, w, cx| ws.create_document("txt", w, cx))),
         cmd("Save", "File", Some("⌘S"), "", action(Save)),
         cmd("Duplicate (Fork)", "File", Some("⇧⌘D"), "copy fork duplicate", action(DuplicateDocument)),
@@ -182,7 +183,22 @@ impl Workspace {
 
     fn palette_results(&self, cx: &App) -> Vec<PaletteCommand> {
         let Overlay::Palette(p) = &self.dialogs.open else { return Vec::new() };
-        filter(commands(), &p.input.read(cx).value())
+        let mut list = commands();
+        if let Some(super::OpenDoc { kind: super::DocKind::Office(office), .. }) = &self.doc
+            && !self.workspace_page_open()
+        {
+            let view = office.view.clone();
+            for id in view.read(cx).palette_commands() {
+                let found = markie_office_view::commands::COMMANDS.iter().find(|(_, key, _)| *key == id);
+                let Some((group, label)) = found.map(|(group, _, label)| (*group, *label))
+                    .or_else(|| (id == "find").then_some(("View", "Find and Replace…"))) else { continue };
+                let view = view.clone();
+                list.push(cmd(label, group, (id == "find").then_some("⌘F"), id, Rc::new(move |_, window, cx| {
+                    view.update(cx, |view, cx| view.command(id, window, cx));
+                })));
+            }
+        }
+        filter(list, &p.input.read(cx).value())
     }
 
     /// Arrow keys move the selection; Return runs it.

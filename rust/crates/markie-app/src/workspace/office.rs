@@ -61,7 +61,31 @@ fn first_save_path(mut path: PathBuf, key: &Path, format: FormatKind) -> Option<
 }
 
 impl Workspace {
+    pub(super) fn on_document_details(&mut self, _: &crate::actions::DocumentDetails, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(doc) = &self.doc else { return };
+        let Some(name) = doc.path.file_name() else { return };
+        let mut detail = format!("{}\n{}", name.to_string_lossy(), doc.format.label());
+        if let DocKind::Office(office) = &doc.kind {
+            let editor = &office.view.read(cx).editor;
+            if !markie_export::office_pdf::can_print(editor.rich()) {
+                detail.push_str("\n\nPrint and PDF are unavailable for this document's unsupported features or pending revisions. You can still export the source document.");
+            }
+            for warning in &editor.rich().diagnostics {
+                detail.push_str("\n");
+                detail.push_str(&warning.message);
+            }
+        }
+        let _ = window.prompt(PromptLevel::Info, "Document Details", Some(&detail), &["OK"], cx);
+    }
+
     pub(super) fn open_untitled_office(&mut self, name: String, format: FormatKind, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) {
+        let key = markie_core::paths::data_dir().join("unsaved-office")
+            .join(format!("{}-{}", markie_core::clock::now_ms(), self.import_epoch.saturating_add(1)))
+            .join(name);
+        self.resume_untitled_office(key, format, bytes, window, cx);
+    }
+
+    fn resume_untitled_office(&mut self, key: PathBuf, format: FormatKind, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) {
         let Some(engine) = engine_format(format) else { return };
         let document = match open_rich_document(engine, bytes) {
             Ok(document) => document,
@@ -73,19 +97,8 @@ impl Workspace {
         let (view, subscription) = view_for(WordEditor::new(document), window, cx);
         let office = OfficeDoc { view, source: Source::Rich, _subscription: subscription };
         office.focus(window, cx);
-        // A distinct recovery key, not a document file. Nothing touches the
-        // user's filesystem until the first Save chooses a destination.
-        let key = markie_core::paths::data_dir()
-            .join("unsaved-office")
-            .join(format!("{}-{}", markie_core::clock::now_ms(), self.import_epoch))
-            .join(&name);
-        let key = markie_core::paths::data_dir().join("unsaved-office")
-            .join(format!("{}-{}", markie_core::clock::now_ms(), self.import_epoch.saturating_add(1)))
-            .join(name);
-        self.resume_untitled_office(key, format, bytes, window, cx);
-    }
-
-    fn resume_untitled_office(&mut self, key: PathBuf, format: FormatKind, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) {
+        // The recovery key is not a document file.
+        let name = key.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         self.doc = Some(OpenDoc { path: key, format, large: false, kind: DocKind::Office(office), untitled: true });
         self.mode = Mode::View;
         self.dirty = false;
@@ -101,19 +114,6 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn save_untitled_office(&mut self, key: PathBuf, format: FormatKind, view: Entity<WordView>, window: &mut Window, cx: &mut Context<Self>) {
-        let name = key.file_name().map(|n| n.to_string_lossy());
-        let rx = cx.prompt_for_new_path(&self.default_dir(), name.as_deref());
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(path))) = rx.await else { return };
-            let _ = this.update_in(cx, |this, window, cx| {
-                let Some(path) = first_save_path(path, &key, format) else {
-                    window.push_notification("Choose the original file type when saving this document.", cx);
-                    return;
-                };
-                let bytes = match view.read(cx).editor.export() {
-                    Ok(bytes) => bytes,
-                    Err(error) => return window.push_notification(error.to_string(), cx),
     pub(super) fn render_untitled_office_offer(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (path, revision) = self.pending_office.as_ref()?;
         let (path, revision) = (path.clone(), *revision);
@@ -131,12 +131,26 @@ impl Workspace {
             .into_any_element())
     }
 
+    pub(super) fn save_untitled_office(&mut self, key: PathBuf, format: FormatKind, view: Entity<WordView>, window: &mut Window, cx: &mut Context<Self>) {
+        let name = key.file_name().map(|n| n.to_string_lossy());
+        let rx = cx.prompt_for_new_path(&self.default_dir(), name.as_deref());
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = rx.await else { return };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(path) = first_save_path(path, &key, format) else {
+                    window.push_notification("Choose the original file type when saving this document.", cx);
+                    return;
+                };
+                let bytes = match view.read(cx).editor.export() {
+                    Ok(bytes) => bytes,
+                    Err(error) => return window.push_notification(error.to_string(), cx),
                 };
                 if let Err(error) = markie_core::save::atomic_write(&path, &bytes) {
                     window.push_notification(format!("Markie could not save: {error}"), cx);
                     return;
                 }
                 view.update(cx, |view, _| view.editor.mark_saved());
+                this.keep_office_bytes(&key, format, &bytes, true);
                 this.keep_office_bytes(&path, format, &bytes, true);
                 if this.doc.as_ref().is_some_and(|d| d.untitled && d.path == key) {
                     this.open_path(&path, window, cx);
@@ -150,7 +164,6 @@ impl Workspace {
 #[cfg(test)]
 mod first_save_tests {
     use super::*;
-                this.keep_office_bytes(&key, format, &bytes, true);
     use ::core::prelude::v1::test;
 
     #[test]

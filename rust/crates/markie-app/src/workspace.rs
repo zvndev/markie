@@ -288,11 +288,11 @@ impl Workspace {
             dirty: false,
             doc_notes: Vec::new(),
             import_epoch: 0,
+            import_cancel: None,
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
             history: History::new(&data_dir),
-            import_cancel: None,
             drafts,
             disk: DiskMemory::default(),
             autosave: Autosave::default(),
@@ -1240,6 +1240,15 @@ impl Render for Workspace {
         // A video card's player is a web view too: hidden under any layer.
         let hide_video = self.document_failure.is_some() || self.web_views_covered(window, cx) || !self.rich_active();
         self.rich.update(cx, |r, _| r.set_web_views_covered(hide_video));
+        let document_actions = self.doc.is_some() && self.document_failure.is_none()
+            && !self.workspace_page_open() && !self.dialogs.open.is_open();
+        let output_actions = document_actions && match self.doc.as_ref().map(|d| &d.kind) {
+            Some(DocKind::Office(office)) => markie_export::office_pdf::can_print(office.view.read(cx).editor.rich()),
+            _ => true,
+        };
+        if let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc {
+            office.view.update(cx, |view, cx| view.set_menu_suspended(!document_actions, cx));
+        }
         self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
@@ -1259,6 +1268,11 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))
+            .on_action(cx.listener(|this, _: &NewMarkdownDocument, window, cx| this.create_document("md", window, cx)))
+            .on_action(cx.listener(|this, _: &NewWordDocument, window, cx| this.create_document("docx", window, cx)))
+            .on_action(cx.listener(|this, _: &NewTextDocument, window, cx| this.create_document("txt", window, cx)))
+            .on_action(cx.listener(|this, _: &NewDarkmownDocument, window, cx| this.create_document("wd", window, cx)))
+            .when(document_actions, |root| root.on_action(cx.listener(Self::on_document_details)))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_toggle_mode))
             .on_action(cx.listener(Self::on_focus_search))
@@ -1285,9 +1299,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
             .on_action(cx.listener(Self::on_toggle_vault))
-            .on_action(cx.listener(Self::on_print))
+            .when(output_actions, |root| root.on_action(cx.listener(Self::on_print)).on_action(cx.listener(Self::on_export_pdf_light)))
             .on_action(cx.listener(Self::on_export_pdf_dark))
-            .on_action(cx.listener(Self::on_export_pdf_light))
             .on_action(cx.listener(Self::on_export_html))
             // The Library panel's resizer drag follows the pointer anywhere.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
@@ -1331,6 +1344,7 @@ impl Render for Workspace {
                                     .h_full()
                                     .overflow_hidden()
                                     .children(banner)
+                                    .children(self.render_untitled_office_offer(cx))
                                     .children(cloud_banner)
                                     .children(self.render_live_banner(cx))
                                     .child(
@@ -1353,5 +1367,4 @@ impl Render for Workspace {
             .children(self.render_share(window, cx));
         self.dialog_actions(root, cx).children(dialogs)
     }
-                                    .children(self.render_untitled_office_offer(cx))
 }

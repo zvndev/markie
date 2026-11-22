@@ -1,7 +1,8 @@
 //! Spell check in View mode, through the macOS spell checker, as Chromium
 //! does it for Electron's contenteditable editor: misspelled words get a
 //! red dotted underline, and the word being typed is left alone until the
-//! caret leaves it. Electron Markie has no context menu, so there are no
+//! caret leaves it. Code blocks are checked too, as Chromium checks every
+//! editable text; the inline formula field is not (`spellcheck = false`). Electron Markie has no context menu, so there are no
 //! suggestions to offer. Source mode is CodeMirror, which turns spell check
 //! off, and so does Markie RS.
 //!
@@ -156,5 +157,13 @@ mod tests {
         let r = check("This sentense has one mistake.");
         assert!(r.contains(&(5..13)), "{r:?}");
         assert!(check("https://example.com/xqzt").is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn code_block_text_is_checked_across_its_lines() {
+        let code = "// the recieved value\nlet total = 1;";
+        let r = check(code);
+        assert!(r.contains(&(7..15)), "{r:?}");
     }
 }

@@ -39,6 +39,25 @@ fn typeface(id: &str) -> (&'static str, &'static str) {
 /// Settings > Files: the formats Electron offers as Finder defaults.
 
 impl Workspace {
+    /// Keep the store across launches (`markie.themes.v1`'s JSON), and the
+    /// template id older code reads.
+    pub(super) fn save_theme_store(&self, cx: &App) {
+        let store = themes::store(cx);
+        if let Some(reg) = &self.registry {
+            let _ = reg.set_setting("themes.v1", &store.to_json());
+            let _ = reg.set_setting("style_template", &store.active_template().id);
+        }
+    }
+
+    /// Paint and keep a changed store.
+    pub(super) fn commit_theme(&mut self, store: markie_core::theme::ThemeStore, window: &mut Window, cx: &mut Context<Self>) {
+        let id = store.normalized().active_template().id.clone();
+        themes::apply_store(store, Some(window), cx);
+        self.save_theme_store(cx);
+        self.shell.template = id;
+        cx.notify();
+    }
+
     /// Same path as the title bar's switch, so the two never disagree.
     fn set_color_mode(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.pick_color_mode(super::chrome::ColorMode::parse(Some(mode)), window, cx);
@@ -49,6 +68,7 @@ impl Workspace {
             let _ = reg.set_setting("style_template", id);
         }
         themes::apply(id, Some(window), cx);
+        self.save_theme_store(cx);
         self.shell.template = id.to_string();
         cx.notify();
     }

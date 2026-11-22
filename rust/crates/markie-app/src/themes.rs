@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode, ThemeSet};
 use gpui_kit::*;
+use markie_core::theme::{ThemePreset, ThemeStore, Tone, Typography};
 use serde::Deserialize;
 
 const TEMPLATES_JSON: &str = include_str!("../themes/templates.json");
@@ -85,11 +86,44 @@ fn config(name: &str, mode: &str, t: &Tokens) -> serde_json::Value {
     })
 }
 
+/// The person's theme store (`markie.themes.v1`): template, custom presets
+/// and typography. Everything that paints reads the preset it resolves to.
+pub struct ThemeState(pub ThemeStore);
+
+impl Global for ThemeState {}
+
+/// The store in use, or Markie's default before one is applied.
+pub fn store(cx: &App) -> ThemeStore {
+    cx.try_global::<ThemeState>().map(|s| s.0.clone()).unwrap_or_default()
+}
+
+/// The preset and typography painted in one tone, tweaks included.
+pub fn painted(cx: &App, dark: bool) -> (ThemePreset, Typography) {
+    store(cx).painted(if dark { Tone::Dark } else { Tone::Light })
+}
+
+fn app_tokens(t: &markie_core::theme::ThemeTokens) -> Option<Tokens> {
+    serde_json::to_value(t).ok().and_then(|v| serde_json::from_value(v).ok())
+}
+
 /// Make `id` the template GPUI Kit uses for light and dark, keeping the
-/// current mode.
+/// current mode and the custom presets.
 pub fn apply(id: &str, window: Option<&mut Window>, cx: &mut App) {
-    let all = templates();
-    let Some(t) = all.iter().find(|t| t.id == id).or_else(|| all.first()) else { return };
+    let dark = Theme::global(cx).mode.is_dark();
+    let next = store(cx).choose_template(id, if dark { Tone::Dark } else { Tone::Light });
+    apply_store(next, window, cx);
+}
+
+/// Paint `store`: its light and dark presets become GPUI Kit's themes and
+/// Markie's palettes, and the store becomes the global every view reads.
+pub fn apply_store(store: ThemeStore, window: Option<&mut Window>, cx: &mut App) {
+    let store = store.normalized();
+    let name = store.active_template().name.clone();
+    let (light_p, _) = store.painted(Tone::Light);
+    let (dark_p, _) = store.painted(Tone::Dark);
+    cx.set_global(ThemeState(store));
+    let (Some(lt), Some(dt)) = (app_tokens(&light_p.tokens), app_tokens(&dark_p.tokens)) else { return };
+    let t = Template { id: String::new(), name, description: String::new(), light: lt, dark: dt };
     let set = serde_json::json!({
         "name": t.name,
         "themes": [
@@ -233,5 +267,23 @@ mod tests {
             let set = serde_json::json!({ "name": t.name, "themes": [super::config("x", "light", &t.light)] });
             assert!(serde_json::from_value::<gpui_kit::component::ThemeSet>(set).is_ok(), "{}", t.id);
         }
+    }
+
+    #[test]
+    fn every_painted_preset_reaches_the_chrome() {
+        use markie_core::theme::{ThemeStore, Tone, templates};
+        for t in templates() {
+            let store = ThemeStore::default().choose_template(&t.id, Tone::Light);
+            for tone in [Tone::Light, Tone::Dark] {
+                let (p, typo) = store.painted(tone);
+                let tokens = super::app_tokens(&p.tokens).expect("tokens convert");
+                assert_eq!(tokens.background, p.tokens.background);
+                assert_eq!(typo, t.typography, "{} {:?}", t.id, tone);
+            }
+        }
+        let custom = ThemeStore::default()
+            .choose_template("paper", Tone::Light)
+            .edit_colors(Tone::Light, |k| k.background = "#ffeedd".into(), "custom-1");
+        assert_eq!(super::app_tokens(&custom.painted(Tone::Light).0.tokens).unwrap().background, "#ffeedd");
     }
 }

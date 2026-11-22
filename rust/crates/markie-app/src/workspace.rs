@@ -175,11 +175,17 @@ impl Workspace {
         ];
         subscriptions.extend(Self::watch_account(window, cx));
 
-        let template = registry
-            .as_ref()
-            .and_then(|r| r.setting("style_template").ok().flatten())
-            .unwrap_or_else(|| "markie".into());
-        crate::themes::apply(&template, Some(window), cx);
+        // The theme store (`markie.themes.v1`); a build before it kept only
+        // the template id.
+        let store = match registry.as_ref().and_then(|r| r.setting("themes.v1").ok().flatten()) {
+            Some(json) => markie_core::theme::ThemeStore::parse(&json),
+            None => {
+                let id = registry.as_ref().and_then(|r| r.setting("style_template").ok().flatten()).unwrap_or_else(|| "markie".into());
+                markie_core::theme::ThemeStore::default().choose_template(&id, markie_core::theme::Tone::Dark)
+            }
+        };
+        let template = store.active_template().id.clone();
+        crate::themes::apply_store(store, Some(window), cx);
         // The user's own light or dark choice outranks the system appearance;
         // System follows macOS, also when it changes while the app runs.
         let color_mode =

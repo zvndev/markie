@@ -110,6 +110,13 @@ impl Tokens {
     /// The tokens for `template` in the current light or dark mode.
     pub(crate) fn current(template: &str, cx: &App) -> Self {
         let dark = gpui_kit::component::Theme::global(cx).mode.is_dark();
+        // The painted preset, so a custom preset's colours reach dialogs too.
+        if cx.has_global::<crate::themes::ThemeState>() {
+            let (preset, _) = crate::themes::painted(cx, dark);
+            if let Some(v) = serde_json::to_value(&preset.tokens).ok().and_then(|v| serde_json::from_value::<Variant>(v).ok()) {
+                return Self::from_variant(&v, dark);
+            }
+        }
         let all = templates();
         let t = all.iter().find(|t| t.id == template).or_else(|| all.first()).expect("templates exist");
         Self::from_variant(if dark { &t.dark } else { &t.light }, dark)

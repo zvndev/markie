@@ -319,7 +319,7 @@ impl Workspace {
                 }
                 if any {
                     w.share_load(cx);
-                    w.collab_on_open(cx);
+                    w.collab_recheck(cx);
                 }
                 cx.notify();
             })
@@ -365,7 +365,7 @@ impl Workspace {
                 }
                 if r.is_ok() {
                     w.share_load(cx);
-                    w.collab_on_open(cx);
+                    w.collab_recheck(cx);
                 }
                 cx.notify();
             })

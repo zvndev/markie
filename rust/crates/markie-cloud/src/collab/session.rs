@@ -740,7 +740,10 @@ async fn run_socket(shared: &Arc<Shared>, url: &str) -> Option<u16> {
                 }
             }
             _ = renew.tick() => {
-                if let Some(m) = shared.local_awareness() {
+                // Re-set, not just resend: y-protocols takes a state only with
+                // a higher clock, and drops a peer whose clock stops rising
+                // for 30 s (its own renewal calls setLocalState).
+                if let Some(m) = renew_local(&mut shared.awareness.lock().unwrap()) {
                     shared.send(m);
                 }
             }
@@ -767,9 +770,31 @@ async fn run_socket(shared: &Arc<Shared>, url: &str) -> Option<u16> {
     code
 }
 
+/// Renew our presence the way y-protocols does: the same state with the
+/// clock raised. None once our state is cleared (we are leaving).
+pub(crate) fn renew_local(a: &mut Awareness) -> Option<Message> {
+    let raw = a.local_state_raw()?;
+    a.set_local_state_raw(raw);
+    let id = a.client_id();
+    a.update_with_clients([id]).ok().map(Message::Awareness)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renewing_presence_raises_its_clock() {
+        let mut a = Awareness::new(Doc::new());
+        a.set_local_state(json!({ "user": { "name": "A", "color": "#3b82f6" } })).unwrap();
+        let id = a.client_id();
+        let before = a.meta(id).unwrap().0;
+        let Some(Message::Awareness(u)) = renew_local(&mut a) else { panic!("an update") };
+        assert_eq!(a.meta(id).unwrap().0, before + 1);
+        assert_eq!(u.clients[&id].clock, before + 1, "peers only take a higher clock");
+        a.clean_local_state();
+        assert!(renew_local(&mut a).is_none());
+    }
 
     #[test]
     fn backoff_follows_y_websocket() {

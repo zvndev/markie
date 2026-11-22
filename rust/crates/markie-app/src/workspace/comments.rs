@@ -138,8 +138,8 @@ impl Workspace {
     fn submit_comment(&mut self, what: Submit, body: String, cx: &mut Context<Self>) {
         match what {
             Submit::NewCloud => {
+                // The composer stays (this may run inside its own Enter event).
                 let Some((from, to)) = self.collab.comments.composing.take() else { return };
-                self.collab.comments.composers.remove("new");
                 let anchor = self.live_rich_binding().and_then(|b| b.anchor_for(&self.rich.read(cx).editor, from, to));
                 let Some(anchor) = anchor else { return };
                 self.cloud_call(move |c, id| Box::pin(async move { CommentsClient::new(&c).create_thread(&id, anchor, &body).await.map(|_| ()) }), cx);
@@ -150,7 +150,6 @@ impl Workspace {
             Submit::NewLocal => {
                 let Some(panel) = self.collab.comments.local.as_mut() else { return };
                 let Some(anchor) = panel.composing.take() else { return };
-                self.collab.comments.composers.remove("local-new");
                 let r = panel.store.add_from_user(&panel.path, anchor, &body);
                 self.local_result(r.map(|_| ()), cx);
             }

@@ -65,11 +65,20 @@ run("Bob, a TipTap peer", { timeout: 20 * 60_000 }, async () => {
   const word = rangeOf(editor, "together");
   if (word) editor.commands.setTextSelection(word);
   writeFileSync(join(h.dir, "peer.log"), "edited, cursor set, comment posted\n", { flag: "a" });
+  // What Bob sees of the others: names, colours, whether they publish a caret.
+  const others = () =>
+    [...provider.awareness.getStates().entries()]
+      .filter(([id]) => id !== provider.awareness.clientID)
+      .map(([, st]) => {
+        const s = st as { user?: { name?: string; color?: string }; cursor?: unknown; markieSnapshotWriter?: boolean };
+        return { name: s.user?.name, color: s.user?.color, cursor: s.cursor != null, writer: s.markieSnapshotWriter };
+      });
   // Move the caret now and then so the name tag shows again.
   let n = 0;
   while (!existsSync(stop) && n < 20 * 60) {
     await sleep(1000);
     n++;
+    if (n % 5 === 0) writeFileSync(join(h.dir, "peer-sees.json"), JSON.stringify({ at: n, others: others(), text: editor.getText() }, null, 2));
     if (n % 20 === 0) {
       const w = rangeOf(editor, n % 40 === 0 ? "together" : "Markie RS");
       if (w) editor.commands.setTextSelection(w);

@@ -164,6 +164,13 @@ fn random_client_id() -> u64 {
     h.finish() & 0xffff_ffff
 }
 
+/// `MARKIE_RS_COLLAB_DEBUG=1`: log the live session's steps to stderr.
+fn debug(what: impl FnOnce() -> String) {
+    if std::env::var("MARKIE_RS_COLLAB_DEBUG").is_ok_and(|v| v == "1") {
+        eprintln!("markie-rs collab: {}", what());
+    }
+}
+
 fn role_memory_key(path: &Path) -> String {
     format!("share_role:{}", path.to_string_lossy())
 }
@@ -247,7 +254,6 @@ impl Workspace {
     pub(super) fn collab_on_open(&mut self, cx: &mut Context<Self>) {
         self.load_test_session(cx);
         self.stop_live(cx);
-        self.collab.run += 1;
         self.collab.role = None;
         self.collab.access = None;
         self.collab.members = 0;
@@ -255,6 +261,17 @@ impl Workspace {
         self.collab.note = None;
         self.collab.live_unavailable = false;
         self.comments_reset(cx);
+        self.collab_check(cx);
+    }
+
+    /// Ask the server again (membership changed in the share sheet). A live
+    /// session for the same document keeps running unless the role changed.
+    pub(super) fn collab_recheck(&mut self, cx: &mut Context<Self>) {
+        self.collab_check(cx);
+    }
+
+    fn collab_check(&mut self, cx: &mut Context<Self>) {
+        self.collab.run += 1;
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let Some(cloud) = self.collab.docs.get(&path).cloned() else {
             self.collab.cloud = None;
@@ -264,8 +281,10 @@ impl Workspace {
             return;
         };
         self.collab.cloud = Some(cloud.clone());
-        // Read-only until the server answers.
-        self.collab.role = Some(ShareRoleState::Checking);
+        // Read-only until the server answers (a recheck keeps the role it has).
+        if self.collab.role.is_none() {
+            self.collab.role = Some(ShareRoleState::Checking);
+        }
         self.apply_lock(cx);
         let run = self.collab.run;
         let client = cloud.account.client.clone();
@@ -312,6 +331,7 @@ impl Workspace {
             cx.notify();
             return;
         };
+        debug(|| format!("access {:?}, {} members", access.role, members.len()));
         let owner = (access.role == Role::Owner).then(|| me.clone());
         let role = role_for(Some(&members), Some(&me), owner.as_deref());
         if let Some(reg) = &self.registry {
@@ -327,8 +347,17 @@ impl Workspace {
         self.collab.members = members.len();
         self.apply_lock(cx);
         let large = self.doc.as_ref().is_some_and(|d| d.large);
-        if !large && !self.collab.live_unavailable && !members.is_empty() {
-            self.start_live(cloud, role == Role::Viewer, cx);
+        let readonly = role == Role::Viewer;
+        let want = !large && !self.collab.live_unavailable && !members.is_empty();
+        let running = self.collab.live.as_ref().map(|l| (l.session.doc_id() == cloud.doc_id, l.readonly));
+        match running {
+            Some((true, ro)) if want && ro == readonly => {}
+            _ => {
+                self.stop_live(cx);
+                if want {
+                    self.start_live(cloud, readonly, cx);
+                }
+            }
         }
         cx.notify();
     }
@@ -366,6 +395,7 @@ impl Workspace {
     fn start_live(&mut self, cloud: CloudDoc, readonly: bool, cx: &mut Context<Self>) {
         let Some(OpenDoc { format, kind: DocKind::Text { .. }, .. }) = self.doc.as_ref() else { return };
         let rich = *format == FormatKind::Markdown;
+        debug(|| format!("start live: rich {rich}, readonly {readonly}"));
         let doc = markie_rich::ydoc::new_doc(random_client_id());
         let display = cloud.account.display_name();
         let session = LiveSession::start(
@@ -474,6 +504,9 @@ impl Workspace {
         }
         let Some(live) = self.collab.live.as_mut() else { return };
         let status = live.session.status();
+        if self.collab.status != Some(status) {
+            debug(|| format!("status {status:?}"));
+        }
         self.collab.status = Some(status);
         match status {
             LiveStatus::Closed(CloseReason::AccessRevoked) => {
@@ -527,6 +560,7 @@ impl Workspace {
         if live.stage != Stage::Settling {
             return;
         }
+        debug(|| "deciding after the settle".into());
         let readonly = live.readonly;
         match &mut live.room {
             Room::Rich(binding) => {
@@ -588,6 +622,7 @@ impl Workspace {
     }
 
     fn live_claim(&mut self, update: Vec<u8>, cx: &mut Context<Self>) {
+        debug(|| format!("claim: {} bytes", update.len()));
         let Some(live) = self.collab.live.as_mut() else { return };
         if !live.session.send_update(update) {
             return self.live_refuse(cx);
@@ -608,6 +643,7 @@ impl Workspace {
 
     /// The room is the document from here on.
     fn live_ready(&mut self, pull: bool, cx: &mut Context<Self>) {
+        debug(|| format!("ready (pull {pull})"));
         let Some(live) = self.collab.live.as_mut() else { return };
         live.stage = Stage::Ready;
         live._timer = None;
@@ -640,6 +676,7 @@ impl Workspace {
 
     /// No live session for this document after all: the local copy, alone.
     fn live_refuse(&mut self, cx: &mut Context<Self>) {
+        debug(|| "refused: back to the local copy".into());
         self.collab.note = Some(view::LIVE_JOIN_FAILED_LINE);
         self.collab.live_unavailable = true;
         self.stop_live(cx);

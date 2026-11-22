@@ -308,6 +308,13 @@ async fn markie_rs_and_tiptap_share_a_room() {
     until(&carol_session, &mut cb, &mut ced, 20, "Carol's sync", |s, b, _| s.synced() && !b.is_empty()).await;
     assert_eq!(ced.to_markdown().trim_end(), ed.to_markdown().trim_end());
     until(&session, &mut binding, &mut ed, 20, "Carol's presence", |s, _, _| s.peers().iter().any(|p| p.user.name == "Carol Viewer")).await;
+    // Presence outlives y-protocols' 30 s timeout: renewals raise the clock,
+    // so the server and every peer keep taking them.
+    tokio::time::sleep(Duration::from_secs(36)).await;
+    pump(&carol_session, &mut cb, &mut ced);
+    assert!(carol_session.peers().iter().any(|p| p.user.name == "Alice Rust"), "Alice is still present after 36 s: {:?}", carol_session.peers());
+    assert!(session.peers().iter().any(|p| p.user.name == "Carol Viewer"), "Carol is still present after 36 s");
+    assert_eq!(session.history().1, 1, "no reconnect: the room kept talking");
     SharesClient::new(&alice).remove(&doc_id, &carol_id(&carol).await).await.unwrap();
     until(&carol_session, &mut cb, &mut ced, 20, "the 4403", |s, _, _| s.status().is_final()).await;
     assert_eq!(carol_session.status(), LiveStatus::Closed(CloseReason::AccessRevoked));

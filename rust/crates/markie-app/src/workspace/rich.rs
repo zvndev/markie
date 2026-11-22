@@ -19,7 +19,13 @@ impl Workspace {
     pub(super) fn new_rich(window: &mut Window, cx: &mut Context<Self>) -> (Entity<RichView>, Subscription) {
         let rich = cx.new(RichView::new);
         let sub = cx.subscribe_in(&rich, window, |this, _, ev: &RichEvent, window, cx| match ev {
-            RichEvent::Changed => this.on_rich_edit(cx),
+            RichEvent::Changed => {
+                // A live room takes the edit first (collab.rs).
+                this.live_local_edit(cx);
+                this.on_rich_edit(cx)
+            }
+            RichEvent::Undo => this.live_undo(false, cx),
+            RichEvent::Redo => this.live_undo(true, cx),
             RichEvent::OpenPaths(paths) => {
                 if let Some(p) = paths.first() {
                     this.open_path(p, window, cx);
@@ -29,7 +35,7 @@ impl Workspace {
             RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
             RichEvent::Zoom(z) => this.set_zoom(*z, cx),
             RichEvent::PageWidth(w) => this.set_width_step(*w, cx),
-            RichEvent::History => this.toggle_side(super::SidePanel::History, cx),
+            RichEvent::History => this.on_show_history(&crate::actions::ShowHistory, window, cx),
             RichEvent::Print => {}
         });
         (rich, sub)
@@ -58,11 +64,16 @@ impl Workspace {
         self.rich.update(cx, |r, cx| r.load(text, dir, cx));
     }
 
-    fn on_rich_edit(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn on_rich_edit(&mut self, cx: &mut Context<Self>) {
         let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         let text = self.rich.read(cx).markdown();
         self.dirty = &text != saved;
         self.update_stats(&text);
+        // A live room that cannot carry this file leaves the file alone.
+        if self.live_holds_file() {
+            cx.notify();
+            return;
+        }
         if self.dirty && self.disk_conflict.is_none() {
             self.autosave.note_change(std::time::Instant::now());
             self.schedule_autosave(cx);

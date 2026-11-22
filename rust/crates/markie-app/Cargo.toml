@@ -18,6 +18,8 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }
+markie-rich = { path = "../markie-rich" }
+yrs = "=0.28.2"
 markie-vault = { path = "../markie-vault" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 getrandom = "0.3"

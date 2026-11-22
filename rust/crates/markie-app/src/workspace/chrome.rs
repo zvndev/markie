@@ -187,15 +187,8 @@ impl Workspace {
         }
     }
 
-    /// The Share button also offers opt-in sync or an Office snapshot.
-    pub(crate) fn open_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(doc) = &self.doc else { return; };
-        if matches!(doc.kind, DocKind::Text { .. }) {
-            self.show_text_sync(window, cx);
-        } else if markie_cloud::platform::supported_name(&super::cloud::name(&doc.path)).is_some() {
-            self.show_office_upload(window, cx);
-        }
-    }
+    // The Share button opens `open_share` (share.rs): the share sheet for a
+    // document with a cloud copy, else the sync opt-in or an Office snapshot.
 
     fn copy_all(&mut self, cx: &mut Context<Self>) {
         let text = self.current_text(cx);
@@ -326,6 +319,8 @@ impl Workspace {
                 &p,
                 cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(CommandPalette), cx)),
             ))
+            // The live dot and peers' avatars (collab.rs), as toolbar.tsx.
+            .children(self.render_presence(&p))
             .child(self.render_mode_switch(&p, cx))
             .child(self.render_theme_button(&p, cx))
             .child(vrule(&p))

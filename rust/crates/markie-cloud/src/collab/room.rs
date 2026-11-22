@@ -38,7 +38,7 @@ pub enum CloseReason {
 }
 
 impl CloseReason {
-    fn from_code(code: u16) -> Self {
+    pub fn from_code(code: u16) -> Self {
         match code {
             CLOSE_ACCESS_REVOKED => CloseReason::AccessRevoked,
             CLOSE_ROOM_TOO_NEW => CloseReason::RoomTooNew,
@@ -271,7 +271,9 @@ impl TextRoom {
                 if h.status.lock().unwrap().closed.is_some() {
                     return;
                 }
-                if let Some(m) = h.local_awareness() {
+                // Raise the clock, as y-protocols' renewal does.
+                let renewed = crate::collab::session::renew_local(&mut h.awareness.lock().unwrap());
+                if let Some(m) = renewed {
                     h.send(m);
                 }
             }

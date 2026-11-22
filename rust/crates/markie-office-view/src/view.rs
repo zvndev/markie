@@ -682,7 +682,7 @@ impl WordView {
                 )
             })
             .when(hint.before, |d| d.child(self.break_marker(colors)))
-            .child(div().w_full().min_h(line_height).child(flow))
+            .child(div().w_full().min_h(size * 1.4).child(flow))
             .when(hint.after, |d| d.child(self.break_marker(colors)).child(div().h(line_height)))
             .into_any_element()
     }
@@ -850,7 +850,7 @@ impl WordView {
                 .child(content)
                 .into_any_element(),
             ViewMode::Continuous => {
-                div().w_full().max_w(px(960. * zoom)).min_h_full().mx_auto().bg(colors.paper).p(px(32. * zoom)).child(content).into_any_element()
+                div().w_full().max_w(px(960. * zoom)).flex_1().mx_auto().bg(colors.paper).p(px(32. * zoom)).child(content).into_any_element()
             }
         }
     }

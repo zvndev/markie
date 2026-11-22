@@ -23,7 +23,7 @@ import { docsHostConfig, redirectToDocsHost } from "./docs-host.ts";
 import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
-import { desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
+import { desktopAuthApp, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { withoutAppleUserEmail } from "./apple-sign-in.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { canonicalHostRedirect } from "./canonical-host.ts";
@@ -363,9 +363,12 @@ async function startDesktopSignIn(c: Context, provider: "google" | "apple"): Pro
   const label = provider === "apple" ? "Apple" : "Google";
   try {
     const state = desktopAuthState(c.req.query("state"));
+    // Markie RS asks for its own markie-rs:// hand-back; see desktop-auth.ts.
+    const desktopApp = desktopAuthApp(c.req.query("app"));
     const query = [
       ...(state ? [`state=${encodeURIComponent(state)}`] : []),
       ...(provider === "google" ? [] : [`provider=${provider}`]),
+      ...(desktopApp === "markie" ? [] : [`app=${desktopApp}`]),
     ].join("&");
     const bridge = query
       ? `${AUTH_BASE}/auth/desktop-bridge?${query}`
@@ -456,10 +459,11 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
   // a sign-in it started, and say which server this token is from, so it is
   // never filed under another one. Without the nonce the app rejects it.
   const state = desktopAuthState(c.req.query("state"));
+  const desktopApp = desktopAuthApp(c.req.query("app"));
   return page(
     "You're signed in",
-    "Returning you to Markie…",
-    desktopAuthDeepLink(token, state, AUTH_ISSUER)
+    desktopApp === "markie-rs" ? "Returning you to Markie RS…" : "Returning you to Markie…",
+    desktopAuthDeepLink(token, state, AUTH_ISSUER, desktopApp)
   );
 });
 

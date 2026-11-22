@@ -27,6 +27,16 @@ export function desktopAuthIssuer(authBase: string | null | undefined): string |
   }
 }
 
+// Which desktop app the token goes back to. Markie registers markie://. The
+// Markie RS side build registers markie-rs://, so it never takes over the
+// links Markie answers. Only these two names are honoured; anything else, or
+// nothing, means Markie, which is what every existing build expects.
+export type DesktopAuthApp = "markie" | "markie-rs";
+
+export function desktopAuthApp(raw: string | null | undefined): DesktopAuthApp {
+  return raw === "markie-rs" ? "markie-rs" : "markie";
+}
+
 // A link with no state is still produced (an older app build sends none), but
 // current builds reject it, which is what makes the check meaningful.
 //
@@ -35,8 +45,13 @@ export function desktopAuthIssuer(authBase: string | null | undefined): string |
 // sign-in" by bouncing the browser to another server's bridge with the app's
 // nonce, and the token that comes back would be filed under the wrong server.
 // The app compares `iss` with the server it started the sign-in against.
-export function desktopAuthDeepLink(token: string, state: string | null, issuer: string | null = null): string {
-  let link = `markie://auth?token=${encodeURIComponent(token)}`;
+export function desktopAuthDeepLink(
+  token: string,
+  state: string | null,
+  issuer: string | null = null,
+  app: DesktopAuthApp = "markie",
+): string {
+  let link = `${app}://auth?token=${encodeURIComponent(token)}`;
   if (state) link += `&state=${encodeURIComponent(state)}`;
   if (issuer) link += `&iss=${encodeURIComponent(issuer)}`;
   return link;

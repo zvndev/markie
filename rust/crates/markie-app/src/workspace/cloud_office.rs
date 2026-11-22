@@ -114,7 +114,8 @@ impl Workspace {
                                     .on_click(move |_, window, cx| {
                                         window.close_dialog(cx);
                                         let _ = owner.update(cx, |this, cx| {
-                                            this.cloud.visible = true;
+                                            this.shell.view = super::rail::LeftView::Cloud;
+                                            this.shell.panel_open = true;
                                             this.refresh_cloud(false, cx);
                                         });
                                     }),

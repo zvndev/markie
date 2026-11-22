@@ -43,27 +43,13 @@ impl Source {
 }
 
 impl Workspace {
-    pub(super) fn render_cloud_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Button::new("cloud-library-toggle")
-            .ghost()
-            .small()
-            .label("Cloud")
-            .selected(self.cloud.visible)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.cloud.visible = !this.cloud.visible;
-                if this.cloud.visible {
-                    this.refresh_cloud(false, cx);
-                }
-                cx.notify();
-            }))
-    }
 
     pub(super) fn render_cloud_library(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let scopes = self.cloud.scopes();
         let scope = self.cloud.selected_scope();
         let listing = scope.as_ref().and_then(|scope| self.cloud.listing(scope));
-        let query = self.search.read(cx).value().trim().to_lowercase();
+        let query = self.cloud_search.read(cx).value().trim().to_lowercase();
         let mut rows: Vec<_> = listing
             .and_then(|l| l.docs.as_ref())
             .into_iter()
@@ -302,7 +288,7 @@ impl Workspace {
                                     ),
                             ),
                     )
-                    .child(Input::new(&self.search).small().cleanable(true))
+                    .child(Input::new(&self.cloud_search).small().cleanable(true))
                     .when(server_buttons.len() > 1, |el| {
                         el.child(h_flex().gap_1().flex_wrap().children(server_buttons))
                     })
@@ -394,8 +380,7 @@ impl Workspace {
         {
             return None;
         }
-        if !self.cloud.visible
-            && !self.cloud.bindings.contains_key(&doc.path)
+        if !self.cloud.bindings.contains_key(&doc.path)
             && !self.cloud_office.targets.contains_key(&doc.path)
         {
             return None;
@@ -459,7 +444,7 @@ impl Workspace {
         )
     }
 
-    fn show_text_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_text_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else {
             return;
         };

@@ -46,6 +46,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("View", "view-continuous", "Continuous Layout"),
     ("View", "view-outline", "Document Outline"),
     ("View", "view-zoom-reset", "Actual Size"),
+    ("View", "view-light-paper", "Light Paper"),
 ];
 
 pub fn label(id: &str) -> &'static str {
@@ -58,7 +59,7 @@ pub fn available_commands(editor: &WordEditor) -> Vec<&'static str> {
     let doc = editor.rich();
     let docx = editor.is_docx();
     let editable = editor.can_mutate();
-    let mut out: Vec<&'static str> = vec!["view-page", "view-continuous", "view-outline", "view-zoom-reset"];
+    let mut out: Vec<&'static str> = vec!["view-page", "view-continuous", "view-outline", "view-zoom-reset", "view-light-paper"];
     if docx {
         out.extend(["review-comments", "review-tracking", "review-changes", "review-final"]);
         if doc.original_text.is_some() {

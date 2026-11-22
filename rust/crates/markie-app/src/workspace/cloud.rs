@@ -97,7 +97,6 @@ pub(super) struct Listing {
 }
 
 pub(super) struct CloudWorkspace {
-    pub visible: bool,
     pub servers: ServerStore,
     pub tokens: Arc<dyn TokenStore>,
     transport: Transport,
@@ -125,7 +124,6 @@ impl CloudWorkspace {
             Arc::new(KeyringTokenStore::new(paths::APP_NAME))
         };
         Self {
-            visible: false,
             servers: ServerStore::open(Some(data.join("servers.json")), scratch),
             tokens,
             transport: Transport::new(),

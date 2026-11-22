@@ -22,7 +22,12 @@ use crate::actions::*;
 use crate::workspace::Workspace;
 
 fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
+    cx.bind_keys(key_bindings());
+    markie_office_view::actions::bind_keys(cx);
+}
+
+fn key_bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("cmd-o", Open, None),
         KeyBinding::new("cmd-shift-o", OpenFolder, None),
         KeyBinding::new("cmd-n", NewDocument, None),
@@ -31,6 +36,10 @@ fn bind_keys(cx: &mut App) {
         // Electron: ⌘P prints (File menu); search is ⇧⌘F.
         KeyBinding::new("cmd-p", Print, None),
         KeyBinding::new("cmd-shift-f", FocusSearch, None),
+        // GPUI Kit's code editor binds ⌘⇧F to its replace bar. Electron's
+        // ⌘⇧F searches all documents from anywhere; replace is ⌥⌘F. Bound
+        // after gpui_kit::init, so this one wins in the editor's context.
+        KeyBinding::new("cmd-shift-f", FocusSearch, Some("Input")),
         KeyBinding::new("cmd-k", CommandPalette, None),
         KeyBinding::new("cmd-shift-d", DuplicateDocument, None),
         KeyBinding::new("cmd-alt-r", RevealDocument, None),
@@ -53,8 +62,40 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-2", SourceMode, None),
         KeyBinding::new("cmd-3", SplitMode, None),
         KeyBinding::new("cmd-/", ShowShortcuts, None),
-    ]);
-    markie_office_view::actions::bind_keys(cx);
+    ]
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::key_bindings;
+    use gpui_kit::Keystroke;
+
+    fn bound(keys: &'static str) -> Vec<(String, Option<String>)> {
+        let typed = [Keystroke::parse(keys).unwrap()];
+        key_bindings()
+            .iter()
+            .filter(|b| b.match_keystrokes(&typed) == Some(false))
+            .map(|b| (b.action().name().to_string(), b.predicate().map(|p| p.to_string())))
+            .collect()
+    }
+
+    #[test]
+    fn view_modes_are_cmd_1_2_3() {
+        assert!(bound("cmd-1").iter().any(|(a, _)| a.ends_with("RichMode")));
+        assert!(bound("cmd-2").iter().any(|(a, _)| a.ends_with("SourceMode")));
+        assert!(bound("cmd-3").iter().any(|(a, _)| a.ends_with("SplitMode")));
+    }
+
+    #[test]
+    fn cmd_shift_f_searches_all_documents_inside_the_source_editor() {
+        let found = bound("cmd-shift-f");
+        assert!(found.iter().any(|(a, ctx)| a.ends_with("FocusSearch") && ctx.as_deref() == Some("Input")), "{found:?}");
+    }
+
+    #[test]
+    fn cmd_p_prints() {
+        assert!(bound("cmd-p").iter().any(|(a, _)| a.ends_with("Print")));
+    }
 }
 
 fn set_menus(cx: &mut App) {

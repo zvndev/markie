@@ -11,7 +11,7 @@
 //! registers. Network work runs on a small tokio runtime; GPUI awaits it.
 
 use std::future::Future;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::text::{TextView, TextViewState};
@@ -28,7 +28,7 @@ use markie_cloud::http::{Method, Transport};
 use markie_cloud::origin::Trust;
 use markie_cloud::registry::{SignIn, parse_server_info};
 use markie_cloud::sharing::{People, PeopleClient, Person};
-use markie_cloud::tokens::KeyringTokenStore;
+use markie_cloud::tokens::{KeyringTokenStore, MemoryTokenStore, TokenStore};
 use markie_cloud::{CloudClient, CloudError, DEFAULT_SERVER};
 use markie_core::registry::Registry;
 
@@ -70,6 +70,45 @@ pub fn server_config() -> ServerConfig {
         eprintln!("markie-rs: MARKIE_RS_CLOUD_SERVER must be a localhost address; using Markie Cloud");
     }
     ServerConfig { origin: DEFAULT_SERVER.to_string(), dev: false }
+}
+
+// ------------------------------------------------------------------ tokens
+
+/// Where Markie RS keeps its sign-ins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenHome {
+    /// A scratch data folder (`MARKIE_RS_DATA_DIR`): memory, for this run
+    /// only. Scratch copies never touch the Keychain, so parallel test runs
+    /// cannot read each other's sessions or raise a Keychain prompt.
+    Memory,
+    /// The login Keychain under this service.
+    Keychain(&'static str),
+}
+
+/// The token home for a run: memory with a scratch data folder, else the
+/// Keychain, under the test service while a local test server is named.
+pub fn token_home(scratch: bool, dev: bool) -> TokenHome {
+    match (scratch, dev) {
+        (true, _) => TokenHome::Memory,
+        (false, true) => TokenHome::Keychain(TEST_KEYCHAIN_SERVICE),
+        (false, false) => TokenHome::Keychain(KEYCHAIN_SERVICE),
+    }
+}
+
+/// The one token store of this process. The sign-in sheet, the Cloud sync
+/// workspace, the agent bridge and deep links all read and write it, so a
+/// session made in any of them is the session of all of them.
+pub fn shared_tokens() -> Arc<dyn TokenStore> {
+    static STORE: OnceLock<Arc<dyn TokenStore>> = OnceLock::new();
+    STORE
+        .get_or_init(|| {
+            let scratch = std::env::var_os("MARKIE_RS_DATA_DIR").is_some();
+            match token_home(scratch, server_config().dev) {
+                TokenHome::Memory => Arc::new(MemoryTokenStore::new()),
+                TokenHome::Keychain(service) => Arc::new(KeyringTokenStore::new(service)),
+            }
+        })
+        .clone()
 }
 
 // ------------------------------------------------------------------ store
@@ -165,9 +204,8 @@ impl AccountStore {
             .map(Arc::new)
             .map_err(|e| eprintln!("markie-rs: cloud runtime unavailable: {e}"))
             .ok();
-        let service = if config.dev { TEST_KEYCHAIN_SERVICE } else { KEYCHAIN_SERVICE };
         let trust = Arc::new(RwLock::new(Trust::new([], config.dev)));
-        let client = CloudClient::new(&config.origin, trust, Arc::new(KeyringTokenStore::new(service)), Transport::new())
+        let client = CloudClient::new(&config.origin, trust, shared_tokens(), Transport::new())
             .map_err(|e| eprintln!("markie-rs: cloud client unavailable: {e}"))
             .ok();
         let registry = Registry::open(&markie_core::paths::data_dir().join("registry.db")).ok();
@@ -1319,7 +1357,19 @@ impl Workspace {
     pub(super) fn watch_account(window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
         let Some(store) = AccountStore::global(cx) else { return Vec::new() };
         vec![
-            cx.observe(&store, |_, _, cx| cx.notify()),
+            // The sheet and the sync workspace share one session store, so a
+            // sign-in or sign-out here changes the Cloud library at once.
+            cx.observe(&store, |this, store, cx| {
+                let store = store.read(cx);
+                if store.status != AuthStatus::Checking {
+                    let who = store.user().map(|u| u.id.clone());
+                    if this.cloud.account_seen.as_ref() != Some(&who) {
+                        this.cloud.account_seen = Some(who);
+                        this.on_account_changed(cx);
+                    }
+                }
+                cx.notify();
+            }),
             cx.subscribe_in(&store, window, |_, _, event: &AccountEvent, window, cx| {
                 if *event == AccountEvent::BrowserSignedIn && window.has_active_dialog(cx) {
                     window.close_dialog(cx);
@@ -1651,8 +1701,19 @@ impl Render for CloudPanel {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that brings in GPUI's own `test` macro.
-    use super::{dev_server, mix, short_ago};
+    use super::{KEYCHAIN_SERVICE, TEST_KEYCHAIN_SERVICE, TokenHome, dev_server, mix, shared_tokens, short_ago, token_home};
     use gpui_kit::{Hsla, Rgba};
+    use std::sync::Arc;
+
+    #[test]
+    fn scratch_runs_keep_sessions_in_memory_and_real_runs_in_the_keychain() {
+        assert_eq!(token_home(true, false), TokenHome::Memory);
+        assert_eq!(token_home(true, true), TokenHome::Memory);
+        assert_eq!(token_home(false, true), TokenHome::Keychain(TEST_KEYCHAIN_SERVICE));
+        assert_eq!(token_home(false, false), TokenHome::Keychain(KEYCHAIN_SERVICE));
+        // One store for the whole process.
+        assert!(Arc::ptr_eq(&shared_tokens(), &shared_tokens()));
+    }
 
     #[test]
     fn only_a_bare_localhost_address_is_a_test_server() {

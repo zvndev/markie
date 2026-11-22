@@ -20,7 +20,7 @@ use markie_agent::{
 };
 use markie_agent::{cloud, permissions, tokens};
 use markie_cloud::sync::SyncRecord;
-use markie_cloud::tokens::{KeyringTokenStore, MemoryTokenStore, TokenStore};
+use markie_cloud::tokens::TokenStore;
 use markie_cloud::{CloudClient, DEFAULT_SERVER, http::Transport, registry::ServerStore};
 use markie_core::paths;
 use serde_json::json;
@@ -45,11 +45,7 @@ impl AgentState {
                 .build()
                 .ok()
                 .map(Arc::new),
-            tokens: if std::env::var_os("MARKIE_RS_DATA_DIR").is_some() {
-                Arc::new(MemoryTokenStore::new())
-            } else {
-                Arc::new(KeyringTokenStore::new(paths::APP_NAME))
-            },
+            tokens: super::account::shared_tokens(),
             #[cfg(unix)]
             bridge: None,
             busy: false,

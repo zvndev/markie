@@ -8,7 +8,7 @@ use markie_cloud::http::Transport;
 use markie_cloud::platform::{Area, PlatformClient, SnapshotMeta};
 use markie_cloud::registry::ServerStore;
 use markie_cloud::sync::{self, LibraryState, PushResult, SyncEngine, SyncRecord, SyncState};
-use markie_cloud::tokens::{KeyringTokenStore, MemoryTokenStore, TokenStore};
+use markie_cloud::tokens::TokenStore;
 use markie_cloud::{CloudClient, DEFAULT_SERVER, assets, links};
 use markie_core::{document, formats, history::Writer, paths, registry::Registry};
 use serde::{Deserialize, Serialize};
@@ -113,21 +113,44 @@ pub(super) struct CloudWorkspace {
     pub busy: HashSet<PathBuf>,
     pub resource_epoch: u64,
     pub pending_link: Option<PathBuf>,
+    /// The account the sign-in sheet last reported (None inside: signed out).
+    pub account_seen: Option<Option<String>>,
     suspend_push: bool,
     queued: HashSet<PathBuf>,
     cursors: HashMap<String, usize>,
 }
 
 impl CloudWorkspace {
+    /// The sessions are the sign-in sheet's own (`account::shared_tokens`),
+    /// and a local test server named by `MARKIE_RS_CLOUD_SERVER` is trusted
+    /// for the run, so a sign-in in the sheet is a scope here at once.
     pub fn new(data: &Path, registry: Option<&Registry>) -> Self {
         let scratch = std::env::var_os("MARKIE_RS_DATA_DIR").is_some();
-        let tokens: Arc<dyn TokenStore> = if scratch {
-            Arc::new(MemoryTokenStore::new())
-        } else {
-            Arc::new(KeyringTokenStore::new(paths::APP_NAME))
-        };
+        let config = super::account::server_config();
+        Self::with_tokens(
+            data,
+            registry,
+            super::account::shared_tokens(),
+            scratch,
+            config.dev.then_some(config.origin.as_str()),
+        )
+    }
+
+    pub fn with_tokens(
+        data: &Path,
+        registry: Option<&Registry>,
+        tokens: Arc<dyn TokenStore>,
+        scratch: bool,
+        local_server: Option<&str>,
+    ) -> Self {
+        let mut servers = ServerStore::open(Some(data.join("servers.json")), scratch || local_server.is_some());
+        if let Some(origin) = local_server
+            && let Err(e) = servers.pin_local(origin)
+        {
+            eprintln!("markie-rs: the test server was not trusted: {e}");
+        }
         Self {
-            servers: ServerStore::open(Some(data.join("servers.json")), scratch),
+            servers,
             tokens,
             transport: Transport::new(),
             bindings: registry
@@ -144,6 +167,7 @@ impl CloudWorkspace {
             busy: HashSet::new(),
             resource_epoch: 0,
             pending_link: None,
+            account_seen: None,
             suspend_push: false,
             queued: HashSet::new(),
             cursors: HashMap::new(),
@@ -321,8 +345,32 @@ fn landing_dir_at(mut dir: PathBuf) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{landing_dir_at, path_occupied};
+    use super::{CloudWorkspace, landing_dir_at, path_occupied};
+    use markie_cloud::tokens::{self, MemoryTokenStore, TokenStore};
     use markie_cloud::{assets, sync};
+    use std::sync::Arc;
+
+    /// What the sign-in sheet writes is what the sync workspace reads: a
+    /// confirmed session on the local test server becomes a scope at once.
+    #[test]
+    fn a_sign_in_in_the_shared_store_is_a_sync_scope() {
+        let data = tempfile::tempdir().unwrap();
+        let store: Arc<dyn TokenStore> = Arc::new(MemoryTokenStore::new());
+        let origin = "http://localhost:18787";
+        let cloud = CloudWorkspace::with_tokens(data.path(), None, store.clone(), true, Some(origin));
+        assert!(cloud.scopes().is_empty(), "nobody is signed in yet");
+        // The sheet stores the token, then /api/me confirms the account.
+        tokens::set_token(store.as_ref(), origin, Some("t1")).unwrap();
+        assert!(cloud.scope(origin).is_none(), "an unconfirmed token is not an account");
+        tokens::confirm(store.as_ref(), origin, "t1", "user-1").unwrap();
+        let scope = cloud.selected_scope().expect("the signed-in server is the selected scope");
+        assert_eq!((scope.origin(), scope.user.as_str()), (origin, "user-1"));
+        // Signing out in the sheet ends the scope here too.
+        tokens::set_token(store.as_ref(), origin, None).unwrap();
+        assert!(cloud.scopes().is_empty());
+        // A pinned test server is never written to the scratch server list.
+        assert!(!data.path().join("servers.json").exists());
+    }
 
     #[test]
     fn cloud_landing_is_isolated_and_exclusive() {
@@ -792,6 +840,13 @@ impl Workspace {
             }
         }
         Ok(())
+    }
+
+    /// Someone signed in or out in the sheet: list that account's cloud.
+    pub(super) fn on_account_changed(&mut self, cx: &mut Context<Self>) {
+        self.cloud.selection = None;
+        self.cloud.area = None;
+        self.refresh_cloud(false, cx);
     }
 
     pub(super) fn start_cloud_poll(&mut self, cx: &mut Context<Self>) {

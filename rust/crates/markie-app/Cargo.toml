@@ -48,6 +48,9 @@ gpui-kit = { version = "=0.10.0", features = [
   "tree-sitter-bash",
   "tree-sitter-css",
   "tree-sitter-toml",
+  # Every grammar GPUI Kit ships, for fenced code in Source
+  # (`@codemirror/language-data` in Electron).
+  "tree-sitter-languages",
 ] }
 
 [dev-dependencies]
@@ -55,7 +58,8 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSResponder", "NSView", "NSWindow", "NSPrintInfo", "NSPrintOperation"] }
-objc2-foundation = { version = "0.3.2", features = ["NSData"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSResponder", "NSView", "NSWindow", "NSPrintInfo", "NSPrintOperation", "NSAlert", "NSButton", "NSControl", "NSCell", "block2"] }
+objc2-foundation = { version = "0.3.2", features = ["NSData", "NSString"] }
+block2 = "0.6"
 objc2-pdf-kit = { version = "0.3.2", features = ["PDFDocument", "objc2-app-kit"] }
 raw-window-handle = "0.6"

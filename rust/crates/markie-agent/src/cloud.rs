@@ -28,7 +28,14 @@ pub struct Document {
 
 impl Document {
     pub fn resolve(raw: &str, home: &Path) -> Result<Self, String> {
-        let path = guarded_path(raw, home, false)?;
+        // agent-cloud.js `resolveDoc` words the home-folder refusal for Cloud.
+        let path = guarded_path(raw, home, false).map_err(|e| {
+            if e == crate::OUTSIDE_HOME {
+                "Only files in your home folder can go to Markie Cloud.".into()
+            } else {
+                e
+            }
+        })?;
         let name = path
             .file_name()
             .ok_or("Give the absolute path of a file.")?

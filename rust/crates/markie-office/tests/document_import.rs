@@ -11,6 +11,11 @@ fn html_with(text: &str, l: DocumentImportLimits) -> ImportResult<ImportedDocume
 fn html_extracts_paragraph_heading_inline_text_and_character_references_in_order() {
     assert_eq!(html("<h1>Title</h1><p>Alpha <strong>bold</strong> tail</p><p>Next &amp; &#x1F600; &NotEqualTilde;</p>").text, "Title\nAlpha bold tail\nNext & 😀 ≂̸");
 }
+
+#[test]
+fn html_repairs_misplaced_table_text_as_the_browser_does() {
+    assert_eq!(html("<table>Outside<tr><td>Inside</table>").text, "Outside\nInside");
+}
 #[test]
 fn html_flattens_table_cells_and_breaks_while_preserving_preformatted_text() {
     assert_eq!(html("<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table><pre>  x\n y</pre><p>a<br>b</p>").text, "A\tB\nC\tD\n  x\n y\na\nb");

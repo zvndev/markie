@@ -132,5 +132,7 @@ pub fn menus() -> Vec<Menu> {
 
 /// The Word layout items for the app's View menu.
 pub fn view_menu_items() -> Vec<MenuItem> {
-    group("View")
+    group("View").into_iter().filter(|item| {
+        !matches!(item, MenuItem::Action { name, .. } if name.as_ref() == "Actual Size")
+    }).collect()
 }

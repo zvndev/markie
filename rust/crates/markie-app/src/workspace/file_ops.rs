@@ -10,14 +10,13 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use markie_core::document;
 use markie_core::formats::FormatKind;
 use markie_office::model::Format;
 use markie_office::rich_document::{create_rich_document, export_rich_document};
 
 use super::dialog_chrome::{self as chrome, Tokens, fade, shadow};
 use super::overlay::Overlay;
-use super::{Mode, Workspace};
+use super::Workspace;
 use crate::actions::*;
 use markie_core::paths;
 
@@ -158,31 +157,13 @@ impl Workspace {
     }
 
     pub(super) fn create_document(&mut self, ext: &'static str, window: &mut Window, cx: &mut Context<Self>) {
-        // Text kinds start as an unsaved, untitled buffer, as Electron's New
-        // does; ⌘S asks where it goes. Word, RTF and ODT are written first.
-        if blank_bytes(ext).is_ok_and(|b| b.is_empty()) {
-            self.open_untitled(super::untitled::untitled_name(ext), String::new(), window, cx);
-            return;
+        let name = super::untitled::untitled_name(ext);
+        let format = markie_core::formats::kind_for_extension(ext);
+        match blank_bytes(ext) {
+            Ok(bytes) if bytes.is_empty() => self.open_untitled(name, String::new(), window, cx),
+            Ok(bytes) => self.open_untitled_office(name, format, &bytes, window, cx),
+            Err(e) => window.push_notification(format!("Markie could not create it: {e}"), cx),
         }
-        let dir = self.default_dir();
-        let suggested = document::untitled_path(&dir, ext);
-        let name = suggested.file_name().map(|n| n.to_string_lossy().into_owned());
-        let rx = cx.prompt_for_new_path(&dir, name.as_deref());
-        cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(Some(path))) = rx.await {
-                let written = blank_bytes(ext).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()));
-                this.update_in(cx, |this, window, cx| match written {
-                    Ok(()) => {
-                        this.mode = Mode::Source;
-                        this.open_path(&path, window, cx);
-                        this.rescan(cx);
-                    }
-                    Err(e) => window.push_notification(format!("Markie could not create it: {e}"), cx),
-                })
-                .ok();
-            }
-        })
-        .detach();
     }
 
     fn create_from_modal(&mut self, ext: &'static str, window: &mut Window, cx: &mut Context<Self>) {
@@ -441,6 +422,7 @@ impl Workspace {
         }
         match std::fs::rename(old, &new) {
             Ok(()) => {
+                self.file_grants.move_document(old, &new);
                 self.follow_move(old, &new, cx);
                 self.open_path(&new, window, cx);
                 self.rescan(cx);
@@ -591,6 +573,7 @@ impl Workspace {
         let moved = std::fs::rename(from, to).or_else(|_| std::fs::copy(from, to).and_then(|_| trash::delete(from).map_err(std::io::Error::other)));
         match moved {
             Ok(()) => {
+                self.file_grants.move_document(from, to);
                 self.disk.forget(from);
                 self.follow_move(from, to, cx);
                 self.open_path(to, window, cx);

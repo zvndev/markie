@@ -525,7 +525,11 @@ impl Workspace {
             item("ex-copy", "markie/save-copy.svg", "Save a Copy…", has_doc)
                 .when(has_doc, |el| el.on_click(cx.listener(|this, _, window, cx| this.save_a_copy(window, cx)))),
         );
+        // toolbar.tsx offers the document PDF only while `document-export-pdf`
+        // is enabled, which is `canPrintDocx` for a Word, RTF or ODT document.
+        let printable = self.office_output_for(cx).is_some_and(|o| o.printable);
         if document_mode {
+            if printable {
             panel = panel
                 .child(
                     item("ex-docpdf", "markie/download.svg", "Export PDF…", true)
@@ -535,6 +539,7 @@ impl Workspace {
                     "PDF uses document typography and page setup. Review comments are not included. Page breaks can vary with installed fonts and printer settings.",
                     240.,
                 ));
+            }
         } else {
             // Markdown offers everything but itself; plain text everything but .txt.
             let formats: Vec<(&'static str, &'static str, Option<ExportTarget>)> = if markdown {

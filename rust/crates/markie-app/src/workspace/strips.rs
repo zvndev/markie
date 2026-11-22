@@ -8,7 +8,6 @@
 //! - Markie RS's own strip for a file that was moved or deleted.
 
 use std::path::PathBuf;
-use std::time::Instant;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
@@ -16,7 +15,6 @@ use gpui_kit::*;
 use markie_core::drafts::Drafts;
 
 use super::dialog_chrome::{Tokens, inset};
-use super::history_dialog::{Line, line_diff};
 use super::overlay::Overlay;
 use super::{DocKind, OpenDoc, Workspace};
 
@@ -46,13 +44,7 @@ pub(crate) fn relative_time(ms_ago: i64) -> String {
 
 /// `describeDiskChange` from `src/lib/disk-change.ts`.
 pub(crate) fn describe_disk_change(local: &str, disk: &str) -> String {
-    let (added, removed) = match line_diff(local, disk) {
-        Some(lines) => (
-            lines.iter().filter(|l| matches!(l, Line::Added(_))).count(),
-            lines.iter().filter(|l| matches!(l, Line::Removed(_))).count(),
-        ),
-        None => (disk.lines().count(), local.lines().count()),
-    };
+    let markie_core::line_diff::LineDiff { added, removed, .. } = markie_core::line_diff::line_diff(local, disk);
     let lines = |n: usize| format!("{n} line{}", if n == 1 { "" } else { "s" });
     if added == 0 && removed == 0 {
         return "The two copies are identical.".into();
@@ -99,6 +91,11 @@ impl Workspace {
             return;
         }
         self.disk_conflict = Some(theirs);
+        // Somebody else's write is a version too, as Electron's watcher
+        // records it (`captureExternal`); the store skips a copy it has.
+        if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
+            let _ = self.history.capture_external(&path);
+        }
         if self.dirty {
             self.autosave.cancel();
         }
@@ -145,8 +142,9 @@ impl Workspace {
             }
             self.update_stats(&text);
             self.dirty = true;
-            self.autosave.note_change(Instant::now());
-            self.schedule_autosave(cx);
+            // Loaded as unsaved (`loadFile({ unsaved: true })`): nothing is
+            // written until the next edit.
+            self.autosave.cancel();
         }
         cx.notify();
     }

@@ -401,6 +401,7 @@ impl Workspace {
                     Ok(Ok(SignInOutcome::SignedIn(user))) => {
                         this.cloud.servers_ui.emails.insert(origin.clone(), Some(user.email));
                         this.cloud.servers_ui.sign_in = None;
+                        this.refresh_cloud_resources(cx);
                         this.refresh_cloud(true, cx);
                     }
                     Ok(Ok(SignInOutcome::NeedsVerification)) => {
@@ -430,11 +431,15 @@ impl Workspace {
 
     fn server_sign_out(&mut self, origin: String, cx: &mut Context<Self>) {
         let Some(client) = self.cloud.client(&origin) else { return };
+        if !self.cloud.media_signing_out.insert(origin.clone()) { return; }
+        self.refresh_cloud_resources(cx);
         cx.spawn(async move |this, cx| {
             let _ = network(async move { AuthClient::new(&client).sign_out().await }).await;
             let _ = this.update(cx, |this, cx| {
+                this.cloud.media_signing_out.remove(&origin);
                 this.cloud.servers_ui.emails.remove(&origin);
                 this.cloud.servers_ui.asked.remove(&origin);
+                this.refresh_cloud_resources(cx);
                 this.refresh_cloud(false, cx);
                 cx.notify();
             });
@@ -452,6 +457,7 @@ impl Workspace {
             Ok(_) => {
                 let client = self.cloud.client(&origin);
                 let _ = markie_cloud::tokens::set_token(self.cloud.tokens.as_ref(), &origin, None);
+                self.refresh_cloud_resources(cx);
                 self.cloud.servers_ui.confirm_remove = None;
                 self.cloud.servers_ui.emails.remove(&origin);
                 self.cloud.servers_ui.asked.remove(&origin);

@@ -100,12 +100,41 @@ pub struct PreviewMeta {
     pub image_url: Option<String>,
 }
 
+/// JavaScript's `\s`, which `clean` collapses and trims: Unicode white
+/// space without U+0085, plus U+FEFF.
+fn is_js_space(c: char) -> bool {
+    c == '\u{feff}' || (c.is_whitespace() && c != '\u{85}')
+}
+
+/// `String.fromCodePoint` as the card shows it: a lone surrogate becomes
+/// U+FFFD, as the renderer draws it.
+fn from_code_point(code: u64) -> Option<char> {
+    if code > 0x10ffff {
+        return None;
+    }
+    Some(char::from_u32(code as u32).unwrap_or('\u{fffd}'))
+}
+
+/// `Number.parseInt(digits, radix)`: the longest valid prefix, or None.
+fn js_parse_int(digits: &str, radix: u32) -> Option<u64> {
+    let prefix: String = digits.chars().take_while(|c| c.is_digit(radix)).collect();
+    let trimmed = prefix.trim_start_matches('0');
+    if prefix.is_empty() {
+        return None;
+    }
+    if trimmed.len() > 8 {
+        return Some(u64::MAX);
+    }
+    Some(u64::from_str_radix(if trimmed.is_empty() { "0" } else { trimmed }, radix).unwrap_or(u64::MAX))
+}
+
+/// `decodeEntities` in `electron/link-preview.js`.
 fn decode_entities(text: &str) -> String {
     static ENTITY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)&(#x?[0-9a-f]+|[a-z]+);").unwrap());
     ENTITY
         .replace_all(text, |c: &regex::Captures<'_>| {
-            let body = c[1].to_lowercase();
-            let named = match body.as_str() {
+            let key = c[1].to_lowercase();
+            let named = match key.as_str() {
                 "amp" => Some('&'),
                 "lt" => Some('<'),
                 "gt" => Some('>'),
@@ -115,29 +144,33 @@ fn decode_entities(text: &str) -> String {
                 _ => None,
             };
             let code = named.or_else(|| {
-                let n = if let Some(hex) = body.strip_prefix("#x") {
-                    u32::from_str_radix(hex, 16).ok()
+                let n = if let Some(hex) = key.strip_prefix("#x") {
+                    js_parse_int(hex, 16)
                 } else {
-                    body.strip_prefix('#').and_then(|d| d.parse().ok())
+                    key.strip_prefix('#').and_then(|d| js_parse_int(d, 10))
                 };
-                n.and_then(char::from_u32)
+                n.and_then(from_code_point)
             });
             code.map_or_else(|| c[0].to_string(), String::from)
         })
         .into_owned()
 }
 
+/// `clean`: entities decoded, white space collapsed, and at most `MAX_TEXT`
+/// UTF-16 units, as JavaScript counts and slices them.
 fn clean(text: &str) -> String {
-    let flat = decode_entities(text).split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() > MAX_TEXT {
-        let cut: String = flat.chars().take(MAX_TEXT - 1).collect();
-        format!("{}…", cut.trim_end())
-    } else {
-        flat
+    let decoded = decode_entities(text);
+    let flat = decoded.split(is_js_space).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+    let units: Vec<u16> = flat.encode_utf16().collect();
+    if units.len() <= MAX_TEXT {
+        return flat;
     }
+    let cut = String::from_utf16_lossy(&units[..MAX_TEXT - 1]);
+    format!("{}…", cut.trim_end_matches(is_js_space))
 }
 
-/// The preview strings from a page's `<head>`, by string scan only.
+/// The preview strings from a page's `<head>`, by string scan only. A line
+/// for line port of `parseMeta`.
 pub fn parse_meta(html: &str) -> PreviewMeta {
     static META: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<meta\b([^>]*?)/?>").unwrap());
     static ATTR: LazyLock<Regex> = LazyLock::new(|| {
@@ -148,29 +181,31 @@ pub fn parse_meta(html: &str) -> PreviewMeta {
     let head = &html[..lower.find("</head>").unwrap_or(html.len())];
     let mut found: Vec<(String, String)> = Vec::new();
     for tag in META.captures_iter(head) {
-        let mut key = None;
-        let mut content = None;
+        // Later attributes of the same name win, as `attrs.set` does.
+        let mut attrs: Vec<(String, String)> = Vec::new();
         for a in ATTR.captures_iter(&tag[1]) {
             let name = a[1].to_lowercase();
             let value = a.get(2).or(a.get(3)).or(a.get(4)).map_or("", |m| m.as_str()).to_string();
-            match name.as_str() {
-                "property" if key.is_none() => key = Some(value.to_lowercase()),
-                "name" if key.is_none() => key = Some(value.to_lowercase()),
-                "content" => content = Some(value),
-                _ => {}
+            match attrs.iter_mut().find(|(n, _)| *n == name) {
+                Some(slot) => slot.1 = value,
+                None => attrs.push((name, value)),
             }
         }
-        if let (Some(k), Some(c)) = (key, content) {
-            if !k.is_empty() && !c.is_empty() && !found.iter().any(|(f, _)| *f == k) {
-                found.push((k, c));
+        let attr = |k: &str| attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty());
+        let key = attr("property").or_else(|| attr("name")).unwrap_or("").to_lowercase();
+        let content = attr("content");
+        if let Some(content) = content {
+            if !key.is_empty() && !found.iter().any(|(f, _)| *f == key) {
+                found.push((key, content.to_string()));
             }
         }
     }
     let get = |k: &str| found.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone());
     let pick = |keys: &[&str]| keys.iter().filter_map(|k| get(k)).map(|v| clean(&v)).find(|v| !v.is_empty());
     PreviewMeta {
-        title: pick(&["og:title", "twitter:title"])
-            .or_else(|| TITLE.captures(head).map(|c| clean(&c[1])).filter(|t| !t.is_empty())),
+        // `pick(...) || (titleTag ? clean(titleTag[1]) : null)`: an empty
+        // title tag gives "", which the card treats as no title.
+        title: pick(&["og:title", "twitter:title"]).or_else(|| TITLE.captures(head).map(|c| clean(&c[1]))),
         description: pick(&["og:description", "twitter:description", "description"]),
         site_name: pick(&["og:site_name", "application-name"]),
         image_url: get("og:image").or_else(|| get("twitter:image")).or_else(|| get("og:image:url")),

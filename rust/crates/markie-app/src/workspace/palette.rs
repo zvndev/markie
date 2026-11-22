@@ -50,10 +50,6 @@ pub(super) struct PaletteContext {
     pub nightly: bool,
 }
 
-fn export(kind: super::export::ExportKind) -> Run {
-    Rc::new(move |ws, w, cx| ws.export_document(kind, w, cx))
-}
-
 /// Every command, in Electron's order (`commands` in `src/app/page.tsx`),
 /// with the commands Markie RS adds at the end. The shortcuts sheet reads
 /// the same list, so a shortcut shown anywhere is one that works.
@@ -62,7 +58,6 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
 }
 
 pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
-    use super::export::ExportKind;
     let mut list = vec![
         cmd("Open File…", "File", Some("⌘O"), "", action(Open)),
         cmd("New Markdown document", "File", None, "md markdown", Rc::new(|ws, w, cx| ws.create_document("md", w, cx))),
@@ -81,33 +76,20 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         cmd("Save As…", "File", Some("⇧⌘S"), "", action(SaveAs)),
         cmd("Duplicate (Fork)", "File", Some("⇧⌘D"), "copy fork duplicate", action(DuplicateDocument)),
         cmd(crate::menus::reveal_label(), "File", Some("⌥⌘R"), "finder explorer folder show reveal drag locate", action(RevealDocument)),
-        // Electron labels this ⇧⌘E but binds nothing to it; so does Markie RS.
-        cmd("Export PDF (Dark)", "File", Some("⇧⌘E"), "print", export(ExportKind::PdfDark)),
-        cmd("Export PDF (Light)", "File", None, "print", export(ExportKind::PdfLight)),
-        cmd("Export HTML", "File", None, "", export(ExportKind::Html)),
+        // Electron lists ⇧⌘E beside Export PDF (Dark) but binds no key to it;
+        // in a rich pane ⇧⌘E centres text, here as there.
+        cmd("Export PDF (Dark)", "File", Some("⇧⌘E"), "print", action(ExportPdfDark)),
+        cmd("Export PDF (Light)", "File", None, "print", action(ExportPdfLight)),
+        cmd("Export HTML", "File", None, "", action(ExportHtml)),
+        // The "Export as" rows follow here (palette_results, export_as_commands).
     ]);
-    if !ctx.office_open {
-        // `exportFormatsFor`: Markdown leaves out .md, text leaves out .txt.
-        for (kind, label, ext) in [
-            (ExportKind::Docx, "Word (.docx)", "docx"),
-            (ExportKind::Rtf, "RTF (.rtf)", "rtf"),
-            (ExportKind::Odt, "OpenDocument (.odt)", "odt"),
-            (ExportKind::Txt, "Plain text (.txt)", "txt"),
-            (ExportKind::Md, "Markdown (.md)", "md"),
-        ] {
-            if (ctx.plain_text && ext == "txt") || (!ctx.plain_text && ext == "md") {
-                continue;
-            }
-            list.push(cmd(format!("Export as {label}"), "File", None, format!("export convert {ext}"), export(kind)));
-        }
-    }
     list.extend([
         cmd("Rich Mode", "View", Some("⌘1"), "preview rich wysiwyg formatted view", Rc::new(|ws, w, cx| ws.set_mode(Mode::View, w, cx))),
         cmd("Source Mode", "View", Some("⌘2"), "source raw markdown edit", Rc::new(|ws, w, cx| ws.set_mode(Mode::Source, w, cx))),
         cmd("Split Mode", "View", Some("⌘3"), "both side by side", Rc::new(|ws, w, cx| ws.set_mode(Mode::Split, w, cx))),
         cmd("Statistics", "View", Some("⇧⌘I"), "words count reading", action(ToggleStats)),
         cmd("Command Palette", "View", Some("⌘K"), "", Rc::new(|_, _, _| {})),
-        cmd("Find…", "View", Some("⌘F"), "search find text", action(MenuFind)),
+        cmd("Find…", "View", Some("⌘F"), "search find text", action(super::source::EditFind)),
         cmd("Find and Replace…", "View", Some("⌥⌘F"), "search find replace all substitute", action(super::source::FindReplace)),
         cmd("Copy File Path", "File", None, "link location terminal clipboard", action(CopyPath)),
         cmd("Copy Document Contents", "File", None, "clipboard markdown text", Rc::new(|ws, _, cx| ws.copy_all(cx))),
@@ -269,7 +251,69 @@ impl Workspace {
 
     fn palette_results(&self, cx: &App) -> Vec<PaletteCommand> {
         let Overlay::Palette(p) = &self.dialogs.open else { return Vec::new() };
-        filter(commands_for(self.palette_context()), &p.input.read(cx).value())
+        let ctx = self.palette_context();
+        let mut list = commands_for(ctx);
+        if let Some(super::OpenDoc { kind: super::DocKind::Office(office), .. }) = &self.doc
+            && !self.workspace_page_open()
+        {
+            // The Word document brings its own Find and Replace… (⌘F).
+            list.retain(|c| !matches!(c.title.as_ref(), "Find…" | "Find and Replace…"));
+            let view = office.view.clone();
+            for id in view.read(cx).palette_commands() {
+                let found = markie_office_view::commands::COMMANDS.iter().find(|(_, key, _)| *key == id);
+                let Some((group, label)) = found.map(|(group, _, label)| (*group, *label))
+                    .or_else(|| (id == "find").then_some(("View", "Find and Replace…"))) else { continue };
+                let view = view.clone();
+                list.push(cmd(label, group, (id == "find").then_some("⌘F"), id, Rc::new(move |_, window, cx| {
+                    view.update(cx, |view, cx| view.command(id, window, cx));
+                })));
+            }
+        }
+        // Electron puts the open document's enabled commands just before Save.
+        let at = list.iter().position(|c| c.title.as_ref() == "Save").unwrap_or(0);
+        let darkmown = self.darkmown_palette().into_iter().map(|(title, mode)| {
+            cmd(title, "View", None, "", Rc::new(move |ws, _, cx| ws.darkmown_command(mode, cx)))
+        });
+        list.splice(at..at, darkmown);
+        if let Some(at) = list.iter().position(|c| c.title.as_ref() == "Export HTML") {
+            list.splice(at + 1..at + 1, self.export_as_commands());
+        }
+        filter(list, &p.input.read(cx).value())
+    }
+
+    /// page.tsx's `exportFormatsFor(plainText ? "text" : "markdown")` rows, for
+    /// a document that is not a Word, RTF or ODT one.
+    fn export_as_commands(&self) -> Vec<PaletteCommand> {
+        use super::export::ExportKind;
+        use markie_export::convert::{ExportFormat, SourceKind};
+        let Some(doc) = &self.doc else { return Vec::new() };
+        if matches!(doc.kind, super::DocKind::Office(_)) {
+            return Vec::new();
+        }
+        let source = if doc.format == markie_core::formats::FormatKind::Markdown { SourceKind::Markdown } else { SourceKind::Text };
+        [
+            (ExportFormat::Docx, ExportKind::Docx),
+            (ExportFormat::Rtf, ExportKind::Rtf),
+            (ExportFormat::Odt, ExportKind::Odt),
+            (ExportFormat::Txt, ExportKind::Txt),
+            (ExportFormat::Md, ExportKind::Md),
+        ]
+        .into_iter()
+        .filter(|(format, _)| match source {
+            SourceKind::Markdown => *format != ExportFormat::Md,
+            SourceKind::Text => *format != ExportFormat::Txt,
+        })
+        .map(|(format, kind)| {
+            let info = format.info();
+            cmd(
+                format!("Export as {}", info.label),
+                "File",
+                None,
+                format!("export convert {}", info.extension),
+                Rc::new(move |ws, w, cx| ws.export_document(kind, w, cx)),
+            )
+        })
+        .collect()
     }
 
     /// Arrow keys move the selection; Return runs it.
@@ -397,7 +441,7 @@ mod tests {
         let electron = [
             "Open File…", "New Markdown document", "New Word document", "New text document", "New Darkmown document", "Open Vault",
             "Save", "Save As…", "Duplicate (Fork)", "Reveal in Finder", "Export PDF (Dark)", "Export PDF (Light)", "Export HTML",
-            "Export as Word (.docx)", "Export as RTF (.rtf)", "Export as OpenDocument (.odt)", "Export as Plain text (.txt)",
+            // The "Export as" rows go here at run time (export_as_commands).
             "Rich Mode", "Source Mode", "Split Mode", "Statistics", "Command Palette", "Find…", "Find and Replace…",
             "Copy File Path", "Copy Document Contents", "Format Tables",
         ];
@@ -413,10 +457,8 @@ mod tests {
     #[test]
     fn context_filters_like_electron() {
         let titles = |ctx| commands_for(ctx).iter().map(|c| c.title.to_string()).collect::<Vec<_>>();
-        let text = titles(PaletteContext { plain_text: true, editable: true, ..Default::default() });
-        assert!(text.contains(&"Export as Markdown (.md)".to_string()) && !text.contains(&"Export as Plain text (.txt)".to_string()));
         let office = titles(PaletteContext { office_open: true, ..Default::default() });
-        for gone in ["Rich Mode", "Export HTML", "Copy File Path", "Format Tables", "Reveal in Finder", "Export as Word (.docx)"] {
+        for gone in ["Rich Mode", "Export HTML", "Copy File Path", "Format Tables", "Reveal in Finder"] {
             assert!(!office.contains(&gone.to_string()), "{gone} is hidden for a Word document");
         }
         assert!(!titles(PaletteContext::default()).contains(&"Format Tables".to_string()), "read-only documents have no Format Tables");
@@ -452,5 +494,14 @@ mod tests {
     #[test]
     fn every_template_has_a_command() {
         assert_eq!(commands().iter().filter(|c| c.group == "Theme").count(), 9);
+    }
+
+    #[test]
+    fn export_commands_follow_electrons_list() {
+        let all = commands();
+        let titles: Vec<&str> = all.iter().map(|c| c.title.as_ref()).collect();
+        let at = titles.iter().position(|t| *t == "Reveal in Finder").unwrap();
+        assert_eq!(&titles[at + 1..at + 4], ["Export PDF (Dark)", "Export PDF (Light)", "Export HTML"]);
+        assert_eq!(all[at + 1].shortcut, Some("⇧⌘E"));
     }
 }

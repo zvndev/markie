@@ -39,6 +39,15 @@ pub enum ExportKind {
 /// One export at a time: a second click while one runs says so.
 static EXPORTING: AtomicBool = AtomicBool::new(false);
 pub const EXPORT_BUSY: &str = "Markie is already exporting. Wait for that one to finish.";
+/// document-output-policy.ts.
+pub const COMMENT_OUTPUT_CONFIRMATION: &str = "This output does not include review comments. Continue with the document text only?";
+
+/// What use-document-output.ts reads off the open Word, RTF or ODT document.
+pub(super) struct OfficeOutput {
+    /// `canPrintDocx`.
+    pub printable: bool,
+    pub has_comments: bool,
+}
 /// Electron's deadline for laying out an export.
 const DEADLINE: Duration = Duration::from_secs(30);
 
@@ -104,6 +113,12 @@ impl Workspace {
         let dark = crate::themes::palette(cx).dark;
 
         if matches!(kind, ExportKind::OfficePdf) || (kind == ExportKind::Print && matches!(doc.kind, DocKind::Office(_))) {
+            // use-document-output.ts: only a document `canPrintDocx` accepts
+            // has a print or PDF path; the menu item is not offered otherwise.
+            let Some(eligible) = self.office_output_for(cx) else { return };
+            if !eligible.printable {
+                return;
+            }
             let DocKind::Office(office) = &doc.kind else { return };
             let bytes = office.view.read(cx).editor.export();
             let format = match doc.format {
@@ -111,17 +126,27 @@ impl Workspace {
                 FormatKind::Odt => markie_office::model::Format::Odt,
                 _ => markie_office::model::Format::Docx,
             };
+            let unchanged = if format == markie_office::model::Format::Docx { "The Word file was not changed." } else { "The source file was not changed." };
             let printing = kind == ExportKind::Print;
-            let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "document".into());
-            let target = (!printing).then(|| cx.prompt_for_new_path(&dir, Some(&format!("{stem}.pdf"))));
+            let confirm = eligible.has_comments.then(|| {
+                window.prompt(PromptLevel::Info, COMMENT_OUTPUT_CONFIRMATION, None, &[PromptButton::ok("OK"), PromptButton::cancel("Cancel")], cx)
+            });
             cx.spawn_in(window, async move |_, cx| {
                 let _guard = guard;
-                let target = match target {
-                    Some(rx) => match rx.await {
+                if let Some(answer) = confirm
+                    && answer.await.ok() != Some(0)
+                {
+                    return;
+                }
+                // export-pdf's own save sheet: "document.pdf", whatever the file is called.
+                let target = if printing {
+                    None
+                } else {
+                    let Ok(rx) = cx.update(|_, cx| cx.prompt_for_new_path(&dir, Some("document.pdf"))) else { return };
+                    match rx.await {
                         Ok(Ok(Some(t))) => Some(t),
                         _ => return,
-                    },
-                    None => None,
+                    }
                 };
                 let result = with_deadline(
                     cx,
@@ -133,7 +158,18 @@ impl Workspace {
                     "The PDF export took too long and was stopped.",
                 )
                 .await;
-                finish(result, target, printing, "Couldn't export this document as a PDF.", cx);
+                let written = target.as_ref().map(|t| ensure_extension(t, ".pdf"));
+                let ok = finish(result, target, printing, "Could not print or export the supported document view.", cx);
+                if ok {
+                    notify(
+                        match (printing, written) {
+                            (true, _) => "Sent the supported document view to the printer.".to_string(),
+                            (false, Some(path)) => format!("Exported PDF to {}. {unchanged}", path.display()),
+                            (false, None) => format!("PDF exported. {unchanged}"),
+                        },
+                        cx,
+                    );
+                }
             })
             .detach();
             return;
@@ -217,6 +253,14 @@ impl Workspace {
 }
 
 impl Workspace {
+    /// The open office document's output state, or none for other documents.
+    pub(super) fn office_output_for(&self, cx: &App) -> Option<OfficeOutput> {
+        let DocKind::Office(office) = &self.doc.as_ref()?.kind else { return None };
+        let view = office.view.read(cx);
+        let rich = view.editor.rich();
+        Some(OfficeOutput { printable: markie_export::office_pdf::can_print(rich), has_comments: !rich.comments.is_empty() })
+    }
+
     pub(super) fn on_print(&mut self, _: &crate::actions::Print, window: &mut Window, cx: &mut Context<Self>) {
         self.export_document(ExportKind::Print, window, cx);
     }
@@ -224,7 +268,12 @@ impl Workspace {
         self.export_document(ExportKind::PdfDark, window, cx);
     }
     pub(super) fn on_export_pdf_light(&mut self, _: &crate::actions::ExportPdfLight, window: &mut Window, cx: &mut Context<Self>) {
-        self.export_document(ExportKind::PdfLight, window, cx);
+        let kind = if matches!(self.doc.as_ref().map(|doc| &doc.kind), Some(DocKind::Office(_))) {
+            ExportKind::OfficePdf
+        } else {
+            ExportKind::PdfLight
+        };
+        self.export_document(kind, window, cx);
     }
     pub(super) fn on_export_html(&mut self, _: &crate::actions::ExportHtml, window: &mut Window, cx: &mut Context<Self>) {
         self.export_document(ExportKind::Html, window, cx);
@@ -235,25 +284,32 @@ fn notify(message: String, cx: &mut AsyncWindowContext) {
     cx.update(|window, cx| window.push_notification(message, cx)).ok();
 }
 
-fn finish(result: Result<Vec<u8>, String>, target: Option<PathBuf>, printing: bool, failure: &str, cx: &mut AsyncWindowContext) {
+/// Writes or prints the PDF. True when it was written or sent to a printer.
+fn finish(result: Result<Vec<u8>, String>, target: Option<PathBuf>, printing: bool, failure: &str, cx: &mut AsyncWindowContext) -> bool {
     match result {
-        Err(e) => notify(if e.is_empty() { failure.to_string() } else { e }, cx),
-        Ok(pdf) if printing => {
-            cx.update(|_, _| {
-                if let Err(e) = print_pdf(&pdf) {
+        Err(e) => {
+            notify(if e.is_empty() { failure.to_string() } else { e }, cx);
+            false
+        }
+        Ok(pdf) if printing => cx
+            .update(|_, _| match print_pdf(&pdf) {
+                Ok(printed) => printed,
+                Err(e) => {
                     eprintln!("markie-rs: print failed: {e}");
+                    false
                 }
             })
-            .ok();
-            let _ = &pdf;
-        }
-        Ok(pdf) => {
-            if let Some(t) = target
-                && let Err(e) = std::fs::write(ensure_extension(&t, ".pdf"), pdf)
-            {
-                notify(format!("{}: {e}", failure.trim_end_matches('.')), cx);
-            }
-        }
+            .unwrap_or(false),
+        Ok(pdf) => match target {
+            Some(t) => match std::fs::write(ensure_extension(&t, ".pdf"), pdf) {
+                Ok(()) => true,
+                Err(e) => {
+                    notify(format!("{}: {e}", failure.trim_end_matches('.')), cx);
+                    false
+                }
+            },
+            None => false,
+        },
     }
 }
 

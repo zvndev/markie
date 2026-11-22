@@ -39,7 +39,11 @@ pub fn parse(text: &str) -> Vec<Vec<String>> {
     rows
 }
 
+/// `serializeCSV`: rows joined by `\n`, then one `\n`, so no rows is `"\n"`.
 pub fn serialize(rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return "\n".into();
+    }
     let mut out = String::new();
     for row in rows {
         let cells: Vec<String> = row

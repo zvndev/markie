@@ -91,6 +91,43 @@ pub fn step_zoom(current: f32, up: bool) -> f32 {
     ZOOM_STEPS[next]
 }
 
+/// `createPinchZoom` in `src/lib/document-zoom.ts`: a trackpad pinch (and
+/// ctrl + scroll) arrives as many small deltas, collected so one deliberate
+/// pinch moves one or two zoom steps. Deltas are in Chromium's wheel units:
+/// positive `delta_y` zooms out.
+#[derive(Default)]
+pub struct PinchZoom {
+    total: f32,
+    last_ms: f64,
+}
+
+pub const PINCH_STEP: f32 = 60.;
+pub const PINCH_IDLE_MS: f64 = 220.;
+
+impl PinchZoom {
+    /// The steps to take for one event: +1 zooms in, -1 zooms out.
+    pub fn feed(&mut self, delta_y: f32, at_ms: f64) -> Vec<i8> {
+        if at_ms - self.last_ms > PINCH_IDLE_MS {
+            self.total = 0.;
+        }
+        self.last_ms = at_ms;
+        self.total += delta_y;
+        let mut steps = Vec::new();
+        while self.total.abs() >= PINCH_STEP {
+            let direction: i8 = if self.total < 0. { 1 } else { -1 };
+            self.total += f32::from(direction) * PINCH_STEP;
+            steps.push(direction);
+        }
+        steps
+    }
+
+    /// A platform pinch's magnification as the ctrl+wheel delta Chromium
+    /// synthesizes for it (`-100 · ln(scale)`).
+    pub fn wheel_delta_for_magnification(delta: f32) -> f32 {
+        -100. * (1. + delta).max(0.01).ln()
+    }
+}
+
 /// `zoomLabel`.
 pub fn zoom_label(zoom: f32) -> String {
     format!("{}%", (zoom * 100.0).round() as i32)
@@ -135,6 +172,20 @@ pub fn clamp_font_size(size: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pinch_collects_like_document_zoom_ts() {
+        let mut p = super::PinchZoom::default();
+        // Small deltas add up to one step; the remainder carries.
+        assert!(p.feed(-30., 1000.).is_empty());
+        assert_eq!(p.feed(-40., 1010.), vec![1]);
+        assert!(p.feed(-45., 1020.).is_empty());
+        // A pause longer than 220 ms starts over.
+        assert!(p.feed(-50., 1300.).is_empty());
+        assert_eq!(p.feed(130., 1310.), vec![-1]);
+        assert_eq!(p.feed(200., 1320.), vec![-1, -1, -1]);
+        assert!(super::PinchZoom::wheel_delta_for_magnification(0.1) < 0.);
+    }
+
     use super::{step_width, step_zoom, width_label, zoom_label};
 
     #[test]

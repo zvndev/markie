@@ -5,6 +5,7 @@
 
 mod actions;
 mod deeplinks;
+mod doc_worker;
 mod default_apps;
 mod icons;
 mod instance;
@@ -98,15 +99,50 @@ mod key_tests {
     fn cmd_p_prints() {
         assert!(bound("cmd-p").iter().any(|(a, _)| a.ends_with("Print")));
     }
+
+    #[test]
+    fn office_commands_are_directly_in_the_reference_file_and_view_groups() {
+        use gpui_kit::MenuItem;
+        // A Word document on screen: document-menu.js swaps "PDF (Light)…"
+        // in the Export submenu for "Export PDF…".
+        let menus = super::menus::build(super::menus::MenuState { word: true, ..Default::default() });
+        fn names(items: &[MenuItem], out: &mut Vec<String>) {
+            for item in items {
+                match item {
+                    MenuItem::Action { name, .. } => out.push(name.to_string()),
+                    MenuItem::Submenu(menu) => names(&menu.items, out),
+                    _ => {}
+                }
+            }
+        }
+        let group = |group: &str| {
+            let mut out = Vec::new();
+            names(&menus.iter().find(|menu| menu.name.as_ref() == group).unwrap().items, &mut out);
+            out
+        };
+        let file = group("File");
+        for name in ["New Markdown Document", "New Word Document", "New Text Document",
+            "New Darkmown Document", "Document Details…", "History…", "Print…", "Export PDF…"] {
+            assert!(file.iter().any(|label| label == name), "{name}");
+        }
+        let view = group("View");
+        for name in ["Page Layout", "Continuous Layout", "Document Outline", "Actual Size"] {
+            assert_eq!(view.iter().filter(|label| label.as_str() == name).count(), 1, "{name}");
+        }
+    }
 }
 
 fn set_menus(cx: &mut App) {
     menus::bind_app_actions(cx);
     let nightly = std::env::var("MARKIE_RS_NIGHTLY").is_ok_and(|v| v == "1");
-    menus::install(menus::MenuState { has_history: false, nightly }, cx);
+    menus::install(menus::MenuState { has_history: false, nightly, ..Default::default() }, cx);
 }
 
+
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(doc_worker::ARG)) {
+        std::process::exit(if doc_worker::serve() { 0 } else { 1 });
+    }
     logs::install_panic_hook();
     let args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
 
@@ -187,6 +223,10 @@ fn main() {
 
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {
                 let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
+            });
+            #[cfg(target_os = "macos")]
+            cx.on_action(move |_: &logs::RevealNativeCrashReport, cx| {
+                let _ = window_handle.update(cx, |_, window, cx| logs::reveal_native_crash_report(window, cx));
             });
             workspace::account::handle_open_urls(open_urls::hand_back_links(&launch_links), cx);
             for link in open_urls::deep_links(&launch_links) {

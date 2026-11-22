@@ -4,18 +4,20 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 83 of 94 = 88.3 %.**
+**Parity: 88 of 94 = 93.6 %.**
 
 | Count | Rows |
 |---|---|
 | All rows | 96 |
-| PASS | 83 |
-| FAIL | 8 |
+| PASS | 88 |
+| FAIL | 3 |
 | NEEDS-CAPTURE | 3 |
 | EXCLUDED | 1 |
 | EXCLUDED-PLATFORM | 1 |
 
-The score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). Of the 8 FAIL rows, 5 are real gaps and 3 are roll-up rows that fail only because a row under them does. Every gap has a concrete blocker in its row and in "FAIL rows left" below. All 5 sit on another auditor's ground or behind a side-build rule.
+The score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). Of the 3 FAIL rows, 2 are schema rows behind a side-build rule (2.3, 2.8) and 1 is their roll-up (2.2).
+
+After the merge of `rust/markie-rs` at e8e8e07, rows 2.9, 2.10 and 29.7 pass with the other auditors' work, and their roll-ups 29.1 and 29.2 pass with them.
 
 Rows that failed and were fixed in this audit: 1.2, 1.3, 1.5, 1.7, 1.8, 1.11, 1.12, 2.1, 3.1, 6.2, 6.3, 6.4, 28.6, 29.3, 29.4, 29.5 and 29.8. Rows 28.2a and 28.2b were fixed in code; their look still needs a capture. Rows 1.6 and 28.2 pass since the cloud audit merged (in-place row sync actions; the full Servers section).
 
@@ -43,6 +45,7 @@ Rows that failed and were fixed in this audit: 1.2, 1.3, 1.5, 1.7, 1.8, 1.11, 1.
 | 535badf | Merge of `rust/markie-rs` (cloud, office and platform audits), conflicts resolved as its message lists. |
 | ac0bea6 | Settings › Advanced: the checkboxes stay on the panel and the descriptions wrap (found by the cloud auditor). |
 | 220da82 | The Library's own "Upload destination" picker, used by a row's Sync to cloud. |
+| (merge) | Merge of `rust/markie-rs` at e8e8e07. One menu bar (`menus.rs`) carries every auditor's items in Electron's places, one Edit menu, one palette list. |
 
 Shared files touched, kept small, for the other auditors:
 
@@ -81,15 +84,15 @@ Shared files touched, kept small, for the other auditors:
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
 | 2.1 | Files: registry.js, WAL, `registry.db`, `PRAGMA user_version` 2 | PASS | `registry.rs:71` WAL, `paths::data_dir()/registry.db`; `user_version_is_two_with_the_project_tables` | Fixed: user_version was never set. |
-| 2.2 | Schema to keep exactly | FAIL | Roll-up | 2.3, 2.8, 2.9 and 2.10 fail. |
+| 2.2 | Schema to keep exactly | FAIL | Roll-up | 2.3 and 2.8 fail. |
 | 2.3 | `files(…)` with all columns | FAIL | `registry.js:72-170`; `registry.rs:73` | Markie RS's `files` has path to share_role. The cloud columns (share_role_user, assets_*, links_*, cloud_origin) live as one JSON record per path in `rs_cloud_sync` (`markie-cloud` SyncRecord). Blocker: the identical table only matters for opening Electron's database in place, which the side-build rules forbid. Migration reads Electron's file through `markie-migrate`. Recommend Kirby mark it EXCLUDED. |
 | 2.4 | `sync_state` values | PASS | `markie-cloud/src/sync.rs:10,22` kebab-case SyncState; `push_only_from_synced_or_unpushed` | |
 | 2.5 | `cloud_origin` NULL is Markie Cloud; legacy aliases rewritten | PASS | `origin.rs` canonical_cloud_origin; `allowed_server_origin`, `trusted_list_replaces_the_pin` | |
 | 2.6 | `workspace_roots(path, added_at)` | PASS | `registry.rs:84`; `recents_roots_stars_settings` | |
 | 2.7 | `md_stars(path, kind, added_at)` | PASS | `registry.rs:88`; same test | |
 | 2.8 | `md_index_cache(path, name, mtime_ms)` | FAIL | `registry.rs:93` rs_index_snapshot | Same role, one JSON row. Same blocker and recommendation as 2.3. |
-| 2.9 | `skill_sources` | FAIL | none in Markie RS | Blocker: skills (section 16) belong to the Agents auditor, whose `markie-agent` keeps no sources table yet. |
-| 2.10 | `skill_installs` | FAIL | `workspace/skills.rs` | Same blocker as 2.9. |
+| 2.9 | `skill_sources` | PASS | `registry.js:96-99`; `markie-agent/src/skills.rs:360` SKILL_TABLES, ensure_skill_tables at registry open (`workspace.rs`); `the_registry_gets_electrons_skill_tables` | Agents audit. Same columns as Electron. |
+| 2.10 | `skill_installs` | PASS | `registry.js:100-121`; same | Agents audit. Same columns, `root` included. |
 | 2.11 | v1 tables | PASS | `projects/store.rs:23-60`; `decisions_round_trip_and_survive_upserts` | Created at open now. |
 | 2.12 | v2 `projects` | PASS | `projects/store.rs:60`; same test | |
 | 2.13 | Windows paths lowercased (`canonicalPath`) | EXCLUDED-PLATFORM | `registry.rs:54` | Built, untested on macOS. |
@@ -177,13 +180,13 @@ Shared files touched, kept small, for the other auditors:
 
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 29.1 | What the user can do | FAIL | Roll-up | 29.7 fails. |
-| 29.2 | Native menus | FAIL | Roll-up | 29.7 fails. |
+| 29.1 | What the user can do | PASS | Roll-up | |
+| 29.2 | Native menus | PASS | Roll-up | |
 | 29.3 | File menu | PASS | `main.js:3741-3833` with `document-menu.js` install; `menus.rs`; `file_menu_matches_electron`, `history_is_greyed_until_the_document_has_versions`, `electron_accelerators_reach_their_items` | Rebuilt. |
-| 29.4 | Edit: Undo/Redo, Find ⌘F, Replace ⌥⌘F, Format Tables ⌥⌘T | PASS | `main.js:3835-3883`; `edit_menu.rs`; `edit_view_window_and_help_match_electron`, `edit_commands_reach_the_focused_editor` | Fixed: there was no Edit menu. |
+| 29.4 | Edit: Undo/Redo, Find ⌘F, Replace ⌥⌘F, Format Tables ⌥⌘T | PASS | `main.js:3835-3883`; `source.rs` edit_menu (editors audit), used by `menus.rs`; `edit_view_window_and_help_match_electron` (exactly one Edit menu) | This audit and the editors audit each built one; the merge kept the editors' routing and removed this audit's duplicate. |
 | 29.5 | View: modes, zoom, page width, Command Palette, Theme, Shortcuts, Statistics | PASS | `main.js:3885-3960`; same tests | Theme… opens Settings › Appearance, as `menu-theme` does. |
 | 29.6 | Settings ⌘,; Default Apps; Check for Updates | PASS | app menu in `menus.rs`; same test | Check for Updates is left out: updater, excluded. |
-| 29.7 | The document menus from section 17 | FAIL | `document-menu-commands.json`; `markie-office-view/src/actions.rs` menus, view_menu_items | Format, Insert, Layout and Review sit between Edit and View, as `install` puts them. Blocker: "Document Details…" and the three Darkmown view items have no Markie RS command yet. They belong to the Office (section 17) and Darkmown (section 18) auditors. Menu slots are ready in `menus.rs`. |
+| 29.7 | The document menus from section 17 | PASS | `document-menu.js` install, `document-menu-commands.json`; `menus.rs` build; `office_commands_are_directly_in_the_reference_file_and_view_groups`, `file_menu_matches_electron`, `edit_view_window_and_help_match_electron` | Format, Insert, Layout and Review sit between Edit and View, disabled without a Word document. File has Document Details… (Office audit) after the New items. The Export submenu says "Export PDF…" for a Word document and "PDF (Light)…" otherwise, as `install` relabels it. View gets the Word layouts and the three Darkmown views (agents audit) straight after a separator. |
 | 29.8 | Palette: about 40 commands, fuzzy ranking | PASS | `page.tsx:2164-2240`, `commands.ts`; `palette.rs`; `ranking_matches_electrons_filter_commands` (16 queries through Electron's filterCommands), `commands_follow_electrons_list`, `context_filters_like_electron` | Fixed: 20 commands were missing. Markie RS's ten extra commands come after Electron's. |
 | 29.9 | Shortcuts help sheet | PASS | `shortcuts-help.tsx`; `shortcuts.rs`; `groups_follow_electron_order` | Same grouping and order. It also lists Markie RS's three extra shortcuts (⌥⌘O, ⇧⌘O, ⌘R). |
 | 29.10 | Files | PASS | main.js template → `menus.rs`; document-menu.js → `menus.rs` plus office actions; command-palette → `palette.rs`; shortcuts-help → `shortcuts.rs`; commands.ts → `palette.rs`; editor-keymap → `markie-editor` bind_keys | |
@@ -194,10 +197,8 @@ Shared files touched, kept small, for the other auditors:
 | Row | Blocker | Owner |
 |---|---|---|
 | 2.3, 2.8 | Column-identical tables matter only for sharing Electron's database, which the side-build rules forbid | Kirby: recommend EXCLUDED |
-| 2.9, 2.10 | No skills sources or installs tables in `markie-agent` | Agents (16) |
-| 29.7 | Document Details… and the Darkmown view commands do not exist yet | Office (17), Darkmown (18) |
 
-The roll-up rows 2.2, 29.1 and 29.2 clear when these do.
+The roll-up row 2.2 clears when these do.
 
 ## Pending Kirby's call, not changed
 
@@ -225,6 +226,6 @@ Each one is light and dark at 1280 x 820, the same fixture in both apps, per SCR
 
 - `cargo test -p markie-app` after the merge: 149 passed.
 - `cargo test -p markie-core`: 92 passed.
-- `cargo test --workspace` after the merge and the last fix: 1028 passed, 0 failed, 2 ignored.
+- `cargo test --workspace` after merging e8e8e07: 1073 passed, 0 failed, 2 ignored.
 - `node --import ./rust/scripts/ts-run/register.mjs rust/scripts/parity/library-settings-parity.mjs`: regenerates the fixture from Electron's code.
 - `local-parity.mjs` on `.autoloop/runs/library-settings/home`: all match. Five search queries were checked for order, name hits and excerpts, plus the Projects tree and the ignored count.

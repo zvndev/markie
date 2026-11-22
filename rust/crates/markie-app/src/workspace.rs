@@ -16,7 +16,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use markie_core::autosave::Autosave;
-use markie_core::disk::{DiskChange, DiskMemory};
+use markie_core::disk::{save_conflict_action, DiskChange, DiskMemory, SaveAction};
 use markie_core::document::{self, Content};
 use markie_core::drafts::{Draft, Drafts};
 use markie_core::history::{History, Version, Writer};
@@ -39,7 +39,7 @@ mod comments;
 mod share;
 mod dialog_chrome;
 mod edit_menu;
-pub(crate) use edit_menu::{NewDarkmownDocument, NewMarkdownDocument, NewTextDocument, NewWordDocument};
+mod document_failure;
 mod file_ops;
 mod first_run;
 mod folder_tree;
@@ -140,7 +140,9 @@ pub struct Workspace {
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
     rich: Entity<markie_editor::RichView>,
+    file_grants: markie_core::links::FileGrants,
     doc: Option<OpenDoc>,
+    document_failure: Option<document_failure::DocumentFailure>,
     mode: Mode,
     /// In Split, the pane whose text is newest: the source editor (true) or
     /// the rich editor (false). Electron's `lastPane`.
@@ -152,6 +154,7 @@ pub struct Workspace {
     /// Warnings shown above a converted copy (Electron's `session.warnings`).
     doc_notes: Vec<String>,
     import_epoch: u64,
+    import_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
@@ -160,8 +163,13 @@ pub struct Workspace {
     disk: DiskMemory,
     autosave: Autosave,
     _autosave_task: Task<()>,
+    /// The crash journal's debounce (`use-save-guard.ts`).
+    _journal_task: Task<()>,
+    pinch: markie_editor::style::PinchZoom,
+    pinch_clock: Instant,
     /// Office documents' recovery history (Electron's document library).
     recovery: markie_core::office_recovery::RecoveryStore,
+    pending_office: Option<(PathBuf, u64)>,
     _recovery_task: Task<()>,
     _poll_task: Task<()>,
     /// What the file says on disk when it changed under unsaved edits.
@@ -212,6 +220,8 @@ impl Workspace {
             }
             // `seedWorkspaceExamples`: the Darkmown example, offered once.
             markie_core::workspace_ops::seed_examples(&paths::default_root(), &paths::data_dir().join("seeded-examples.json"));
+            // electron/registry.js creates the skill tables with the rest.
+            let _ = markie_agent::skills::ensure_skill_tables(reg);
         }
 
         let editor = cx.new(|cx| {
@@ -286,6 +296,9 @@ impl Workspace {
         let data_dir = paths::data_dir();
         let drafts = Drafts::new(&data_dir);
         let recovered = drafts.pending();
+        let recovery = markie_core::office_recovery::RecoveryStore::new(&data_dir);
+        let pending_office = recovery.pending_untitled(&data_dir.join("unsaved-office"))
+            .map(|(path, revision)| (path, revision.revision));
         let cloud = cloud::CloudWorkspace::new(&data_dir, registry.as_deref());
         let mut this = Self {
             agents: agents::AgentState::new(&data_dir),
@@ -304,13 +317,16 @@ impl Workspace {
             editor,
             preview,
             rich,
+            file_grants: Default::default(),
             doc: None,
+            document_failure: None,
             mode: Mode::View,
             split_source_latest: false,
             split_echo: None,
             dirty: false,
             doc_notes: Vec::new(),
             import_epoch: 0,
+            import_cancel: None,
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
@@ -319,7 +335,11 @@ impl Workspace {
             disk: DiskMemory::default(),
             autosave: Autosave::default(),
             _autosave_task: Task::ready(()),
-            recovery: markie_core::office_recovery::RecoveryStore::new(&data_dir),
+            _journal_task: Task::ready(()),
+            pinch: Default::default(),
+            pinch_clock: Instant::now(),
+            recovery,
+            pending_office,
             _recovery_task: Task::ready(()),
             _poll_task: Task::ready(()),
             disk_conflict: None,
@@ -415,6 +435,16 @@ impl Workspace {
         cx.notify();
     }
 
+    fn pinch_zoom_by(&mut self, delta_y: f32, cx: &mut Context<Self>) {
+        if !matches!(self.dialogs.open, overlay::Overlay::None) {
+            return;
+        }
+        let now = self.pinch_clock.elapsed().as_secs_f64() * 1000.;
+        for step in self.pinch.feed(delta_y, now) {
+            self.set_zoom(markie_editor::style::step_zoom(self.zoom, step > 0), cx);
+        }
+    }
+
     fn on_zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
         self.set_zoom(markie_editor::style::step_zoom(self.zoom, true), cx);
     }
@@ -472,6 +502,7 @@ impl Workspace {
                     let _ = reg.save_snapshot(&snapshot);
                 }
                 this.library.scanning = false;
+                this.skills_index_updated(&snapshot.files, cx);
                 this.library.set_snapshot(snapshot);
                 this.build_search_pool();
                 this.compute_projects(cx);
@@ -525,6 +556,8 @@ impl Workspace {
         self.doc_notes.clear();
         match document::open(path) {
             Ok(doc) => {
+                self.document_failure = None;
+                self.file_grants.grant_document(&doc.path);
                 let large = doc.is_large();
                 let kind = match doc.content {
                     Content::Text { text: raw, encoding, bom } => {
@@ -668,11 +701,37 @@ impl Workspace {
         let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         self.dirty = &text != saved;
         self.update_stats(&text);
+        self.schedule_journal(&text, cx);
         if self.dirty && self.disk_conflict.is_none() {
             self.autosave.note_change(Instant::now());
             self.schedule_autosave(cx);
         }
         cx.notify();
+    }
+
+    /// Journal the buffer while it is dirty, debounced, whatever autosave
+    /// may do: a crash between the edit and the save loses nothing. Off for
+    /// a large document, as Electron's `journal: largeDocSize === null`.
+    pub(super) fn schedule_journal(&mut self, text: &str, cx: &mut Context<Self>) {
+        if !self.dirty || self.doc.as_ref().is_none_or(|d| d.large || !matches!(d.kind, DocKind::Text { .. })) {
+            self._journal_task = Task::ready(());
+            return;
+        }
+        let wait = Duration::from_millis(markie_core::drafts::journal_delay_ms(text));
+        self._journal_task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            this.update(cx, |this, cx| this.journal_now(cx)).ok();
+        });
+    }
+
+    fn journal_now(&mut self, cx: &mut Context<Self>) {
+        if !self.dirty {
+            return;
+        }
+        let Some(doc) = &self.doc else { return };
+        let path = (!doc.untitled).then(|| doc.path.clone());
+        let text = self.current_text(cx);
+        let _ = self.drafts.save(path.as_deref(), &text);
     }
 
     fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
@@ -693,12 +752,19 @@ impl Workspace {
 
     /// Write whatever autosave still owes, now. Never a dialog.
     fn flush_pending(&mut self, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
             return self.office_flush_recovery(cx);
         }
-        if self.autosave.is_pending() || self.dirty {
+        // Only a save that was armed is owed (`settle`): a restored version or
+        // draft, or edits held back by an outside change, arm nothing. Their
+        // text goes to the journal instead, so closing loses nothing.
+        if self.autosave.is_pending() {
             self.autosave.cancel();
             self.autosave_now(cx);
+        } else if self.dirty {
+            self._journal_task = Task::ready(());
+            self.journal_now(cx);
         }
     }
 
@@ -717,6 +783,18 @@ impl Workspace {
         }
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
+        // Someone else wrote the file since Markie read it: an autosave
+        // refuses and raises the strip (`saveConflictAction`), and the draft
+        // above keeps the unsaved text.
+        if self.disk.over_cap(&path).is_some() {
+            return;
+        }
+        if let Some(DiskChange::Changed(theirs)) = self.disk.changed_since(&path) {
+            if save_conflict_action(true, false, true) == SaveAction::Refuse {
+                self.note_disk_change(theirs, cx);
+                return;
+            }
+        }
         if self.write_text(&text, cx).is_ok() {
             let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
         }
@@ -800,6 +878,7 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
         if self.workspace_page_open() && self.live_docs_open() {
             return self.live_save(cx);
         }
@@ -820,6 +899,60 @@ impl Workspace {
         }
         let text = self.current_text(cx);
         self.autosave.cancel();
+        if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
+            let name = path.file_name().map_or_else(|| "This document".into(), |n| n.to_string_lossy().into_owned());
+            if let Some(size) = self.disk.over_cap(&path) {
+                window.push_notification(markie_core::disk::over_cap_message(&name, size), cx);
+                return;
+            }
+            // ⌘S over a file that changed on disk asks, as `save-file` does.
+            if let Some(DiskChange::Changed(theirs)) = self.disk.changed_since(&path) {
+                if save_conflict_action(false, false, true) == SaveAction::Ask {
+                    return self.ask_before_overwrite(path, name, theirs, window, cx);
+                }
+            }
+        }
+        self.write_after_save_checks(&text, window, cx);
+    }
+
+    /// Electron's native question for a save over an outside edit.
+    fn ask_before_overwrite(&mut self, path: PathBuf, name: String, theirs: String, window: &mut Window, cx: &mut Context<Self>) {
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("\"{name}\" changed on disk since you opened it."),
+            Some(
+                "Something else edited this file, most likely an agent or another editor. \
+                 Reloading discards your unsaved edits. Overwriting discards theirs.",
+            ),
+            &["Reload from disk", "Overwrite", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(choice) = answer.await else { return };
+            this.update_in(cx, |this, window, cx| {
+                if this.doc.as_ref().map(|d| &d.path) != Some(&path) {
+                    return;
+                }
+                match choice {
+                    0 => {
+                        this.disk_conflict = None;
+                        this.load_text(&path, theirs, cx);
+                        cx.notify();
+                    }
+                    1 => {
+                        let text = this.current_text(cx);
+                        this.write_after_save_checks(&text, window, cx);
+                    }
+                    _ => {}
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn write_after_save_checks(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let text = text.to_string();
         if let Err(err) = self.write_text(&text, cx) {
             window.push_notification(format!("Markie could not save: {err:#}"), cx);
         } else if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
@@ -1039,7 +1172,26 @@ impl Workspace {
         v_flex().size_full().bg(theme.background).child(toolbar).child(panes).into_any_element()
     }
 
-    fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_document(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if self.document_failure.is_none() {
+            match markie_core::render_boundary::project(|| self.project_document(cx)) {
+                Ok(document) => return document,
+                Err(detail) => self.show_document_failure(&detail, cx),
+            }
+        }
+        self.render_document_failure(cx)
+    }
+
+    fn project_document(&self, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(debug_assertions)]
+        if self.doc.is_some()
+            && std::env::var_os("MARKIE_RS_DATA_DIR").is_some()
+            && std::env::var_os("MARKIE_RS_RENDER_PROBE").is_some()
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static FIRED: AtomicBool = AtomicBool::new(false);
+            assert!(FIRED.swap(true, Ordering::Relaxed), "Scratch document render probe");
+        }
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
             return v_flex()
@@ -1252,8 +1404,17 @@ impl Render for Workspace {
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
         // A video card's player is a web view too: hidden under any layer.
-        let hide_video = self.web_views_covered(window, cx) || !self.rich_active();
+        let hide_video = self.document_failure.is_some() || self.web_views_covered(window, cx) || !self.rich_active();
         self.rich.update(cx, |r, _| r.set_web_views_covered(hide_video));
+        let document_actions = self.doc.is_some() && self.document_failure.is_none()
+            && !self.workspace_page_open() && !self.dialogs.open.is_open();
+        let output_actions = document_actions && match self.doc.as_ref().map(|d| &d.kind) {
+            Some(DocKind::Office(office)) => markie_export::office_pdf::can_print(office.view.read(cx).editor.rich()),
+            _ => true,
+        };
+        if let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc {
+            office.view.update(cx, |view, cx| view.set_menu_suspended(!document_actions, cx));
+        }
         self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
@@ -1261,7 +1422,8 @@ impl Render for Workspace {
             // Version history is a dialog now, like Electron's.
             SidePanel::History => None,
             SidePanel::Outline => Some(self.render_outline(cx).into_any_element()),
-            SidePanel::Stats => Some(self.render_stats(cx).into_any_element()),
+            // Statistics is a popover over the window (`StatsPanel`).
+            SidePanel::Stats => None,
             SidePanel::None => None,
         };
         let dialogs = self.render_dialogs(window, cx);
@@ -1269,11 +1431,36 @@ impl Render for Workspace {
             .id("workspace")
             .track_focus(&self.focus_handle)
             .key_context("Workspace")
+            // Escape closes the statistics popover, as its window listener does.
+            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key == "escape" && this.side == SidePanel::Stats {
+                    this.side = SidePanel::None;
+                    cx.notify();
+                }
+            }))
+            // A trackpad pinch, or ctrl + scroll, is ⌘+ and ⌘- (page.tsx).
+            .on_pinch(cx.listener(|this, e: &PinchEvent, _, cx| {
+                let dy = markie_editor::style::PinchZoom::wheel_delta_for_magnification(e.delta);
+                this.pinch_zoom_by(dy, cx);
+            }))
+            .on_scroll(cx.listener(|this, e: &ScrollEvent, _, cx| {
+                if e.modifiers.control {
+                    // GPUI's y is positive toward the top; a wheel's is down.
+                    let dy = -f32::from(e.delta.pixel_delta(px(20.)).y);
+                    this.pinch_zoom_by(dy, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .map(|d| Self::source_actions(d, cx))
             .map(|d| Self::edit_menu_actions(d, cx))
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))
+            .on_action(cx.listener(|this, _: &NewMarkdownDocument, window, cx| this.create_document("md", window, cx)))
+            .on_action(cx.listener(|this, _: &NewWordDocument, window, cx| this.create_document("docx", window, cx)))
+            .on_action(cx.listener(|this, _: &NewTextDocument, window, cx| this.create_document("txt", window, cx)))
+            .on_action(cx.listener(|this, _: &NewDarkmownDocument, window, cx| this.create_document("wd", window, cx)))
+            .when(document_actions, |root| root.on_action(cx.listener(Self::on_document_details)))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_toggle_mode))
             .on_action(cx.listener(Self::on_focus_search))
@@ -1300,12 +1487,14 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
             .on_action(cx.listener(Self::on_toggle_vault))
-            .on_action(cx.listener(Self::on_print))
+            .when(output_actions, |root| root.on_action(cx.listener(Self::on_print)).on_action(cx.listener(Self::on_export_pdf_light)))
             .on_action(cx.listener(Self::on_export_pdf_dark))
-            .on_action(cx.listener(Self::on_export_pdf_light))
             .on_action(cx.listener(Self::on_export_html))
             // page.tsx `handleDrop`: a file dropped on the window opens.
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| this.drop_on_window(paths.paths().to_vec(), window, cx)))
+            .on_action(cx.listener(Self::on_darkmown_source_view))
+            .on_action(cx.listener(Self::on_darkmown_preview_view))
+            .on_action(cx.listener(Self::on_darkmown_split_view))
             // The Library panel's resizer drag follows the pointer anywhere.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 if this.shell.panel_drag.is_some() {
@@ -1348,6 +1537,7 @@ impl Render for Workspace {
                                     .h_full()
                                     .overflow_hidden()
                                     .children(banner)
+                                    .children(self.render_untitled_office_offer(cx))
                                     .children(cloud_banner)
                                     .children(self.render_live_banner(cx))
                                     .child(
@@ -1364,6 +1554,7 @@ impl Render for Workspace {
                         }
                     }),
             )
+            .children((self.side == SidePanel::Stats).then(|| self.render_stats(window, cx)))
             .children(self.render_live_preview(cx))
             .children(self.render_row_menu(cx))
             .children(self.render_search(cx))

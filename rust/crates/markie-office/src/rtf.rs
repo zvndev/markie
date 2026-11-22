@@ -290,8 +290,21 @@ impl Reader<'_> {
                 }
             };
         }
+        let encoding = match cp {
+            932 => Some(encoding_rs::SHIFT_JIS),
+            936 => Some(encoding_rs::GBK),
+            949 => Some(encoding_rs::EUC_KR),
+            950 => Some(encoding_rs::BIG5),
+            _ => None,
+        };
+        if let Some(encoding) = encoding {
+            let (decoded, had_errors) = encoding.decode_without_bom_handling(values);
+            if had_errors {
+                self.warn(&format!("invalid-codepage-{cp}-bytes"));
+            }
+            return decoded.into_owned();
+        }
         let Some(table) = single_byte_table(cp) else {
-            // Double-byte CJK code pages are not carried in Rust; see OFFICE.md.
             self.warn(&format!("codepage-{cp}"));
             return "\u{fffd}".repeat(values.len());
         };

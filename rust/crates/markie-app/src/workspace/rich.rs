@@ -16,6 +16,7 @@ impl Workspace {
     pub(super) fn new_rich(window: &mut Window, cx: &mut Context<Self>) -> (Entity<RichView>, Subscription) {
         let rich = cx.new(RichView::new);
         let sub = cx.subscribe_in(&rich, window, |this, _, ev: &RichEvent, window, cx| match ev {
+            RichEvent::RenderFailed(detail) => this.show_document_failure(detail, cx),
             RichEvent::Changed => {
                 // A live room takes the edit first (collab.rs).
                 this.live_local_edit(cx);
@@ -29,6 +30,12 @@ impl Workspace {
                 }
             }
             RichEvent::OpenLocal(href) => this.open_rich_link(href, window, cx),
+            RichEvent::GrantAttachments(paths) => {
+                for path in paths {
+                    this.file_grants.grant_attachment(path);
+                }
+                this.sync_rich_media_grants(cx);
+            }
             RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
             RichEvent::Zoom(z) => this.set_zoom(*z, cx),
             RichEvent::PageWidth(w) => this.set_width_step(*w, cx),
@@ -57,8 +64,15 @@ impl Workspace {
     /// Put Markdown text in the rich editor (on open, reload, or coming
     /// back from Source).
     pub(super) fn load_rich(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.sync_rich_media_grants(cx);
         let dir = self.doc.as_ref().and_then(|d| d.path.parent().map(|p| p.to_path_buf()));
         self.rich.update(cx, |r, cx| r.load(text, dir, cx));
+    }
+
+    fn sync_rich_media_grants(&self, cx: &mut Context<Self>) {
+        let grants = self.file_grants.clone();
+        let roots = self.registry.as_ref().and_then(|r| r.roots().ok()).unwrap_or_default();
+        self.rich.update(cx, |view, cx| view.set_media_grants(grants, roots, cx));
     }
 
     pub(super) fn on_rich_edit(&mut self, cx: &mut Context<Self>) {
@@ -66,6 +80,7 @@ impl Workspace {
         let text = self.rich.read(cx).markdown();
         self.dirty = &text != saved;
         self.update_stats(&text);
+        self.schedule_journal(&text, cx);
         self.split_source_follow(text);
         // A live room that cannot carry this file leaves the file alone.
         if self.live_holds_file() {
@@ -124,7 +139,10 @@ impl Workspace {
     pub(super) fn sync_rich_appearance(&self, cx: &mut Context<Self>) {
         let (z, w) = (self.zoom, self.page_width);
         let style = doc_style(cx);
+        // `showFormatRail`: the pencil is the chosen view and the rich pane shows.
+        let rail = self.shell.format_rail_on();
         self.rich.update(cx, |r, cx| {
+            r.set_format_rail(rail, cx);
             if (r.zoom - z).abs() > f32::EPSILON || (r.page_width - w).abs() > f32::EPSILON {
                 r.set_appearance(z, w, cx);
             }
@@ -135,10 +153,10 @@ impl Workspace {
     /// Like Electron's open-local-file handler, apply the workspace's
     /// grants before handing a passive file to the OS default app.
     fn open_rich_link(&mut self, href: &str, _window: &mut Window, cx: &mut Context<Self>) {
-        use markie_core::links::{LinkClick, classify_click_with_roots};
+        use markie_core::links::LinkClick;
         let dir = self.doc.as_ref().filter(|d| !d.untitled).and_then(|d| d.path.parent());
         let roots = self.registry.as_ref().and_then(|r| r.roots().ok()).unwrap_or_default();
-        match classify_click_with_roots(href, dir, &roots) {
+        match self.file_grants.classify(href, dir, &roots) {
             LinkClick::Open(path) => cx.open_with_system(&path),
             // Programs and installers are shown in Finder, not run, and the
             // page says so (`openAsLocalFile`).

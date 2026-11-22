@@ -21,6 +21,9 @@ pub struct MenuState {
     pub has_history: bool,
     /// Make Interactive is shown only in a super-nightly build.
     pub nightly: bool,
+    /// A Word, RTF or ODT document is open: document-menu.js labels the
+    /// Export submenu's light PDF "Export PDF…" for it.
+    pub word: bool,
 }
 
 fn item(label: &str, action: impl Action) -> MenuItem {
@@ -61,40 +64,29 @@ pub fn build(state: MenuState) -> Vec<Menu> {
         item("Print…", Print),
         MenuItem::submenu(Menu {
             name: "Export".into(),
-            items: vec![item("PDF (Dark)…", ExportPdfDark), item("PDF (Light)…", ExportPdfLight), item("HTML…", ExportHtml)],
+            items: vec![
+                item("PDF (Dark)…", ExportPdfDark),
+                item(if state.word { "Export PDF…" } else { "PDF (Light)…" }, ExportPdfLight),
+                item("HTML…", ExportHtml),
+            ],
             disabled: false,
         }),
         // document-menu.js puts the document File commands before the
         // last separator.
         MenuItem::separator(),
-        item("New Markdown Document", crate::workspace::NewMarkdownDocument),
-        item("New Word Document", crate::workspace::NewWordDocument),
-        item("New Text Document", crate::workspace::NewTextDocument),
-        item("New Darkmown Document", crate::workspace::NewDarkmownDocument),
+        item("New Markdown Document", NewMarkdownDocument),
+        item("New Word Document", NewWordDocument),
+        item("New Text Document", NewTextDocument),
+        item("New Darkmown Document", NewDarkmownDocument),
     ];
     if state.nightly {
         file.push(item("Make Interactive", MakeInteractive));
     }
-    file.extend([MenuItem::separator(), item("Close Window", CloseWindow)]);
+    file.extend([item("Document Details…", DocumentDetails), MenuItem::separator(), item("Close Window", CloseWindow)]);
 
-    let edit = Menu {
-        name: "Edit".into(),
-        items: vec![
-            item("Undo", MenuUndo),
-            item("Redo", MenuRedo),
-            MenuItem::separator(),
-            MenuItem::os_action("Cut", MenuCut, OsAction::Cut),
-            MenuItem::os_action("Copy", MenuCopy, OsAction::Copy),
-            MenuItem::os_action("Paste", MenuPaste, OsAction::Paste),
-            MenuItem::os_action("Select All", MenuSelectAll, OsAction::SelectAll),
-            MenuItem::separator(),
-            item("Find…", MenuFind),
-            item("Find and Replace…", crate::workspace::source::FindReplace),
-            MenuItem::separator(),
-            item("Format Tables", crate::workspace::source::FormatTables),
-        ],
-        disabled: false,
-    };
+    // One Edit menu: the editors' `source::edit_menu`, Electron's items,
+    // each sent to the editor with focus.
+    let edit = crate::workspace::source::edit_menu();
 
     let mut view = vec![
         item("Rich Text", RichMode),
@@ -114,12 +106,19 @@ pub fn build(state: MenuState) -> Vec<Menu> {
         MenuItem::separator(),
         item("Toggle Full Screen", ToggleFullScreen),
     ];
-    // document-menu.js appends the document View commands after a separator.
-    let word_view = markie_office_view::actions::view_menu_items();
-    if !word_view.is_empty() {
-        view.push(MenuItem::separator());
-        view.extend(word_view);
-    }
+    // document-menu.js appends the document View commands after a
+    // separator, straight into View: the Word layouts, then Darkmown's
+    // three views (document-menu-commands.json order).
+    view.push(MenuItem::separator());
+    view.extend(markie_office_view::actions::view_menu_items());
+    view.extend([
+        item("Darkmown Source", DarkmownSourceView),
+        item("Darkmown Preview", DarkmownPreviewView),
+        item("Darkmown Source and Preview", DarkmownSplitView),
+    ]);
+    // Markie RS's Vault page, which Electron opens from the rail and the
+    // palette; kept here for the menu-bar route.
+    view.extend([MenuItem::separator(), item("Vault", crate::workspace::vault::ToggleVault)]);
 
     let mut menus = vec![app, Menu { name: "File".into(), items: file, disabled: false }, edit];
     // The Word menus sit between Edit and View, as `install` splices them.
@@ -130,7 +129,11 @@ pub fn build(state: MenuState) -> Vec<Menu> {
         items: vec![item("Minimize", MinimizeWindow), item("Zoom", ZoomWindow), MenuItem::separator(), item("Bring All to Front", BringAllToFront)],
         disabled: false,
     });
-    menus.push(Menu { name: "Help".into(), items: vec![item(crate::logs::reveal_menu_label(), crate::logs::RevealCrashLog)], disabled: false });
+    let mut help = vec![item(crate::logs::reveal_menu_label(), crate::logs::RevealCrashLog)];
+    if cfg!(target_os = "macos") {
+        help.push(item("Reveal Native Crash Report", crate::logs::RevealNativeCrashReport));
+    }
+    menus.push(Menu { name: "Help".into(), items: help, disabled: false });
     menus
 }
 
@@ -166,18 +169,12 @@ pub fn bind_app_actions(cx: &mut App) {
     cx.on_action(|_: &BringAllToFront, cx| cx.activate(true));
 }
 
-/// Shortcuts the menu shows. Electron's accelerators, bound globally; an
-/// editor's own binding for the same keys wins inside it.
+/// Shortcuts the menu shows that no other module binds. Electron's
+/// accelerators; an editor's own binding for the same keys wins inside it.
+/// The Edit menu's keys are `source::bind_keys`.
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-shift-s", SaveAs, None),
-        KeyBinding::new("cmd-z", MenuUndo, None),
-        KeyBinding::new("cmd-shift-z", MenuRedo, None),
-        KeyBinding::new("cmd-x", MenuCut, None),
-        KeyBinding::new("cmd-c", MenuCopy, None),
-        KeyBinding::new("cmd-v", MenuPaste, None),
-        KeyBinding::new("cmd-a", MenuSelectAll, None),
-        KeyBinding::new("cmd-f", MenuFind, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-m", MinimizeWindow, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
@@ -217,18 +214,21 @@ mod tests {
 
     #[test]
     fn file_menu_matches_electron() {
-        let menus = build(MenuState { has_history: true, nightly: false });
+        let menus = build(MenuState { has_history: true, ..Default::default() });
         assert_eq!(
             labels(&menu(&menus, "File").items),
             [
                 "New File", "Open…", "-", "Library…", "Search All Documents…", "-", "Save", "Save As…", "History…",
                 "Duplicate (Fork)", "Reveal in Finder", "-", "Print…", "Export >", "-", "New Markdown Document",
-                "New Word Document", "New Text Document", "New Darkmown Document", "-", "Close Window",
+                "New Word Document", "New Text Document", "New Darkmown Document", "Document Details…", "-", "Close Window",
             ]
         );
         let MenuItem::Submenu(export) = &menu(&menus, "File").items[13] else { panic!() };
         assert_eq!(labels(&export.items), ["PDF (Dark)…", "PDF (Light)…", "HTML…"]);
-        let nightly = build(MenuState { has_history: true, nightly: true });
+        let nightly = build(MenuState { has_history: true, nightly: true, ..Default::default() });
+        let word = build(MenuState { word: true, ..Default::default() });
+        let MenuItem::Submenu(export) = &menu(&word, "File").items[13] else { panic!() };
+        assert_eq!(labels(&export.items), ["PDF (Dark)…", "Export PDF…", "HTML…"]);
         assert!(labels(&menu(&nightly, "File").items).contains(&"Make Interactive".to_string()));
     }
 
@@ -241,8 +241,8 @@ mod tests {
                 _ => None,
             })
         };
-        assert_eq!(find(MenuState { has_history: false, nightly: false }), Some(true));
-        assert_eq!(find(MenuState { has_history: true, nightly: false }), Some(false));
+        assert_eq!(find(MenuState { has_history: false, ..Default::default() }), Some(true));
+        assert_eq!(find(MenuState { has_history: true, ..Default::default() }), Some(false));
     }
 
     #[test]
@@ -262,7 +262,13 @@ mod tests {
             ]
         );
         assert_eq!(labels(&menu(&menus, "Window").items), ["Minimize", "Zoom", "-", "Bring All to Front"]);
-        assert_eq!(labels(&menu(&menus, "Help").items), ["Reveal Crash Log in Finder"]);
+        assert_eq!(labels(&menu(&menus, "Help").items), ["Reveal Crash Log in Finder", "Reveal Native Crash Report"]);
+        let tail = &view[16..];
+        assert_eq!(tail.first().map(String::as_str), Some("-"), "the document View commands follow a separator");
+        for name in ["Darkmown Source", "Darkmown Preview", "Darkmown Source and Preview", "Vault"] {
+            assert_eq!(view.iter().filter(|l| l.as_str() == name).count(), 1, "{name}");
+        }
+        assert_eq!(menus.iter().filter(|m| m.name.as_ref() == "Edit").count(), 1, "exactly one Edit menu");
         assert_eq!(
             labels(&menus[0].items),
             ["About Markie RS", "-", "Settings…", "Default Apps for File Types…", "-", "Hide Markie RS", "Hide Others", "Show All", "-", "Quit Markie RS"]
@@ -290,9 +296,6 @@ mod tests {
             ("cmd-shift-d", "DuplicateDocument"),
             ("cmd-alt-r", "RevealDocument"),
             ("cmd-p", "Print"),
-            ("cmd-z", "MenuUndo"),
-            ("cmd-shift-z", "MenuRedo"),
-            ("cmd-f", "MenuFind"),
             ("cmd-1", "RichMode"),
             ("cmd-2", "SourceMode"),
             ("cmd-3", "SplitMode"),

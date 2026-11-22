@@ -241,7 +241,6 @@ impl Shell {
     }
 
     /// The formatting rail is the chosen view (the editor reads this).
-    #[allow(dead_code)]
     pub(super) fn format_rail_on(&self) -> bool {
         self.view == LeftView::Edit
     }

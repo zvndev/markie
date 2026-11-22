@@ -79,25 +79,78 @@ impl Workspace {
             )
     }
 
-    pub(super) fn render_stats(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        let text = self.editor.read(cx).value().to_string();
+    /// `StatsPanel`: a 240 pt popover 48 pt from the top and 16 pt from the
+    /// right of the window, `.markie-menu-panel` in the current template,
+    /// with the "STATISTICS" label, its ×, and one 12 pt row per figure.
+    pub(super) fn render_stats(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = super::dialog_chrome::Tokens::current(&self.setting_or("style_template", "markie"), cx);
+        // The document as it stands, whichever pane is editing it.
+        let text = self.current_text(cx);
         let s = stats::compute(&text);
+        let n = stats::grouped;
+        // `StatsPanel`'s rows, in its order and wording.
         let rows = [
-            ("Words", s.words.to_string()),
-            ("Characters", s.chars.to_string()),
-            ("Lines", s.lines.to_string()),
-            ("Headings", s.headings.to_string()),
-            ("Reading time", format!("{} min", s.reading_minutes)),
+            ("Words", n(s.words)),
+            ("Characters", n(s.chars)),
+            ("Characters (no spaces)", n(s.chars_no_spaces)),
+            ("Lines", n(s.lines)),
+            ("Headings", n(s.headings)),
+            ("Code blocks", n(s.code_blocks)),
+            ("Links", n(s.links)),
+            ("Reading time", if s.reading_minutes > 0 { format!("{} min", s.reading_minutes) } else { "—".into() }),
         ];
-        self.panel_shell("Statistics", SidePanel::Stats, cx).child(v_flex().px_3().gap_2().children(rows.into_iter().map(
-            |(label, value)| {
+        use super::dialog_chrome::{black, fade, inset, mix, shadow};
+        let (bg, border, shadows) = if t.dark {
+            (t.surface2, t.border, vec![shadow(fade(black(), 0.22), 0., 10., 24.), inset(fade(t.foreground, 0.06), 1.)])
+        } else {
+            (mix(t.background, 0.58, t.surface2), fade(t.border, 0.6), vec![shadow(fade(black(), 0.11), 0., 8., 22.)])
+        };
+        let width = f32::from(window.viewport_size().width);
+        let hover = t.hover();
+        let panel = v_flex()
+            .id("stats-panel")
+            .w(px(240.))
+            .rounded(px(8.))
+            .py(px(8.))
+            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .shadow(shadows)
+            .occlude()
+            .child(
                 h_flex()
                     .justify_between()
-                    .text_sm()
-                    .child(div().text_color(theme.muted_foreground).child(label))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(value))
-            },
-        )))
+                    .items_center()
+                    .px(px(12.))
+                    .pb(px(6.))
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(super::dialog_chrome::section_label("Statistics", &t))
+                    .child(
+                        div()
+                            .id("stats-close")
+                            .px(px(4.))
+                            .rounded(px(4.))
+                            .text_size(px(13.))
+                            .line_height(px(13.))
+                            .text_color(t.muted)
+                            .hover(move |s| s.bg(hover))
+                            .cursor_pointer()
+                            .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Close statistics").build(window, cx))
+                            .child("×")
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_side(SidePanel::Stats, cx))),
+                    ),
+            )
+            .children(rows.into_iter().map(|(label, value)| {
+                h_flex()
+                    .justify_between()
+                    .gap(px(16.))
+                    .px(px(12.))
+                    .py(px(6.))
+                    .text_size(px(12.))
+                    .child(div().text_color(t.muted).child(label))
+                    .child(div().text_color(t.foreground).child(value))
+            }));
+        deferred(anchored().position(point(px(width - 16. - 240.), px(48.))).child(panel)).with_priority(5).into_any_element()
     }
 }

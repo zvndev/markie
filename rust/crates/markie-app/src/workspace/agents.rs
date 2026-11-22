@@ -12,6 +12,7 @@ use gpui_kit::component::{
     ActiveTheme, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::*;
+use gpui_kit::prelude::FluentBuilder as _;
 #[cfg(unix)]
 use markie_agent::{
     Reply,
@@ -308,14 +309,24 @@ impl Workspace {
             client,
             available,
             remote: false,
-            busy: false,
-            error: None,
+            checking: false,
+            signed_in: false,
+            unavailable: false,
+            load_error: None,
+            create_error: None,
+            revoke_error: None,
+            creating: false,
+            revoking: None,
             rows: None,
             fresh: None,
-            signed_in: false,
+            error: None,
         });
-        window.open_dialog(cx, move |dialog, _, _| {
-            dialog.w(px(520.)).close_button(false).child(panel.clone())
+        window.open_dialog(cx, move |dialog, _, cx| {
+            // A stray click outside must not throw away a token that cannot
+            // be shown again (remote-agents-panel.tsx closes on the scrim
+            // only while no new token is on screen).
+            let closable = !panel.read(cx).holds_secret();
+            dialog.w(px(520.)).close_button(false).overlay_closable(closable).child(panel.clone())
         });
     }
 }
@@ -336,7 +347,7 @@ async fn cloud_request(
             (
                 format!("An agent wants a public link for “{}”", doc.name),
                 format!(
-                    "{}\n\nAnyone with the link can read and download it without a Markie account.",
+                    "{}\n\nAnyone with the link can read and download it, without a Markie account. You can revoke the link later.",
                     doc.path.display()
                 ),
                 vec![
@@ -360,20 +371,42 @@ async fn cloud_request(
         };
         cx.update(|window, cx| {
             crate::open_urls::bring_to_front(window, cx);
-            window.prompt(PromptLevel::Warning, &message, Some(&detail), &answers, cx)
+            // Electron asks with type "warning" for a public link and
+            // "question" (an info sheet on macOS) for a sync.
+            let level = if public { PromptLevel::Warning } else { PromptLevel::Info };
+            window.prompt(level, &message, Some(&detail), &answers, cx)
         })
     };
     let stopped = |_| Err("Markie Cloud request stopped.".into());
     match request.method.as_str() {
         "cloud_sync" => {
             if !permissions::sync_always(&data) {
-                let Ok(answer) = prompt(cx, false) else {
-                    return failure("Markie RS closed.");
+                // Electron's sheet: Put in Cloud, Don't Allow and an "always
+                // allow" checkbox, which counts only with Put in Cloud.
+                #[cfg(target_os = "macos")]
+                let answer = {
+                    let (message, detail) = (
+                        format!("An agent wants to put “{}” in Markie Cloud", doc.name),
+                        format!("{}\n\nIt stays private: only you can open it until you share it.", doc.path.display()),
+                    );
+                    let Ok(Some(sheet)) = cx.update(|window, cx| {
+                        crate::open_urls::bring_to_front(window, cx);
+                        consent_sheet(window, &message, &detail)
+                    }) else {
+                        return failure("Markie RS closed.");
+                    };
+                    sheet.await.ok()
                 };
-                match answer.await.ok() {
-                    Some(0) => {}
-                    Some(1) => {
-                        if permissions::set_sync_always(&data, true).is_err() {
+                #[cfg(not(target_os = "macos"))]
+                let answer = {
+                    let Ok(answer) = prompt(cx, false) else {
+                        return failure("Markie RS closed.");
+                    };
+                    answer.await.ok().map(|n| (n != 2, n == 1))
+                };
+                match answer {
+                    Some((true, always)) => {
+                        if always && permissions::set_sync_always(&data, true).is_err() {
                             return failure("Markie RS could not save the permission.");
                         }
                     }
@@ -437,6 +470,46 @@ async fn cloud_request(
     }
 }
 
+/// The sync consent sheet, as Electron's `dialog.showMessageBox` draws it on
+/// macOS: an informational NSAlert with "Put in Cloud" (Return), "Don’t
+/// Allow" (Escape) and the suppression checkbox as "Always allow agents to put
+/// files in Markie Cloud". Answers (allowed, always).
+#[cfg(target_os = "macos")]
+fn consent_sheet(window: &Window, message: &str, detail: &str) -> Option<futures::channel::oneshot::Receiver<(bool, bool)>> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSControlStateValueOn, NSModalResponse, NSView};
+    use objc2_foundation::NSString;
+    use raw_window_handle::RawWindowHandle;
+
+    let mtm = MainThreadMarker::new()?;
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else { return None };
+    // SAFETY: GPUI hands out the live NSView of this window, read on the main thread.
+    let view: &NSView = unsafe { appkit.ns_view.cast::<NSView>().as_ref() };
+    let ns_window = view.window()?;
+    let alert = NSAlert::new(mtm);
+    alert.setAlertStyle(NSAlertStyle::Informational);
+    alert.setMessageText(&NSString::from_str(message));
+    alert.setInformativeText(&NSString::from_str(detail));
+    alert.addButtonWithTitle(&NSString::from_str("Put in Cloud"));
+    let cancel = alert.addButtonWithTitle(&NSString::from_str("Don\u{2019}t Allow"));
+    cancel.setKeyEquivalent(&NSString::from_str("\u{1b}"));
+    alert.setShowsSuppressionButton(true);
+    let checkbox = alert.suppressionButton()?;
+    checkbox.setTitle(&NSString::from_str("Always allow agents to put files in Markie Cloud"));
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let tx = std::cell::Cell::new(Some(tx));
+    let block = block2::RcBlock::new(move |response: NSModalResponse| {
+        let allowed = response == NSAlertFirstButtonReturn;
+        let always = allowed && checkbox.state() == NSControlStateValueOn;
+        if let Some(tx) = tx.take() {
+            let _ = tx.send((allowed, always));
+        }
+    });
+    alert.beginSheetModalForWindow_completionHandler(&ns_window, Some(&block));
+    Some(rx)
+}
+
 fn adapter_path() -> PathBuf {
     let installed = std::env::current_exe().ok().and_then(|p| {
         p.parent()?
@@ -448,6 +521,7 @@ fn adapter_path() -> PathBuf {
     })
 }
 
+/// agents-dialog.tsx and, over it, remote-agents-panel.tsx.
 struct AgentsPanel {
     input: Entity<InputState>,
     server: PathBuf,
@@ -455,38 +529,114 @@ struct AgentsPanel {
     client: Option<(CloudClient, Arc<Runtime>)>,
     available: bool,
     remote: bool,
-    busy: bool,
-    error: Option<String>,
+    /// `auth.status === "checking"`.
+    checking: bool,
+    signed_in: bool,
+    /// The server answered the list or create route with "no such route".
+    unavailable: bool,
+    load_error: Option<String>,
+    create_error: Option<String>,
+    revoke_error: Option<String>,
+    creating: bool,
+    revoking: Option<String>,
     rows: Option<Vec<tokens::Token>>,
     fresh: Option<tokens::Created>,
-    signed_in: bool,
+    /// Saving the Cloud permission failed.
+    error: Option<String>,
+}
+
+/// agents-dialog.tsx `TOOLS`, which mirrors TOOLS in mcp/markie-mcp.mjs.
+const TOOLS: &[(&str, &str)] = &[
+    ("markie_find_documents", "find any document by name, path or type"),
+    ("markie_search_documents", "search inside documents, Word and RTF too"),
+    ("markie_read_document", "read any document, Word and RTF as plain text"),
+    ("markie_write_document", "write markdown, text and data files, home folder only"),
+    ("markie_open_in_markie", "open any document here in Markie"),
+    ("markie_list_skills", "list your agent and skill files, grouped by tool"),
+    ("markie_check_md", "say which pictures, clips and tags in a document will not show"),
+    ("markie_check_wd", "compile a Darkmown document and say what will not work"),
+    ("markie_cloud_sync", "put a file in your Markie Cloud and hand back its private link"),
+    ("markie_cloud_public_link", "a public link, only when you ask for one, and you confirm it"),
+    ("markie_guide", "what Markie renders and which types each tool handles"),
+    ("markie_*_md", "markdown-only find, read and write, for older setups"),
+];
+
+/// The front matter an agent writes when it declares where a document belongs.
+const FRONT_MATTER_EXAMPLE: &str = "---\nmarkie:\n  project: bevrly\n  block: checkout-redesign\n---";
+
+/// remote-agents-panel.tsx `formatWhen`: seconds or milliseconds or a date
+/// string, as `toLocaleDateString` with a short month ("Nov 22, 2026").
+fn format_when(value: Option<&serde_json::Value>) -> Option<String> {
+    use chrono::{DateTime, Local, TimeZone as _};
+    let date: DateTime<Local> = match value? {
+        serde_json::Value::Number(n) => {
+            let n = n.as_f64()?;
+            let ms = if n < 1e11 { n * 1000. } else { n };
+            Local.timestamp_millis_opt(ms as i64).single()?
+        }
+        serde_json::Value::String(s) => DateTime::parse_from_rfc3339(s)
+            .map(|d| d.with_timezone(&Local))
+            .or_else(|_| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map(|d| {
+                    Local
+                        .from_local_datetime(&d.and_hms_opt(0, 0, 0).expect("midnight"))
+                        .single()
+                        .expect("local midnight")
+                })
+            })
+            .ok()?,
+        _ => return None,
+    };
+    Some(date.format("%b %-d, %Y").to_string())
 }
 
 impl AgentsPanel {
-    fn load(&mut self, cx: &mut Context<Self>) {
-        let Some((client, runtime)) = self.client.clone() else {
+    fn holds_secret(&self) -> bool {
+        self.fresh.is_some()
+    }
+
+    /// The effect that runs for each signed-in session of the panel.
+    fn open_remote(&mut self, cx: &mut Context<Self>) {
+        self.remote = true;
+        self.fresh = None;
+        self.rows = None;
+        self.load_error = None;
+        self.create_error = None;
+        self.revoke_error = None;
+        self.unavailable = false;
+        self.creating = false;
+        self.revoking = None;
+        let Some((client, _)) = self.client.clone() else {
+            self.signed_in = false;
             cx.notify();
             return;
         };
-        self.busy = true;
-        self.error = None;
+        self.signed_in = client.session().is_some();
+        if self.signed_in {
+            self.load(cx);
+        }
+        cx.notify();
+    }
+
+    fn load(&mut self, cx: &mut Context<Self>) {
+        let Some((client, runtime)) = self.client.clone() else {
+            return;
+        };
+        self.load_error = None;
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    if client.session().is_none() {
-                        Ok(None)
-                    } else {
-                        tokens::list(&client).await.map(Some)
-                    }
-                })
-                .await;
+            let result = runtime.spawn(async move { tokens::list(&client).await }).await;
             let _ = this.update(cx, |this, cx| {
-                this.busy = false;
-                this.signed_in = !matches!(&result, Ok(Ok(None)));
                 match result {
-                    Ok(Ok(rows)) => this.rows = rows,
-                    Ok(Err(e)) => this.error = Some(e),
-                    Err(_) => this.error = Some("Markie Cloud request stopped.".into()),
+                    Ok(Ok(rows)) => {
+                        this.rows = Some(rows);
+                        this.unavailable = false;
+                    }
+                    Ok(Err(e)) => {
+                        this.rows = None;
+                        this.unavailable = e.status.is_some_and(tokens::offers_no_agent_tokens);
+                        this.load_error = Some(e.message);
+                    }
+                    Err(_) => this.load_error = Some("Markie Cloud request stopped.".into()),
                 }
                 cx.notify();
             });
@@ -495,30 +645,43 @@ impl AgentsPanel {
         cx.notify();
     }
 
-    fn create(&mut self, cx: &mut Context<Self>) {
+    fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((client, runtime)) = self.client.clone() else {
             return;
         };
-        if self.busy || self.fresh.is_some() {
+        let name = self.input.read(cx).value().trim().to_string();
+        if name.is_empty() || self.creating {
             return;
         }
-        let name = self.input.read(cx).value().to_string();
-        self.busy = true;
-        self.error = None;
-        cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move { tokens::create(&client, &name).await })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                this.busy = false;
+        self.creating = true;
+        self.create_error = None;
+        let input = self.input.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = runtime.spawn(async move { tokens::create(&client, &name).await }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.creating = false;
                 match result {
                     Ok(Ok(token)) if this.remote => {
+                        input.update(cx, |s, cx| s.set_value("", window, cx));
+                        let row = tokens::Token {
+                            id: token.id.clone(),
+                            name: token.name.clone(),
+                            prefix: token.prefix.clone(),
+                            created_at: token.created_at.clone(),
+                            last_used_at: None,
+                        };
+                        this.rows.get_or_insert_default().insert(0, row);
                         this.fresh = Some(token);
-                        this.load(cx);
                     }
+                    // Answered after the panel closed: show it to nobody.
                     Ok(Ok(_)) => {}
-                    Ok(Err(e)) => this.error = Some(e),
-                    Err(_) => this.error = Some("Markie Cloud request stopped.".into()),
+                    Ok(Err(e)) => {
+                        if e.status.is_some_and(tokens::offers_no_agent_tokens) {
+                            this.unavailable = true;
+                        }
+                        this.create_error = Some(e.message);
+                    }
+                    Err(_) => this.create_error = Some("Markie Cloud request stopped.".into()),
                 }
                 cx.notify();
             });
@@ -531,81 +694,102 @@ impl AgentsPanel {
         let Some((client, runtime)) = self.client.clone() else {
             return;
         };
-        if self.busy {
+        if self.revoking.is_some() {
             return;
         }
         let prompt = window.prompt(
             PromptLevel::Warning,
-            &format!("Revoke “{name}”?"),
-            Some("The agent will no longer be able to use this token."),
-            &[PromptButton::ok("Revoke"), PromptButton::cancel("Cancel")],
+            &format!(
+                "Revoke “{name}”? Any agent using it stops working right away. The documents it made stay in your Cloud. This cannot be undone."
+            ),
+            None,
+            &[PromptButton::ok("OK"), PromptButton::cancel("Cancel")],
             cx,
         );
-        self.busy = true;
         cx.spawn(async move |this, cx| {
-            let confirmed = prompt.await.ok() == Some(0);
-            let result = if confirmed {
-                runtime
-                    .spawn(async move { tokens::revoke(&client, &id).await })
-                    .await
-                    .unwrap_or_else(|_| Err("Markie Cloud request stopped.".into()))
-            } else {
-                Ok(())
-            };
+            if prompt.await.ok() != Some(0) {
+                return;
+            }
             let _ = this.update(cx, |this, cx| {
-                this.busy = false;
+                this.revoking = Some(id.clone());
+                this.revoke_error = None;
+                cx.notify();
+            });
+            let gone = id.clone();
+            let result = runtime
+                .spawn(async move { tokens::revoke(&client, &id).await })
+                .await
+                .unwrap_or_else(|_| Err("Markie Cloud request stopped.".into()));
+            let _ = this.update(cx, |this, cx| {
+                this.revoking = None;
                 match result {
-                    Ok(()) if confirmed && this.remote => this.load(cx),
-                    Err(e) => this.error = Some(e),
-                    _ => {}
+                    Ok(()) => {
+                        if let Some(rows) = &mut this.rows {
+                            rows.retain(|t| t.id != gone);
+                        }
+                        if this.fresh.as_ref().is_some_and(|t| t.id == gone) {
+                            this.fresh = None;
+                        }
+                    }
+                    Err(e) => this.revoke_error = Some(e),
                 }
                 cx.notify();
             });
         })
         .detach();
-        cx.notify();
     }
 }
 
 fn paragraph(s: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .text_size(px(12.))
+        .line_height(relative(1.625))
         .text_color(cx.theme().muted_foreground)
         .child(s.into())
 }
 
-fn heading(s: &'static str) -> Div {
-    div().text_xs().font_weight(FontWeight::SEMIBOLD).child(s)
+fn red(s: impl Into<SharedString>) -> Div {
+    div().text_size(px(12.)).line_height(relative(1.625)).text_color(rgb(0xdc2626)).child(s.into())
 }
 
-fn copy_block(id: &'static str, name: &'static str, text: String, hide: bool, cx: &App) -> Div {
-    let visible = if hide {
-        "Hidden · copy to clipboard".into()
-    } else {
-        text.clone()
-    };
+/// `.markie-overlay-section`.
+fn heading(s: &'static str) -> Div {
+    div().mt_2().text_xs().font_weight(FontWeight::SEMIBOLD).child(s)
+}
+
+/// copy-block.tsx: an upper-case label, a hint, Copy, and the text in full.
+fn copy_block(id: impl Into<SharedString>, label: impl Into<SharedString>, hint: &'static str, text: String, cx: &App) -> Div {
+    let copied = text.clone();
     v_flex()
         .gap_1()
+        .mb_3()
         .child(
-            h_flex().justify_between().child(heading(name)).child(
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label("Copy")
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-                    }),
-            ),
+            h_flex()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .text_size(px(11.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(label.into().to_uppercase()))
+                        .child(hint),
+                )
+                .child(Button::new(id.into()).small().label("Copy").on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
+                })),
         )
         .child(
             div()
                 .text_size(px(11.5))
-                .p_2()
+                .line_height(relative(1.625))
+                .font_family("Menlo")
+                .p(px(10.))
                 .border_1()
                 .border_color(cx.theme().border)
                 .rounded_md()
                 .bg(cx.theme().background)
-                .child(visible),
+                .text_color(cx.theme().foreground.opacity(0.9))
+                .child(text),
         )
 }
 
@@ -613,41 +797,26 @@ impl Render for AgentsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = h_flex()
             .justify_between()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(if self.remote {
-                        "Remote agents"
-                    } else {
-                        "Connect an agent to Markie"
-                    }),
-            )
-            .child(
-                Button::new("close-agents")
-                    .small()
-                    .ghost()
-                    .label("×")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if this.remote {
-                            this.remote = false;
-                            this.fresh = None;
-                            this.error = None;
-                            cx.notify();
-                        } else {
-                            window.close_dialog(cx);
-                        }
-                    })),
-            );
-        let body = if self.remote {
-            self.remote_body(cx)
-        } else {
-            self.local_body(cx)
-        };
+            .mb_1()
+            .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(if self.remote {
+                "Remote agents"
+            } else {
+                "Connect an agent to Markie"
+            }))
+            .child(Button::new("close-agents").small().ghost().label("×").on_click(cx.listener(|this, _, window, cx| {
+                if this.remote {
+                    this.remote = false;
+                    this.fresh = None;
+                    cx.notify();
+                } else {
+                    window.close_dialog(cx);
+                }
+            })));
+        let body = if self.remote { self.remote_body(cx) } else { self.local_body(cx) };
         v_flex().gap_2().child(header).child(
             div()
                 .id("agents-body")
-                .max_h(window.viewport_size().height * 0.68)
+                .max_h(window.viewport_size().height * 0.86)
                 .overflow_y_scroll()
                 .child(body),
         )
@@ -657,6 +826,9 @@ impl Render for AgentsPanel {
 impl AgentsPanel {
     fn local_body(&self, cx: &mut Context<Self>) -> Div {
         let p = self.server.to_string_lossy();
+        // Markie RS's own server name and adapter, so this never changes the
+        // `markie` entry an agent keeps for Electron Markie. The path has a
+        // space in it ("Markie RS.app"), so the shell needs it quoted.
         let quoted = format!("'{}'", p.replace('\'', "'\\''"));
         let claude = format!("claude mcp add markie-rs -- node {quoted}");
         let codex = format!(
@@ -664,176 +836,196 @@ impl AgentsPanel {
             serde_json::to_string(&p).expect("path")
         );
         let always = permissions::sync_always(&self.data);
-        v_flex().gap_2()
-            .child(paragraph("Find, search, read and write documents on this computer, and open them here in Markie. Word, RTF, OpenDocument and HTML stay read-only to agents.", cx))
-            .child(div().text_xs().text_color(cx.theme().success).child("Runs on demand, on this computer. Nothing is uploaded unless you let an agent put a file in your Markie Cloud."))
+        v_flex()
+            .gap_2()
+            .child(paragraph("Hand your agent the documents on this computer. It can find a document by name, search inside it, read it, write a new one, and open it here in Markie: your notes and docs, Word, RTF and OpenDocument files, CSV, JSON and YAML, and your agent files too (CLAUDE.md, AGENTS.md, ~/.claude/skills, ~/.codex).", cx))
+            .child(paragraph("Word, RTF, OpenDocument and HTML files stay read-only to agents. An agent reads their text and opens them here for you to edit, so their formatting is never overwritten.", cx))
+            .child(div().text_size(px(12.)).line_height(relative(1.625)).mb_2().text_color(cx.theme().success).child("Runs on demand, on this computer. Nothing is uploaded unless you let an agent put a file in your Markie Cloud."))
             .child(heading("Tools it gives your agent"))
-            .children([
-                ("markie_find_documents", "find any document by name, path or type"),
-                ("markie_search_documents", "search inside documents, Word and RTF too"),
-                ("markie_read_document", "read any document, Word and RTF as plain text"),
-                ("markie_write_document", "write markdown, text and data files, home folder only"),
-                ("markie_open_in_markie", "open any document here in Markie RS"),
-                ("markie_list_skills", "list your agent and skill files, grouped by tool"),
-                ("markie_check_md", "check which media and tags will show"),
-                ("markie_check_wd", "compile a Darkmown document and report problems"),
-                ("markie_cloud_sync", "put a file in Markie Cloud and get a private link"),
-                ("markie_cloud_public_link", "make a public link after you confirm"),
-                ("markie_guide", "what Markie renders and which types each tool handles"),
-                ("markie_*_md", "older Markdown-only tools"),
-            ].into_iter().map(|(tool, desc)| h_flex().gap_2().child(div().text_xs().child(tool)).child(paragraph(desc, cx))))
+            .child(v_flex().gap_1().mb_2().children(TOOLS.iter().map(|(tool, desc)| {
+                h_flex()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .child(div().flex_none().font_family("Menlo").text_color(cx.theme().foreground.opacity(0.9)).child(*tool))
+                    .child(div().min_w_0().truncate().text_color(cx.theme().muted_foreground).child(*desc))
+            })))
             .child(heading("Markie Cloud"))
-            .child(paragraph("Markie asks you before the first upload. A public link is only made when you ask for one, and Markie confirms it with you every time.", cx))
-            .child(Button::new("agent-always").small().ghost().label(if always {
-                "☑  Let agents put files in Markie Cloud without asking"
-            } else { "☐  Let agents put files in Markie Cloud without asking" }).on_click(cx.listener(move |this, _, _, cx| {
-                this.error = permissions::set_sync_always(&this.data, !always).err().map(|_| "Markie RS could not save the permission.".into());
-                cx.notify();
-            })))
+            .child(paragraph("Ask an agent for a private Markie copy of something and it puts the file in your Cloud and hands you a private link. That link opens only for you, after you sign in, on any browser or phone. Markie asks you before the first upload. A public link is only made when you ask for one, and Markie confirms it with you every time.", cx))
+            .child(
+                gpui_kit::component::checkbox::Checkbox::new("agent-always")
+                    .checked(always)
+                    .label("Let agents put files in Markie Cloud without asking")
+                    .text_size(px(12.))
+                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                        this.error = permissions::set_sync_always(&this.data, *checked)
+                            .err()
+                            .map(|_| "Markie RS could not save the permission.".into());
+                        cx.notify();
+                    })),
+            )
             .child(heading("Remote agents"))
-            .child(paragraph("An agent that is not on this computer can make documents in your Cloud with a token. Create and revoke tokens here.", cx))
-            .child(Button::new("remote-agents").small().primary().label("Remote agents…").on_click(cx.listener(|this, _, _, cx| {
-                if !this.busy { this.remote = true; this.load(cx); }
-            })))
+            .child(paragraph("An agent that is not on this computer, such as Claude on your phone, can make documents in your Cloud with a token. Create and revoke tokens here.", cx))
+            .child(div().mb_2().child(Button::new("remote-agents").small().label("Remote agents…").on_click(cx.listener(|this, _, _, cx| this.open_remote(cx)))))
             .child(heading("It files what it writes"))
-            .child(paragraph("Agents can declare a project and block without moving files on disk.", cx))
-            .child(paragraph("---\nmarkie:\n  project: bevrly\n  block: checkout-redesign\n---", cx))
-            .child(if self.available {
-                v_flex().gap_2().child(copy_block("claude-rs", "Claude Code", claude, false, cx))
-                    .child(copy_block("codex-rs", "Codex", codex, false, cx))
-                    .child(paragraph("Needs Node 22.15 or newer on your PATH. Keep Markie RS open. Add this setup manually.", cx))
-            } else { v_flex().child(paragraph("The local Markie RS bridge is unavailable in this instance.", cx)) })
-            .children(self.error.as_ref().map(|error| paragraph(error.clone(), cx)))
+            .child(paragraph("Every connected agent is handed Markie’s organization conventions when it starts, so it declares which project and block a document belongs to as it writes:", cx))
+            .child(
+                div()
+                    .text_size(px(11.5))
+                    .line_height(relative(1.625))
+                    .font_family("Menlo")
+                    .p(px(10.))
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded_md()
+                    .bg(cx.theme().background)
+                    .text_color(cx.theme().foreground.opacity(0.9))
+                    .child(FRONT_MATTER_EXAMPLE),
+            )
+            .child(paragraph("New documents arrive organized in Projects instead of loose on disk, and nothing moves on your disk to make it happen. Works with Claude Code, Codex, and any other MCP client.", cx))
+            .child(copy_block("claude-rs", "Claude Code", "run this in your terminal", claude, cx))
+            .child(copy_block("codex-rs", "Codex", "add to ~/.codex/config.toml", codex, cx))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .line_height(relative(1.625))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if self.available {
+                        "Needs node 22.15 or newer on your PATH, and Markie RS open. After adding it, ask your agent to “list my Markie skills” or “search my documents for X.”"
+                    } else {
+                        "Needs node 22.15 or newer on your PATH, and Markie RS open. This Markie RS window could not start its local agent connection, so agents cannot reach it until Markie RS is opened again."
+                    }),
+            )
+            .children(self.error.as_ref().map(|error| red(error.clone())))
     }
 
     fn remote_body(&self, cx: &mut Context<Self>) -> Div {
-        let mut content = v_flex().gap_2().child(paragraph("For an agent that does not run on this computer. A token can create documents and can read and edit only the documents it created. Those documents stay private to you.", cx));
-        if self.busy && !self.signed_in {
+        let mut content = v_flex().gap_2().child(paragraph("For an agent that does not run on this computer, such as Claude on your phone or in the cloud. It connects to Markie Cloud with a token you make here. A token can create documents, and it can read and edit only the documents that same token created. It cannot reach your other documents, the ones another token made, or the ones an agent on this computer put in your Cloud. The documents a token makes stay private to you and open in the Markie app.", cx).mb_2());
+        if self.checking {
             return content.child(paragraph("Checking your Markie Cloud sign-in…", cx));
         }
         if !self.signed_in {
-            return content.child(heading("Sign in first")).child(paragraph("Remote agents need a Markie Cloud sign-in. Sign in from Settings, then open this panel again.", cx));
+            return content
+                .child(heading("Sign in first"))
+                .child(paragraph("Remote agents need a Markie Cloud sign-in, because the tokens belong to your account. Sign in to Markie Cloud from Settings, then open this panel again.", cx));
         }
-        if self.error.as_deref() == Some("This server does not offer agent tokens.") {
-            return content.child(paragraph("This server does not offer agent tokens.", cx));
+        if self.unavailable {
+            return content.child(red(self
+                .load_error
+                .clone()
+                .or_else(|| self.create_error.clone())
+                .unwrap_or_else(|| "This server does not offer agent tokens.".into())));
         }
-        let url = tokens::url(
-            self.client
-                .as_ref()
-                .map_or(markie_cloud::DEFAULT_SERVER, |(client, _)| client.origin()),
-        );
-        let secret = self
-            .fresh
-            .as_ref()
-            .map_or(tokens::TOKEN_PLACEHOLDER, |token| token.token.as_str());
+        let url = tokens::url(self.client.as_ref().map_or(markie_cloud::DEFAULT_SERVER, |(client, _)| client.origin()));
+        let secret = self.fresh.as_ref().map_or(tokens::TOKEN_PLACEHOLDER, |token| token.token.as_str());
+        let can_create = !self.creating && !self.input.read(cx).value().trim().is_empty();
         content = content
-            .child(copy_block("remote-url", "MCP URL", url.clone(), false, cx))
+            .child(copy_block("remote-url", "MCP URL", "the hosted Markie server", url.clone(), cx))
             .child(heading("Create a token"))
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Input::new(&self.input).small())
+                    .child(div().flex_1().min_w_0().child(Input::new(&self.input).small()))
                     .child(
                         Button::new("create-token")
                             .small()
-                            .primary()
-                            .disabled(self.busy || self.fresh.is_some())
-                            .label("Create token")
-                            .on_click(cx.listener(|this, _, _, cx| this.create(cx))),
+                            .disabled(!can_create)
+                            .label(if self.creating { "Creating…" } else { "Create token" })
+                            .on_click(cx.listener(|this, _, window, cx| this.create(window, cx))),
                     ),
             );
+        if let Some(error) = &self.create_error {
+            content = content.child(red(error.clone()));
+        }
         if let Some(fresh) = &self.fresh {
-            content = content
-                .child(paragraph(
-                    "Copy this token now. It will not be shown again, and Markie does not keep it.",
-                    cx,
-                ))
-                .child(copy_block(
-                    "new-token",
-                    "New token · shown once",
-                    fresh.token.clone(),
-                    true,
-                    cx,
-                ))
-                .child(
-                    Button::new("forget-token")
-                        .small()
-                        .label("I have copied it")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.fresh = None;
-                            cx.notify();
-                        })),
-                );
+            content = content.child(
+                v_flex()
+                    .p(px(10.))
+                    .mb_3()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded_md()
+                    .bg(cx.theme().background)
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(relative(1.625))
+                            .mb_2()
+                            .text_color(rgb(0xca8a04))
+                            .child("Copy this token now. It will not be shown again, and Markie does not keep it. If you lose it, revoke it and make a new one."),
+                    )
+                    .child(copy_block("new-token", format!("Token: {}", fresh.name), "shown once", fresh.token.clone(), cx))
+                    .child(div().child(Button::new("forget-token").xsmall().label("I have copied it").on_click(cx.listener(|this, _, _, cx| {
+                        this.fresh = None;
+                        cx.notify();
+                    })))),
+            );
         }
         content = content
             .child(heading("Set up your agent"))
-            .child(copy_block(
-                "remote-claude",
-                "Claude Code",
-                tokens::claude(&url, secret),
-                self.fresh.is_some(),
+            .child(paragraph(
+                if self.fresh.is_some() {
+                    "These include the token you just made.".to_string()
+                } else {
+                    format!("Replace {} with a token. A new token fills it in here.", tokens::TOKEN_PLACEHOLDER)
+                },
                 cx,
             ))
-            .child(copy_block(
-                "remote-config",
-                "Other MCP clients",
-                tokens::config(&url, secret),
-                self.fresh.is_some(),
-                cx,
-            ))
+            .child(copy_block("remote-claude", "Claude Code", "run this in your terminal", tokens::claude(&url, secret), cx))
+            .child(copy_block("remote-config", "Other MCP clients", "add to the client's MCP config", tokens::config(&url, secret), cx))
             .child(heading("Your tokens"));
-        if let Some(rows) = &self.rows {
-            if rows.is_empty() {
-                content = content.child(paragraph("No tokens yet.", cx));
+        content = match (&self.load_error, &self.rows) {
+            (Some(error), _) => content.child(
+                h_flex().gap_1().child(red(error.clone())).child(
+                    Button::new("retry-tokens").xsmall().ghost().label("Try again").on_click(cx.listener(|this, _, _, cx| this.load(cx))),
+                ),
+            ),
+            (None, None) => content.child(paragraph("Loading…", cx)),
+            (None, Some(rows)) if rows.is_empty() => content.child(paragraph("No tokens yet.", cx)),
+            (None, Some(rows)) => {
+                let mut list = v_flex().border_1().border_color(cx.theme().border).rounded_md();
+                for (i, row) in rows.iter().enumerate() {
+                    let (id, name) = (row.id.clone(), row.name.clone());
+                    let created = format_when(row.created_at.as_ref()).map_or_else(|| "Created".to_string(), |d| format!("Created {d}"));
+                    let used = format_when(row.last_used_at.as_ref()).map_or_else(|| "Never used".to_string(), |d| format!("Last used {d}"));
+                    let prefix = if row.prefix.is_empty() { String::new() } else { format!("{}… · ", row.prefix) };
+                    let revoking = self.revoking.as_deref() == Some(row.id.as_str());
+                    list = list.child(
+                        h_flex()
+                            .gap_3()
+                            .px(px(10.))
+                            .py_2()
+                            .text_size(px(12.))
+                            .when(i > 0, |d| d.border_t_1().border_color(cx.theme().border))
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .child(div().truncate().text_color(cx.theme().foreground).child(row.name.clone()))
+                                    .child(div().truncate().text_size(px(11.)).text_color(cx.theme().muted_foreground).child(format!("{prefix}{created} · {used}"))),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!("revoke-{id}")))
+                                    .xsmall()
+                                    .ghost()
+                                    .disabled(revoking)
+                                    .label(if revoking { "Revoking…" } else { "Revoke" })
+                                    .on_click(cx.listener(move |this, _, window, cx| this.revoke(id.clone(), name.clone(), window, cx))),
+                            ),
+                    );
+                }
+                content.child(list)
             }
-            for row in rows {
-                let id = row.id.clone();
-                let name = row.name.clone();
-                let dates = format!(
-                    "{}… · {} · {}",
-                    row.prefix,
-                    row.created_at
-                        .as_ref()
-                        .map(|v| format!("Created {v}"))
-                        .unwrap_or_else(|| "Created".into()),
-                    row.last_used_at
-                        .as_ref()
-                        .map(|v| format!("Last used {v}"))
-                        .unwrap_or_else(|| "Never used".into())
-                );
-                content = content.child(
-                    h_flex()
-                        .gap_2()
-                        .justify_between()
-                        .child(
-                            v_flex()
-                                .child(paragraph(name.clone(), cx))
-                                .child(paragraph(dates, cx)),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!("revoke-{id}")))
-                                .small()
-                                .ghost()
-                                .disabled(self.busy)
-                                .label("Revoke")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.revoke(id.clone(), name.clone(), window, cx)
-                                })),
-                        ),
-                );
-            }
+        };
+        if let Some(error) = &self.revoke_error {
+            content = content.child(red(error.clone()));
         }
-        if let Some(error) = &self.error {
-            content = content.child(paragraph(error.clone(), cx)).child(
-                Button::new("retry-tokens")
-                    .small()
-                    .label("Try again")
-                    .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-            );
-        }
-        content.child(paragraph(
-            "You can have up to 20 active tokens. Each token can make 60 changes an hour.",
-            cx,
-        ))
+        content.child(
+            div()
+                .mt_3()
+                .text_size(px(11.))
+                .line_height(relative(1.625))
+                .text_color(cx.theme().muted_foreground)
+                .child("You can have up to 20 active tokens. Each token can make 60 changes an hour."),
+        )
     }
 }

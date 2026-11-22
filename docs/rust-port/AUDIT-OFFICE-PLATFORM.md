@@ -1,12 +1,13 @@
 # Markie RS Office and platform parity audit
 
-Score: **46.97% (31 PASS ÷ 66 eligible)**. 101 rows: 31 PASS, 29 FAIL,
-35 EXCLUDED, 3 NEEDS-CAPTURE, and 3 NEEDS-KIRBY. The 93 inventory bullets
-are all represented. Splits add six rows, plus two extra vault verification rows.
+macOS score: **83.61% (51 PASS ÷ 61 eligible)**. 105 rows: 51 PASS, 4 FAIL,
+39 EXCLUDED, 5 EXCLUDED-PLATFORM, 3 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
+All 93 inventory bullets are represented. Both exclusion classes stay out of the denominator.
 
 Baseline: Rust `3b6f6c0`, Electron source `ae62cfa7e73f`, installed reference
-`0.9.7`. No live profile, real Keychain item or user vault or document was
-used. No app instance was launched and no OS registration was changed.
+`0.9.7`. The follow-up merged through `987ba30`. Only scratch app
+instances and synthetic fixtures were used; no live profile, real Keychain
+item, user vault, or user document was used.
 
 IDs are source line numbers in [PARITY.md](PARITY.md) at the baseline. The
 category bullets have rows of their own. Where a source bullet has unlike
@@ -47,18 +48,18 @@ can match an IPC operation without implementing the Electron transport.
 
 | ID | Inventory item | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 17.298 | Office workspace behavior | FAIL | Electron `src/components/documents/use-document-workspace.ts:29`; App `workspace/office.rs:91`; Word engine/edit tests | Most surfaces present; see bounded codec differences and native menu issues below. |
-| 17.299 | DOCX editing, formatting, page setup and views, objects and review; Find | FAIL | Electron `src/components/documents/word-document-editor.tsx:34,400,406,579`, `word-find.ts:6,21`, `src/lib/office/docx-numbering.ts:96`; Word `word_find_replaces_literal_matches_across_runs_in_one_undo_step`, `headings_lists_and_alignment_change_the_paragraph`, `page_size_and_orientation_follow_the_layout_commands`, `tables_insert_after_the_caret_and_are_editable`, `pictures_scale_into_the_content_box`, `links_need_a_selection_and_can_be_retargeted`, `page_breaks_insert_at_the_caret_and_add_a_paragraph_at_the_end`, `comments_attach_to_the_caret_paragraph`, `tracked_typing_makes_a_revision_that_can_be_accepted`; Office `reuses_the_first_numbering_instance_in_document_order` | Reference Find and Replace is functional despite the inventory's stub note. Native now has literal find and replace and reuses list definitions in source order. IDNA hyperlinks and exact Unicode grapheme handling are still open. |
-| 17.300 | DOC extraction to TXT, worker and budgets | FAIL | Electron `src/lib/office/legacy-doc-worker-client.ts:3,21`, `src/components/documents/use-document-workspace.ts:29`; App `import_reads_at_most_one_byte_past_its_budget`, `doc_copy_rejects_lone_surrogates_but_accepts_literal_replacement_characters`; Office `extracts_a_real_synthetic_doc_off_thread`, `stops_waiting_for_a_hung_import_on_its_time_budget` | Bounded read, invalid Unicode rejection and TXT conversion verified. New opens invalidate the previous result. Rust still detaches rather than terminates a timed-out worker. |
-| 17.301 | RTF and ODT bounded same-format save | FAIL | Electron `src/lib/office/rich-document.ts`; Office `retains_exact_original_bytes_and_owns_defensive_copies`, `exports_unchanged_source_byte_for_byte_and_owns_an_isolated_copy`, `edits_and_reopens_same_format_preserving_unrelated_part_bytes`; Word `an_untouched_document_saves_its_original_bytes` | Untouched bytes and edits verified for both. Legacy multi-byte RTF remains a codec mismatch. |
-| 17.302 | HTML consent and UTF-8 TXT copy | FAIL | Electron `src/components/documents/use-document-workspace.ts:310`, `src/lib/document-import/index.ts:8`; App `workspace/import_copy.rs` `confirm_conversion`; Office `html_extracts_paragraph_heading_inline_text_and_character_references_in_order`, `html_does_not_execute_scripts_custom_elements_handlers_forms_or_fetch` | Consent and supported UTF-8 output are wired, and the read is bounded. Malformed HTML repair can differ from Chromium; see OFFICE.md. Capture the dialog too. |
+| 17.298 | Office workspace behavior | FAIL | Electron `src/components/documents/use-document-workspace.ts:29`; App `workspace/office.rs:91`; Word engine/edit tests | Editing, imports, untitled recovery, and active menu state are covered. Exact printed pagination remains blocked by the renderer difference in 17.306. |
+| 17.299 | DOCX editing, formatting, page setup and views, objects and review; Find | PASS | Electron `src/components/documents/word-document-editor.tsx:34,400,406,579`, `word-find.ts:6,21`, `src/lib/office/docx-numbering.ts:96`; Word `word_find_replaces_literal_matches_across_runs_in_one_undo_step`, `headings_lists_and_alignment_change_the_paragraph`, `page_size_and_orientation_follow_the_layout_commands`, `tables_insert_after_the_caret_and_are_editable`, `pictures_scale_into_the_content_box`, `links_need_a_selection_and_can_be_retargeted`, `page_breaks_insert_at_the_caret_and_add_a_paragraph_at_the_end`, `comments_attach_to_the_caret_paragraph`, `tracked_typing_makes_a_revision_that_can_be_accepted`; Office `reuses_the_first_numbering_instance_in_document_order` | Find and formatting edits round-trip through the original engine. URL and grapheme primitives already shipped in Markie RS now handle IDNA, path normalization and extended clusters; tested by `normalizes_link_targets_like_the_url_serializer` and the Word editing suite. |
+| 17.300 | DOC extraction to TXT, worker and budgets | PASS | Electron `src/lib/office/legacy-doc-worker-client.ts:3,21`, `src/components/documents/use-document-workspace.ts:29`; App `import_reads_at_most_one_byte_past_its_budget`, `doc_copy_rejects_lone_surrogates_but_accepts_literal_replacement_characters`; Office `extracts_a_real_synthetic_doc_off_thread`, `stops_waiting_for_a_hung_import_on_its_time_budget` | `worker_parses_an_original_doc_without_opening_a_window` and `reaps_a_timed_out_document_worker` cover the separate process. The importer cancels previous opens and preserves the 32 MiB / 5 second limits. |
+| 17.301 | RTF and ODT bounded same-format save | PASS | Electron `src/lib/office/rich-document.ts`; Office `retains_exact_original_bytes_and_owns_defensive_copies`, `exports_unchanged_source_byte_for_byte_and_owns_an_isolated_copy`, `edits_and_reopens_same_format_preserving_unrelated_part_bytes`; Word `an_untouched_document_saves_its_original_bytes` | `decodes_bytes_with_document_and_font_codepage_authority` exercises Shift_JIS, GBK, EUC-KR and Big5. Untouched bytes and edited reopening are covered for RTF and ODT. |
+| 17.302 | HTML consent and UTF-8 TXT copy | PASS | Electron `src/components/documents/use-document-workspace.ts:310`, `src/lib/document-import/index.ts:8`; App `workspace/import_copy.rs` `confirm_conversion`; Office `html_extracts_paragraph_heading_inline_text_and_character_references_in_order`, `html_does_not_execute_scripts_custom_elements_handlers_forms_or_fetch` | A bounded, inert template fragment uses the browser's tree-building model. `html_repairs_misplaced_table_text_as_the_browser_does` covers malformed markup; source consent and file preservation are unchanged. |
 | 17.303 | Native Format, Insert, Layout and Review menus | PASS | Electron `electron/document-menu.js:27,87`; Word `actions.rs` `register_commands`, `menu_commands_follow_the_selection_and_format`; GPUI `platform/app_menu.rs:341` | macOS validates the registered actions. Word tools suspend the native commands and Outline is DOCX-only. Visual/native input verification still pending. |
 | 17.304 | Light paper for Word PDF export and print | PASS | Electron `src/lib/office/docx-print.ts`; App `workspace/export.rs:106`; Export `office_pdf.rs:236,282`, `plain_documents_print`, `converted_markdown_prints_with_lists_tables_and_links` | The Office branch never passes dark theme. Print dialog appearance remains for capture. |
 | 17.305 | Source surfaces | PASS | Electron `src/lib/office/`, `src/components/documents/`, `electron/document-menu.js`; Rust Office crate, Word crate, App `workspace/office.rs:67` | Code location inventory, not a second blanket pass on features. |
-| 17.306 | Codec and document-import equivalents | FAIL | Electron `src/lib/office/docx-hyperlinks.ts`, `rtf.ts`, `docx-print.ts`, `src/lib/document-import/`; Office `src/docx/links.rs:17`, `src/rtf.rs`, `src/document_import/html.rs`; Export `office_pdf.rs:63` | The implementations exist, but the IDNA, CJK, HTML repair and print projection differences are tracked in OFFICE.md. |
-| 17.307 | Document workspace and sessions | FAIL | Electron `src/components/documents/use-document-workspace.ts:29,268`; App `workspace/office.rs:91,193`, `workspace/import_copy.rs`, `workspace/untitled.rs` | Office editing/recovery exists, but new Office documents prompt for a path before editing. The dev workbench has no parity proof. |
-| 17.308 | Command IDs and session menu mapping | FAIL | Electron `electron/document-menu-commands.json`, `document-menu.js`; Word `commands.rs` and `actions.rs`; App `main.rs` `set_menus` | Native Word groups map the four core groups. File and View integration is still structured differently, including Word Layout nested under View. |
-| 17.309a | Menu-state and action compatibility | FAIL | Electron `electron/document-menu.js:27,87`; Word `menu_commands_follow_the_selection_and_format`; App `main.rs:171` | Selection/format and open tool gates are tested. Full per-workspace palette and menu-state parity is not proven. |
+| 17.306 | Codec and document-import equivalents | FAIL | Electron `src/lib/office/docx-hyperlinks.ts`, `rtf.ts`, `docx-print.ts`, `src/lib/document-import/`; Office `src/docx/links.rs:17`, `src/rtf.rs`, `src/document_import/html.rs`; Export `office_pdf.rs:63` | Inert HTML repair, CJK decoding, IDNA and grapheme rules are covered. Chromium uses CSS paragraph min-height and table-row break avoidance (`docx-print.ts:165`); the Typst projection (`office_pdf.rs:262`) does not implement the same height and row-break rules. No equivalent print layout is proven without a paired PDF comparison. |
+| 17.307 | Document workspace and sessions | PASS | Electron `src/components/documents/use-document-workspace.ts:29,268`; App `workspace/office.rs:91,193`, `workspace/import_copy.rs`, `workspace/untitled.rs` | New Office documents are editable before choosing a file. `unsaved_office_session_only_saves_to_its_original_format` and `pending_untitled_ignores_normal_files_and_exported_sessions` cover first save and recovery. |
+| 17.308 | Command IDs and session menu mapping | PASS | Electron `electron/document-menu-commands.json`, `document-menu.js`; Word `commands.rs` and `actions.rs`; App `main.rs` `set_menus` | The File and View groups now expose the Office actions directly. `office_commands_are_directly_in_the_reference_file_and_view_groups` checks both groups. |
+| 17.309a | Menu-state and action compatibility | PASS | Electron `electron/document-menu.js:27,87`; Word `menu_commands_follow_the_selection_and_format`; App `main.rs:171` | Word actions depend on the selection and format, suspend under modal workspace layers, and are listed by capability in the palette. `menu_commands_follow_the_selection_and_format` covers the command gate. |
 | 17.309b | Unchanged bytes and edited reopen | PASS | Electron `src/lib/office/rich-document.ts`; App `workspace/office.rs:147`; Word `an_untouched_document_saves_its_original_bytes`; Office `returns_the_byte_identical_original_when_untouched_or_reverted` | Save untouched is a no-op on disk; exported bytes equal the input for DOCX, RTF and ODT, and all three reopen with the edit. |
 | 17.310 | Native port placement | PASS | Electron `src/lib/office/` and `src/components/documents/word-document-editor.tsx:579`; Rust `markie-office` and `markie-office-view` Cargo manifests | Architecture row. The editor and codecs are native. |
 | 17.311 | Original codecs and provenance | PASS | Electron `docs/decisions/2026-10-14-original-document-engine.md`; Office `Cargo.toml` and `src/lib.rs` | No third-party Office engine in the port. |
@@ -68,18 +69,20 @@ can match an IPC operation without implementing the Electron transport.
 
 | ID | Inventory item | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 20.342 | OS integration behavior | FAIL | Electron `electron/main.js:3983-4030,4128`; App `main.rs` launch queue, `open_urls.rs`, `instance.rs` | Windows single instance, exact grants and cross-platform OS delivery remain open. |
+| 20.342 | OS integration behavior | PASS | Electron `electron/main.js:3983-4030,4128`; App `main.rs` launch queue, `open_urls.rs`, `instance.rs` | Mac file/URL delivery and second launch dispatch share the same queue. Native OS tests below are scoped to macOS. |
+| 20.342w | OS integration behavior on Windows | EXCLUDED-PLATFORM | App `instance.rs` | macOS-only benchmark; Windows is a later phase. |
 | 20.343a | Sign-in return on the native side scheme | PASS | Electron `electron/deep-links.js`, `src/lib/auth-state.ts:19`; App `keeps_only_markie_rs_links_for_sign_in`; Cloud `start_urls_ask_for_the_markie_rs_hand_back` | URL hand-backs and initial argv dispatch to the same account handler. No live account sign-in attempted. |
 | 20.343b | Anonymous public link and confirmation | PASS | Electron `electron/share-open.js:84`, `main.js` `openSharedTokenFromDeepLink`; App `share_plans`, `fetches_a_public_link_without_following_redirects` | Trust plan and local mock HTTP request, without sending an account bearer token. |
 | 20.343c | Account document ID with source hint and own session | PASS | Electron `electron/main.js` `openCloudDocFromDeepLink`; App `deeplinks.rs:413`, `doc_links_carry_only_an_id`; Cloud `client.rs:102` | Uses the side build's own session on a trusted server. Live signed-in flow not run. |
 | 20.344 | Claim file types in Settings | EXCLUDED | Electron `electron/default-apps.js`, `src/components/default-apps-section.tsx`; App `default_apps.rs` | Native buttons intentionally cannot take over. |
-| 20.345 | Single instance; macOS OS events; argv | FAIL | Electron `electron/main.js:4007,4022,4026,4128`; App `a_second_launch_hands_over_and_a_stale_socket_is_taken_over`, `args_round_trip`, `open_urls.rs:13` | Unix handoff tests pass; Windows still starts independent copies. Cold Finder handoff needs a live check. |
+| 20.345 | Single instance; macOS OS events; argv | PASS | Electron `electron/main.js:4007,4022,4026,4128`; App `a_second_launch_hands_over_and_a_stale_socket_is_taken_over`, `args_round_trip`, `open_urls.rs:13` | Mac handlers route file URLs and auth callbacks; Unix handoff and cold path/URL ordering are covered by the isolated instance and open URL tests. No Windows implementation is claimed. |
+| 20.345w | Windows second-instance handoff | EXCLUDED-PLATFORM | App `instance.rs` `cfg(not(unix))` | macOS-only benchmark; named-pipe single-instance support is deferred. |
 | 20.346a | Hidden inset title bar and traffic lights | NEEDS-CAPTURE | Electron `electron/main.js:883`; App `main.rs` `TitlebarOptions` | Native position is set to (14, 14). Capture on both themes. |
-| 20.346b | Linux desktop integration | FAIL | Electron `electron/linux-desktop.js:69,112`; Rust `scripts/com.zvn.markie.rs.desktop`; App `linux_launcher_advertises_only_the_side_build_scheme` | Entry now exists, but no automatic install, icon or live XDG desktop verification. |
-| 20.347 | Open passive local files, reveal other files | FAIL | Electron `electron/main.js:2453`, `file-grants.js:66,87`, `local-open-policy.js:19`; Core `workspace_roots_grant_passive_files_and_never_turn_scripts_into_opens`; App `workspace/rich.rs` `open_rich_link` | Current folder and explicitly granted roots now work. Exact session grants for attachments and other opened directories are still narrower than Electron. |
+| 20.346b | Linux desktop integration | EXCLUDED-PLATFORM | Electron `electron/linux-desktop.js:69,112`; Rust `scripts/com.zvn.markie.rs.desktop`; App `linux_launcher_advertises_only_the_side_build_scheme` | Linux registration and launcher behavior are a later phase. |
+| 20.347 | Open passive local files, reveal other files | PASS | Electron `electron/main.js:2453`, `file-grants.js:66,87`, `local-open-policy.js:19`; Core `workspace_roots_grant_passive_files_and_never_turn_scripts_into_opens`; App `workspace/rich.rs` `open_rich_link` | `attachment_grants_are_exact_and_opened_document_grants_follow_moves` proves exact dropped-file grants, opened-document roots, and workspace roots. Targets are resolved before classification; scripts reveal only. |
 | 20.348 | Source inventory for OS integration | PASS | Electron `electron/deep-links.js`, `default-apps.js`, `desktop-intents.js`, `local-open-policy.js`; App `deeplinks.rs`, `default_apps.rs`, `open_urls.rs`; Core `links.rs` | Implementation map, not a separate behavioral claim. |
-| 20.349 | Compatibility surfaces | FAIL | Electron `electron/main.js:2453,3983`; App `open_urls.rs:13`, `deeplinks.rs:303`, `workspace/rich.rs` | Default-app mutation excluded; local grants still differ. |
-| 20.350 | Default-app status and operations, external/local links, deep-link delivery | FAIL | Electron `electron/main.js:2453,2567,4007`, `electron/default-apps.js`; App `default_apps.rs`, `open_urls.rs:13`, `workspace/rich.rs`; Core `only_plain_web_addresses_reach_the_browser` | Native direct calls replace IPC; exact local grants and whole-flow OS testing are open. |
+| 20.349 | Compatibility surfaces | PASS | Electron `electron/main.js:2453,3983`; App `open_urls.rs:13`, `deeplinks.rs:303`, `workspace/rich.rs` | Native calls replace IPC. The session grant test covers local rights; default-app ownership changes remain deliberately excluded. |
+| 20.350 | Default-app status and operations, external/local links, deep-link delivery | PASS | Electron `electron/main.js:2453,2567,4007`, `electron/default-apps.js`; App `default_apps.rs`, `open_urls.rs:13`, `workspace/rich.rs`; Core `only_plain_web_addresses_reach_the_browser` | Local links now use active session grants; external links and deep links retain their existing routing. Claims on file types and the shipping URL scheme remain excluded. |
 | 20.351 | Raw route and Downloads landing | PASS | Electron `electron/share-open.js:84`, `main.js:2436`; App `fetches_a_public_link_without_following_redirects`, `landing_names` | Endpoint path, anonymous fetch and naming tested locally. |
 | 20.352 | Packaging claims for the production bundle, scheme and UTIs | EXCLUDED | Electron `electron/main.js:4005`; `scripts/bundle-mac.sh:40,53` | Side bundle keeps `com.zvn.markie.rs`, only `markie-rs` and no file associations. |
 
@@ -87,11 +90,12 @@ can match an IPC operation without implementing the Electron transport.
 
 | ID | Inventory item | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 22.374 | Vault behavior | FAIL | Electron `src/components/documents/vault-panel.tsx:326,610`; App `workspace/vault.rs`; `create_save_lock_unlock_backup_restore` | See editing, capture and biometric gaps. |
+| 22.374 | Vault behavior | PASS | Electron `src/components/documents/vault-panel.tsx:326,610`; App `workspace/vault.rs`; `create_save_lock_unlock_backup_restore` | Local unlock, encrypted editing, save, backup, and automatic lock are covered by isolated tests. Actual Touch ID and the comparison capture remain separate checks. |
 | 22.375 | Passphrase vault creation, unlock and generator | PASS | Electron `src/lib/vault/passphrase.ts:21,83`, `documents/vault-panel.tsx:338`; Vault compatibility test; App `create_save_lock_unlock_backup_restore`, `failure_copy_matches_electron` | Six-word generator, 16+ code points, wrong-passphrase behavior and no plaintext fallback. |
-| 22.376 | Encrypted documents and env key/value editor | FAIL | Electron `src/components/documents/vault-panel.tsx`, `vault-env-editor.tsx`; App `workspace/vault.rs:1671,1881`, `parked_keys_are_masked`, `key_problems` | Native vault keeps DOCX opaque instead of allowing in-vault edits. Multiline env values edit in Raw, not in the key row. |
+| 22.376 | Encrypted documents and env key/value editor | PASS | Electron `src/components/documents/vault-panel.tsx`, `vault-env-editor.tsx`; App `workspace/vault.rs:1671,1881`, `parked_keys_are_masked`, `key_problems` | `private_docx_preserves_original_bytes_and_edits_survive_encrypted_save` covers the in-vault engine. Revealed multiline env values are editable in their row and removed from the visible editor when hidden. |
 | 22.377 | Real Touch ID unlock and confirmation of open, reveal and copy | NEEDS-KIRBY | Electron `electron/vault-touch-id.js`, `vault-panel.tsx:207`; App `workspace/vault.rs` `unlock_with_touch_id`; Vault `device.rs` | Trait tests are not a real sensor check. Follow procedure below. |
-| 22.378 | Copy a secret and clear only if unchanged | FAIL | Electron `electron/secret-clipboard.js:20,36`; Vault `clears_after_the_timer_if_unchanged`, `leaves_what_the_user_copied_since`, `a_new_copy_replaces_the_old_timer_and_clear_now_works`; App `workspace/vault.rs` `secret_pasteboard` | The macOS implementation and fake clipboard tests work. Non-macOS writes nowhere. |
+| 22.378 | Copy a secret and clear only if unchanged | PASS | Electron `electron/secret-clipboard.js:20,36`; Vault `clears_after_the_timer_if_unchanged`, `leaves_what_the_user_copied_since`, `a_new_copy_replaces_the_old_timer_and_clear_now_works`; App `workspace/vault.rs` `secret_pasteboard` | macOS concealed pasteboard implementation plus tests named in this row. Clears after 30 seconds if unchanged; non-macOS is listed separately. |
+| 22.378w | Secret clipboard on Windows and Linux | EXCLUDED-PLATFORM | App `workspace/vault.rs` `secret_pasteboard` | Non-macOS clipboard behavior is a later phase. |
 | 22.379 | Vault backup and restore | PASS | Electron `src/lib/vault/backup.ts:26,33`; App `create_save_lock_unlock_backup_restore`; Vault compatibility test | Test-only backup round trips in both directions. |
 | 22.380 | Vault source surfaces | PASS | Electron `src/lib/vault/`, `src/components/documents/vault-panel.tsx`, `electron/secret-clipboard.js`; Vault crate, App `workspace/vault.rs:1947` | Native codec, repository, clipboard and UI are identifiable. |
 | 22.381 | Exact vault wire format | PASS | Electron `src/lib/vault/envelope.ts:119,140,153`; Vault compatibility test | Ciphertext envelopes, canonical validation and backup interoperability exercised. |
@@ -100,7 +104,8 @@ can match an IPC operation without implementing the Electron transport.
 | 22.384 | 8 MiB content and 128 records | PASS | Electron `src/lib/vault/envelope.ts:2`, `storage.ts:44`; Vault `envelope.rs` `limits`, `storage.rs` | Same checked content/record caps. |
 | 22.385 | IndexedDB store and cutover | EXCLUDED | Electron `src/lib/vault/storage.ts:44`; Migrate `the_migrated_vault_opens_with_the_fixture_passphrase` | Native uses its own atomic JSON. Migration postponed by Kirby. |
 | 22.386a | Touch ID available, enroll, unlock, confirm, remove transport | NEEDS-KIRBY | Electron `electron/vault-touch-id.js`; App `workspace/vault.rs` `refresh_touch_id`, `enroll_touch_id`; Vault `device.rs` | Native takes the place of IPC. Check all five operations on the sensor. |
-| 22.386b | Clipboard copy and clear transport | FAIL | Electron `electron/secret-clipboard.js:20`; Vault `clipboard.rs:85`; App `workspace/vault.rs` `secret_pasteboard` | Direct runtime calls; no Windows/Linux implementation. |
+| 22.386b | Clipboard copy and clear transport | PASS | Electron `electron/secret-clipboard.js:20`; Vault `clipboard.rs:85`; App `workspace/vault.rs` `secret_pasteboard` | macOS native copy/clear takes the place of IPC. Fake clipboard tests cover clearing, replacement and the timer. |
+| 22.386bw | Clipboard copy/clear transport on Windows and Linux | EXCLUDED-PLATFORM | App `workspace/vault.rs` `secret_pasteboard` | Non-macOS clipboard behavior is a later phase. |
 | 22.387a | RustCrypto, LocalAuthentication and separate Keychain | NEEDS-KIRBY | Electron `electron/vault-touch-id.js`, `src/lib/vault/envelope.ts`; Vault `Cargo.toml`, `device.rs`; App `the_vault_lives_in_markie_rs_own_places` | Crypto proven separately. Verify the actual consent sheet and Keychain lifecycle with a scratch vault. |
 | 22.387b | IndexedDB migration | EXCLUDED | Electron `src/lib/vault/storage.ts:44`; Migrate `the_migrated_vault_opens_with_the_fixture_passphrase` | Same switchover rule as 22.385. |
 | 22.A | Window hiding and idle lock | PASS | Electron `src/components/documents/vault-panel.tsx:328,610`; App `hidden_window_triggers_the_same_lock_as_idle_without_reentering` | Native visibility invokes the bounded checkpoint. The live minimize/restore and platform visibility definitions remain to be checked. |
@@ -132,25 +137,25 @@ can match an IPC operation without implementing the Electron transport.
 
 | ID | Inventory item | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 27.427 | Crash reporting behavior | FAIL | Electron `electron/main.js:301,347,939,3605`; App `logs.rs:415,438` | Local log and optional reporting present. App recovery and native dump handling differ. |
+| 27.427 | Crash reporting behavior | FAIL | Electron `electron/main.js:301,347,939,3605`; App `logs.rs:415,438` | The live scratch document failure recovered without changing the source bytes. Fatal crash parity still lacks Electron's out-of-process Crashpad supervision; see 27.431. |
 | 27.428 | Opt-in; default off; inert without DSN | PASS | Electron `electron/crash-reporting.js:33,82,95`; App `consent_fails_closed`, `dsn_rules` | No live DSN used. |
 | 27.429 | Reveal Crash Log in Help | PASS | Electron `electron/main.js:3633` and `revealCrashLog`; App `main.rs:179`, `logs.rs:438`, `log_rotates_one_generation` | Same command and empty-log treatment; actual file-manager UI not driven. |
-| 27.430 | Top-level error boundary and error logging | FAIL | Electron `src/components/error-boundary.tsx`; `electron/main.js:939,3605`; App `logs.rs:415` | Native panic hook logs but does not implement recovery/renderer fallback. |
-| 27.431 | Crash reporter sources, envelope, log, DSN, stdio | FAIL | Electron `electron/crash-reporting.js:95`, `sentry-envelope.js`, `crash-log.js:14`, `stdio-guard.js:20`; App `entry_format_matches_electron`, `envelope_shape_and_scrubbing`, `logs.rs:415` | Log, DSN and envelope present; Rust doesn't create equivalent Crashpad dumps or guard all stderr writes. |
-| 27.432 | Consent, reveal and renderer-error operations | FAIL | Electron `electron/main.js:3605,3612,3620,3633`; App `logs.rs:132,140,438` | Native settings and reveal present, but no analogue for isolated renderer failures. |
+| 27.430 | Top-level error boundary and error logging | PASS | Electron `src/components/error-boundary.tsx`; `electron/main.js:939,3605`; App `logs.rs:415` | The scratch Word pane visibly displayed the error screen. Reload reopened the same fixture without changing its SHA-256. Unit test: `a_failed_projection_does_not_prevent_the_replacement_from_rendering`. |
+| 27.431 | Crash reporter sources, envelope, log, DSN, stdio | FAIL | Electron `electron/crash-reporting.js:95`, `sentry-envelope.js`, `crash-log.js:14`, `stdio-guard.js:20`; App `entry_format_matches_electron`, `envelope_shape_and_scrubbing`, `logs.rs:415` | The app reveals its own macOS `.ips` reports without uploading them, verified with a scratch metadata fixture. It does not produce Electron's Crashpad `.dmp` files. A real fatal-process test would write an OS report outside the allowed scratch location; exact dump parity needs a separately approved crash reporter or an isolated macOS test environment. |
+| 27.432 | Consent, reveal and renderer-error operations | PASS | Electron `electron/main.js:3605,3612,3620,3633`; App `logs.rs:132,140,438` | The scratch process wrote exactly one renderer error, kept the app alive, and recovered through Reload. Existing consent and log reveal tests apply; the shared system clipboard was not overwritten by the probe. |
 | 27.433 | Panic hook and scrubbed Sentry envelope POST | PASS | Electron `electron/crash-reporting.js:95`, `sentry-envelope.js`; App `logs.rs:390,415`, `scrub_matches_the_javascript`, `frames_from_v8_and_rust`, `envelope_shape_and_scrubbing` | Native platform and stack types differ; wire envelope and scrub tested, no external upload. |
 
 ## 31. Miscellany
 
 | ID | Inventory item | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 31.472 | Private release gate | FAIL | Electron `electron/main.js:1330`, `private-release.js`; App `main.rs:1` | Side build has no private release lane. This feature was not separately authorized as an exclusion. |
-| 31.473 | Suppress document UI until authorization | FAIL | Electron `electron/main.js:1330`, `src/components/private-release-gate.tsx`; App `main.rs` `gpui_kit::open_window` | No authorized native variant or account gate. Do not gate normal local files. |
-| 31.474 | Private release status, session, authorize, lock and auth hand-back | FAIL | Electron `electron/main.js:1333-1345`; App `open_urls.rs:23`, `workspace/account.rs` | Ordinary native sign-in is not a private build grant or lock. |
-| 31.475 | Private-release and preview CLI flags | FAIL | Electron `electron/private-release.js`, `desktop-preview.cjs`; App `main.rs` initial args | Native nightly flags are not Electron's authorization workflow. |
+| 31.472 | Private release gate | EXCLUDED | Electron `electron/main.js:1330`, `private-release.js`; App `main.rs:1` | Electron release-lane machinery. The side build has no release pipeline, as with its updater. |
+| 31.473 | Suppress document UI until authorization | EXCLUDED | Electron `electron/main.js:1330`, `src/components/private-release-gate.tsx`; App `main.rs` `gpui_kit::open_window` | The macOS side app is not a private Electron release variant; no release authorization UI is required. |
+| 31.474 | Private release status, session, authorize, lock and auth hand-back | EXCLUDED | Electron `electron/main.js:1333-1345`; App `open_urls.rs:23`, `workspace/account.rs` | Private release-session and build-credential IPC belong to the shipping Electron release pipeline. |
+| 31.475 | Private-release and preview CLI flags | EXCLUDED | Electron `electron/private-release.js`, `desktop-preview.cjs`; App `main.rs` initial args | The private-release and preview launch flags belong to Electron's release pipeline. |
 | 31.476 | One-time welcome; skip if the OS opened a file | PASS | Electron `src/lib/first-run.ts:30`, `welcome-doc.ts`, `src/app/page.tsx:1972`; App `a_handed_over_file_does_not_consume_the_welcome_document`, `main.rs` launch queue | First-run marker uses the isolated registry. Already queued Finder files and argv go first. The live cold Finder timing still needs to be checked. |
-| 31.477 | Inline MP4 player; link dropped attachments in place | FAIL | Electron `src/lib/rehype-media.ts:17,32`, `attach.ts:50,67`; Rust editor `render.rs:956`, `hrefs_like_attach_ts`, `attachments` | Drop links do not copy bytes. The rendered MP4 is a card, not an embedded player. |
-| 31.478 | Persistent hash media cache, `asset-cache/cache.json` | FAIL | Electron `electron/asset-cache.js:39`, `main.js:1714`; App `workspace/cloud_resources.rs:36`; Cloud `assets.rs:374` | Native caches images in per-reference buckets with ETags, not the bounded deduplicated store. Audio and video do not use this path. |
+| 31.477 | Inline MP4 player; link dropped attachments in place | PASS | Electron `src/lib/rehype-media.ts:17,32`, `attach.ts:50,67`; Rust editor `render.rs:956`, `hrefs_like_attach_ts`, `attachments` | An authorized synthetic MP4 played inline with changing frames and WebKit controls. `mp4_seeking_accepts_a_bounded_range_only` tests seeking bounds. Dropped files remain in place, with exact grants and relative or absolute links as in `attach.ts`. |
+| 31.478 | Persistent hash media cache, `asset-cache/cache.json` | PASS | Electron `electron/asset-cache.js:39`, `main.js:1714`; App `workspace/cloud_resources.rs:36`; Cloud `assets.rs:374` | `persists_deduplicated_hash_files_and_wipes_when_account_changes` and `never_overwrites_through_a_cache_symlink` cover `<Markie RS data>/asset-cache/cache.json`, hash blobs, limits, and account isolation. |
 | 31.479 | Security posture | PASS | Electron `electron/csp.js:64`, `main.js:2453`, `share-open.js:84`; App `deeplinks.rs:303`, `workspace/rich.rs`; Web `island.rs:412` | All four enumerated safety policies are present. Exact functional filesystem grants are tracked separately in 20.347. |
 | 31.480 | Only YouTube and Vimeo remote player frame origins | PASS | Electron `electron/csp.js:15`; Export `embeds.rs:27,114`; Web `island.rs:408,412` | Only a canonical provider iframe on the video path; Darkmown has its own no-frame policy. |
 | 31.481 | Origin allowlist before sending a bearer token | PASS | Electron `electron/main.js` `trustedServerArg`, `share-origin.js`; Cloud `client.rs:59,95,102`, `allowed_server_origin`, `redirects_are_not_followed` | Untrusted share host fetch is anonymous after consent. |
@@ -159,9 +164,13 @@ can match an IPC operation without implementing the Electron transport.
 
 ## Deferred screen verification
 
-The console reported `IOConsoleLocked = Yes`. No window was launched. On an
-unlocked screen, do the following for 17.312, 20.346a and 22.B, plus any
-functional screens noted above:
+The baseline pass had a locked console. The follow-up captured Markie RS
+Word and vault views in both themes at 1280 × 820 points. Installed Electron
+0.9.7 opened the scratch Office Library automatically. Close inputs sent
+only to the scratch PID did not dismiss it, and accessibility exposed no
+web area to confirm panel state, so those reference captures were removed.
+There is no valid paired geometry or styling verdict for 17.312, 20.346a
+and 22.B yet. To repeat them:
 
 1. Make a private scratch directory with separate `rs-home`, `rs-data`,
    `electron-home`, `electron-data` and fixture directories. Generate a Word
@@ -183,12 +192,14 @@ functional screens noted above:
 
    ```sh
    rust/scripts/screen/with-screen-lock.sh office-electron -- sh -c '
-     env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME="$1" /Applications/Markie.app/Contents/MacOS/Markie "--user-data-dir=$2" "$3" >"$4" 2>&1 &
+     env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u ELECTRON_RUN_AS_NODE HOME="$1" /Applications/Markie.app/Contents/MacOS/Markie "--user-data-dir=$2" "$3" >"$4" 2>&1 &
      printf "%s\n" "$!"
    ' sh "<electron-home>" "<electron-data>" "<electron-fixture.docx>" "<electron.log>"
    ```
 
-   Record only the launched PIDs and never enter Browse, Search or Library in Electron.
+   Use a short scratch path to avoid the Unix socket path limit. Record only
+   the launched PIDs. Do not capture until the reference Library has been
+   confirmed closed, and never navigate into Browse, Search or Library.
 3. Use only `rust/scripts/screen/act.sh <pid>` for focus, keys, menus and
    clicks. Resize each to `1280 820`. Under Appearance choose Light in each
    scratch session, then Dark for the second pass. Capture the same Word
@@ -255,3 +266,36 @@ it a handler for either document types or `markie://`.
 | `fd74119` | 17.299 and 17.306: reuse numbering instances in source order. |
 | `9b8dfea` | 20.347 and 20.350: workspace-root local links. 31.483: test the no-launch rule with a granted root. |
 | `8136dc2` | 22.A: trigger lock on native window hiding and keep a timed-out repository checkpoint off the UI thread. |
+
+## macOS follow-up verification
+
+- `25d23d4`: exact user-dropped attachment grants, opened-document directory
+  grants, workspace roots, and grant movement. Passive files open; executable
+  targets reveal only.
+- `6931d50`, `cb44d23`: encrypted DOCX run edits and revealed multiline env
+  editing. The DOCX regression checks untouched bytes and encrypted reopen.
+- `b6852a6`, `754c164`, `8f632a3`: untitled Office first save and recovery,
+  native File/View mapping, and selection/modal gating. `bb12e89` proves
+  DOC subprocess extraction and timeout reaping. `0a4f6f3` reuses primitives
+  already present in Markie RS for browser-standard codec behavior; it
+  replaces the handwritten HTML fragment builder and entity table.
+- `118b3d9`: account-bound, content-addressed cache under the side app's data
+  folder. Tests cover the Electron index shape, reuse, eviction and symlink
+  refusal.
+- `905e8c9`, `4ecc4e3`: a deliberate scratch render failure showed the
+  error screen, logged exactly once, and reopened the fixture on Reload
+  without changing its SHA-256. It did not exercise a fatal process crash.
+  Native report discovery uses [Apple's .ips report metadata](https://developer.apple.com/documentation/xcode/interpreting-the-json-format-of-a-crash-report),
+  not Crashpad. No native report was collected from outside scratch.
+- `4622669`: a scratch MP4 played inline. The pictures at two timestamps
+  show WebKit controls and changing playback frames.
+
+Native-only evidence is in
+`.autoloop/runs/office-platform-resume.rHbmVA/` in this worktree:
+`probe-before.png`, `probe-after.png`, `clip-playing-a.png`,
+`clip-playing-b.png`, and the four `rs-word-*` and `rs-vault-*` captures.
+The app processes launched for verification have been closed. Copy details
+was not clicked because the desktop clipboard is shared.
+
+The final Rust run, `cargo test --workspace`, passed **990 tests**, with 0
+failures and 2 ignored. The ignored Keychain tests were not run.

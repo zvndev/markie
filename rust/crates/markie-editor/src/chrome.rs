@@ -1056,6 +1056,16 @@ impl RichView {
 
 impl Render for RichView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        markie_core::render_boundary::project(|| self.project_document(window, cx).into_any_element())
+            .unwrap_or_else(|detail| {
+                cx.emit(crate::RichEvent::RenderFailed(detail));
+                div().into_any_element()
+            })
+    }
+}
+
+impl RichView {
+    fn project_document(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let started = std::time::Instant::now();
         self.source_mode = false;
         let outside = std::mem::take(&mut self.toolbar_outside);
@@ -1071,15 +1081,22 @@ impl Render for RichView {
         if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
             eprintln!("render {} blocks in {:?}", self.editor.block_count(), started.elapsed());
         }
+        let format_rail = self.render_format_rail(cx);
         gpui_kit::component::v_flex()
             .size_full()
             .children(toolbar)
             .children(prompt)
             .child(
+                gpui_kit::component::h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .children(format_rail)
+                    .child(
                 div()
                     .relative()
                     .flex_1()
-                    .min_h_0()
+                    .min_w_0()
+                    .h_full()
                     .child(doc)
                     .children(rail)
                     .children(find)
@@ -1087,7 +1104,12 @@ impl Render for RichView {
                     .children(self.render_math_field(cx))
                     .children(self.render_link_card(window, cx))
                     .children(self.render_notice(cx))
-                    .children(self.render_video(window, cx)),
+                    .children(self.render_video(window, cx))
+                    .children({
+                        let look = self.look(cx.theme(), window);
+                        self.render_lightbox(&look, window, cx)
+                    }),
+                    ),
             )
     }
 }

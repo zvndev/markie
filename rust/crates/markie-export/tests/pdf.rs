@@ -58,3 +58,24 @@ fn system_font_is_loaded() {
     eprintln!("{families:?}");
     assert!(families.iter().any(|f| f.contains("SF") || f.contains("System")), "{families:?}");
 }
+
+/// Measured against Electron's PDF of everything.md (AUDIT-AGENTS-WEB.md
+/// row 23.1): Chromium's disc marker, sub and super offsets, a heading's own
+/// half-leading, and boxes that take only the neighbour's half-leading.
+#[test]
+fn layout_rules_measured_from_chromium() {
+    let md = "## Head\n\n- one\n\n> quote\n\n---\n\nH<sub>2</sub>O x<sup>2</sup>\n";
+    let (source, _) = markie_export::pdf::typst_source(md, &PdfOptions::default()).unwrap();
+    for rule in [
+        "#let mk-disc = box(move(dy: 4.92pt, circle(radius: 1.86pt",
+        "mk-li(mk-disc,",
+        "sub(size: 0.75em, typographic: false, baseline: 0.27em,",
+        "super(size: 0.75em, typographic: false, baseline: -0.405em,",
+        "inset: (top: size * 0.2785 - 2.925pt, bottom: pad + size * 0.2785)",
+        "#let mk-hr() = block(above: 18.9pt + L / 2,",
+        "#let mk-quote(body) = block(above: 10.5pt + L / 2,",
+        "outset: (left: -1.125pt)",
+    ] {
+        assert!(source.contains(rule), "missing {rule}");
+    }
+}

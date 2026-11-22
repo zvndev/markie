@@ -96,3 +96,11 @@ Under `.autoloop/runs/visual-editor/` in this worktree. Electron is on the left 
 Each pair was captured at 1280 by 820 with the same `rich.md` fixture. It holds every block type: three heading levels and two more, bold, italic, strike, code, link, underline, highlight, colour, inline and display math, bullet, nested, numbered and task lists, a quote, a code block, an aligned table, a rule, a picture and a video link.
 
 The pairs were taken before the window shell's rewrite was merged in, so the panels around the page differ. The page and toolbar are this work.
+
+Not yet captured, because the Mac was locked for the rest of the run:
+
+- The toolbar above Source mode, and Source's 14 px SF Mono.
+- The page inside the window shell's new frame, after both merges.
+- The seven templates other than Markie, and the New York face.
+
+Each is built and its tests pass. One more capture pass at 1280 by 820 settles them.

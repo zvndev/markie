@@ -39,6 +39,7 @@ mod comments;
 mod share;
 mod dialog_chrome;
 mod file_ops;
+mod first_run;
 mod folder_tree;
 mod history_dialog;
 mod library_rows;
@@ -142,6 +143,7 @@ pub struct Workspace {
     dirty: bool,
     /// Warnings shown above a converted copy (Electron's `session.warnings`).
     doc_notes: Vec<String>,
+    import_epoch: u64,
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
@@ -275,6 +277,7 @@ impl Workspace {
             split_echo: None,
             dirty: false,
             doc_notes: Vec::new(),
+            import_epoch: 0,
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
@@ -330,12 +333,19 @@ impl Workspace {
                 first_file = Some(path);
             }
         }
-        if let Some(path) = first_file.clone() {
+        let seen = this.registry.as_ref().and_then(|r| r.setting(first_run::SEEN_KEY).ok().flatten()).is_some();
+        let show_welcome = first_run::should_show_welcome(first_file.is_some(), seen);
+        if let Some(path) = first_file {
             this.open_path(&path, window, cx);
         } else if this.untitled_draft_pending() {
             // Electron offers the untitled journal entry when the launch opens
             // no document: an empty untitled buffer shows the recovery strip.
             this.open_untitled(untitled::untitled_name("md"), String::new(), window, cx);
+        } else if show_welcome {
+            this.open_welcome(window, cx);
+            if let Some(registry) = &this.registry {
+                let _ = registry.set_setting(first_run::SEEN_KEY, "1");
+            }
         } else if let Some(path) = this.most_recent() {
             this.open_path(&path, window, cx);
         }
@@ -482,6 +492,7 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.invalidate_import();
         if self.intercept_import(path, window, cx) {
             return;
         }

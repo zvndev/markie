@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Markie RS
+Comment=Markdown reader and editor
+Type=Application
+Exec=markie-rs %U
+TryExec=markie-rs
+Terminal=false
+Categories=Office;TextEditor;Utility;
+MimeType=x-scheme-handler/markie-rs;

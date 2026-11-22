@@ -201,12 +201,8 @@ fn main() {
     };
     // A markie-rs:// link in argv (Windows and Linux hand links over this
     // way) waits for the window; everything else is a file to open.
-    let launch_links: Vec<String> = args.iter().filter(|a| a.starts_with(deeplinks::SCHEME)).cloned().collect();
-    let initial: Vec<std::path::PathBuf> = args
-        .iter()
-        .filter(|a| !a.starts_with(deeplinks::SCHEME) && !a.starts_with("-psn_"))
-        .map(std::path::PathBuf::from)
-        .collect();
+    let mut launch_links: Vec<String> = args.iter().filter(|a| a.starts_with(deeplinks::SCHEME)).cloned().collect();
+    let mut initial = open_urls::launch_file_paths(&args);
 
     // macOS hands files to a running app (Finder, `open -a`) and, on a cold
     // launch through Launch Services, often hands the first file the same way
@@ -242,6 +238,12 @@ fn main() {
             workspace::account::AccountStore::init(cx);
             std::thread::spawn(open_urls::register_url_scheme);
 
+            // Include Finder's already delivered launch documents before the
+            // workspace chooses its first document or marks the welcome seen.
+            while let Ok(urls) = open_rx.try_recv() {
+                initial.extend(open_urls::file_paths(&urls));
+                launch_links.extend(urls.into_iter().filter(|u| u.starts_with(deeplinks::SCHEME)));
+            }
             let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -268,7 +270,8 @@ fn main() {
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {
                 let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
             });
-            for link in launch_links {
+            workspace::account::handle_open_urls(open_urls::hand_back_links(&launch_links), cx);
+            for link in open_urls::deep_links(&launch_links) {
                 deeplinks::deliver(link, window_handle, workspace.clone(), cx);
             }
 

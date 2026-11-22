@@ -9,13 +9,14 @@
 //!   `<stem> converted.txt` (`convertAdditionalDocument`); Cancel import
 //!   leaves the open document as it was.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 
 use markie_office::document_import::{AdditionalDocumentFormat, AdditionalDocumentInput, DocumentImportLimits, convert_additional_document};
-use markie_office::legacy_doc::{DocImportOptions, extract_legacy_doc_text_off_thread};
+use markie_office::legacy_doc::{DocImportOptions, LEGACY_DOC_MAX_INPUT, LegacyDocText, extract_legacy_doc_text_off_thread};
 
 use super::dialog_chrome::{Tokens, fade, shadow};
 use super::overlay::Overlay;
@@ -30,7 +31,7 @@ pub(super) const HTML_NOTICE: &str = "Imported a new text-only copy. The origina
 
 /// `name.replace(/\.doc$/i, " (converted).txt")`.
 pub(super) fn doc_copy_name(name: &str) -> String {
-    if name.len() >= 4 && name[name.len() - 4..].eq_ignore_ascii_case(".doc") {
+    if name.get(name.len().saturating_sub(4)..).is_some_and(|ext| ext.eq_ignore_ascii_case(".doc")) {
         format!("{} (converted).txt", &name[..name.len() - 4])
     } else {
         name.to_string()
@@ -51,7 +52,37 @@ fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+fn read_import(mut input: impl Read, limit: usize, limit_error: &str) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    input.by_ref().take(limit as u64 + 1).read_to_end(&mut bytes)
+        .map_err(|e| format!("Markie could not read this file: {e}"))?;
+    if bytes.len() > limit {
+        return Err(limit_error.into());
+    }
+    Ok(bytes)
+}
+
+fn doc_copy(extracted: LegacyDocText) -> Result<(String, Vec<String>), String> {
+    // Electron's encodeTextDocument refuses invalid Unicode before switching
+    // documents. The codec retains the original units, even when its display
+    // string needed replacement characters.
+    if char::decode_utf16(extracted.raw_text.iter().copied()).any(|unit| unit.is_err()) {
+        return Err("The document is not valid Unicode text.".into());
+    }
+    let text = doc_text(&extracted.text);
+    let mut notes = vec![DOC_WARNING.to_string()];
+    if text != extracted.text {
+        notes.push(DOC_SEPARATORS.into());
+    }
+    notes.extend(extracted.warnings);
+    Ok((text, notes))
+}
+
 impl Workspace {
+    pub(super) fn invalidate_import(&mut self) {
+        self.import_epoch = self.import_epoch.wrapping_add(1);
+    }
+
     /// Called by `open_path` before it opens anything. True when the file is
     /// one of these and was taken care of here.
     pub(super) fn intercept_import(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -70,27 +101,28 @@ impl Workspace {
     }
 
     fn open_doc_copy(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(e) => return window.push_notification(format!("Markie could not read this file: {e}"), cx),
-        };
         let name = doc_copy_name(&file_name(&path));
-        let reader = cx.background_spawn(async move { extract_legacy_doc_text_off_thread(&bytes, DocImportOptions::default()) });
+        let epoch = self.import_epoch;
+        let reader = cx.background_spawn(async move {
+            let file = std::fs::File::open(path).map_err(|e| format!("Markie could not read this file: {e}"))?;
+            let bytes = read_import(file, LEGACY_DOC_MAX_INPUT, "Legacy DOC exceeds the 32 MiB import limit.")?;
+            let extracted = extract_legacy_doc_text_off_thread(&bytes, DocImportOptions::default()).map_err(|e| e.to_string())?;
+            doc_copy(extracted)
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = reader.await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(extracted) => {
-                    let text = doc_text(&extracted.text);
-                    let mut notes = vec![DOC_WARNING.to_string()];
-                    if text != extracted.text {
-                        notes.push(DOC_SEPARATORS.into());
-                    }
-                    notes.extend(extracted.warnings);
-                    this.open_untitled(name, text, window, cx);
-                    this.doc_notes = notes;
-                    cx.notify();
+            this.update_in(cx, |this, window, cx| {
+                if this.import_epoch != epoch {
+                    return;
                 }
-                Err(e) => window.push_notification(e.to_string(), cx),
+                match result {
+                    Ok((text, notes)) => {
+                        this.open_untitled(name, text, window, cx);
+                        this.doc_notes = notes;
+                        cx.notify();
+                    }
+                    Err(e) => window.push_notification(e, cx),
+                }
             })
             .ok();
         })
@@ -103,10 +135,12 @@ impl Workspace {
         let path = path.clone();
         self.close_dialog(window, cx);
         let name = file_name(&path);
-        let result = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| {
+        let result = std::fs::File::open(path).map_err(|e| e.to_string()).and_then(|file| {
+            let limits = DocumentImportLimits::default();
+            let bytes = read_import(file, limits.max_input_bytes, "Source exceeds the document-import byte budget.")?;
             convert_additional_document(
                 &AdditionalDocumentInput { name: &name, bytes: &bytes, format: AdditionalDocumentFormat::Html },
-                DocumentImportLimits::default(),
+                limits,
             )
             .map_err(|e| e.message.clone())
         });
@@ -180,17 +214,33 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{doc_copy_name, doc_text};
+    use super::{doc_copy, doc_copy_name, doc_text, read_import, LegacyDocText};
 
     #[test]
     fn doc_copies_are_named_like_electron() {
         assert_eq!(doc_copy_name("Report.doc"), "Report (converted).txt");
         assert_eq!(doc_copy_name("OLD.DOC"), "OLD (converted).txt");
         assert_eq!(doc_copy_name("a.docx"), "a.docx");
+        assert_eq!(doc_copy_name("📄abc"), "📄abc");
     }
 
     #[test]
     fn legacy_separators_become_whitespace() {
         assert_eq!(doc_text("a\u{7}b\u{b}c\u{c}d\u{1}e"), "a\tb\nc\n\nde");
+    }
+
+    #[test]
+    fn import_reads_at_most_one_byte_past_its_budget() {
+        let mut input = std::io::Cursor::new([0; 64]);
+        assert_eq!(read_import(&mut input, 10, "over budget").unwrap_err(), "over budget");
+        assert_eq!(input.position(), 11);
+        assert_eq!(read_import(&[0; 10][..], 10, "over budget").unwrap().len(), 10);
+    }
+
+    #[test]
+    fn doc_copy_rejects_lone_surrogates_but_accepts_literal_replacement_characters() {
+        let input = |unit| LegacyDocText { text: "�".into(), raw_text: vec![unit], warnings: Vec::new() };
+        assert!(doc_copy(input(0xd800)).is_err());
+        assert_eq!(doc_copy(input(0xfffd)).unwrap().0, "�");
     }
 }

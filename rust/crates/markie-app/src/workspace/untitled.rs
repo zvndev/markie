@@ -62,6 +62,15 @@ impl Workspace {
 
     /// Open `text` as an unsaved document called `name`.
     pub(super) fn open_untitled(&mut self, name: String, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_untitled_with_baseline(name, text, false, window, cx);
+    }
+
+    pub(super) fn open_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_untitled_with_baseline(untitled_name("md"), super::first_run::WELCOME_DOC.into(), true, window, cx);
+    }
+
+    fn open_untitled_with_baseline(&mut self, name: String, text: String, clean: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.invalidate_import();
         self.settle(window, cx);
         self.doc_notes.clear();
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
@@ -81,7 +90,7 @@ impl Workspace {
             path: PathBuf::from(&name),
             format,
             large: false,
-            kind: DocKind::Text { encoding: TextEncoding::Utf8, bom: false, saved: String::new() },
+            kind: DocKind::Text { encoding: TextEncoding::Utf8, bom: false, saved: if clean { text.clone() } else { String::new() } },
             untitled: true,
         });
         if literal {
@@ -93,7 +102,7 @@ impl Workspace {
         self.split_echo = None;
         self.set_preview(&text, format, cx);
         self.update_stats(&text);
-        self.dirty = !text.is_empty();
+        self.dirty = !clean && !text.is_empty();
         self.autosave.cancel();
         self.disk_conflict = None;
         self.disk_missing = false;

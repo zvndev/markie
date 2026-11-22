@@ -277,3 +277,40 @@ async fn a_foreign_linking_page_is_refused() {
     let refused = account::start_provider_link(&c, LinkProvider::Apple, "pr_1").await.unwrap_err();
     assert_eq!(refused.message, "The server returned invalid account information.");
 }
+
+/// The Library menu's Live Doc address: `GET /api/docs/:id/live-doc`, read as
+/// auth-client.ts `liveDocAddress` reads it.
+#[tokio::test]
+async fn live_doc_addresses_say_who_can_open_them() {
+    let server = MockServer::start().await;
+    let tokens = Arc::new(MemoryTokenStore::new());
+    set_token(tokens.as_ref(), &server.uri(), Some("tok")).unwrap();
+    Mock::given(method("GET")).and(path("/api/docs/doc-1/live-doc")).and(header("authorization", "Bearer tok"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "https://live.example.com/w/abc", "access": "shared", "network": ["https://api.example.com", "http://bad"] })))
+        .mount(&server).await;
+    Mock::given(method("GET")).and(path("/api/docs/doc-2/live-doc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "https://live.example.com/w/def", "access": "private" })))
+        .mount(&server).await;
+    // The shape a local server with Live Docs on sends (checked against one).
+    Mock::given(method("GET")).and(path("/api/docs/doc-5/live-doc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "http://abc123.localhost:18932/", "access": "private", "network": null })))
+        .mount(&server).await;
+    Mock::given(method("GET")).and(path("/api/docs/doc-3/live-doc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "url": "javascript:alert(1)", "access": "private" })))
+        .mount(&server).await;
+    let c = client(&server, tokens);
+    let shares = SharesClient::new(&c);
+    let shared = shares.live_doc_address("doc-1").await.unwrap();
+    assert_eq!(shared.url, "https://live.example.com/w/abc");
+    assert!(shared.shared);
+    assert_eq!(shared.network, Some(vec!["https://api.example.com".to_string()]));
+    let private = shares.live_doc_address("doc-2").await.unwrap();
+    assert!(!private.shared);
+    assert_eq!(private.network, Some(vec![]), "a server that sends no list reaches nothing");
+    // Only an https (or local http) page is ever handed to the browser.
+    assert!(shares.live_doc_address("doc-3").await.is_err());
+    let local = shares.live_doc_address("doc-5").await.unwrap();
+    assert_eq!((local.url.as_str(), local.shared, local.network.clone()), ("http://abc123.localhost:18932/", false, None));
+    // No address on the server (Live Docs off answers 404): the menu says so.
+    assert!(shares.live_doc_address("doc-4").await.is_err());
+}

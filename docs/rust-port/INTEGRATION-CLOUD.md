@@ -2,7 +2,7 @@
 
 Date: 2026-11-22. Branch `t3/markie-rs-cloud-integration`, on top of `rust/markie-rs` at fb2654e. Reference: Markie 0.9.7 and its source.
 
-Six agents built sign-in ([CLOUD.md](CLOUD.md)), Cloud sync ([CLOUD-SYNC.md](CLOUD-SYNC.md)), collaboration ([COLLAB.md](COLLAB.md)) and the agent bridge ([AGENTS-BRIDGE.md](AGENTS-BRIDGE.md)) separately. This work connects them and closes their open items. All eight items on the list are done. Item 8 was proven end to end against the local server; the screen could not be captured or driven from this session, so there is no side-by-side with Electron yet.
+Six agents built sign-in ([CLOUD.md](CLOUD.md)), Cloud sync ([CLOUD-SYNC.md](CLOUD-SYNC.md)), collaboration ([COLLAB.md](COLLAB.md)) and the agent bridge ([AGENTS-BRIDGE.md](AGENTS-BRIDGE.md)) separately. This work connects them and closes their open items. All nine items are done (the ninth, the Library row menu's links, came after the shell work merged). Item 8 was proven end to end against the local server; the screen could not be captured or driven from this session, so there is no side-by-side with Electron yet.
 
 ## The list
 
@@ -16,6 +16,7 @@ Six agents built sign-in ([CLOUD.md](CLOUD.md)), Cloud sync ([CLOUD-SYNC.md](CLO
 | 6 | Collaboration leftovers: multi-line composer, Source highlights, caret only while focused | Done | 1dddb81 | `source_marks_cover_the_quote_in_bytes` | Integration run: the unfocused window publishes no caret |
 | 7 | One token store for the sign-in sheet and Cloud sync in every mode | Done | 8367d8e | `a_sign_in_in_the_shared_store_is_a_sync_scope`, `token_home` test, registry pin test | Integration run: a scratch sign-in lists the synced library at once |
 | 8 | Prove 1, 4 and 7 end to end on the local server | Done | 7f9ec80 (driver and scripts), with script fixes in the report commit | `scripts_parse_every_step` | `.autoloop/runs/cloud-integration/` (run 1 and the final run) |
+| 9 | Library row menu: Copy link, Copy Live Doc address, Open Live Doc | Done | see "9." below | `cloud_rows_offer_the_link_first_and_live_docs_the_two_addresses`, `copy_link_is_the_private_page_on_the_docs_origin`, `live_doc_addresses_say_who_can_open_them` | The Live Doc route checked against a local server with Live Docs on and off |
 
 ### 1. Sync on starts the live room
 
@@ -68,6 +69,16 @@ Agent Cloud requests use the window's own Cloud workspace. A file already in the
 
 The sync workspace pins the local test server for the run, without writing it to `servers.json`, so a sign-in on that server is a sync scope at once.
 
+### 9. The Library row menu's links
+
+Added after the shell work merged its row ⋯ menu (`workspace/library_rows.rs`), following `rowMenuEntries` in library.tsx:
+
+- Copy link, first, for any row with a cloud copy, signed in or not. It copies `CloudWorkspace::private_link`: `/d/:id` on the document's own server's docs origin, markiedocs.com for Markie Cloud, with Electron's "Private link copied. It opens for you after signing in, on any device."
+- Copy Live Doc address and Open Live Doc, after it, for a cloud `.wd` on a server the row is signed in to, with super-nightly on. Both ask that server for `GET /api/docs/:id/live-doc` with the row's own account (`live_doc_address` in cloud.rs). Copy says who it opens for ("only for you" or "for you and everyone it's shared with"); Open hands the address to the browser. Without an address: "This document has no Live Doc address on its server yet."
+- Copy path now says Electron's "Path copied. Paste it anywhere."
+
+A local server without `LIVE_DOCS_DOMAIN` answers the Live Doc route with 404, which reads as no address. With Live Docs on (app on 127.0.0.1, `LIVE_DOCS_DOMAIN=localhost:<port>`) it answered `{url: "http://<id>.localhost:<port>/", access: "private", network: null}`; the mock test pins that shape.
+
 ## End to end on the local server (item 8)
 
 This session may neither capture nor send input to app windows: `screencapture -l` answered "could not create image from window" and `act.sh` could not bring the window to the front. So the clicks are replaced by a loopback-only driver that calls exactly what the clicks call:
@@ -104,6 +115,7 @@ Each is a few lines, named here for the owners:
 - `markie-app/src/workspace.rs` (window shell): module lines for `cloud_drive` and `cloud_page`, the Cloud filter placeholder "Filter by name or folder", and one subscription for the rich editor's focus.
 - `markie-app/src/themes.rs` (shell): the GPUI Kit theme's `overlay` colour, the dialog backdrop.
 - `markie-app/src/icons.rs` (shell): the sync state, people and refresh icons from library.tsx and document-cloud-library.tsx.
+- `markie-app/src/workspace/library_rows.rs` (shell): Copy link and the two Live Doc entries in the row menu (item 9), and Electron's Copy path sentence.
 - `markie-app/src/deeplinks.rs` (platform): `session_store()` returns the shared token store.
 
 ## Findings
@@ -123,7 +135,7 @@ Each is a few lines, named here for the owners:
 
 ## Tests
 
-`cargo test --workspace` from `rust/` passed before the final commit: 902 tests in 64 suites, none failed, 2 ignored (the opt-in Keychain test and one other opt-in test). The log is in the agent's scratch folder; the integration evidence is under `.autoloop/runs/cloud-integration/`.
+`cargo test --workspace` from `rust/` passed before the items 1 to 8 report commit (902 tests, none failed, 2 ignored) and again after merging `rust/markie-rs` and adding item 9: 947 tests in 64 suites, none failed, 2 ignored (the opt-in Keychain test and one other opt-in test). The log is in the agent's scratch folder; the integration evidence is under `.autoloop/runs/cloud-integration/`.
 
 ## How to run
 

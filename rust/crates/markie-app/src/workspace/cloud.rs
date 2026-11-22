@@ -242,6 +242,19 @@ impl CloudWorkspace {
             .cloned()
     }
 
+    /// The document's private page, `/d/:id` on its server's docs origin
+    /// (markiedocs.com for Markie Cloud), when the file is in the cloud. It
+    /// opens for the owner and the people it is shared with, after they sign
+    /// in (library.tsx `copyPrivateLink`).
+    pub fn private_link(&self, path: &Path) -> Option<String> {
+        let binding = self.bindings.get(&self.binding_key(path)?)?;
+        if binding.record.state == SyncState::LocalOnly {
+            return None;
+        }
+        let id = binding.record.cloud_doc_id.as_deref()?;
+        Some(markie_cloud::sharing::view::private_url(binding.origin(), id))
+    }
+
     /// Mark or clear a file as having a cloud request in flight. A request
     /// that finds it busy waits its turn (`cloud_text`) or is refused.
     pub fn set_busy(&mut self, path: &Path, busy: bool) {
@@ -414,6 +427,31 @@ mod tests {
     use markie_cloud::tokens::{self, MemoryTokenStore, TokenStore};
     use markie_cloud::{assets, sync};
     use std::sync::Arc;
+
+    /// Copy link is the document's `/d/:id` page on its server's docs origin,
+    /// markiedocs.com for Markie Cloud, and only while it has a cloud copy.
+    #[test]
+    fn copy_link_is_the_private_page_on_the_docs_origin() {
+        use super::Binding;
+        use markie_cloud::sync::{SyncRecord, SyncState};
+        let data = tempfile::tempdir().unwrap();
+        let store: Arc<dyn TokenStore> = Arc::new(MemoryTokenStore::new());
+        let mut cloud = CloudWorkspace::with_tokens(data.path(), None, store, true, Some("http://localhost:18787"));
+        let local = std::path::PathBuf::from("/notes/a.md");
+        let record = |origin: Option<&str>, id: Option<&str>, state| SyncRecord {
+            cloud_origin: origin.map(str::to_string),
+            cloud_doc_id: id.map(str::to_string),
+            state,
+            ..Default::default()
+        };
+        cloud.bindings.insert(local.clone(), Binding::new("u1", record(None, Some("d 1"), SyncState::Synced)));
+        assert_eq!(cloud.private_link(&local).as_deref(), Some("https://markiedocs.com/d/d%201"));
+        cloud.bindings.insert(local.clone(), Binding::new("u1", record(Some("http://localhost:18787"), Some("d2"), SyncState::Paused)));
+        assert_eq!(cloud.private_link(&local).as_deref(), Some("http://localhost:18787/d/d2"));
+        cloud.bindings.insert(local.clone(), Binding::new("u1", record(None, None, SyncState::LocalOnly)));
+        assert_eq!(cloud.private_link(&local), None);
+        assert_eq!(cloud.private_link(std::path::Path::new("/notes/other.md")), None);
+    }
 
     /// Turning sync on or off re-checks the open document's access and live
     /// session (refreshCollab); a push, retry or pull does not.
@@ -941,6 +979,39 @@ impl Workspace {
         if self.doc.is_some() {
             self.collab_on_open(cx);
         }
+    }
+
+    /// Copy or open a cloud `.wd`'s hosted Live Doc address
+    /// (server/src/live-docs.ts), asked of the document's own server with
+    /// the account it is bound to (library.tsx `copyLiveDoc`, `openLiveDoc`).
+    pub(super) fn live_doc_address(&mut self, path: &Path, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        const MISSING: &str = "This document has no Live Doc address on its server yet.";
+        let Some((scope, id)) = self.cloud.binding_key(path).and_then(|key| self.cloud.bound_scope(&key)) else {
+            window.push_notification(MISSING, cx);
+            return;
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            let address = network(async move { markie_cloud::sharing::SharesClient::new(&scope.client).live_doc_address(&id).await.ok() })
+                .await
+                .ok()
+                .flatten();
+            let _ = cx.update(|window, cx| match address {
+                None => window.push_notification(MISSING, cx),
+                Some(address) if open => cx.open_url(&address.url),
+                Some(address) => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(address.url.clone()));
+                    window.push_notification(
+                        if address.shared {
+                            "Live Doc address copied. It opens for you and everyone it's shared with, after they sign in."
+                        } else {
+                            "Live Doc address copied. It opens only for you, after you sign in."
+                        },
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
     }
 
     pub(super) fn start_cloud_poll(&mut self, cx: &mut Context<Self>) {

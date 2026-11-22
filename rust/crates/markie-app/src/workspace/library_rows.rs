@@ -100,6 +100,9 @@ pub(super) enum Tone {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RowAction {
+    CopyLink,
+    CopyLiveDoc,
+    OpenLiveDoc,
     CopyPath,
     RetryBackup,
     SyncOn,
@@ -125,11 +128,29 @@ pub(super) fn classic(name: &str) -> bool {
     [".md", ".markdown", ".mdx", ".txt", ".text", ".log", ".csv"].iter().any(|e| lower.ends_with(e))
 }
 
-/// `rowMenuEntries`: copy, then the sync action this state calls for, then
-/// sharing, then deletion on its own at the bottom.
-pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool) -> Vec<Entry> {
+/// What a row's cloud copy allows beyond its sync state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct CloudLinks {
+    /// The file has a cloud copy (`item.cloudId`, not local-only): Copy link.
+    pub private_link: bool,
+    /// A cloud `.wd` on a server this row is signed in to, with super-nightly
+    /// on: Copy Live Doc address and Open Live Doc.
+    pub live_doc: bool,
+}
+
+/// `rowMenuEntries`: the links, copy path, then the sync action this state
+/// calls for, then sharing, then deletion on its own at the bottom.
+pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool, links: CloudLinks) -> Vec<Entry> {
     let e = |action, label, icon, tone| Entry { action, label, icon, tone, separated: false };
-    let mut entries = vec![e(RowAction::CopyPath, "Copy path", ICON_PATH, Tone::Default)];
+    let mut entries = Vec::new();
+    if links.private_link {
+        entries.push(e(RowAction::CopyLink, "Copy link", ICON_LINK, Tone::Default));
+    }
+    if links.live_doc {
+        entries.push(e(RowAction::CopyLiveDoc, "Copy Live Doc address", ICON_LINK, Tone::Default));
+        entries.push(e(RowAction::OpenLiveDoc, "Open Live Doc", ICON_LINK, Tone::Default));
+    }
+    entries.push(e(RowAction::CopyPath, "Copy path", ICON_PATH, Tone::Default));
     let mut sync = Vec::new();
     let in_cloud = !matches!(status, SyncStatus::LocalOnly);
     if signed_in {
@@ -156,6 +177,7 @@ pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool) ->
     entries
 }
 
+const ICON_LINK: &str = r#"<path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/>"#;
 const ICON_PATH: &str = r#"<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>"#;
 const ICON_RETRY: &str = r#"<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/>"#;
 const ICON_UPLOAD: &str = r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M12 15.5v-5M9.8 12.6 12 10.4l2.2 2.2"/>"#;
@@ -186,6 +208,17 @@ impl Workspace {
             .into_any_element()
     }
 
+    /// Copy link and the Live Doc entries for a row (`rowMenuEntries`).
+    fn row_links(&self, path: &Path, name: &str) -> CloudLinks {
+        let private_link = self.cloud.private_link(path).is_some();
+        let row_signed_in = self.cloud.binding_key(path).is_some_and(|key| self.cloud.bound_scope(&key).is_some());
+        let live_doc = private_link
+            && row_signed_in
+            && markie_core::formats::classify(name) == markie_core::formats::FormatKind::Darkmown
+            && super::comments::nightly(self.registry.as_deref());
+        CloudLinks { private_link, live_doc }
+    }
+
     pub(super) fn open_row_menu(&mut self, path: PathBuf, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.shell.row_menu = if self.shell.row_menu.as_ref().is_some_and(|(p, _)| *p == path) { None } else { Some((path, at)) };
         cx.notify();
@@ -194,9 +227,18 @@ impl Workspace {
     fn run_row_action(&mut self, path: PathBuf, action: RowAction, window: &mut Window, cx: &mut Context<Self>) {
         self.shell.row_menu = None;
         match action {
+            RowAction::CopyLink => match self.cloud.private_link(&path) {
+                Some(link) => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(link));
+                    window.push_notification("Private link copied. It opens for you after signing in, on any device.", cx);
+                }
+                None => window.push_notification("Couldn't copy the link.", cx),
+            },
+            RowAction::CopyLiveDoc => self.live_doc_address(&path, false, window, cx),
+            RowAction::OpenLiveDoc => self.live_doc_address(&path, true, window, cx),
             RowAction::CopyPath => {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string_lossy().into_owned()));
-                window.push_notification("Path copied.", cx);
+                window.push_notification("Path copied. Paste it anywhere.", cx);
             }
             RowAction::Delete => self.show_dialog(Overlay::Trash { path }, window, cx),
             RowAction::Review => self.open_path(&path, window, cx),
@@ -218,7 +260,7 @@ impl Workspace {
         let p = themes::palette(cx);
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let signed_in = super::account::signed_in_user(cx).is_some();
-        let entries = row_entries(self.row_status(&path), signed_in, classic(&name));
+        let entries = row_entries(self.row_status(&path), signed_in, classic(&name), self.row_links(&path, &name));
         let hover = p.accent.opacity(0.85);
         let items = entries.into_iter().enumerate().map(|(i, entry)| {
             let color = match entry.tone {
@@ -274,10 +316,36 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{RowAction, SyncStatus, classic, row_entries};
+    use super::{CloudLinks, RowAction, SyncStatus, classic, row_entries};
 
     fn actions(status: SyncStatus, signed_in: bool, classic: bool) -> Vec<RowAction> {
-        row_entries(status, signed_in, classic).into_iter().map(|e| e.action).collect()
+        row_entries(status, signed_in, classic, CloudLinks::default()).into_iter().map(|e| e.action).collect()
+    }
+
+    #[test]
+    fn cloud_rows_offer_the_link_first_and_live_docs_the_two_addresses() {
+        let links = |private_link, live_doc| CloudLinks { private_link, live_doc };
+        let got = |status, signed_in, l| row_entries(status, signed_in, true, l).into_iter().map(|e| (e.action, e.label)).collect::<Vec<_>>();
+        // Copy link shows for any row with a cloud copy, signed in or not.
+        assert_eq!(
+            got(SyncStatus::Synced, false, links(true, false)),
+            [(RowAction::CopyLink, "Copy link"), (RowAction::CopyPath, "Copy path"), (RowAction::Delete, "Delete file…")]
+        );
+        // A cloud Live Doc: the two addresses after Copy link, before Copy path.
+        let live = got(SyncStatus::Synced, true, links(true, true));
+        assert_eq!(
+            &live[..4],
+            [
+                (RowAction::CopyLink, "Copy link"),
+                (RowAction::CopyLiveDoc, "Copy Live Doc address"),
+                (RowAction::OpenLiveDoc, "Open Live Doc"),
+                (RowAction::CopyPath, "Copy path"),
+            ]
+        );
+        // The first sync entry is still the separated one.
+        let e = row_entries(SyncStatus::Synced, true, true, links(true, true));
+        assert!(e.iter().take(4).all(|e| !e.separated));
+        assert!(e[4].separated);
     }
 
     #[test]
@@ -310,7 +378,7 @@ mod tests {
 
     #[test]
     fn the_first_sync_entry_and_delete_are_separated() {
-        let e = row_entries(SyncStatus::Synced, true, true);
+        let e = row_entries(SyncStatus::Synced, true, true, CloudLinks::default());
         assert!(!e[0].separated);
         assert!(e[1].separated);
         assert!(!e[2].separated);

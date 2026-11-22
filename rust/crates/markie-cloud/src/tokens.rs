@@ -145,6 +145,25 @@ mod tests {
         assert_eq!(session_for(&s, crate::DEFAULT_SERVER), None);
     }
 
+    /// Writes, reads and deletes one item in the login Keychain under a
+    /// service named as a test, so it can never be mistaken for a real
+    /// sign-in. Opt in: `cargo test -p markie-cloud -- --ignored keychain`.
+    #[test]
+    #[ignore = "touches the login Keychain; run by hand"]
+    fn keychain_round_trip_with_a_marked_test_item() {
+        const SERVICE: &str = "Markie RS Test (safe to delete)";
+        const ORIGIN: &str = "https://keychain-test.invalid";
+        let store = KeyringTokenStore::new(SERVICE);
+        store.put(ORIGIN, None).unwrap();
+        assert_eq!(store.get(ORIGIN).unwrap(), None);
+        set_token(&store, ORIGIN, Some("test-token-not-a-secret")).unwrap();
+        assert!(confirm(&store, ORIGIN, "test-token-not-a-secret", "test-user").unwrap());
+        let got = store.get(ORIGIN).unwrap().unwrap();
+        assert_eq!(got.user_id.as_deref(), Some("test-user"));
+        store.put(ORIGIN, None).unwrap();
+        assert_eq!(store.get(ORIGIN).unwrap(), None);
+    }
+
     #[test]
     fn one_slot_per_origin() {
         let s = MemoryTokenStore::new();

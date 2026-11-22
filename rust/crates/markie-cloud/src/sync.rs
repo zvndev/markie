@@ -48,6 +48,12 @@ pub fn hash_content(content: &str) -> String {
     hex::encode(Sha256::digest(content.as_bytes()))
 }
 
+/// Reserve a creation id before sending anything. A retry after a timeout can
+/// address the same snapshot even if the first request reached the server.
+pub fn reserve_document_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 /// Markie refuses to open a document at or over 100 MB.
 pub const MAX_DOC_BYTES: usize = 100_000_000;
 
@@ -112,7 +118,7 @@ pub fn plan_sync_on(record: &SyncRecord, viewer: bool, new_id: impl FnOnce() -> 
         return Err((SyncRecord { state: SyncState::Unpushed, ..record.clone() }, PushResult::Error(VIEWER_REFUSAL.into())));
     }
     Ok(match &record.cloud_doc_id {
-        Some(id) => PushPlan { cloud_id: id.clone(), base_version: record.cloud_version, linked: true },
+        Some(id) => PushPlan { cloud_id: id.clone(), base_version: record.cloud_version, linked: record.cloud_version > 0 },
         None => PushPlan { cloud_id: new_id(), base_version: 0, linked: false },
     })
 }
@@ -372,11 +378,15 @@ impl<'a> SyncEngine<'a> {
 
     /// Turn syncing on: create the cloud doc, or push a new snapshot of a linked one.
     pub async fn sync_on(&self, record: &SyncRecord, name: &str, content: &str, viewer: bool) -> (SyncRecord, PushResult) {
-        let plan = match plan_sync_on(record, viewer, || uuid::Uuid::new_v4().to_string()) {
+        self.sync_on_in_area(record, name, content, viewer, None).await
+    }
+
+    pub async fn sync_on_in_area(&self, record: &SyncRecord, name: &str, content: &str, viewer: bool, area: Option<&str>) -> (SyncRecord, PushResult) {
+        let plan = match plan_sync_on(record, viewer, reserve_document_id) {
             Ok(p) => p,
             Err(refused) => return refused,
         };
-        let (hash, out) = self.put(&plan, name, content, None).await;
+        let (hash, out) = self.put(&plan, name, content, if plan.linked { None } else { area }).await;
         after_put(record, &plan, self.record_origin.as_deref(), &hash, &out, &crate::registry::iso_now_system())
     }
 
@@ -434,7 +444,7 @@ impl<'a> SyncEngine<'a> {
     /// whatever version the server holds now.
     pub async fn resolve_overwrite(&self, record: &SyncRecord, name: &str, local: &str) -> Result<Resolved, String> {
         let id = record.cloud_doc_id.clone().ok_or("not resolvable")?;
-        let base = self.docs.get(&id).await.map(|d| d.version).unwrap_or(0);
+        let base = self.fetch(&id).await?.version;
         let plan = PushPlan { cloud_id: id, base_version: base, linked: true };
         let (hash, out) = self.put(&plan, name, local, None).await;
         match after_put(record, &plan, None, &hash, &out, &crate::registry::iso_now_system()) {
@@ -594,7 +604,7 @@ mod tests {
     }
 
     fn meta(id: &str, v: i64, shared: bool, out: Option<bool>) -> DocMeta {
-        DocMeta { id: id.into(), name: id.into(), version: v, hash: None, updated_at: None, shared, role: shared.then_some(Role::Editor), shared_by: None, shared_out: out }
+        DocMeta { id: id.into(), name: id.into(), version: v, hash: None, updated_at: None, shared, role: shared.then_some(Role::Editor), shared_by: None, shared_out: out, area_id: None }
     }
 
     #[test]

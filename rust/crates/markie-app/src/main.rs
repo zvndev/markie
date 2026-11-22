@@ -53,6 +53,7 @@ fn set_menus(cx: &mut App) {
             name: "Markie RS".into(),
             items: vec![
                 MenuItem::action("Settings…", OpenSettings),
+                MenuItem::action("Sign In…", OpenAccount),
                 MenuItem::separator(),
                 MenuItem::action("Quit Markie RS", Quit),
             ],
@@ -85,6 +86,7 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Outline", ToggleOutline),
                 MenuItem::action("Statistics", ToggleStats),
                 MenuItem::action("Search All Documents", FocusSearch),
+                MenuItem::action("Cloud", ShowCloud),
                 MenuItem::action("Rescan Documents", Rescan),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ZoomIn),
@@ -127,6 +129,10 @@ fn main() {
             set_menus(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.activate(true);
+            // The Markie Cloud session, restored from the Keychain, and this
+            // copy registered as the one markie-rs:// sign-ins come back to.
+            workspace::account::AccountStore::init(cx);
+            std::thread::spawn(open_urls::register_url_scheme);
 
             let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
             let options = WindowOptions {
@@ -152,6 +158,14 @@ fn main() {
 
             cx.spawn(async move |cx| {
                 while let Some(urls) = open_rx.next().await {
+                    // A Google or Apple sign-in coming back on markie-rs://.
+                    let links = open_urls::hand_back_links(&urls);
+                    if !links.is_empty() {
+                        let _ = window_handle.update(cx, move |_, window, cx| {
+                            open_urls::bring_to_front(window, cx);
+                            workspace::account::handle_open_urls(links, cx);
+                        });
+                    }
                     let paths = open_urls::file_paths(&urls);
                     if paths.is_empty() {
                         continue;

@@ -200,7 +200,7 @@ impl TextRoom {
     /// Connect to a room URL that already carries its ticket.
     pub async fn connect(url: &str, opts: RoomOptions) -> Result<TextRoom> {
         let (ws, _) = tokio_tungstenite::connect_async(url).await.map_err(|e| match e {
-            tokio_tungstenite::tungstenite::Error::Http(res) => CloudError::Status { status: res.status().as_u16(), message: None },
+            tokio_tungstenite::tungstenite::Error::Http(res) => CloudError::Status { status: res.status().as_u16(), message: None, code: None },
             _ => CloudError::Offline,
         })?;
         let (mut sink, mut stream) = ws.split();

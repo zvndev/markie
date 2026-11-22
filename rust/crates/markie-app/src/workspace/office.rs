@@ -37,17 +37,6 @@ impl OfficeDoc {
         matches!(self.source, Source::Rich) && self.view.read(cx).editor.is_dirty()
     }
 
-    pub fn status(&self, cx: &App) -> &'static str {
-        let editor = &self.view.read(cx).editor;
-        if !editor.can_mutate() && !editor.original_view {
-            "Read only"
-        } else if editor.is_dirty() {
-            "Edited"
-        } else {
-            "Saved"
-        }
-    }
-
     /// Focus the page on the next frame, after the window's own startup focus.
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         let handle = self.view.read(cx).focus_handle(cx);

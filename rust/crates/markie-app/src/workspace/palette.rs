@@ -28,6 +28,8 @@ fn commands() -> Vec<(&'static str, Box<dyn Action>, &'static [&'static str])> {
         ("Import recents and stars from Markie", Box::new(ImportFromMarkie), &["electron", "migrate"]),
         ("Rescan documents", Box::new(Rescan), &["index", "refresh"]),
         ("Settings", Box::new(OpenSettings), &["preferences", "theme", "style", "appearance"]),
+        ("Sign In…", Box::new(OpenAccount), &["account", "sign in", "login"]),
+        ("Cloud…", Box::new(ShowCloud), &["synced", "shared", "sharing", "people", "cloud", "sync"]),
         ("Toggle dark mode", Box::new(ToggleTheme), &["theme", "light", "appearance"]),
     ]
 }

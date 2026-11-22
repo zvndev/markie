@@ -4,20 +4,20 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 77 of 92 = 83.7 %.**
+**Parity: 83 of 94 = 88.3 %.**
 
 | Count | Rows |
 |---|---|
-| All rows | 94 |
-| PASS | 77 |
-| FAIL | 15 |
+| All rows | 96 |
+| PASS | 83 |
+| FAIL | 8 |
+| NEEDS-CAPTURE | 3 |
 | EXCLUDED | 1 |
 | EXCLUDED-PLATFORM | 1 |
-| NEEDS-CAPTURE | 0 |
 
-The score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). Of the 15 FAIL rows, 9 are real gaps and 6 are roll-up rows that fail only because a row under them does. Every gap has a concrete blocker in its row and in "FAIL rows left" below. All 9 sit on another auditor's ground or behind a side-build rule.
+The score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). Of the 8 FAIL rows, 5 are real gaps and 3 are roll-up rows that fail only because a row under them does. Every gap has a concrete blocker in its row and in "FAIL rows left" below. All 5 sit on another auditor's ground or behind a side-build rule.
 
-Rows that failed and were fixed in this audit: 1.2, 1.3, 1.5, 1.8, 1.11, 1.12, 2.1, 3.1, 6.2, 6.3, 6.4, 28.6, 29.3, 29.4, 29.5 and 29.8. Row 28.2 was fixed in part.
+Rows that failed and were fixed in this audit: 1.2, 1.3, 1.5, 1.7, 1.8, 1.11, 1.12, 2.1, 3.1, 6.2, 6.3, 6.4, 28.6, 29.3, 29.4, 29.5 and 29.8. Rows 28.2a and 28.2b were fixed in code; their look still needs a capture. Rows 1.6 and 28.2 pass since the cloud audit merged (in-place row sync actions; the full Servers section).
 
 ## Method
 
@@ -39,7 +39,10 @@ Rows that failed and were fixed in this audit: 1.2, 1.3, 1.5, 1.8, 1.11, 1.12, 2
 | 989f895 | Themes follow the account through `/api/me/themes`. Settings › Advanced › Servers shows the real session and every trusted server. |
 | 566df22 | Members of a shared Markie Cloud document read it in the owner's pinned theme, with the "Owner theme" chip. |
 | 228d4c4 | Recent files that are gone stay listed as "Missing on disk", with Remove from Library. |
-| (final) | A size-tier test against `doc-tiers.js`, and this report. |
+| d5f1253 | A size-tier test against `doc-tiers.js`, and this report. |
+| 535badf | Merge of `rust/markie-rs` (cloud, office and platform audits), conflicts resolved as its message lists. |
+| ac0bea6 | Settings › Advanced: the checkboxes stay on the panel and the descriptions wrap (found by the cloud auditor). |
+| 220da82 | The Library's own "Upload destination" picker, used by a row's Sync to cloud. |
 
 Shared files touched, kept small, for the other auditors:
 
@@ -47,28 +50,30 @@ Shared files touched, kept small, for the other auditors:
 - `workspace/cloud.rs`: one call to `pull_cloud_themes` at the end of `on_account_changed`.
 - `workspace/collab.rs`: `release_doc_theme` in `collab_on_open`, and `check_doc_theme` once members resolve.
 - `markie-core/src/registry.rs`: `Registry::forget`, and the PRAGMA and project tables at open.
+- `workspace/cloud_page.rs` and `workspace/share.rs`: `render_area_create` and `create_cloud_area` take an `AreaTarget` (Page, Share, Library) instead of a bool. `select_button` made visible.
+- `workspace/first_run.rs` (from the cloud audit): its welcome text and seen key now come from `welcome.rs`, which holds Electron's text byte for byte. Its own copy had replaced Electron's dashes.
 
 ## 1. Library panel and the Files workspace
 
 | # | Bullet | Status | Evidence (Electron / Markie RS / test) | Notes |
 |---|---|---|---|---|
-| 1.1 | What the user can do | FAIL | Roll-up | 1.6 and 1.7 fail. |
+| 1.1 | What the user can do | PASS | Roll-up | |
 | 1.2 | Library lists recent and opened files with their sync state | PASS | `library.tsx` fileRow; `library.rs` set_lists, `library_rows.rs` sync_status_icon; `states_map_from_the_cloud_badge`, `recent_files_that_are_gone_stay_listed_as_missing` | Fixed: files gone from disk were hidden. They now show "Missing on disk". |
 | 1.3 | Filter by type; sort by name, recency or type | PASS | `library-document-query.ts`; `library.rs` query_rows; `recent_query_matches_electrons_query_library_documents` (112 cases from Electron's code), `the_recent_tab_filters_without_ranking_or_reading_bodies` | Fixed: ranking, snippet search, label-based Type sort, recency by mtime, missing "Other". |
 | 1.4 | Create new documents (Markdown, Word, text, Darkmown, Locked vault) | PASS | `new-document-modal.tsx:16-25`; `file_ops.rs` WRITING_TYPES and DATA_TYPES, `copies_and_renames`; palette `commands_follow_electrons_list` | Same ten types, labels and descriptions. Locked vault comes from the Vault page (section 22) and the palette's "Open Vault", as in Electron. |
 | 1.5 | Drop files to import them | PASS | `library.tsx:387` onDrop, `page.tsx:1701` handleDrop; `file_ops.rs` library_drop_paths, window_drop_target; `drops_open_what_electron_opens` | Fixed: no drop handling existed. The Library notice uses Electron's wording. |
-| 1.6 | Per-row menu: rename, move, Trash (optionally the cloud copy), reveal, sync on/off | FAIL | `library.tsx:608` rowMenuEntries; `library_rows.rs` row_entries_for; `each_state_offers_electrons_sync_action`, `a_file_that_is_gone_is_removed_from_the_library_not_deleted` | Entries, order, tones and separators match. 0.9.7's menu has no rename, move or reveal, so neither does Markie RS. Blocker: Retry backup, Sync to cloud, Resume, Pull latest and Stop syncing run in place in Electron. Markie RS opens the document and hands it to the sync sheet, because its sync engine (`cloud.rs` TextWork) binds only the open document. Changing that is the cloud auditor's (sections 10 and 30). |
-| 1.7 | Pick a cloud upload destination ("area") | FAIL | `library.tsx:884` CloudAreaPicker; `cloud_office.rs:83` | Blocker: Markie RS asks for the area in the per-document upload dialog, not in the Library panel. The Library picker only matters once 1.6's in-place Sync to cloud exists (cloud auditor). |
+| 1.6 | Per-row menu: rename, move, Trash (optionally the cloud copy), reveal, sync on/off | PASS | `library.tsx:608` rowMenuEntries; `library_rows.rs` row_entries_for, run_row_action; `each_state_offers_electrons_sync_action`, `a_file_that_is_gone_is_removed_from_the_library_not_deleted`, `a_cloud_copy_without_its_file_offers_download` | Entries, order, tones and separators match. 0.9.7's menu has no rename, move or reveal, so neither does Markie RS. The sync actions run in place since the cloud audit (f6e11d5, merged). |
+| 1.7 | Pick a cloud upload destination ("area") | PASS | `library.tsx:884`, `cloud-area-picker.tsx`; `library_area.rs`; `the_picker_names_the_chosen_area_or_the_default_cloud` | Fixed: the Library used the Cloud page's area filter. It now has its own picker, with "Default cloud", the areas and New area, reset on an account change. |
 | 1.8 | Projects tab, Files workspace roots, Settings › Files (default folder `~/Documents/Markie`) | PASS | `workspace-default.ts`, `workspace.js:62`; `workspace_ops.rs` ensure_default_root, `projects.rs`; `the_default_root_is_made_only_when_no_live_root_is_registered`, `the_open_documents_project_opens_and_shared_folders_hide` | Fixed: the default folder was never made or registered. |
 | 1.9 | Files | PASS | Roll-up | |
 | 1.10 | Renderer components | PASS | library.tsx → `rail.rs`, `library.rs`; projects-panel → `projects.rs`; file-menu → `library_rows.rs`; filters → `rail.rs` select_button; new-document-modal → `file_ops.rs`; activity-bar → `rail.rs`; panel-resizer → `rail.rs` panel_width; panel-notice, format-badge, document-format-mark → `rail.rs`, `icons.rs`; cloud-area-picker → `cloud_office.rs` | |
 | 1.11 | Renderer libs | PASS | library-overview → `rail.rs` band; library-state, library-document-query → `library.rs`; left-rail → `rail.rs` LeftView; folder-tree → `folder_tree.rs`; first-run, welcome-doc → `welcome.rs` (new); document-library → `office_recovery.rs` | Fixed: first run and the welcome document were missing. `the_welcome_is_electrons_text`, `the_welcome_shows_once_and_never_over_a_file`. |
 | 1.12 | Main: workspace.js, examples.js | PASS | `workspace_ops.rs`; `seed_examples`; `the_darkmown_example_is_offered_once_and_never_overwrites` | Fixed: the example was never seeded. Same id, name, bytes and marker file. |
-| 1.13 | Compatibility | FAIL | Roll-up | 1.17 fails. |
+| 1.13 | Compatibility | PASS | Roll-up | |
 | 1.14 | IPC ws-* | PASS | `workspace_ops.rs` live_roots, ensure_default_root, remove_root, move_into, rename; `file_ops.rs` trash, reveal; `paths::default_root` | `ws-list-dir`, `ws-mkdir` and `ws-new-file` have no caller in 0.9.7's renderer. |
 | 1.15 | IPC library-state, library-trash-file, registry-track, registry-get, registry-set-role, events | PASS | `workspace.rs` refresh_lists; `file_ops.rs` trash; `Registry::track_opened`, `forget`; `cloud.rs` share_role | |
 | 1.16 | Data: `files`, `workspace_roots`, IndexedDB recovery records | PASS | `registry.rs:73-90`; `recents_roots_stars_settings` | The IndexedDB records are the "Recovered from Markie" list, excluded by Kirby. Markie RS's own office recovery is `office_recovery.rs`. |
-| 1.17 | Cloud areas REST | FAIL | `account-identities.ts`; `markie-cloud/src/platform.rs:312,331` | GET and the snapshot placement exist. Blocker: `PUT …/placements/markdown/:docId` is not built, because Markdown sync does not place by area yet (cloud auditor, section 10). |
+| 1.17 | Cloud areas REST | PASS | `account-identities.ts:141-151`; `markie-cloud/src/platform.rs` areas, create_area, place; `sync.rs` sync_on_in_area | GET, POST and the snapshot placement are built. Electron's renderer calls `place` only for snapshots (`document-cloud-dialog.tsx:196`). A Markdown document's area travels with sync-on, as Electron's `areaId` does. |
 | 1.18 | Rust port note: recovery records out of IndexedDB | EXCLUDED | | The "Recovered from Markie" list, Kirby's decision. |
 
 ## 2. Local registry
@@ -153,8 +158,10 @@ Shared files touched, kept small, for the other auditors:
 
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 28.1 | What the user can do | FAIL | Roll-up | 28.2 fails. |
-| 28.2 | Sections: account, appearance, files, advanced (servers, updates, error reporting, links) | FAIL | `settings.tsx:57-180`, `servers-setting.tsx`; `settings.rs`; `the_cloud_row_says_who_is_signed_in_like_account_line`, `hosts_like_host_of`, `only_an_explicit_zero_turns_previews_off`, `logs` consent tests | Tabs, order and wording match. Updates is greyed (updater excluded). Files' "Use Markie" buttons are greyed (no file-type claims, excluded). Fixed: the Servers row said "Not signed in" whatever the session was. Blocker: "Add a server…", Remove and sign-in to an added server are not built. `ServerStore::probe` holds `&mut self` across the network call, so a form needs a probe that runs without the store, in `markie-cloud`. Per-origin sessions belong to sign-in (section 21). Both are the cloud auditor's. |
+| 28.1 | What the user can do | NEEDS-CAPTURE | Roll-up | 28.2a and 28.2b need a capture. |
+| 28.2 | Sections: account, appearance, files, advanced (servers, updates, error reporting, links) | PASS | `settings.tsx:57-180`, `servers-setting.tsx`; `settings.rs`, `servers_setting.rs` (cloud audit); `rows_say_who_is_signed_in_like_account_line`, `the_submit_button_reads_like_server_sign_in`, `only_an_explicit_zero_turns_previews_off`, `logs` consent tests | Tabs, order and wording match. Updates is greyed (updater excluded). Files' "Use Markie" buttons are greyed (no file-type claims, excluded). The Servers section, with add, remove and per-server sign-in, came with the cloud audit. |
+| 28.2a | Advanced: "Get new versions early" and "Preview links on hover" show their checkbox | NEEDS-CAPTURE | `settings.tsx:225-283`; `settings.rs` setting_text; `setting_text_may_shrink_so_its_checkbox_stays_on_the_panel` | Found by the cloud auditor side by side. Fixed in ac0bea6: the text column had no zero minimum width, so it pushed the checkbox out. Capture 10 confirms it. |
+| 28.2b | Advanced: the descriptions wrap inside the panel | NEEDS-CAPTURE | same | Same cause and fix as 28.2a. |
 | 28.3 | Eight templates, light and dark | PASS | `theme.rs`; `eight_templates_with_their_typography` | |
 | 28.4 | Light, dark or system | PASS | `chrome.rs` ColorMode, observe_window_appearance; `color_mode_round_trips` | Following a live macOS change was not exercised, as before. |
 | 28.5 | Custom presets: colours plus typography | PASS | `ThemeStore`, `appearance.rs`; `store_transitions_match_theme_ts`, `appearance::tests::*` | Colour wells are hex fields, as recorded in LOCAL-FEATURES.md. |
@@ -186,15 +193,11 @@ Shared files touched, kept small, for the other auditors:
 
 | Row | Blocker | Owner |
 |---|---|---|
-| 1.6 | Row sync actions run in place only with a sync binding for an unopened file | Cloud (10, 30) |
-| 1.7 | The Library area picker follows from 1.6 | Cloud |
-| 1.17 | Markdown placement by area not in the sync engine | Cloud (10) |
 | 2.3, 2.8 | Column-identical tables matter only for sharing Electron's database, which the side-build rules forbid | Kirby: recommend EXCLUDED |
 | 2.9, 2.10 | No skills sources or installs tables in `markie-agent` | Agents (16) |
-| 28.2 | Add, remove and sign in to other servers need a store-free probe and per-origin sessions | Cloud (14, 21) |
 | 29.7 | Document Details… and the Darkmown view commands do not exist yet | Office (17), Darkmown (18) |
 
-The roll-up rows 1.1, 1.13, 2.2, 28.1, 29.1 and 29.2 clear when these do.
+The roll-up rows 2.2, 29.1 and 29.2 clear when these do.
 
 ## Pending Kirby's call, not changed
 
@@ -215,11 +218,13 @@ Each one is light and dark at 1280 x 820, the same fixture in both apps, per SCR
 7. The "Owner theme" chip. It needs a shared test document on a local server.
 8. Drag a fixture file onto each window, using `act.sh` drag if available. Otherwise mark it manual.
 9. Save As (⇧⌘S): the sheet opens with the document's name.
+10. Settings › Advanced in both apps, signed out: each row shows its checkbox and the descriptions wrap inside the panel (rows 28.2a, 28.2b).
+11. The Library signed in to a local test server: "Upload destination" and its menu.
 
 ## Tests run
 
-- `cargo test -p markie-app`: 134 passed.
+- `cargo test -p markie-app` after the merge: 149 passed.
 - `cargo test -p markie-core`: 92 passed.
-- `cargo test --workspace`: see the final commit message.
+- `cargo test --workspace` after the merge and the last fix: 1028 passed, 0 failed, 2 ignored.
 - `node --import ./rust/scripts/ts-run/register.mjs rust/scripts/parity/library-settings-parity.mjs`: regenerates the fixture from Electron's code.
 - `local-parity.mjs` on `.autoloop/runs/library-settings/home`: all match. Five search queries were checked for order, name hits and excerpts, plus the Projects tree and the ignored count.

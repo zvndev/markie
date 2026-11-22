@@ -375,23 +375,6 @@ impl Workspace {
         self.shell.browse_rows = Some(Rc::new(rows));
     }
 
-    fn show_agents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let p = themes::palette(cx);
-        window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title("Connect an agent").w(px(460.)).child(
-                v_flex()
-                    .gap(px(8.))
-                    .text_size(px(12.5))
-                    .child(div().text_color(p.fg(0.85)).child(
-                        "Markie lets Claude, Codex and other agents read and edit your documents through its MCP server.",
-                    ))
-                    .child(div().text_color(p.muted).child(
-                        "Markie RS does not run the agent bridge yet. Connect agents from the Markie app for now.",
-                    )),
-            )
-        });
-    }
-
     fn show_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let p = themes::palette(cx);
         window.open_dialog(cx, move |dialog, _, _| {
@@ -539,7 +522,10 @@ impl Workspace {
                 false,
                 &p,
                 cx,
-                |this, _, cx| this.select_view(LeftView::Skills, cx),
+                |this, window, cx| {
+                    this.prepare_skills(window, cx);
+                    this.select_view(LeftView::Skills, cx);
+                },
             ))
             .child(self.rail_button(
                 "rail-vault",
@@ -571,7 +557,7 @@ impl Workspace {
                 false,
                 &p,
                 cx,
-                |this, w, cx| this.show_agents(w, cx),
+                |this, w, cx| this.open_agents(w, cx),
             ))
             .child(self.rail_button(
                 "rail-keys",
@@ -717,7 +703,7 @@ impl Workspace {
         let body = match view {
             LeftView::Library => self.render_library_view(&p, cx).into_any_element(),
             LeftView::Browse => self.render_browse_view(&p, cx).into_any_element(),
-            _ => self.render_skills_view(&p).into_any_element(),
+            _ => self.render_skills_panel(),
         };
         let bg = if p.dark {
             Background::from(linear_gradient(
@@ -1290,15 +1276,6 @@ impl Workspace {
             .when(self.shell.filter_menu == Some(FilterMenu::BrowseType), |el| {
                 el.child(self.render_filter_menu(FilterMenu::BrowseType, &p, cx))
             })
-    }
-
-    fn render_skills_view(&self, p: &Palette) -> impl IntoElement {
-        v_flex().flex_1().min_h_0().px(px(14.)).py(px(14.)).gap(px(6.)).child(
-            div()
-                .text_size(px(12.))
-                .text_color(p.muted)
-                .child("Skills and agent files from Claude, Codex, Cursor and Gemini show here. They are not in Markie RS yet."),
-        )
     }
 
     /// The Cloud or Vault page, in place of the document.

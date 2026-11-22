@@ -30,5 +30,10 @@ actions!(
         PageWider,
         PageNarrower,
         Quit,
+        ShowShortcuts,
+        ShowAbout,
+        RichMode,
+        SourceMode,
+        MoveDocument,
     ]
 );

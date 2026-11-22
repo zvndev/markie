@@ -30,12 +30,18 @@ use markie_core::{outline, paths, stats};
 use crate::actions::*;
 use crate::library::{Library, LibraryTab};
 
+mod account_slot;
+mod dialog_chrome;
 mod file_ops;
+mod history_dialog;
 mod office;
+mod overlay;
 mod palette;
 mod panels;
 mod rich;
 mod settings;
+mod shortcuts;
+mod strips;
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -108,6 +114,8 @@ pub struct Workspace {
     page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
+    /// The dialog layer: settings, palette, new document and the rest.
+    dialogs: overlay::Dialogs,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -195,6 +203,7 @@ impl Workspace {
             pending_editor_text: None,
             zoom: 1.0,
             page_width: 768.0,
+            dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
@@ -580,7 +589,7 @@ impl Workspace {
 
     fn check_disk(&mut self, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
-        if !matches!(doc.kind, DocKind::Text { .. }) || self.disk_conflict.is_some() {
+        if !matches!(doc.kind, DocKind::Text { .. }) {
             return;
         }
         match self.disk.changed_since(&doc.path) {
@@ -596,16 +605,8 @@ impl Workspace {
                     cx.notify();
                 }
             }
-            Some(DiskChange::Changed(theirs)) => {
-                let path = doc.path.clone();
-                if self.dirty {
-                    self.disk_conflict = Some(theirs);
-                    self.autosave.cancel();
-                } else {
-                    self.load_text(&path, theirs, cx);
-                }
-                cx.notify();
-            }
+            // Like Electron, never reload on its own: the strip asks.
+            Some(DiskChange::Changed(theirs)) => self.note_disk_change(theirs, cx),
         }
     }
 
@@ -766,34 +767,6 @@ impl Workspace {
         self.toggle_side(SidePanel::Stats, cx);
     }
 
-    fn on_show_history(&mut self, _: &ShowHistory, _: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_side(SidePanel::History, cx);
-        if self.side == SidePanel::History {
-            self.refresh_versions();
-        }
-        cx.notify();
-    }
-
-    fn view_version(&mut self, stamp: String, cx: &mut Context<Self>) {
-        let Some(doc) = &self.doc else { return };
-        if let Some(text) = self.history.read(&doc.path, &stamp) {
-            self.viewing_version = Some((stamp, text));
-        }
-        cx.notify();
-    }
-
-    /// Restoring is a save like any other, so the text it replaces becomes a
-    /// version too and nothing is lost.
-    fn restore_version(&mut self, cx: &mut Context<Self>) {
-        let Some((_, text)) = self.viewing_version.take() else { return };
-        if self.write_text(&text).is_ok() {
-            if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
-                self.load_text(&path, text, cx);
-            }
-        }
-        cx.notify();
-    }
-
     /// The file changed on disk while there were unsaved edits.
     fn take_theirs(&mut self, cx: &mut Context<Self>) {
         let Some(theirs) = self.disk_conflict.take() else { return };
@@ -805,167 +778,14 @@ impl Workspace {
 
     fn keep_mine(&mut self, cx: &mut Context<Self>) {
         self.disk_conflict = None;
-        let text = self.editor.read(cx).value().to_string();
+        let text = self.current_text(cx);
         // History keeps the outside version first, so overwriting loses nothing.
         let _ = self.write_text(&text);
         cx.notify();
     }
 
-    fn restore_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(draft) = self.recovered.first().cloned() else { return };
-        let Some(text) = self.drafts.read(&draft.key) else {
-            self.recovered.remove(0);
-            return;
-        };
-        if let Some(path) = draft.meta.path.as_deref().map(PathBuf::from) {
-            self.open_path(&path, window, cx);
-            self.mode = Mode::Source;
-            self.pending_editor_text = Some(text);
-        }
-        self.recovered.remove(0);
-        cx.notify();
-    }
-
-    fn discard_draft(&mut self, cx: &mut Context<Self>) {
-        if !self.recovered.is_empty() {
-            let draft = self.recovered.remove(0);
-            let _ = self.drafts.discard(&draft.key);
-        }
-        cx.notify();
-    }
-
     fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let theme = cx.theme();
-        let bar = |message: String| {
-            h_flex()
-                .w_full()
-                .px_3()
-                .py_1p5()
-                .gap_2()
-                .bg(theme.warning.opacity(0.15))
-                .border_b_1()
-                .border_color(theme.border)
-                .child(div().flex_1().text_sm().child(message))
-        };
-        if self.disk_conflict.is_some() {
-            return Some(
-                bar("This file changed on disk while you were editing.".into())
-                    .child(
-                        Button::new("take-theirs")
-                            .small()
-                            .label("Load the disk version")
-                            .on_click(cx.listener(|this, _, _, cx| this.take_theirs(cx))),
-                    )
-                    .child(
-                        Button::new("keep-mine")
-                            .small()
-                            .primary()
-                            .label("Keep mine")
-                            .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx))),
-                    )
-                    .into_any_element(),
-            );
-        }
-        if self.disk_missing {
-            return Some(
-                bar("This file was moved or deleted. Saving will create it again.".into()).into_any_element(),
-            );
-        }
-        if let Some(draft) = self.recovered.first() {
-            let name = draft.meta.name.clone().unwrap_or_else(|| "an untitled document".into());
-            return Some(
-                bar(format!("Markie kept unsaved text from {name}."))
-                    .child(
-                        Button::new("draft-restore")
-                            .small()
-                            .primary()
-                            .label("Restore")
-                            .on_click(cx.listener(|this, _, window, cx| this.restore_draft(window, cx))),
-                    )
-                    .child(
-                        Button::new("draft-discard")
-                            .small()
-                            .label("Discard")
-                            .on_click(cx.listener(|this, _, _, cx| this.discard_draft(cx))),
-                    )
-                    .into_any_element(),
-            );
-        }
-        None
-    }
-
-    fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let viewing = self.viewing_version.as_ref().map(|(s, _)| s.clone());
-        v_flex()
-            .size_full()
-            .bg(theme.sidebar)
-            .border_l_1()
-            .border_color(theme.sidebar_border)
-            .child(
-                h_flex()
-                    .p_2()
-                    .justify_between()
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Version history"))
-                    .child(
-                        Button::new("history-close")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Close)
-                            .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowHistory), cx)),
-                    ),
-            )
-            .when(self.versions.is_empty(), |el| {
-                el.child(
-                    div()
-                        .px_3()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child("No versions yet. Markie keeps one every time this file is saved."),
-                )
-            })
-            .child(
-                v_flex()
-                    .id("versions")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .children(self.versions.iter().map(|v| {
-                        let stamp = v.stamp.clone();
-                        let when = v
-                            .ms
-                            .and_then(chrono::DateTime::from_timestamp_millis)
-                            .map(|d| d.with_timezone(&chrono::Local).format("%b %-d, %-I:%M %p").to_string())
-                            .unwrap_or_else(|| v.stamp.clone());
-                        let who = match (v.meta.author.as_str(), v.meta.agent.as_deref()) {
-                            ("agent", Some(agent)) if !agent.is_empty() => agent.to_string(),
-                            ("external", _) => "Outside edit".into(),
-                            ("user", _) => "You".into(),
-                            _ => "Unknown".into(),
-                        };
-                        let active = viewing.as_deref() == Some(v.stamp.as_str());
-                        div()
-                            .id(SharedString::from(format!("v-{}", v.stamp)))
-                            .px_3()
-                            .py_1()
-                            .cursor_pointer()
-                            .when(active, |el| el.bg(theme.list_active))
-                            .hover(|el| el.bg(theme.list_hover))
-                            .on_click(cx.listener(move |this, _, _, cx| this.view_version(stamp.clone(), cx)))
-                            .child(div().text_sm().child(v.meta.name.clone().unwrap_or(when)))
-                            .child(div().text_xs().text_color(theme.muted_foreground).child(who))
-                    })),
-            )
-            .when(viewing.is_some(), |el| {
-                el.child(
-                    h_flex().p_2().gap_2().child(
-                        Button::new("restore-version")
-                            .small()
-                            .primary()
-                            .label("Restore this version")
-                            .on_click(cx.listener(|this, _, _, cx| this.restore_version(cx))),
-                    ),
-                )
-            })
+        self.render_strips(cx)
     }
 
     // ---------------------------------------------------------------- render
@@ -1356,12 +1176,14 @@ impl Render for Workspace {
         }
         let banner = self.render_banner(cx);
         let history = match self.side {
-            SidePanel::History => Some(self.render_history(cx).into_any_element()),
+            // Version history is a dialog now, like Electron's.
+            SidePanel::History => None,
             SidePanel::Outline => Some(self.render_outline(cx).into_any_element()),
             SidePanel::Stats => Some(self.render_stats(cx).into_any_element()),
             SidePanel::None => None,
         };
-        v_flex()
+        let dialogs = self.render_dialogs(window, cx);
+        let root = v_flex()
             .id("workspace")
             .track_focus(&self.focus_handle)
             .key_context("Workspace")
@@ -1418,6 +1240,7 @@ impl Render for Workspace {
                     )
                     .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h))),
             )
-            .child(self.render_status(cx))
+            .child(self.render_status(cx));
+        self.dialog_actions(root, cx).children(dialogs)
     }
 }

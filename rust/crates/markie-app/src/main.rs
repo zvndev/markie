@@ -41,6 +41,10 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-0", ZoomReset, None),
         KeyBinding::new("cmd-alt-]", PageWider, None),
         KeyBinding::new("cmd-alt-[", PageNarrower, None),
+        // Electron's mode and help shortcuts (src/app/page.tsx).
+        KeyBinding::new("cmd-1", RichMode, None),
+        KeyBinding::new("cmd-2", SourceMode, None),
+        KeyBinding::new("cmd-/", ShowShortcuts, None),
     ]);
     markie_office_view::actions::bind_keys(cx);
 }
@@ -50,6 +54,8 @@ fn set_menus(cx: &mut App) {
         Menu {
             name: "Markie RS".into(),
             items: vec![
+                MenuItem::action("About Markie RS", ShowAbout),
+                MenuItem::separator(),
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::separator(),
                 MenuItem::action("Quit Markie RS", Quit),
@@ -70,6 +76,7 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Duplicate", DuplicateDocument),
                 MenuItem::action("Reveal in Finder", RevealDocument),
                 MenuItem::action("Copy Path", CopyPath),
+                MenuItem::action("Move To…", MoveDocument),
                 MenuItem::action("Move to Trash", TrashDocument),
             ],
             disabled: false,
@@ -100,6 +107,11 @@ fn set_menus(cx: &mut App) {
     // Format, Insert, Layout and Review act on the Word page view; they show
     // disabled when another document has focus.
     menus.extend(markie_office_view::actions::menus());
+    menus.push(Menu {
+        name: "Help".into(),
+        items: vec![MenuItem::action("Keyboard Shortcuts", ShowShortcuts)],
+        disabled: false,
+    });
     cx.set_menus(menus);
 }
 

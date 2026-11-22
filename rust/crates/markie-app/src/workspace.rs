@@ -38,7 +38,9 @@ mod comments;
 mod share;
 mod dialog_chrome;
 mod file_ops;
+mod folder_tree;
 mod history_dialog;
+mod library_rows;
 mod import_copy;
 mod cloud;
 mod cloud_office;
@@ -293,6 +295,8 @@ impl Workspace {
             }
         }
         this.refresh_lists();
+        this.restore_browse_open();
+        this.restore_panel_width(window);
         this.build_search_pool();
 
         let mut first_file = None;
@@ -323,6 +327,7 @@ impl Workspace {
         let recent = reg.recent(200).unwrap_or_default().into_iter().map(|r| r.path).collect();
         let starred = reg.stars().unwrap_or_default();
         self.library.set_lists(Vec::new(), starred.clone());
+        self.shell.stars = starred.iter().cloned().collect();
         self.shell.recent.set_lists(recent, starred);
         self.shell.invalidate_browse();
     }
@@ -1194,6 +1199,22 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_export_pdf_dark))
             .on_action(cx.listener(Self::on_export_pdf_light))
             .on_action(cx.listener(Self::on_export_html))
+            // The Library panel's resizer drag follows the pointer anywhere.
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                if this.shell.panel_drag.is_some() {
+                    this.panel_drag_move(f32::from(ev.position.x), window, cx);
+                }
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.panel_drag_end(cx)))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.panel_drag_end(cx)))
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                if ev.keystroke.key == "escape" && this.panel_drag_cancel(cx) {
+                    cx.stop_propagation();
+                } else if ev.keystroke.key == "escape" && this.shell.row_menu.take().is_some() {
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
             .relative()
             .size_full()
             .bg(cx.theme().background)
@@ -1233,6 +1254,7 @@ impl Render for Workspace {
                         }
                     }),
             )
+            .children(self.render_row_menu(cx))
             .children(self.render_search(cx))
             .children(self.render_share(window, cx));
         self.dialog_actions(root, cx).children(dialogs)

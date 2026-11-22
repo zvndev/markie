@@ -199,6 +199,10 @@ impl Workspace {
             .map(Rc::new)
             .map_err(|e| eprintln!("markie-rs: registry unavailable: {e:#}"))
             .ok();
+        // electron/registry.js creates the skill tables with the rest.
+        if let Some(reg) = &registry {
+            let _ = markie_agent::skills::ensure_skill_tables(reg);
+        }
 
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -479,6 +483,7 @@ impl Workspace {
                     let _ = reg.save_snapshot(&snapshot);
                 }
                 this.library.scanning = false;
+                this.skills_index_updated(&snapshot.files, cx);
                 this.library.set_snapshot(snapshot);
                 this.build_search_pool();
                 this.compute_projects(cx);
@@ -1441,6 +1446,9 @@ impl Render for Workspace {
             .when(output_actions, |root| root.on_action(cx.listener(Self::on_print)).on_action(cx.listener(Self::on_export_pdf_light)))
             .on_action(cx.listener(Self::on_export_pdf_dark))
             .on_action(cx.listener(Self::on_export_html))
+            .on_action(cx.listener(Self::on_darkmown_source_view))
+            .on_action(cx.listener(Self::on_darkmown_preview_view))
+            .on_action(cx.listener(Self::on_darkmown_split_view))
             // The Library panel's resizer drag follows the pointer anywhere.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 if this.shell.panel_drag.is_some() {

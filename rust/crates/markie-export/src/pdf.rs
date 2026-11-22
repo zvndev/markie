@@ -415,11 +415,12 @@ impl Ctx<'_, '_> {
             }
             "sup" => {
                 let b = self.body(e, prev_space);
-                wrap(format!("super(size: 0.75em, typographic: false, {b})"))
+                // Chromium: `vertical-align: super` raises by size / 3 + 1px, `sub` lowers by size / 5 + 1px.
+                wrap(format!("super(size: 0.75em, typographic: false, baseline: -0.405em, {b})"))
             }
             "sub" => {
                 let b = self.body(e, prev_space);
-                wrap(format!("sub(size: 0.75em, typographic: false, {b})"))
+                wrap(format!("sub(size: 0.75em, typographic: false, baseline: 0.27em, {b})"))
             }
             "small" => {
                 let b = self.body(e, prev_space);
@@ -750,7 +751,7 @@ impl Ctx<'_, '_> {
             } else if ordered {
                 lit(&format!("{number}."))
             } else {
-                lit("•")
+                "mk-disc".to_string()
             };
             // A loose item's paragraph margins collapse through the <li>.
             let loose = li.children.iter().any(|c| matches!(c, Node::Element(p) if p.tag == "p"));
@@ -920,22 +921,29 @@ fn prelude(p: &Palette) -> String {
   block(breakable: h > half, width: 100%, body)
 }}
 #let mk-par(body, quote) = block(above: (if quote {{ 2.625pt }} else {{ 7.35pt }}) + L, below: (if quote {{ 2.625pt }} else {{ 7.35pt }}) + L, width: 100%, par(body))
-#let mk-heading(size, weight, top, bottom, pad, rule, color, track, body) = block(above: top, below: bottom, width: 100%, sticky: true, inset: (bottom: pad), stroke: if rule {{ (bottom: 0.75pt + c-border) }} else {{ none }}, text(size: size, weight: weight, fill: rgb(color), tracking: track, par(leading: 0.557em, body)))
+// CSS gives a heading its own half-leading, (1.75 - 1.193) / 2 of its size,
+// above and below the text, where L carries the body's 2.925pt on each side.
+#let mk-heading(size, weight, top, bottom, pad, rule, color, track, body) = block(above: top, below: bottom - 2.925pt, width: 100%, sticky: true, inset: (top: size * 0.2785 - 2.925pt, bottom: pad + size * 0.2785), stroke: if rule {{ (bottom: 0.75pt + c-border) }} else {{ none }}, text(size: size, weight: weight, fill: rgb(color), tracking: track, par(leading: 0.557em, body)))
 #let mk-h1(body) = mk-heading(21pt, 700, 25.2pt + L, 10.5pt + L, 6.3pt, true, "{h1}", {t_h1:.5}em, body)
 #let mk-h2(body) = mk-heading(15.75pt, 600, 20.475pt + L, 7.0875pt + L, 3.94pt, true, "{h2}", {t_h2:.5}em, body)
 #let mk-h3(body) = mk-heading(13.125pt, 600, 15.75pt + L, 5.25pt + L, 0pt, false, "{h3}", {t_h3:.5}em, body)
 #let mk-h4(body) = mk-heading(11.55pt, 600, 12.7pt + L, 4.04pt + L, 0pt, false, "{h4}", {t_h4:.5}em, body)
 #let mk-h5(body) = mk-heading(10.5pt, 600, 10.5pt + L, 3.15pt + L, 0pt, false, "{h5}", {t_body:.5}em, body)
 #let mk-h6(body) = mk-heading(10.5pt, 600, 10.5pt + L, 3.15pt + L, 0pt, false, "{h6}", {t_body:.5}em, body)
-#let mk-hr() = block(above: 18.9pt + L, below: 18.9pt + L, line(length: 100%, stroke: 0.75pt + c-border))
-#let mk-quote(body) = block(above: 10.5pt + L, below: 10.5pt + L, width: 100%, fill: rgb("{quote_bg}"), stroke: (left: 2.25pt + rgb("{quote_bar}")), radius: (right: 4.5pt), inset: (x: 10.5pt, y: 5.25pt), {{ set text(fill: rgb("{quote_fg}")); body }})
+// A rule, a quote, code, a table or a picture is a box: CSS puts only the
+// neighbour's half-leading (L / 2) next to its edge, not a second one.
+#let mk-hr() = block(above: 18.9pt + L / 2, below: 18.9pt + L / 2, line(length: 100%, stroke: 0.75pt + c-border))
+#let mk-quote(body) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, width: 100%, fill: rgb("{quote_bg}"), stroke: (left: 2.25pt + rgb("{quote_bar}")), outset: (left: -1.125pt), radius: (right: 4.5pt), inset: (left: 12.75pt, right: 10.5pt, y: 5.25pt), {{ set text(fill: rgb("{quote_fg}")); body }})
 #let mk-code(s) = box(fill: rgb("{code_bg}"), stroke: 0.75pt + rgb("{code_border}"), radius: 3pt, inset: (x: 0.35em * 0.88), outset: (y: 0.2em), text(size: 0.88em, fill: rgb("{code_fg}"), raw(s)))
-#let mk-pre(body) = block(above: 10.5pt + L, below: 10.5pt + L, width: 100%, avoid(block(width: 100%, fill: rgb("{pre_bg}"), stroke: 0.75pt + c-border, radius: 6pt, inset: (x: 12.6pt, y: 10.5pt + (18.375pt - 8.925pt * 1.164) / 2), {{ set text(size: 8.925pt, fill: rgb("{pre_fg}"), top-edge: "ascender", bottom-edge: "descender"); set par(leading: 18.375pt - 8.925pt * 1.164); body }})))
+#let mk-pre(body) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, width: 100%, avoid(block(width: 100%, fill: rgb("{pre_bg}"), stroke: 0.75pt + c-border, radius: 6pt, inset: (x: 12.6pt, y: 10.5pt + (18.375pt - 8.925pt * 1.164) / 2), {{ set text(size: 8.925pt, fill: rgb("{pre_fg}"), top-edge: "ascender", bottom-edge: "descender"); set par(leading: 18.375pt - 8.925pt * 1.164); body }})))
 #let mk-list(items) = block(above: 6.3pt + L, below: 6.3pt + L, width: 100%, items)
+// Chromium's `list-style-type: disc`: a 3.72pt disc centred 3.42pt above the
+// baseline, its right edge 9.24pt before the text (measured from Electron's PDF).
+#let mk-disc = box(move(dy: 4.92pt, circle(radius: 1.86pt, fill: c-marker, stroke: none))) + h(8.52pt - 0.45em)
 #let mk-li(marker, gap, body) = block(above: gap + L, below: gap + L, width: 100%, if marker == none {{ pad(left: 0.3em, body) }} else {{ grid(columns: (1.8em, 1fr), align(right, text(fill: c-marker, marker) + h(0.45em)), body) }})
 #let mk-box(on) = box(baseline: 15%, width: 10.5pt, height: 10.5pt, stroke: 1.5pt + (if on {{ rgb("{box_on}") }} else {{ rgb("{box_border}") }}), radius: 2.25pt, fill: if on {{ rgb("{box_on}") }} else {{ none }}, if on {{ align(center + horizon, text(size: 7.5pt, weight: 700, fill: rgb("{box_tick}"), "✓")) }}) + h(3.75pt)
-#let mk-figure(img) = block(above: 10.5pt + L, below: 10.5pt + L, img)
-#let mk-embed(path, url) = block(above: 10.5pt + L, below: 10.5pt + L, link(url, box(clip: true, radius: 6pt, width: calc.min(col, 480pt), height: calc.min(col, 480pt) * 9 / 16, image(path, width: 100%, height: 100%, fit: "cover"))))
+#let mk-figure(img) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, img)
+#let mk-embed(path, url) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, link(url, box(clip: true, radius: 6pt, width: calc.min(col, 480pt), height: calc.min(col, 480pt) * 9 / 16, image(path, width: 100%, height: 100%, fit: "cover"))))
 #let mk-video() = box(width: 225pt, height: 112.5pt, fill: rgb("#000000"), radius: 0pt)
 #let mk-audio() = box(width: 225pt, height: 40.5pt, fill: rgb("#f1f3f4"), radius: 20pt)
 #let mk-math(code, display) = {{
@@ -945,7 +953,7 @@ fn prelude(p: &Palette) -> String {
 #let mk-display(eq) = block(above: 10.5pt + L, below: 10.5pt + L, width: 100%, avoid(align(center, eq)))
 #let mk-th(body) = text(size: 0.85em, weight: 600, fill: rgb("{th_fg}"), tracking: {t_th:.5}em, upper(body))
 #let mk-td(body) = body
-#let mk-table(n, cells) = block(above: 10.5pt + L, below: 10.5pt + L, avoid({{
+#let mk-table(n, cells) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, avoid({{
   set text(size: 0.9em, tracking: {t_td:.5}em)
   table(columns: n, stroke: none, inset: (x: 0.8em, y: 0.5em + 0.28em), fill: (x, y) => if y == 0 {{ rgb("{th_bg}") }} else {{ none }}, ..cells)
 }}))

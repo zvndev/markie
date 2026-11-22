@@ -207,12 +207,7 @@ fn parse_request(line: &[u8], token: &str) -> Result<Request, String> {
     }
     let method = req["method"].as_str();
     if !method.is_some_and(|m| METHODS.contains(&m)) {
-        let display = match req.get("method") {
-            None => "undefined".into(),
-            Some(Value::String(s)) => s.clone(),
-            Some(Value::Object(_)) => "[object Object]".into(),
-            Some(other) => other.to_string(),
-        };
+        let display = req.get("method").map_or_else(|| "undefined".into(), js_string);
         return Err(format!("Unknown method: {display}"));
     }
     let params = &req["params"];
@@ -226,6 +221,51 @@ fn parse_request(line: &[u8], token: &str) -> Result<Request, String> {
     })
 }
 
+/// JavaScript's `String(value)` for a parsed JSON value, as agent-bridge.js
+/// prints an unknown method.
+fn js_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Object(_) => "[object Object]".into(),
+        // Array.prototype.toString: elements joined by commas, null as "".
+        Value::Array(items) => items
+            .iter()
+            .map(|v| if v.is_null() { String::new() } else { js_string(v) })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Number(n) => match (n.as_i64(), n.as_u64(), n.as_f64()) {
+            (Some(i), _, _) => i.to_string(),
+            (_, Some(u), _) => u.to_string(),
+            (_, _, Some(f)) => js_number(f),
+            _ => n.to_string(),
+        },
+    }
+}
+
+/// Number.prototype.toString for the values JSON can carry.
+fn js_number(f: f64) -> String {
+    // The shortest round-trip digits, as both languages pick them.
+    let shortest = format!("{f:e}");
+    let (mantissa, exp) = shortest.split_once('e').expect("exponent form");
+    let exp: i32 = exp.parse().expect("exponent");
+    let (sign, mantissa) = mantissa.strip_prefix('-').map_or(("", mantissa), |m| ("-", m));
+    if !(-6..21).contains(&exp) {
+        return format!("{sign}{mantissa}e{}{}", if exp < 0 { "-" } else { "+" }, exp.abs());
+    }
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let point = exp + 1;
+    let body = if point <= 0 {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
+    } else if point as usize >= digits.len() {
+        format!("{digits}{}", "0".repeat(point as usize - digits.len()))
+    } else {
+        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+    };
+    format!("{sign}{body}")
+}
+
 fn write_reply(stream: &mut UnixStream, response: Reply) -> io::Result<()> {
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let reply = match response {
@@ -235,4 +275,36 @@ fn write_reply(stream: &mut UnixStream, response: Reply) -> io::Result<()> {
     serde_json::to_writer(&mut *stream, &reply)?;
     stream.write_all(b"\n")?;
     stream.shutdown(Shutdown::Write)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{js_string, parse_request};
+    use serde_json::json;
+
+    #[test]
+    fn unknown_methods_print_as_javascript_string_does() {
+        for (method, want) in [
+            (json!(null), "null"),
+            (json!(true), "true"),
+            (json!(1), "1"),
+            (json!(1.0), "1"),
+            (json!(1.5), "1.5"),
+            (json!(-0.000001), "-0.000001"),
+            (json!(1e-7), "1e-7"),
+            (json!(1e21), "1e+21"),
+            (json!(123456789012345680000.0), "123456789012345680000"),
+            (json!(0.1), "0.1"),
+            (json!(-1.5e-9), "-1.5e-9"),
+            (json!([1, null, "a", [2, 3]]), "1,,a,2,3"),
+            (json!({"a": 1}), "[object Object]"),
+            (json!("cloud_x"), "cloud_x"),
+        ] {
+            assert_eq!(js_string(&method), want);
+        }
+        let line = serde_json::to_vec(&json!({"token": "t", "method": [1, 2]})).unwrap();
+        assert_eq!(parse_request(&line, "t").err().unwrap(), "Unknown method: 1,2");
+        let line = serde_json::to_vec(&json!({"token": "t"})).unwrap();
+        assert_eq!(parse_request(&line, "t").err().unwrap(), "Unknown method: undefined");
+    }
 }

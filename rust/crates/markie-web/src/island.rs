@@ -275,6 +275,7 @@ impl Compiler {
     /// Starts compiling `source`. Poll [`Compiler::result`]; drop the compiler
     /// after 10 s without one (the same budget as Electron's worker).
     pub fn start<W: HasWindowHandle>(window: &W, source: &str) -> Result<Self, String> {
+        crate::darkmown::limits::check_preview_size(source)?;
         crate::darkmown::limits::validate_preview_source(source)?;
         let (compiler, driver) = compiler_scripts().ok_or("The bundled Darkmown compiler is not the expected build.")?;
         if compiler.to_ascii_lowercase().contains("</script") || driver.contains("</script") {

@@ -4,6 +4,7 @@
 pub mod bridge;
 pub mod cloud;
 pub mod comments;
+pub mod frontmatter;
 pub mod permissions;
 pub mod skills;
 pub mod tokens;
@@ -26,6 +27,7 @@ pub const METHODS: &[&str] = &[
     "open_in_markie",
 ];
 pub type Reply = Result<serde_json::Value, String>;
+pub const OUTSIDE_HOME: &str = "Only files in your home folder can be opened through Markie.";
 
 /// Fence again at the app boundary. History may announce a new file before
 /// Node creates it, but its existing ancestor must still be inside the home.
@@ -82,7 +84,7 @@ pub fn guarded_path(raw: &str, home: &Path, allow_missing: bool) -> Result<PathB
         real.push(name);
     }
     if !allowed(&real) {
-        return Err("Only files in your home folder can be opened through Markie.".into());
+        return Err(OUTSIDE_HOME.into());
     }
     if real.exists() && !real.is_file() {
         return Err(format!("Not a file: {}", real.display()));

@@ -5170,6 +5170,7 @@ name = "markie-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "block2 0.6.2",
  "chrono",
  "dirs 7.0.0",
  "futures",

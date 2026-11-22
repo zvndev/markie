@@ -195,6 +195,11 @@ fn application_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Vault", workspace::vault::ToggleVault),
                 MenuItem::separator(),
+                // electron/document-menu-commands.json: on for a .wd only.
+                MenuItem::action("Darkmown Source", DarkmownSourceView),
+                MenuItem::action("Darkmown Preview", DarkmownPreviewView),
+                MenuItem::action("Darkmown Source and Preview", DarkmownSplitView),
+                MenuItem::separator(),
             ].into_iter().chain(markie_office_view::actions::view_menu_items()).collect(),
             disabled: false,
         },

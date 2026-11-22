@@ -54,6 +54,8 @@ pub(super) enum LeftView {
     Cloud,
     Skills,
     Vault,
+    /// Live Docs (super-nightly): Darkmown projects, a page of its own.
+    LiveDocs,
     /// The pencil: the formatting rail, which owns no panel.
     Edit,
 }
@@ -66,6 +68,7 @@ impl LeftView {
             LeftView::Cloud => "CLOUD",
             LeftView::Skills => "SKILLS",
             LeftView::Vault => "VAULT",
+            LeftView::LiveDocs => "LIVE DOCS",
             LeftView::Edit => "",
         }
     }
@@ -76,7 +79,7 @@ impl LeftView {
 
     /// Cloud and the Vault take the document area over instead of a panel.
     fn takes_workspace(self) -> bool {
-        matches!(self, LeftView::Cloud | LeftView::Vault)
+        matches!(self, LeftView::Cloud | LeftView::Vault | LeftView::LiveDocs)
     }
 }
 
@@ -262,6 +265,9 @@ impl Workspace {
         s.filter_menu = None;
         if self.shell.view == LeftView::Cloud && self.shell.panel_open {
             self.refresh_cloud(false, cx);
+        }
+        if self.shell.view == LeftView::LiveDocs && self.shell.panel_open {
+            self.live_docs_shown(cx);
         }
         if self.shell.view == LeftView::Browse && self.shell.panel_open && self.library.total() == 0 && !self.library.scanning {
             self.rescan(cx);
@@ -725,6 +731,18 @@ impl Workspace {
                 cx,
                 |this, _, cx| this.select_view(LeftView::Vault, cx),
             ))
+            .when(super::live_docs::enabled(), |el| {
+                el.child(self.rail_button(
+                    "rail-live-docs",
+                    "markie/live-docs.svg",
+                    "Live Docs: Darkmown projects",
+                    active(LeftView::LiveDocs),
+                    false,
+                    &p,
+                    cx,
+                    |this, _, cx| this.select_view(LeftView::LiveDocs, cx),
+                ))
+            })
             .child(rule())
             .child(self.rail_button(
                 "rail-edit",
@@ -1590,6 +1608,9 @@ impl Workspace {
         // the sync library below takes over with the same session.
         if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
             return self.render_cloud_page();
+        }
+        if self.shell.view == LeftView::LiveDocs {
+            return self.render_live_docs(cx);
         }
         if let Some(vault) = self.render_vault() {
             return vault;

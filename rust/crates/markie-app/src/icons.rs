@@ -32,6 +32,7 @@ const ICONS: &[(&str, &str)] = &[
     ("markie/cloud.svg", stroke!("1.8", r#"<path d="M7 19a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 19z"/>"#)),
     ("markie/cloud-large.svg", stroke!("1.7", r#"<path d="M7 19a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 19z"/>"#)),
     ("markie/skills.svg", stroke!("1.8", r#"<path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.7 1.8L21.5 17.5l-1.8.7L19 20l-.7-1.8L16.5 17.5l1.8-.7z"/>"#)),
+    ("markie/live-docs.svg", stroke!("1.8", r#"<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 8.5h17M9.5 12.5l-2 2 2 2M14.5 12.5l2 2-2 2"/>"#)),
     ("markie/vault.svg", stroke!("1.8", r#"<rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3M12 14.5v2"/>"#)),
     ("markie/pencil.svg", stroke!("1.8", r#"<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>"#)),
     ("markie/agent.svg", stroke!("1.7", r#"<rect x="5" y="8" width="14" height="11" rx="2.5"/><path d="M12 8V4M9 4h6"/><circle cx="9.5" cy="13" r="1" fill="black" stroke="none"/><circle cx="14.5" cy="13" r="1" fill="black" stroke="none"/><path d="M2 12v3M22 12v3"/>"#)),

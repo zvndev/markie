@@ -41,6 +41,7 @@ mod file_ops;
 mod folder_tree;
 mod history_dialog;
 mod library_rows;
+mod live_docs;
 mod import_copy;
 mod cloud;
 mod cloud_office;
@@ -117,6 +118,8 @@ pub struct Workspace {
     shell: rail::Shell,
     /// The Projects tab and the ⇧⌘F body search.
     projects: projects::Projects,
+    /// Live Docs: the projects page and the site preview (`live_docs.rs`).
+    live_docs: live_docs::LiveDocs,
     /// The open `.wd` document's preview (`workspace/darkmown.rs`).
     darkmown: darkmown::DarkmownState,
     editor: Entity<EditorState>,
@@ -248,6 +251,7 @@ impl Workspace {
             shell,
             projects,
             darkmown: Default::default(),
+            live_docs: live_docs::LiveDocs::new(&data_dir),
             editor,
             preview,
             rich,
@@ -734,6 +738,9 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace_page_open() && self.live_docs_open() {
+            return self.live_save(cx);
+        }
         if self.is_untitled() {
             return self.save_untitled(window, cx);
         }
@@ -1151,6 +1158,7 @@ impl Render for Workspace {
         self.ensure_browse_rows();
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
+        self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
         let history = match self.side {
@@ -1210,6 +1218,9 @@ impl Render for Workspace {
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                 if ev.keystroke.key == "escape" && this.panel_drag_cancel(cx) {
                     cx.stop_propagation();
+                } else if ev.keystroke.key == "escape" && this.live_docs.preview.is_some() && !this.dialogs.open.is_open() && !this.shell.search_open {
+                    this.close_live_preview(cx);
+                    cx.stop_propagation();
                 } else if ev.keystroke.key == "escape" && this.shell.row_menu.take().is_some() {
                     cx.notify();
                     cx.stop_propagation();
@@ -1254,6 +1265,7 @@ impl Render for Workspace {
                         }
                     }),
             )
+            .children(self.render_live_preview(cx))
             .children(self.render_row_menu(cx))
             .children(self.render_search(cx))
             .children(self.render_share(window, cx));

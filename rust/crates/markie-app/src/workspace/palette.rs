@@ -92,6 +92,8 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
     ]);
     // Super-nightly in Electron (`makeInteractiveAvailable`).
     if super::comments::nightly(None) {
+        list.push(cmd("Open Darkmown project preview…", "File", None, "darkmown live docs site project dev server localhost wd run", Rc::new(|ws, w, cx| ws.open_live_preview(w, cx))));
+        list.push(cmd("Live Docs", "View", None, "darkmown projects live docs", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::LiveDocs, cx))));
         list.push(cmd("Make interactive", "File", None, "darkmown wd live doc interactive convert copy checklist calculator", action(MakeInteractive)));
     }
     list

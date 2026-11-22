@@ -107,7 +107,8 @@ impl Workspace {
     /// `Workspace::web_views_covered`).
     pub(super) fn sync_darkmown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let wanted = self.is_darkmown_doc() && self.darkmown.mode != Mode::Source;
-        let overlay = self.web_views_covered(window, cx);
+        // The Live Docs preview panel also sits over the document.
+        let overlay = self.web_views_covered(window, cx) || self.live_docs.preview.is_some();
         if !wanted {
             if let Some(frame) = &self.darkmown.frame {
                 let _ = frame.set_visible(false);

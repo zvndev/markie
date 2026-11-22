@@ -15,6 +15,14 @@ markie-core.workspace = true
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }
+markie-vault = { path = "../markie-vault" }
+markie-cloud = { path = "../markie-cloud" }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tokio = { version = "1", features = ["rt", "time"] }
+getrandom = "0.3"
+regex = "1"
+zeroize = "1"
+dirs.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -35,6 +43,9 @@ gpui-kit = { version = "=0.10.0", features = [
   "tree-sitter-css",
   "tree-sitter-toml",
 ] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -36,6 +36,7 @@ mod palette;
 mod panels;
 mod rich;
 mod settings;
+pub(crate) mod vault;
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -108,6 +109,9 @@ pub struct Workspace {
     page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
+    /// The vault page (workspace/vault.rs), and whether it has the document area.
+    vault: Option<Entity<vault::VaultPage>>,
+    vault_visible: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -195,6 +199,8 @@ impl Workspace {
             pending_editor_text: None,
             zoom: 1.0,
             page_width: 768.0,
+            vault: None,
+            vault_visible: false,
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
@@ -371,6 +377,11 @@ impl Workspace {
     /// Files macOS handed over while the app runs (Finder, `open -a`). A
     /// folder joins the Library; the first file opens.
     pub fn open_external(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        // A file handed over while the vault shows: leave it (asking first if
+        // edits are unsaved), so the file does not open out of sight.
+        if self.vault_open() {
+            self.close_vault(window, cx);
+        }
         let mut first_file = None;
         let mut added_root = false;
         for path in paths {
@@ -1175,6 +1186,9 @@ impl Workspace {
     }
 
     fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(vault) = self.render_vault() {
+            return vault;
+        }
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
             return v_flex()
@@ -1390,6 +1404,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_trash))
             .on_action(cx.listener(Self::on_reveal))
             .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_toggle_vault))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)

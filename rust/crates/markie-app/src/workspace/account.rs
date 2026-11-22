@@ -315,6 +315,42 @@ impl AccountStore {
         cx.notify();
     }
 
+    /// The sheet's email-code route, with the code read from a console-mail
+    /// server's log instead of typed. Only `cloud_drive.rs` calls this, and
+    /// only for a test server on this computer and a scratch data folder.
+    pub(super) fn sign_in_with_logged_code(&mut self, email: String, server_log: std::path::PathBuf, cx: &mut Context<Self>) {
+        if !self.config.dev {
+            return;
+        }
+        let Some((rt, client)) = self.backend() else { return };
+        run_bg(
+            &rt,
+            cx,
+            async move {
+                let auth = AuthClient::new(&client);
+                let flow = auth.send_code(&email).await.map_err(|e| e.to_string())?;
+                let needle = format!("to={email} subject=\"");
+                for _ in 0..200 {
+                    let text = std::fs::read_to_string(&server_log).unwrap_or_default();
+                    let code = text
+                        .lines()
+                        .filter(|l| l.contains(&needle))
+                        .filter_map(|l| l.split(&needle).nth(1)?.split(' ').next().map(str::to_string))
+                        .last();
+                    if let Some(code) = code {
+                        return auth.verify_code(&flow, &code).await.map_err(|e| e.to_string());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                Err("no code in the server log".to_string())
+            },
+            |this: &mut Self, result, cx| match result {
+                Ok(user) => this.set_signed_in(user, cx),
+                Err(e) => eprintln!("markie-rs drive: sign-in failed: {e}"),
+            },
+        );
+    }
+
     /// Sign out here at once, and end the session at the server too.
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         self.ticket += 1;

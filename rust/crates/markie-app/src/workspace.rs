@@ -39,6 +39,7 @@ mod dialog_chrome;
 mod file_ops;
 mod history_dialog;
 mod cloud;
+mod cloud_drive;
 mod cloud_office;
 mod cloud_resources;
 mod cloud_ui;

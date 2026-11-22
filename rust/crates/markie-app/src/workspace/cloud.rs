@@ -928,6 +928,7 @@ impl Workspace {
     }
 
     pub(super) fn start_cloud_poll(&mut self, cx: &mut Context<Self>) {
+        self.start_test_drive(cx);
         self.refresh_cloud(true, cx);
         cx.spawn(async move |weak, cx| {
             loop {
@@ -1021,6 +1022,14 @@ impl Workspace {
                             {
                                 this.cloud.notice = Some(error);
                             }
+                        }
+                        if std::env::var("MARKIE_RS_COLLAB_DEBUG").is_ok_and(|v| v == "1") {
+                            eprintln!(
+                                "markie-rs cloud: listed {} for this account: {} documents, {} snapshots",
+                                scope.origin(),
+                                listing.docs.as_ref().map_or(0, Vec::len),
+                                listing.snapshots.len()
+                            );
                         }
                         this.cloud
                             .listings

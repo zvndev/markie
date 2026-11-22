@@ -287,7 +287,6 @@ pub struct RichView {
     pub(crate) resize: Option<(Pos, f32, f32)>,
     pub(crate) live_width: Option<(Pos, f32)>,
     emitted: u64,
-    pub(crate) highlighters: RefCell<std::collections::HashMap<String, gpui_kit::component::highlighter::SyntaxHighlighter>>,
     /// A link under a plain click, followed on release (behaviour.rs).
     pub(crate) link_click: Option<String>,
     /// An inline formula open for editing in place (math_field.rs).
@@ -362,7 +361,6 @@ impl RichView {
             resize: None,
             live_width: None,
             emitted: 0,
-            highlighters: RefCell::new(Default::default()),
             link_click: None,
             math_field: None,
             spell: spell::SpellCache::default(),

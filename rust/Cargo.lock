@@ -4648,6 +4648,7 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "markie-cloud",
  "markie-core",
  "markie-editor",
  "markie-office",
@@ -4657,6 +4658,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "tokio",
  "trash",
  "url",
 ]

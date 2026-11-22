@@ -31,6 +31,7 @@ use crate::library::Library;
 pub(crate) mod account;
 mod account_slot;
 mod agents;
+mod appearance;
 mod chrome;
 mod dialog_chrome;
 mod file_ops;
@@ -101,6 +102,8 @@ pub struct Workspace {
     shell: rail::Shell,
     /// The Projects tab and the ⇧⌘F body search.
     projects: projects::Projects,
+    /// Settings › Appearance's live controls.
+    appearance: appearance::AppearanceUi,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
@@ -196,6 +199,8 @@ impl Workspace {
         subscriptions.extend(shell_subs);
         let (projects, projects_sub) = projects::Projects::new(window, cx);
         subscriptions.push(projects_sub);
+        let (appearance, appearance_subs) = appearance::AppearanceUi::new(window, cx);
+        subscriptions.extend(appearance_subs);
         // Closing flushes pending saves first (Electron's close-flush.js).
         subscriptions.push(cx.on_app_quit(|this, cx| {
             this.flush_pending(cx);
@@ -227,6 +232,7 @@ impl Workspace {
             library,
             shell,
             projects,
+            appearance,
             editor,
             preview,
             rich,

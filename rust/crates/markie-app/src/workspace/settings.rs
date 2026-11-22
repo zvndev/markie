@@ -49,15 +49,6 @@ impl Workspace {
         }
     }
 
-    /// Paint and keep a changed store.
-    pub(super) fn commit_theme(&mut self, store: markie_core::theme::ThemeStore, window: &mut Window, cx: &mut Context<Self>) {
-        let id = store.normalized().active_template().id.clone();
-        themes::apply_store(store, Some(window), cx);
-        self.save_theme_store(cx);
-        self.shell.template = id;
-        cx.notify();
-    }
-
     /// Same path as the title bar's switch, so the two never disagree.
     fn set_color_mode(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.pick_color_mode(super::chrome::ColorMode::parse(Some(mode)), window, cx);
@@ -100,7 +91,7 @@ impl Workspace {
         let max_h = window.viewport_size().height * 0.86;
         let body = match section {
             SettingsSection::Account => self.render_account_section(t, cx),
-            SettingsSection::Appearance => self.render_appearance(colors_open, t, cx),
+            SettingsSection::Appearance => self.render_appearance_live(colors_open, t, window, cx),
             SettingsSection::Files => render_files(t),
             SettingsSection::Advanced => self.render_advanced(t, cx),
         };
@@ -150,159 +141,6 @@ impl Workspace {
             )
             .child(body)
             .into_any_element()
-    }
-
-    // ------------------------------------------------------------ appearance
-
-    fn render_appearance(&mut self, _colors_open: bool, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
-        let mode = self.setting_or("color_mode", "system");
-        let template_id = self.setting_or("style_template", "markie");
-        let all = chrome::templates();
-        let current = all.iter().find(|x| x.id == template_id).or_else(|| all.first()).expect("templates").clone();
-        let variant = if t.dark { &current.dark } else { &current.light };
-        let tone = if t.dark { "dark" } else { "light" };
-        // 680 panel - 2x20 padding - 2 border, four columns with 8pt gaps.
-        let card_w = (638. - 3. * 8.) / 4.;
-
-        div()
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.))
-                    .mb(px(12.))
-                    .child(
-                        div().child(section_label("Templates", t)).child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(t.muted)
-                                .mt(px(4.))
-                                .child("Each template has a light and a dark version. The mode picks which one you see."),
-                        ),
-                    )
-                    .child(segmented(
-                        [("light", "Light"), ("dark", "Dark"), ("system", "System")],
-                        &mode,
-                        t,
-                        cx,
-                        |this, m, window, cx| this.set_color_mode(m, window, cx),
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .mb(px(20.))
-                    .children(all.iter().map(|tpl| {
-                        let id = tpl.id.clone();
-                        template_card(tpl, tpl.id == template_id, t, card_w).on_click(cx.listener(
-                            move |this, _, window, cx| this.set_template(&id, window, cx),
-                        ))
-                    })),
-            )
-            .child(self.render_typography(&current.name, variant, t))
-            .child(
-                group(t)
-                    .mb(px(16.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(12.))
-                            .opacity(0.55)
-                            .child(
-                                div()
-                                    .child(div().flex().items_center().gap(px(8.)).child(section_label("Customize colors", t)).child(badge(t)))
-                                    .child(div().text_size(px(11.)).text_color(t.muted).mt(px(4.)).child(format!(
-                                        "Changes save a copy of {} that stands in for {tone} mode.",
-                                        current.name
-                                    ))),
-                            )
-                            .child(chrome::stroke_icon(chrome::PATH_CHEVRON_DOWN, t.muted, 14., 2.)),
-                    )
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.))
-                    .border_t_1()
-                    .border_color(t.border)
-                    .pt(px(12.))
-                    .child(div().text_size(px(11.)).text_color(t.muted).child(current.name.clone()))
-                    .child(
-                        // Disabled because nothing is customized, as in Electron.
-                        div()
-                            .rounded(px(6.))
-                            .border_1()
-                            .border_color(t.border)
-                            .px(px(10.))
-                            .py(px(4.))
-                            .text_size(px(11.))
-                            .text_color(t.muted)
-                            .opacity(0.4)
-                            .child("Reset to template"),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_typography(&self, template_name: &str, v: &chrome::Variant, t: &Tokens) -> Div {
-        let body = v.body_font.clone().unwrap_or_else(|| "system".into());
-        let heading = v.heading_font.clone().unwrap_or_else(|| "body".into());
-        let (body_label, body_family) = typeface(&body);
-        let (heading_label, heading_family) = if heading == "body" { ("Same as body", body_family) } else { typeface(&heading) };
-        let size = v.font_size.unwrap_or(16.);
-        let lh = v.line_height.unwrap_or(1.75);
-        let gap = v.paragraph_gap.unwrap_or(0.8);
-        let width = v.content_width.unwrap_or(768.);
-        group(t).mb(px(16.)).child(
-            div()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .mb(px(12.))
-                        .child(div().flex().items_center().gap(px(8.)).child(section_label("Typography", t)).child(badge(t)))
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(t.muted)
-                                .child(format!("Applies to both versions of {template_name}")),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(16.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(12.))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap(px(8.))
-                                        .child(font_menu("Body font", body_label, body_family, t))
-                                        .child(font_menu("Heading font", heading_label, heading_family, t)),
-                                )
-                                .child(range_row("Text size", format!("{size} px"), (size - 13.) / (22. - 13.), t))
-                                .child(range_row("Line height", format!("{lh:.2}"), (lh - 1.3) / (2.2 - 1.3), t))
-                                .child(range_row("Paragraph spacing", format!("{gap:.1} em"), (gap - 0.3) / (1.6 - 0.3), t))
-                                .child(range_row("Content width", format!("{width} px"), (width - 560.) / (1200. - 560.), t)),
-                        )
-                        .child(specimen(body_family, heading_family, size, lh, t)),
-                ),
-        )
     }
 
     // ---------------------------------------------------------------- account
@@ -451,7 +289,7 @@ fn render_files(t: &Tokens) -> AnyElement {
 // ---------------------------------------------------------------- widgets
 
 /// `.markie-settings-group`.
-fn group(t: &Tokens) -> Div {
+pub(super) fn group(t: &Tokens) -> Div {
     div()
         .rounded(px(10.))
         .border_1()
@@ -553,6 +391,13 @@ fn disabled_button(label: &str, t: &Tokens) -> Div {
         .child(label.to_string())
 }
 
+/// Appearance's Light / Dark / System switch.
+pub(super) fn color_mode_control(mode: &str, t: &Tokens, cx: &mut Context<Workspace>) -> Div {
+    segmented([("light", "Light"), ("dark", "Dark"), ("system", "System")], mode, t, cx, |this, m, window, cx| {
+        this.set_color_mode(m, window, cx)
+    })
+}
+
 /// `.markie-segmented-control` with `.markie-segmented-option`s.
 fn segmented<const N: usize>(
     options: [(&'static str, &'static str); N],
@@ -605,7 +450,7 @@ fn segmented<const N: usize>(
 
 /// Electron's TemplateCard: a miniature page painted in the template's own
 /// colours and faces.
-fn template_card(tpl: &chrome::TemplateInfo, selected: bool, t: &Tokens, w: f32) -> Stateful<Div> {
+pub(super) fn template_card(tpl: &chrome::TemplateInfo, selected: bool, t: &Tokens, w: f32) -> Stateful<Div> {
     let v = if t.dark { &tpl.dark } else { &tpl.light };
     let p = Tokens::from_variant(v, t.dark);
     let body = typeface(v.body_font.as_deref().unwrap_or("system")).1;
@@ -732,70 +577,8 @@ fn template_card(tpl: &chrome::TemplateInfo, selected: bool, t: &Tokens, w: f32)
         )
 }
 
-/// FontMenu's closed state: the label and a select-shaped button.
-fn font_menu(label: &str, value: &str, family: &'static str, t: &Tokens) -> Div {
-    div()
-        .flex_1()
-        .min_w_0()
-        .child(div().text_size(px(11.)).text_color(t.muted).mb(px(4.)).child(label.to_string()))
-        .child(
-            div()
-                .h(px(32.))
-                .flex()
-                .items_center()
-                .gap(px(7.))
-                .rounded(px(7.))
-                .border_1()
-                .border_color(t.field_border())
-                .bg(t.select_bg())
-                .pl(px(10.4))
-                .pr(px(8.8))
-                .opacity(0.42)
-                .child(div().flex_1().text_size(px(12.5)).font_family(family).child(value.to_string()))
-                .child(chrome::stroke_icon(chrome::PATH_CHEVRON_DOWN, t.muted, 14., 2.)),
-        )
-}
-
-/// RangeRow: label, value and Markie's slider track.
-fn range_row(label: &str, display: String, fill: f32, t: &Tokens) -> Div {
-    let fill = fill.clamp(0., 1.);
-    div()
-        .child(
-            div()
-                .flex()
-                .items_baseline()
-                .justify_between()
-                .mb(px(4.))
-                .child(div().text_size(px(12.)).child(label.to_string()))
-                .child(div().text_size(px(11.)).text_color(t.muted).child(display)),
-        )
-        .child(
-            div().h(px(16.)).relative().flex().items_center().opacity(0.55).child(
-                div()
-                    .w_full()
-                    .h(px(4.))
-                    .rounded_full()
-                    .bg(fade(t.foreground, 0.14))
-                    .child(div().h_full().w(relative(fill)).rounded_full().bg(t.blue)),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(px(1.))
-                    .left(relative(fill))
-                    .ml(px(-7.))
-                    .size(px(14.))
-                    .rounded_full()
-                    .bg(rgb(0xffffff))
-                    .border_1()
-                    .border_color(fade(chrome::black(), 0.18))
-                    .shadow(vec![shadow(fade(chrome::black(), 0.3), 0., 1., 3.)]),
-            ),
-        )
-}
-
 /// The typography specimen: a short page in the template's faces.
-fn specimen(body: &'static str, heading: &'static str, size: f32, lh: f32, t: &Tokens) -> Div {
+pub(super) fn specimen(body: &'static str, heading: &'static str, size: f32, lh: f32, t: &Tokens) -> Div {
     div()
         .flex_1()
         .min_w_0()

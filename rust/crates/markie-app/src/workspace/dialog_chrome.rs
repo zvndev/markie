@@ -26,10 +26,6 @@ pub(crate) struct Variant {
     pub status_red: Option<String>,
     pub body_font: Option<String>,
     pub heading_font: Option<String>,
-    pub line_height: Option<f32>,
-    pub paragraph_gap: Option<f32>,
-    pub font_size: Option<f32>,
-    pub content_width: Option<f32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -363,7 +359,7 @@ mod tests {
     #[test]
     fn every_template_has_typography() {
         for t in templates() {
-            assert!(t.light.font_size.is_some() && t.dark.content_width.is_some(), "{}", t.id);
+            assert!(t.light.body_font.is_some() && t.dark.heading_font.is_some(), "{}", t.id);
         }
     }
 

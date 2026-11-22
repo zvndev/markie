@@ -4664,7 +4664,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs 7.0.0",
  "futures",
+ "getrandom 0.3.4",
  "gpui-kit",
  "markie-agent",
  "markie-cloud",
@@ -4672,16 +4674,20 @@ dependencies = [
  "markie-editor",
  "markie-office",
  "markie-office-view",
+ "markie-vault",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "pulldown-cmark",
  "raw-window-handle",
+ "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "trash",
  "url",
+ "zeroize",
 ]
 
 [[package]]

@@ -4,8 +4,12 @@
 //! and nothing in the Electron release pipeline knows it exists.
 
 mod actions;
+mod deeplinks;
+mod default_apps;
 mod icons;
+mod instance;
 mod library;
+mod logs;
 mod open_urls;
 mod themes;
 mod workspace;
@@ -97,6 +101,8 @@ fn set_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Toggle Dark Mode", ToggleTheme),
                 MenuItem::separator(),
+                MenuItem::action("Vault", workspace::vault::ToggleVault),
+                MenuItem::separator(),
                 MenuItem::submenu(Menu { name: "Word Layout".into(), items: markie_office_view::actions::view_menu_items(), disabled: false }),
             ],
             disabled: false,
@@ -105,12 +111,31 @@ fn set_menus(cx: &mut App) {
     // Format, Insert, Layout and Review act on the Word page view; they show
     // disabled when another document has focus.
     menus.extend(markie_office_view::actions::menus());
+    menus.push(Menu {
+        name: "Help".into(),
+        items: vec![MenuItem::action(logs::reveal_menu_label(), logs::RevealCrashLog)],
+        disabled: false,
+    });
     cx.set_menus(menus);
 }
 
 fn main() {
-    let initial: Vec<std::path::PathBuf> = std::env::args_os()
-        .skip(1)
+    logs::install_panic_hook();
+    let args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+
+    // One Markie RS per data folder. A second launch hands its files and
+    // links to the running one and exits.
+    let data_dir = markie_core::paths::data_dir();
+    let second_launches = match instance::claim(&data_dir, &args) {
+        instance::Claim::Handed => return,
+        instance::Claim::Primary(rx) => rx,
+    };
+    // A markie-rs:// link in argv (Windows and Linux hand links over this
+    // way) waits for the window; everything else is a file to open.
+    let launch_links: Vec<String> = args.iter().filter(|a| a.starts_with(deeplinks::SCHEME)).cloned().collect();
+    let initial: Vec<std::path::PathBuf> = args
+        .iter()
+        .filter(|a| !a.starts_with(deeplinks::SCHEME) && !a.starts_with("-psn_"))
         .map(std::path::PathBuf::from)
         .collect();
 
@@ -119,15 +144,28 @@ fn main() {
     // instead of in argv. The callback has no App, so it only queues.
     let (open_tx, mut open_rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
     let app = gpui_kit::application().with_assets(icons::MarkieAssets);
+    let instance_tx = open_tx.clone();
     app.on_open_urls(move |urls| {
         let _ = open_tx.unbounded_send(urls);
+    });
+    // Second launches arrive on their own thread; an empty list only raises.
+    std::thread::spawn(move || {
+        while let Ok(args) = second_launches.recv() {
+            let urls = instance::as_urls(&args);
+            if instance_tx.unbounded_send(urls).is_err() {
+                break;
+            }
+        }
     });
     app.run(move |cx| {
             gpui_kit::init(cx);
             bind_keys(cx);
             markie_editor::bind_keys(cx);
             set_menus(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.on_action(|_: &Quit, cx| {
+                instance::release(&markie_core::paths::data_dir());
+                cx.quit()
+            });
             cx.activate(true);
             // The Markie Cloud session, restored from the Keychain, and this
             // copy registered as the one markie-rs:// sign-ins come back to.
@@ -137,7 +175,8 @@ fn main() {
             let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(640.), px(420.))),
+                // Electron's minWidth 600, minHeight 400.
+                window_min_size: Some(size(px(600.), px(400.))),
                 // Electron's `hiddenInset` traffic lights sit at x 14, y 14 in its
                 // 40px title bar (electron/main.js).
                 titlebar: Some(TitlebarOptions {
@@ -156,18 +195,39 @@ fn main() {
             })
             .expect("failed to open the Markie RS window");
 
+            cx.on_action(move |_: &logs::RevealCrashLog, cx| {
+                let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
+            });
+            for link in launch_links {
+                deeplinks::deliver(link, window_handle, workspace.clone(), cx);
+            }
+
             cx.spawn(async move |cx| {
                 while let Some(urls) = open_rx.next().await {
                     // A Google or Apple sign-in coming back on markie-rs://.
-                    let links = open_urls::hand_back_links(&urls);
-                    if !links.is_empty() {
+                    let hand_backs = open_urls::hand_back_links(&urls);
+                    if !hand_backs.is_empty() {
                         let _ = window_handle.update(cx, move |_, window, cx| {
                             open_urls::bring_to_front(window, cx);
-                            workspace::account::handle_open_urls(links, cx);
+                            workspace::account::handle_open_urls(hand_backs, cx);
+                        });
+                    }
+                    // Shared documents and public links on markie-rs://.
+                    let links = open_urls::deep_links(&urls);
+                    if !links.is_empty() {
+                        let workspace = workspace.clone();
+                        let _ = cx.update(|cx| {
+                            for link in links {
+                                deeplinks::deliver(link, window_handle, workspace.clone(), cx);
+                            }
                         });
                     }
                     let paths = open_urls::file_paths(&urls);
                     if paths.is_empty() {
+                        // A second launch with nothing to open raises the window.
+                        if urls.is_empty() {
+                            let _ = window_handle.update(cx, |_, window, cx| open_urls::bring_to_front(window, cx));
+                        }
                         continue;
                     }
                     let workspace = workspace.clone();

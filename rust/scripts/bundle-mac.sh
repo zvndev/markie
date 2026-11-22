@@ -7,8 +7,8 @@
 #   - no updater, no feed, no upload step, no signing identity;
 #   - it claims no file types and no markie:// scheme, so it cannot take over
 #     what double-clicking a .md file does or the links Markie answers;
-#   - the one URL scheme it registers is its own, markie-rs://, where Markie
-#     Cloud hands back a Google or Apple sign-in started with app=markie-rs.
+#   - the one URL scheme it registers is its own, markie-rs://, for shared
+#     links and the Google or Apple sign-in hand-back (app=markie-rs).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -48,12 +48,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
-      <key>CFBundleURLName</key><string>com.zvn.markie.rs.sign-in</string>
+      <key>CFBundleURLName</key><string>com.zvn.markie.rs</string>
       <key>CFBundleTypeRole</key><string>Viewer</string>
-      <key>CFBundleURLSchemes</key>
-      <array>
-        <string>markie-rs</string>
-      </array>
+      <key>CFBundleURLSchemes</key><array><string>markie-rs</string></array>
     </dict>
   </array>
 </dict>

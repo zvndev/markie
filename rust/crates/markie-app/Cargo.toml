@@ -13,11 +13,17 @@ path = "src/main.rs"
 [dependencies]
 markie-core.workspace = true
 markie-agent = { path = "../markie-agent" }
+markie-cloud = { path = "../markie-cloud" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }
-markie-cloud = { path = "../markie-cloud" }
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+markie-vault = { path = "../markie-vault" }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+getrandom = "0.3"
+regex = "1"
+zeroize = "1"
+dirs.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 serde.workspace = true

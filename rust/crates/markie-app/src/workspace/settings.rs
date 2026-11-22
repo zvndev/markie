@@ -3,7 +3,6 @@
 //! for features Markie RS does not have yet are drawn the same way, greyed,
 //! with a "Not in Markie RS yet" tag, so the layout matches Electron's.
 
-use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -48,16 +47,9 @@ const DEFAULT_APP_FORMATS: [(&str, &str, &str, Option<&str>); 6] = [
 ];
 
 impl Workspace {
+    /// Same path as the title bar's switch, so the two never disagree.
     fn set_color_mode(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(reg) = &self.registry {
-            let _ = reg.set_setting("color_mode", mode);
-        }
-        match mode {
-            "light" => Theme::change(ThemeMode::Light, Some(window), cx),
-            "dark" => Theme::change(ThemeMode::Dark, Some(window), cx),
-            _ => Theme::sync_system_appearance(Some(window), cx),
-        }
-        cx.notify();
+        self.pick_color_mode(super::chrome::ColorMode::parse(Some(mode)), window, cx);
     }
 
     pub(super) fn set_template(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -65,6 +57,7 @@ impl Workspace {
             let _ = reg.set_setting("style_template", id);
         }
         themes::apply(id, Some(window), cx);
+        self.shell.template = id.to_string();
         cx.notify();
     }
 

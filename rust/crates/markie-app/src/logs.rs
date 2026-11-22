@@ -26,7 +26,7 @@ pub const CONSENT_FILE: &str = "crash-reporting.json";
 /// `electron/crash-reporting.config.json`'s DSN. Empty: reporting is inert.
 pub const CONFIG_DSN: &str = "";
 
-gpui_kit::actions!(markie_logs, [RevealCrashLog]);
+gpui_kit::actions!(markie_logs, [RevealCrashLog, RevealNativeCrashReport]);
 
 /// Finder on macOS, File Explorer on Windows, and neither name is right on Linux.
 pub fn reveal_menu_label() -> &'static str {
@@ -415,6 +415,9 @@ pub fn upload_crash(kind: &str, detail: &str, wait: bool) {
 pub fn install_panic_hook() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        if markie_core::render_boundary::capture_panic(info) {
+            return;
+        }
         let message = if let Some(s) = info.payload().downcast_ref::<&str>() {
             (*s).to_string()
         } else if let Some(s) = info.payload().downcast_ref::<String>() {
@@ -448,6 +451,62 @@ pub fn reveal_crash_log(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
         return;
     }
     reveal_in_file_manager(&log.path);
+}
+
+/// Apple records hard native crashes outside the app process on macOS 12+.
+/// Reveal its report without copying, changing, or uploading it.
+#[cfg(any(target_os = "macos", test))]
+fn latest_native_report(dir: &Path) -> Option<PathBuf> {
+    use std::io::{BufRead, BufReader, Read as _};
+
+    std::fs::read_dir(dir).ok()?.filter_map(Result::ok).filter_map(|entry| {
+        let name = entry.file_name();
+        let name = name.to_str()?;
+        if !name.ends_with(".ips") || !(name.starts_with("markie-rs-") || name.starts_with("Markie RS-")) {
+            return None;
+        }
+        if !entry.file_type().ok()?.is_file() { return None; }
+        let mut header = String::new();
+        BufReader::new(std::fs::File::open(entry.path()).ok()?).take(8_192).read_line(&mut header).ok()?;
+        let metadata: Value = serde_json::from_str(&header).ok()?;
+        let id = metadata.get("bundleID").and_then(Value::as_str);
+        let process = metadata.get("name").and_then(Value::as_str);
+        if metadata.get("bug_type").and_then(Value::as_str) != Some("309")
+            || (id != Some("com.zvn.markie.rs") && !(id.is_none() && process == Some("markie-rs")))
+        {
+            return None;
+        }
+        Some((entry.metadata().ok()?.modified().ok()?, entry.path()))
+    }).max().map(|(_, path)| path)
+}
+
+#[cfg(target_os = "macos")]
+pub fn reveal_native_crash_report(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    // A scratch profile must not inspect the machine's real diagnostics.
+    let dir = if let Some(dir) = std::env::var_os("MARKIE_RS_DATA_DIR") {
+        PathBuf::from(dir).join("DiagnosticReports")
+    } else {
+        markie_core::paths::home_dir().join("Library/Logs/DiagnosticReports")
+    };
+    if let Some(path) = latest_native_report(&dir) {
+        reveal_in_file_manager(&path);
+    } else {
+        let _ = window.prompt(
+            gpui_kit::PromptLevel::Info, "No native crashes have been recorded yet.", None, &["OK"], cx,
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn native_reports_are_discovered_only_for_the_side_app() {
+    let scratch = tempfile::tempdir().unwrap();
+    let own = scratch.path().join("markie-rs-fixture.ips");
+    let file = |bundle: &str, kind| format!("{{\"name\":\"markie-rs\",\"bundleID\":\"{bundle}\",\"bug_type\":\"{kind}\"}}\n{{}}");
+    std::fs::write(&own, file("com.zvn.markie.rs", 309)).unwrap();
+    std::fs::write(scratch.path().join("markie-rs-electron.ips"), file("com.zvn.markie", 309)).unwrap();
+    std::fs::write(scratch.path().join("markie-rs-sample.ips"), file("com.zvn.markie.rs", 288)).unwrap();
+    assert_eq!(latest_native_report(scratch.path()), Some(own));
 }
 
 pub fn reveal_in_file_manager(path: &Path) {

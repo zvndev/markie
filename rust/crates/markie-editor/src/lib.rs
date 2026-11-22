@@ -203,6 +203,7 @@ pub fn bind_keys(cx: &mut App) {
 /// takes back only this person's edits.
 #[derive(Debug, Clone)]
 pub enum RichEvent {
+    RenderFailed(String),
     Changed,
     Undo,
     Redo,

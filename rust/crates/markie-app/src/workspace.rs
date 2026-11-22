@@ -38,6 +38,7 @@ mod collab;
 mod comments;
 mod share;
 mod dialog_chrome;
+mod document_failure;
 mod file_ops;
 mod first_run;
 mod folder_tree;
@@ -134,6 +135,7 @@ pub struct Workspace {
     rich: Entity<markie_editor::RichView>,
     file_grants: markie_core::links::FileGrants,
     doc: Option<OpenDoc>,
+    document_failure: Option<document_failure::DocumentFailure>,
     mode: Mode,
     /// In Split, the pane whose text is newest: the source editor (true) or
     /// the rich editor (false). Electron's `lastPane`.
@@ -274,6 +276,7 @@ impl Workspace {
             rich,
             file_grants: Default::default(),
             doc: None,
+            document_failure: None,
             mode: Mode::View,
             split_source_latest: false,
             split_echo: None,
@@ -502,6 +505,7 @@ impl Workspace {
         self.doc_notes.clear();
         match document::open(path) {
             Ok(doc) => {
+                self.document_failure = None;
                 self.file_grants.grant_document(&doc.path);
                 let large = doc.is_large();
                 let kind = match doc.content {
@@ -671,6 +675,7 @@ impl Workspace {
 
     /// Write whatever autosave still owes, now. Never a dialog.
     fn flush_pending(&mut self, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
             return self.office_flush_recovery(cx);
         }
@@ -778,6 +783,7 @@ impl Workspace {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
         if self.workspace_page_open() && self.live_docs_open() {
             return self.live_save(cx);
         }
@@ -1017,7 +1023,17 @@ impl Workspace {
         v_flex().size_full().bg(theme.background).child(toolbar).child(panes).into_any_element()
     }
 
-    fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_document(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if self.document_failure.is_none() {
+            match markie_core::render_boundary::project(|| self.project_document(cx)) {
+                Ok(document) => return document,
+                Err(detail) => self.show_document_failure(&detail, cx),
+            }
+        }
+        self.render_document_failure(cx)
+    }
+
+    fn project_document(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
             return v_flex()
@@ -1206,7 +1222,7 @@ impl Render for Workspace {
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
         // A video card's player is a web view too: hidden under any layer.
-        let hide_video = self.web_views_covered(window, cx) || !self.rich_active();
+        let hide_video = self.document_failure.is_some() || self.web_views_covered(window, cx) || !self.rich_active();
         self.rich.update(cx, |r, _| r.set_web_views_covered(hide_video));
         self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);

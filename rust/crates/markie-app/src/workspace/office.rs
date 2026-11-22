@@ -69,6 +69,7 @@ impl Workspace {
         };
         self.invalidate_import();
         self.settle(window, cx);
+        self.document_failure = None;
         let (view, subscription) = view_for(WordEditor::new(document), window, cx);
         let office = OfficeDoc { view, source: Source::Rich, _subscription: subscription };
         office.focus(window, cx);
@@ -152,6 +153,7 @@ fn doc_text(raw: &str) -> String {
 fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>) -> (Entity<WordView>, Subscription) {
     let view = cx.new(|cx| WordView::new(editor, window, cx));
     let subscription = cx.subscribe(&view, |this: &mut Workspace, view, event: &WordViewEvent, cx| match event {
+        WordViewEvent::RenderFailed(detail) => this.show_document_failure(detail, cx),
         WordViewEvent::Changed => {
             this.on_office_changed(cx);
             cx.notify();

@@ -39,6 +39,7 @@ pub mod path_display;
 pub mod paths;
 pub mod projects;
 pub mod registry;
+pub mod render_boundary;
 pub mod save;
 pub mod search;
 pub mod stats;

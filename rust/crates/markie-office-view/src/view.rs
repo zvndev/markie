@@ -48,6 +48,7 @@ pub enum PaperTone {
 
 #[derive(Clone, Debug)]
 pub enum WordViewEvent {
+    RenderFailed(String),
     /// The document, selection or view changed; the host refreshes its status.
     Changed,
     /// View > Actual Size: the host owns the shared document zoom.
@@ -1511,6 +1512,16 @@ impl WordView {
 
 impl Render for WordView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        markie_core::render_boundary::project(|| self.project_document(window, cx).into_any_element())
+            .unwrap_or_else(|detail| {
+                cx.emit(WordViewEvent::RenderFailed(detail));
+                div().into_any_element()
+            })
+    }
+}
+
+impl WordView {
+    fn project_document(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_images();
         self.sync_size_field(window, cx);
         self.building.borrow_mut().clear();

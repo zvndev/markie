@@ -48,6 +48,7 @@ impl Workspace {
     /// Before another document replaces this one. A file saves as before; an
     /// untitled buffer goes to the journal, the only copy there will be.
     pub(super) fn settle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document_failure.is_some() { return; }
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
             self.office_flush_recovery(cx);
             return;
@@ -76,6 +77,7 @@ impl Workspace {
     fn open_untitled_with_baseline(&mut self, name: String, text: String, clean: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.invalidate_import();
         self.settle(window, cx);
+        self.document_failure = None;
         self.doc_notes.clear();
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
         let format = kind_for_extension(&ext);

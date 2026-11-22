@@ -182,6 +182,8 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
             MenuItem::separator(),
             MenuItem::action(logs::reveal_menu_label(), logs::RevealCrashLog),
+            #[cfg(target_os = "macos")]
+            MenuItem::action("Reveal Native Crash Report", logs::RevealNativeCrashReport),
         ],
         disabled: false,
     });
@@ -269,6 +271,10 @@ fn main() {
 
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {
                 let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
+            });
+            #[cfg(target_os = "macos")]
+            cx.on_action(move |_: &logs::RevealNativeCrashReport, cx| {
+                let _ = window_handle.update(cx, |_, window, cx| logs::reveal_native_crash_report(window, cx));
             });
             workspace::account::handle_open_urls(open_urls::hand_back_links(&launch_links), cx);
             for link in open_urls::deep_links(&launch_links) {

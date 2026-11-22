@@ -5314,6 +5314,7 @@ name = "markie-office-view"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "markie-core",
  "markie-office",
  "miniz_oxide 0.8.9",
 ]

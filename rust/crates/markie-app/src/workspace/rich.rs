@@ -16,6 +16,7 @@ impl Workspace {
     pub(super) fn new_rich(window: &mut Window, cx: &mut Context<Self>) -> (Entity<RichView>, Subscription) {
         let rich = cx.new(RichView::new);
         let sub = cx.subscribe_in(&rich, window, |this, _, ev: &RichEvent, window, cx| match ev {
+            RichEvent::RenderFailed(detail) => this.show_document_failure(detail, cx),
             RichEvent::Changed => {
                 // A live room takes the edit first (collab.rs).
                 this.live_local_edit(cx);

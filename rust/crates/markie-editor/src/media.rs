@@ -78,6 +78,10 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
 
+pub(crate) fn reference_key(source: &str) -> String {
+    percent_decode(source.trim().split(['?', '#']).next().unwrap_or_default())
+}
+
 /// `image/png;base64,...` to an image.
 fn data_uri(rest: &str) -> Option<Image> {
     let (meta, data) = rest.split_once(',')?;

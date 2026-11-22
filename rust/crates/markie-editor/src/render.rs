@@ -657,7 +657,20 @@ impl RichView {
         let live = self.live_width.filter(|(p, _)| *p == pos).map(|(_, w)| w);
         let w = live.or(width.map(|w| w as f32));
         let kind = markie_rich::html::media_kind(src);
-        let source = media::resolve(src, self.base_dir.as_deref());
+        let source = match media::resolve(src, self.base_dir.as_deref()) {
+            Source::Local(path) => {
+                let allowed = !self.restrict_local_media || self.base_dir.as_ref()
+                    .and_then(|dir| Some(path.canonicalize().ok()?.starts_with(dir.canonicalize().ok()?)))
+                    .unwrap_or(false);
+                if allowed && path.is_file() {
+                    Source::Local(path)
+                } else {
+                    self.cloud_media.get(&media::reference_key(src))
+                        .cloned().map(Source::Local).unwrap_or(Source::None)
+                }
+            }
+            source => source,
+        };
         let image: AnyElement = if kind != markie_rich::html::MediaKind::Image {
             // Playback is phase 5: a card for the clip.
             div()

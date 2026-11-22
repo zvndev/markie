@@ -67,15 +67,96 @@ fn device(env: &Env, store: &ServerStore) -> CloudClient {
 
 async fn sign_up(env: &Env, store: &ServerStore, name: &str) -> (CloudClient, String, String) {
     let email = address(&name.to_lowercase());
+    let (client, id) = sign_up_at(env, store, name, &email).await;
+    (client, email, id)
+}
+
+async fn sign_up_at(env: &Env, store: &ServerStore, name: &str, email: &str) -> (CloudClient, String) {
     let c = device(env, store);
     let auth = AuthClient::new(&c);
-    assert_eq!(auth.sign_up_email(&email, "correct horse battery", name).await.unwrap(), SignInOutcome::NeedsVerification);
+    assert_eq!(auth.sign_up_email(email, "correct horse battery", name).await.unwrap(), SignInOutcome::NeedsVerification);
     // An unproven address cannot sign in.
-    assert_eq!(auth.sign_in_email(&email, "correct horse battery").await.unwrap(), SignInOutcome::NeedsVerification);
-    let code = code_for(env, &email, "verification code", 0).await;
-    let user = auth.verify_email(&email, &code).await.unwrap().expect("verify signs in");
+    assert_eq!(auth.sign_in_email(email, "correct horse battery").await.unwrap(), SignInOutcome::NeedsVerification);
+    let code = code_for(env, email, "verification code", 0).await;
+    let user = auth.verify_email(email, &code).await.unwrap().expect("verify signs in");
     assert_eq!(c.session().unwrap().user_id.as_deref(), Some(user.id.as_str()));
-    (c, email, user.id)
+    (c, user.id)
+}
+
+#[tokio::test]
+async fn cloud_sync_assets_links_and_office_bytes() {
+    use markie_cloud::platform::PlatformClient;
+    use markie_cloud::{assets, links};
+    let Some(env) = env() else { return; };
+    let mut store = ServerStore::open(None, true);
+    let probe = store.probe(&Transport::new(), &env.base).await.unwrap();
+    store.add(&probe.probe_id).unwrap();
+    let (client, uid) = sign_up_at(&env, &store, "Sync proof", "success@simulator.amazonses.com").await;
+    let client = client.for_user(&uid);
+    let docs = DocsClient::new(&client);
+    let engine = SyncEngine::new(&client, false);
+    let dir = tempfile::tempdir().unwrap();
+    let note = dir.path().join("source.md");
+    let content = "![Test](media/test.png)\n\n[Target](target.md)\n";
+    std::fs::write(&note, content).unwrap();
+    std::fs::create_dir(dir.path().join("media")).unwrap();
+    let png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+    std::fs::write(dir.path().join("media/test.png"), png).unwrap();
+    let id = markie_cloud::sync::reserve_document_id();
+    let reserved = SyncRecord { cloud_doc_id: Some(id.clone()), state: SyncState::Unpushed, ..Default::default() };
+    let (first, result) = engine.sync_on(&reserved, "source.md", content, false).await;
+    assert_eq!(result, PushResult::Ok { version: 1 });
+    assert_eq!(first.cloud_doc_id.as_deref(), Some(id.as_str()));
+    let (target, _) = engine.sync_on(&SyncRecord::default(), "target.md", "# Target\n", false).await;
+    let id = first.cloud_doc_id.as_deref().unwrap();
+    let target_id = target.cloud_doc_id.unwrap();
+    let assets = assets::reconcile(&docs, id, 1, &note, content, &[], false, &Default::default()).await.unwrap();
+    assert!(assets.fingerprint.is_some() && assets.refused.is_none() && assets.skipped.is_empty());
+    let cache = dir.path().join("cache");
+    for _ in 0..2 {
+        let media = assets::revalidate(&docs, &cache, &uid, &env.base, id, "media/test.png").await.unwrap();
+        assert_eq!(std::fs::read(media).unwrap(), png);
+    }
+    let etag = docs.fetch_asset(id, "media/test.png", None).await.unwrap().etag.unwrap();
+    assert_eq!(docs.fetch_asset(id, "media/test.png", Some(&etag)).await.unwrap().status, 304);
+    let pointers = links::resolve(&note, content, |p| p.ends_with("target.md").then(|| target_id.clone()));
+    let posted = links::reconcile(&docs, id, 1, &pointers, &Default::default()).await.unwrap();
+    assert!(posted.refused.is_none());
+    assert_eq!(links::fetch(&docs, id).await.unwrap(), pointers);
+    let (second, status) = engine.push(&first, "source.md", "# newer\n", false).await;
+    assert_eq!(status, PushResult::Ok { version: 2 });
+    let (conflict, status) = engine.push(&first, "source.md", "# mine\n", false).await;
+    assert_eq!(status, PushResult::Conflict { server_version: Some(2) });
+    assert_eq!(engine.resolve_take_cloud(&conflict, "source.md").await.unwrap().write.as_deref(), Some("# newer\n"));
+    assert_eq!(engine.resolve_overwrite(&conflict, "source.md", "# mine\n").await.unwrap().version, 3);
+    assert_eq!(engine.sync_off(&second, false).await.unwrap().state, SyncState::Paused);
+    eprintln!("text sync, conflict, asset conditional download and document link round trips passed");
+
+    let office = PlatformClient(&client);
+    let bytes = include_bytes!("../../markie-office/tests/fixtures/textedit-report.rtf");
+    let original = office.upload("report.rtf", bytes, None, None).await.unwrap();
+    let id = &original.meta.id;
+    assert_eq!(office.snapshot(id, None).await.unwrap().bytes, bytes);
+    assert!(office.list().await.unwrap().iter().any(|m| m.id == *id && m.byte_length == bytes.len()));
+    assert!(office.members(id).await.unwrap().is_empty());
+    let updated = b"{\\rtf1 Updated}";
+    assert_eq!(office.upload("report.rtf", updated, Some((id, 1)), None).await.unwrap().meta.version, 2);
+    let stale = office.upload("report.rtf", bytes, Some((id, 1)), None).await.unwrap_err();
+    assert_eq!(stale.status(), Some(409));
+    assert_eq!(office.snapshot(id, Some(1)).await.unwrap().bytes, bytes);
+    assert_eq!(office.snapshot(id, None).await.unwrap().bytes, updated);
+    let link = office.create_link(id).await.unwrap();
+    let response = client.call(markie_cloud::client::Call::new(markie_cloud::http::Method::Get,
+        &format!("/api/document-platform/links/{}/download", link.token)).anonymous()).await.unwrap();
+    assert!(response.ok());
+    assert_eq!(response.bytes, updated);
+    office.revoke_link(id, &link.id).await.unwrap();
+    let revoked = client.call(markie_cloud::client::Call::new(markie_cloud::http::Method::Get,
+        &format!("/api/document-platform/links/{}/download", link.token)).anonymous()).await.unwrap();
+    assert_eq!(revoked.status, 404);
+    let links = office.links(id).await.unwrap();
+    assert!(links["links"][0]["revokedAt"].is_number());
+    eprintln!("office create, list, replace, history, stale version, download and revoke passed");
 }
 
 struct DocsIo<'a> {
@@ -132,21 +213,34 @@ async fn against_the_local_server() {
     let code = code_for(&env, &alice_email.to_lowercase(), "sign-in code", 0).await;
     assert_eq!(auth3.verify_code(&flow, &code).await.unwrap().id, alice_id);
 
-    // The browser bridge hands back a deep link with our nonce and this server as issuer.
+    // The browser bridge hands back a deep link with our nonce and this server
+    // as issuer. Markie RS asks for its own scheme with `app=markie-rs`; a
+    // server without that change still answers `markie://`, which belongs to
+    // the Electron app, and the resolver must refuse it.
     let states = AuthStates::new();
     let start = AuthClient::new(&alice3).browser_start_url(Provider::Google, &states).unwrap();
     assert!(start.starts_with(&format!("{}/auth/google-start?state=", env.base)));
-    let state = start.rsplit("state=").next().unwrap().to_string();
-    let bridge = alice3.get(&format!("/auth/desktop-bridge?state={state}")).await.unwrap();
+    assert!(start.ends_with("&app=markie-rs"), "{start}");
+    let query = start.split_once('?').unwrap().1.to_string();
+    let bridge = alice3.get(&format!("/auth/desktop-bridge?{query}")).await.unwrap();
     assert_eq!(bridge.status, 200);
     let html = String::from_utf8(bridge.bytes).unwrap();
-    let link = html.split("href=\"markie://").nth(1).and_then(|s| s.split('"').next()).map(|s| format!("markie://{s}")).expect("deep link").replace("&amp;", "&");
-    let adopted = resolve_auth_deep_link(&link, DEFAULT_SERVER, &states).expect("deep link accepted");
-    assert_eq!(adopted.origin.as_deref(), Some(env.base.as_str()));
-    // The bridge hands back the session token itself; it signs in as Alice.
-    let via_link = device(&env, &store);
-    via_link.set_token(Some(&adopted.token)).unwrap();
-    assert_eq!(AuthClient::new(&via_link).me().await.unwrap().unwrap().id, alice_id);
+    let link_after = |scheme: &str| {
+        html.split(&format!("href=\"{scheme}://")).nth(1).and_then(|s| s.split('"').next()).map(|s| format!("{scheme}://{s}").replace("&amp;", "&"))
+    };
+    if let Some(link) = link_after("markie-rs") {
+        assert!(html.contains("Returning you to Markie RS"), "the bridge names Markie RS");
+        let adopted = resolve_auth_deep_link(&link, DEFAULT_SERVER, &states).expect("deep link accepted");
+        assert_eq!(adopted.origin.as_deref(), Some(env.base.as_str()));
+        // The bridge hands back the session token itself; it signs in as Alice.
+        let via_link = device(&env, &store);
+        assert_eq!(AuthClient::new(&via_link).adopt_token(&adopted.token).await.unwrap().unwrap().id, alice_id);
+        eprintln!("hand-back: markie-rs:// accepted");
+    } else {
+        let link = link_after("markie").expect("deep link");
+        assert_eq!(resolve_auth_deep_link(&link, DEFAULT_SERVER, &states), Err(markie_cloud::auth::DeepLinkRefusal::NotAuth));
+        eprintln!("hand-back: this server predates app=markie-rs and answered markie://, refused as it must be");
+    }
 
     // Sign-out ends the session at the server too.
     let old = alice3.token().unwrap();

@@ -25,6 +25,7 @@ pub mod link_preview;
 mod link_card;
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -195,6 +196,7 @@ pub fn bind_keys(cx: &mut App) {
 #[derive(Debug, Clone)]
 pub enum RichEvent {
     Changed,
+    DocumentLink(String),
     /// Documents dropped on the editor, to open (attach.ts leaves them to
     /// the window's open path).
     OpenPaths(Vec<PathBuf>),
@@ -244,6 +246,9 @@ pub struct RichView {
     scroll: ScrollHandle,
     store: SharedStore,
     base_dir: Option<PathBuf>,
+    cloud_media: HashMap<String, PathBuf>,
+    cloud_links: HashSet<String>,
+    restrict_local_media: bool,
     pub zoom: f32,
     pub page_width: f32,
     pub read_only: bool,
@@ -286,6 +291,9 @@ impl RichView {
             scroll: ScrollHandle::new(),
             store: Rc::new(RefCell::new(element::Store::default())),
             base_dir: None,
+            cloud_media: HashMap::new(),
+            cloud_links: HashSet::new(),
+            restrict_local_media: false,
             zoom: 1.0,
             page_width: 768.0,
             read_only: false,
@@ -331,6 +339,15 @@ impl RichView {
     /// The document as it would be saved.
     pub fn markdown(&self) -> String {
         self.editor.to_markdown()
+    }
+
+    /// Install per-document resources without modifying its Markdown.
+    pub fn set_cloud_resources(&mut self, media: HashMap<String, PathBuf>, links: HashSet<String>,
+        restrict_local: bool, cx: &mut Context<Self>) {
+        self.cloud_media = media;
+        self.cloud_links = links;
+        self.restrict_local_media = restrict_local;
+        cx.notify();
     }
 
     pub fn focus_handle(&self) -> &FocusHandle {
@@ -767,7 +784,8 @@ impl RichView {
         if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
             eprintln!("mouse down {:?} clicks {} -> {:?}", ev.position, ev.click_count, p);
         }
-        // A click on a link follows it on release (behaviour.rs).
+        // A click on a link follows it on release (behaviour.rs); a link
+        // to a cloud document goes to the host.
         self.note_link_click(p, ev.click_count, ev.modifiers.shift);
         let units = self.editor.units(p.block, p.leaf);
         match ev.click_count {

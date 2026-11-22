@@ -20,6 +20,7 @@ impl Workspace {
                 }
             }
             RichEvent::OpenLocal(href) => this.open_rich_link(href, window, cx),
+            RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
         });
         (rich, sub)
     }

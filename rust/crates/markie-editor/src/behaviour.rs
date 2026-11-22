@@ -141,6 +141,11 @@ impl RichView {
         if self.editor.has_selection() {
             return;
         }
+        let reference = super::media::reference_key(&href);
+        if self.cloud_links.contains(&reference) {
+            cx.emit(RichEvent::DocumentLink(reference));
+            return;
+        }
         let lower = href.to_ascii_lowercase();
         if lower.starts_with("http://") || lower.starts_with("https://") {
             if let Some(url) = attach::external_web_target(&href) {

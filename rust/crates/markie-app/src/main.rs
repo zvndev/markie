@@ -4,6 +4,7 @@
 //! and nothing in the Electron release pipeline knows it exists.
 
 mod actions;
+mod icons;
 mod library;
 mod open_urls;
 mod themes;
@@ -30,6 +31,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-alt-r", RevealDocument, None),
         KeyBinding::new("cmd-r", Rescan, None),
         KeyBinding::new("cmd-shift-l", ToggleTheme, None),
+        KeyBinding::new("cmd-l", ToggleLibrary, None),
         KeyBinding::new("cmd-alt-y", ShowHistory, None),
         KeyBinding::new("cmd-shift-i", ToggleStats, None),
         KeyBinding::new("cmd-alt-o", ToggleOutline, None),
@@ -51,6 +53,7 @@ fn set_menus(cx: &mut App) {
             name: "Markie RS".into(),
             items: vec![
                 MenuItem::action("Settings…", OpenSettings),
+                MenuItem::action("Sign In…", OpenAccount),
                 MenuItem::separator(),
                 MenuItem::action("Quit Markie RS", Quit),
             ],
@@ -78,10 +81,12 @@ fn set_menus(cx: &mut App) {
             name: "View".into(),
             items: vec![
                 MenuItem::action("Command Palette", CommandPalette),
+                MenuItem::action("Library", ToggleLibrary),
                 MenuItem::action("Toggle View and Source", ToggleMode),
                 MenuItem::action("Outline", ToggleOutline),
                 MenuItem::action("Statistics", ToggleStats),
-                MenuItem::action("Search Documents", FocusSearch),
+                MenuItem::action("Search All Documents", FocusSearch),
+                MenuItem::action("Cloud", ShowCloud),
                 MenuItem::action("Rescan Documents", Rescan),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ZoomIn),
@@ -113,7 +118,7 @@ fn main() {
     // launch through Launch Services, often hands the first file the same way
     // instead of in argv. The callback has no App, so it only queues.
     let (open_tx, mut open_rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    let app = gpui_kit::application().with_assets(icons::MarkieAssets);
     app.on_open_urls(move |urls| {
         let _ = open_tx.unbounded_send(urls);
     });
@@ -125,11 +130,21 @@ fn main() {
             set_menus(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.activate(true);
+            // The Markie Cloud session, restored from the Keychain, and this
+            // copy registered as the one markie-rs:// sign-ins come back to.
+            workspace::account::AccountStore::init(cx);
+            std::thread::spawn(open_urls::register_url_scheme);
 
             let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(640.), px(420.))),
+                // Electron's `hiddenInset` traffic lights sit at x 14, y 14 in its
+                // 40px title bar (electron/main.js).
+                titlebar: Some(TitlebarOptions {
+                    traffic_light_position: Some(point(px(14.), px(14.))),
+                    ..TitleBar::title_bar_options()
+                }),
                 ..TitleBar::window_options()
             };
             let (window_handle, workspace) = gpui_kit::open_window(options, cx, move |window, cx| {
@@ -144,6 +159,14 @@ fn main() {
 
             cx.spawn(async move |cx| {
                 while let Some(urls) = open_rx.next().await {
+                    // A Google or Apple sign-in coming back on markie-rs://.
+                    let links = open_urls::hand_back_links(&urls);
+                    if !links.is_empty() {
+                        let _ = window_handle.update(cx, move |_, window, cx| {
+                            open_urls::bring_to_front(window, cx);
+                            workspace::account::handle_open_urls(links, cx);
+                        });
+                    }
                     let paths = open_urls::file_paths(&urls);
                     if paths.is_empty() {
                         continue;

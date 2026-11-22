@@ -23,6 +23,15 @@ pub fn hand_back_links(urls: &[String]) -> Vec<String> {
     urls.iter().filter(|raw| markie_cloud::auth::is_hand_back_link(raw)).cloned().collect()
 }
 
+/// The `markie-rs://` links among the URLs, except the sign-in hand-back
+/// (`markie-rs://auth`), which the cloud sign-in code takes.
+pub fn deep_links(urls: &[String]) -> Vec<String> {
+    urls.iter()
+        .filter(|u| crate::deeplinks::classify(u) != crate::deeplinks::Kind::Ignore && !crate::deeplinks::is_auth(u))
+        .cloned()
+        .collect()
+}
+
 /// Un-minimize the window, raise it and make Markie RS the active app.
 /// `activate_window` alone orders a window front but leaves a minimized one in
 /// the Dock.
@@ -105,6 +114,9 @@ mod tests {
             file_paths(&urls),
             vec![PathBuf::from("/Users/someone/Notes/plan one.md"), PathBuf::from("/tmp/b.docx")]
         );
+        assert_eq!(deep_links(&urls), Vec::<String>::new(), "auth belongs to the sign-in code");
+        let more = vec!["markie-rs://open?token=t".to_string(), "markie://open?token=t".to_string(), "markie-rs://doc?id=1".to_string()];
+        assert_eq!(deep_links(&more), vec!["markie-rs://open?token=t".to_string(), "markie-rs://doc?id=1".to_string()]);
     }
 
     #[test]

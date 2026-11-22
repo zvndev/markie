@@ -94,7 +94,10 @@ impl Workspace {
                                     )
                                     .child(div().text_xs().text_color(muted).child(t.description.clone()))
                             })),
-                    ),
+                    )
+                    // Files and Advanced › Error reporting, from default_apps.rs and logs.rs.
+                    .child(crate::default_apps::render_section(cx))
+                    .children(crate::logs::render_crash_setting(cx)),
             )
         });
     }

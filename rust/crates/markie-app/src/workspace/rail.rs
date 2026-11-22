@@ -1323,6 +1323,9 @@ impl Workspace {
         if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
             return self.render_cloud_page();
         }
+        if let Some(vault) = self.render_vault() {
+            return vault;
+        }
         let p = themes::palette(cx);
         let signed_in_cloud = self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_some();
         let (title, glyph, body) = match self.shell.view {

@@ -45,6 +45,7 @@ mod text_view;
 mod settings;
 mod skills;
 pub mod source;
+pub(crate) mod vault;
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,6 +127,8 @@ pub struct Workspace {
     pending_editor_text: Option<String>,
     /// The Cloud page the rail's Cloud destination shows (account.rs).
     cloud_panel: Entity<account::CloudPanel>,
+    /// The vault page (workspace/vault.rs), made the first time the Vault view opens.
+    vault: Option<Entity<vault::VaultPage>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -217,6 +220,7 @@ impl Workspace {
             cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
             zoom: 1.0,
             page_width: 768.0,
+            vault: None,
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
@@ -260,7 +264,8 @@ impl Workspace {
 
 
     fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
-        self.zoom = (zoom * 10.0).round().clamp(5.0, 30.0) / 10.0;
+        // Hundredths: Electron's zoom presets include 0.75 and 1.25.
+        self.zoom = (zoom * 100.0).round().clamp(50.0, 300.0) / 100.0;
         if let Some(reg) = &self.registry {
             let _ = reg.set_setting("zoom", &self.zoom.to_string());
         }
@@ -276,11 +281,11 @@ impl Workspace {
     }
 
     fn on_zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.zoom + 0.1, cx);
+        self.set_zoom(markie_editor::style::step_zoom(self.zoom, true), cx);
     }
 
     fn on_zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.zoom - 0.1, cx);
+        self.set_zoom(markie_editor::style::step_zoom(self.zoom, false), cx);
     }
 
     fn on_zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
@@ -288,11 +293,11 @@ impl Workspace {
     }
 
     fn on_wider(&mut self, _: &PageWider, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_page_width(self.page_width + 96.0, cx);
+        self.step_page_width(true, cx);
     }
 
     fn on_narrower(&mut self, _: &PageNarrower, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_page_width(self.page_width - 96.0, cx);
+        self.step_page_width(false, cx);
     }
 
     fn on_import(&mut self, _: &ImportFromMarkie, window: &mut Window, cx: &mut Context<Self>) {
@@ -354,6 +359,11 @@ impl Workspace {
     /// Files macOS handed over while the app runs (Finder, `open -a`). A
     /// folder joins the Library; the first file opens.
     pub fn open_external(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        // A file handed over while the vault shows: leave it (asking first if
+        // edits are unsaved), so the file does not open out of sight.
+        if self.vault_open() {
+            self.close_vault(window, cx);
+        }
         let mut first_file = None;
         let mut added_root = false;
         for path in paths {
@@ -1067,12 +1077,13 @@ impl Workspace {
                     },
                     |d, bytes| d.child(text_view::large_strip(bytes, cx)),
                 )
+                .when(matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown), |d| d.child(self.source_toolbar(cx)))
                 .child(
                     Editor::new(&self.editor)
                         .bordered(false)
                         .h(relative(1.))
-                        .font_family(theme.mono_font_family.clone())
-                        .text_size(theme.mono_font_size * self.zoom),
+                        .font_family(markie_editor::MONO)
+                        .text_size(px(14. * self.zoom)),
                 )
                 .into_any_element(),
         }
@@ -1095,6 +1106,7 @@ impl Render for Workspace {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         self.ensure_browse_rows();
+        self.sync_vault(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);
         let history = match self.side {
@@ -1136,6 +1148,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open_account))
             .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
+            .on_action(cx.listener(Self::on_toggle_vault))
             .relative()
             .size_full()
             .bg(cx.theme().background)

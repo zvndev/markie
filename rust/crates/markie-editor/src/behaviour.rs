@@ -141,22 +141,12 @@ impl RichView {
         if self.editor.has_selection() {
             return;
         }
-        let reference = super::media::reference_key(&href);
-        if self.cloud_links.contains(&reference) {
-            cx.emit(RichEvent::DocumentLink(reference));
-            return;
+        match activation(&href, &self.cloud_links, self.base_dir.as_deref()) {
+            Activation::Web(url) => cx.open_url(&url),
+            Activation::Cloud(reference) => cx.emit(RichEvent::DocumentLink(reference)),
+            Activation::Local(click) => cx.emit(RichEvent::OpenLocal(click)),
+            Activation::Ignore => {}
         }
-        let lower = href.to_ascii_lowercase();
-        if lower.starts_with("http://") || lower.starts_with("https://") {
-            if let Some(url) = attach::external_web_target(&href) {
-                cx.open_url(&url);
-            }
-            return;
-        }
-        if lower.starts_with('#') || lower.contains("://") || lower.starts_with("mailto:") {
-            return;
-        }
-        cx.emit(RichEvent::OpenLocal(href));
     }
 
     fn on_drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
@@ -192,5 +182,76 @@ impl RichView {
             }
         });
         self.focus(window, cx);
+    }
+}
+
+/// What activating a link does. Every way of following a link in View mode
+/// (a click, the preview card, an embed card) goes through here, so only a
+/// plain web address ever reaches the system opener, and a local file goes
+/// through `classify_click` (Electron's local-open-policy.js).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Activation {
+    Web(String),
+    /// A link to a Markie Cloud document (`DocumentLink`).
+    Cloud(String),
+    /// A file beside the document: open, reveal or refuse.
+    Local(markie_core::links::LinkClick),
+    Ignore,
+}
+
+pub fn activation(href: &str, cloud_links: &std::collections::HashSet<String>, doc_dir: Option<&std::path::Path>) -> Activation {
+    use markie_core::links::{LinkClick, classify_click};
+    // handleExternalLinkClick runs first, then the cloud and local rules.
+    if let LinkClick::Web(url) = classify_click(href, None) {
+        return Activation::Web(url);
+    }
+    let reference = super::media::reference_key(href);
+    if cloud_links.contains(&reference) {
+        return Activation::Cloud(reference);
+    }
+    match classify_click(href, doc_dir) {
+        LinkClick::Ignore => Activation::Ignore,
+        LinkClick::Web(url) => Activation::Web(url),
+        other => Activation::Local(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Activation, activation};
+    use markie_core::links::LinkClick;
+    use std::collections::HashSet;
+
+    fn never_opened(a: &Activation) -> bool {
+        !matches!(a, Activation::Web(_) | Activation::Local(LinkClick::Open(_)))
+    }
+
+    #[test]
+    fn scripts_bundles_and_other_schemes_never_reach_the_opener() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir(d.join("Tool.app")).unwrap();
+        std::fs::write(d.join("setup.command"), b"echo").unwrap();
+        let none = HashSet::new();
+        for href in [
+            "javascript:alert(1)",
+            "JavaScript:void(0)",
+            "file:///Applications/Calculator.app",
+            "file://localhost/System/Applications/Utilities/Terminal.app",
+            "x-apple.systempreferences:com.apple.preference.security",
+            "vscode://file/etc/passwd",
+            "my-custom-app:do-something",
+            "data:text/html,<script>1</script>",
+        ] {
+            let a = activation(href, &none, Some(d));
+            assert!(never_opened(&a), "{href} -> {a:?}");
+        }
+        // An app bundle or script beside the document is only shown in Finder.
+        let real = d.canonicalize().unwrap();
+        assert_eq!(activation("Tool.app", &none, Some(d)), Activation::Local(LinkClick::Reveal(real.join("Tool.app"))));
+        assert_eq!(activation("./setup.command", &none, Some(d)), Activation::Local(LinkClick::Reveal(real.join("setup.command"))));
+        assert!(matches!(activation("/Applications/Calculator.app", &none, Some(d)), Activation::Local(LinkClick::Refuse(_))));
+        assert_eq!(activation("https://example.com/a", &none, Some(d)), Activation::Web("https://example.com/a".into()));
+        assert_eq!(activation("mailto:a@b.c", &none, Some(d)), Activation::Ignore);
     }
 }

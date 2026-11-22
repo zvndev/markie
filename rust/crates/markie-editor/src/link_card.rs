@@ -197,7 +197,9 @@ impl RichView {
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, _, cx| {
-                cx.open_url(&url);
+                if let super::behaviour::Activation::Web(u) = super::behaviour::activation(&url, &Default::default(), None) {
+                    cx.open_url(&u);
+                }
                 this.hide_link_card(cx);
             }))
             .children(image.clone().map(|i| img(i).w_full().h(px(132.)).object_fit(ObjectFit::Cover).border_b_1().border_color(theme.border)))

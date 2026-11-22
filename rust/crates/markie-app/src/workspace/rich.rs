@@ -2,9 +2,15 @@
 //! the open document into it, autosaving its edits through `write_text`,
 //! and keeping Source mode's text in step.
 
+use std::cell::RefCell;
+use std::sync::OnceLock;
+
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
+use serde::Deserialize;
 
 use markie_core::formats::FormatKind;
+use markie_editor::style::{DocStyle, WIDTH_STEPS, step_width, width_index};
 use markie_editor::{RichEvent, RichView};
 
 use super::{DocKind, Mode, OpenDoc, Workspace};
@@ -21,6 +27,10 @@ impl Workspace {
             }
             RichEvent::OpenLocal(href) => this.open_rich_link(href, window, cx),
             RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
+            RichEvent::Zoom(z) => this.set_zoom(*z, cx),
+            RichEvent::PageWidth(w) => this.set_width_step(*w, cx),
+            RichEvent::History => this.toggle_side(super::SidePanel::History, cx),
+            RichEvent::Print => {}
         });
         (rich, sub)
     }
@@ -100,48 +110,116 @@ impl Workspace {
         true
     }
 
-    /// Zoom and page width follow the workspace's settings.
+    /// Zoom, page width and the template's typography follow the
+    /// workspace's settings and theme.
     pub(super) fn sync_rich_appearance(&self, cx: &mut Context<Self>) {
         let (z, w) = (self.zoom, self.page_width);
+        let style = doc_style(cx.theme().background);
         self.rich.update(cx, |r, cx| {
             if (r.zoom - z).abs() > f32::EPSILON || (r.page_width - w).abs() > f32::EPSILON {
                 r.set_appearance(z, w, cx);
             }
+            r.set_style(style, cx);
         });
     }
 
-    /// A click on a link to a file (local-link.ts `openLocalFile`): a
-    /// document opens here, anything else in its own app.
-    fn open_rich_link(&mut self, href: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let href = href.split('#').next().unwrap_or("");
-        if href.is_empty() {
-            return;
+    /// A click on a link to a file, already classified by
+    /// `markie_core::links::classify_click` (local-link.ts and
+    /// local-open-policy.js): a document opens here, another passive file in
+    /// its own app, and programs, installers and bundles only in Finder.
+    fn open_rich_link(&mut self, click: &markie_core::links::LinkClick, window: &mut Window, cx: &mut Context<Self>) {
+        use markie_core::links::LinkClick;
+        match click {
+            LinkClick::Open(path) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                if markie_editor::attach::opens_as_document(&name) {
+                    self.open_path(path, window, cx);
+                } else {
+                    cx.open_with_system(path);
+                }
+            }
+            LinkClick::Reveal(path) => cx.reveal_path(path),
+            LinkClick::Refuse(why) => eprintln!("markie-rs: link not opened: {why}"),
+            LinkClick::Web(_) | LinkClick::Ignore => {}
         }
-        let decoded = href.replace("%20", " ");
-        let raw = decoded.strip_prefix("file://").unwrap_or(&decoded);
-        let path = std::path::Path::new(raw);
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            let Some(dir) = self.doc.as_ref().and_then(|d| d.path.parent().map(|p| p.to_path_buf())) else { return };
-            dir.join(path)
+    }
+
+    /// Electron's formatting row, above the Source pane too.
+    pub(super) fn source_toolbar(&self, cx: &mut Context<Self>) -> Entity<markie_editor::SourceToolbar> {
+        self.sync_rich_appearance(cx);
+        self.rich.update(cx, |r, cx| r.source_toolbar(cx))
+    }
+
+    /// A step of Electron's page widths. "Default" is stored as 768, the
+    /// width this setting always meant, and "Full" as the 1600 ceiling.
+    pub(super) fn set_width_step(&mut self, step: f32, cx: &mut Context<Self>) {
+        let px = match width_index(step) {
+            0 => 768.0,
+            4 => 1600.0,
+            i => WIDTH_STEPS[i],
         };
-        if !path.exists() {
-            return;
-        }
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if markie_editor::attach::opens_as_document(&name) {
-            self.open_path(&path, window, cx);
-        } else if path.is_dir() || is_program(&path) {
-            // Programs and installers are shown in Finder, never run.
-            cx.reveal_path(&path);
-        } else {
-            cx.open_with_system(&path);
-        }
+        self.set_page_width(px, cx);
+    }
+
+    pub(super) fn step_page_width(&mut self, wider: bool, cx: &mut Context<Self>) {
+        self.set_width_step(step_width(self.page_width, wider), cx);
     }
 }
 
-fn is_program(p: &std::path::Path) -> bool {
-    let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "app" | "command" | "sh" | "pkg" | "dmg" | "exe" | "msi" | "bat" | "cmd" | "jar" | "scpt" | "workflow" | "terminal")
+/// One variant's typography in `themes/templates.json`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Typography {
+    background: String,
+    doc_rule: Option<String>,
+    border: String,
+    link: String,
+    body_font: Option<String>,
+    heading_font: Option<String>,
+    line_height: Option<f32>,
+    paragraph_gap: Option<f32>,
+    font_size: Option<f32>,
+    content_width: Option<f32>,
+}
+
+#[derive(Deserialize)]
+struct TemplateTypography {
+    light: Typography,
+    dark: Typography,
+}
+
+fn hex(s: &str) -> Option<Hsla> {
+    let h = s.trim().trim_start_matches('#');
+    (h.len() == 6).then(|| u32::from_str_radix(h, 16).ok().map(|v| rgb(v).into())).flatten()
+}
+
+/// The page's look for the theme in use, found by its background colour
+/// (every template variant has its own), and kept until that changes.
+fn doc_style(background: Hsla) -> DocStyle {
+    static ALL: OnceLock<Vec<TemplateTypography>> = OnceLock::new();
+    thread_local! {
+        static LAST: RefCell<Option<(Hsla, DocStyle)>> = const { RefCell::new(None) };
+    }
+    if let Some(style) = LAST.with(|l| l.borrow().as_ref().filter(|(bg, _)| *bg == background).map(|(_, s)| s.clone())) {
+        return style;
+    }
+    let all = ALL.get_or_init(|| serde_json::from_str(include_str!("../../themes/templates.json")).unwrap_or_default());
+    let found = all.iter().flat_map(|t| [&t.light, &t.dark]).find(|v| hex(&v.background) == Some(background));
+    let style = found
+        .map(|v| {
+            let d = DocStyle::default();
+            DocStyle {
+                body_font: v.body_font.clone().unwrap_or(d.body_font),
+                heading_font: v.heading_font.clone().unwrap_or(d.heading_font),
+                line_height: v.line_height.unwrap_or(d.line_height),
+                paragraph_gap: v.paragraph_gap.unwrap_or(d.paragraph_gap),
+                font_size: v.font_size.unwrap_or(d.font_size),
+                content_width: v.content_width.unwrap_or(d.content_width),
+                doc_rule: v.doc_rule.as_deref().and_then(hex).or_else(|| hex(&v.border)).unwrap_or(d.doc_rule),
+                link: hex(&v.link).unwrap_or(d.link),
+            }
+        })
+        .unwrap_or_default();
+    LAST.with(|l| *l.borrow_mut() = Some((background, style.clone())));
+    style
 }

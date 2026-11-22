@@ -1,18 +1,16 @@
-//! The main window: Library on the left, the open document on the right, a
-//! status bar along the bottom. Mirrors the shape of `src/app/page.tsx`.
+//! The main window: the title bar, the activity rail and its side panel on
+//! the left, and the open document. Mirrors the shape of `src/app/page.tsx`;
+//! the chrome itself lives in `chrome.rs` and `rail.rs`.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
-use gpui_kit::component::resizable::{h_resizable, resizable_panel};
-use gpui_kit::component::status_bar::StatusBar;
+use gpui_kit::component::input::{Editor, EditorState, InputEvent, InputState};
 use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::component::{
-    ActiveTheme, IconName, Selectable as _, Sizable as _, Theme, ThemeMode, TitleBar, WindowExt as _, h_flex,
-    v_flex,
+    ActiveTheme, IconName, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -28,14 +26,24 @@ use markie_core::registry::Registry;
 use markie_core::{outline, paths, stats};
 
 use crate::actions::*;
-use crate::library::{Library, LibraryTab};
+use crate::library::Library;
 
+pub(crate) mod account;
+mod agents;
+mod chrome;
 mod file_ops;
+mod cloud;
+mod cloud_office;
+mod cloud_resources;
+mod cloud_ui;
 mod office;
 mod palette;
 mod panels;
+mod rail;
 mod rich;
+mod text_view;
 mod settings;
+mod skills;
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -71,10 +79,17 @@ enum DocKind {
 }
 
 pub struct Workspace {
+    agents: agents::AgentState,
+    skills: Option<Entity<skills::SkillsPanel>>,
     pub focus_handle: FocusHandle,
     registry: Option<Rc<Registry>>,
+    cloud: cloud::CloudWorkspace,
+    cloud_office: cloud_office::OfficeCloud,
+    cloud_search: Entity<InputState>,
+    /// The Browse panel's view of the device index.
     library: Library,
-    search: Entity<InputState>,
+    /// Title bar, rail and side panel state.
+    shell: rail::Shell,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
     /// View mode for Markdown: the native rich editor.
@@ -108,6 +123,8 @@ pub struct Workspace {
     page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
+    /// The Cloud page the rail's Cloud destination shows (account.rs).
+    cloud_panel: Entity<account::CloudPanel>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -118,7 +135,6 @@ impl Workspace {
             .map_err(|e| eprintln!("markie-rs: registry unavailable: {e:#}"))
             .ok();
 
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search documents"));
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("markdown")
@@ -127,35 +143,33 @@ impl Workspace {
                 .searchable(true)
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
+        let cloud_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search cloud documents"));
         let (rich, rich_sub) = Self::new_rich(cx);
 
-        let subscriptions = vec![
-            cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let text = state.read(cx).value().to_string();
-                    this.library.set_text(&text);
-                    cx.notify();
-                }
-            }),
+        let mut subscriptions = vec![
             cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.on_edit(cx);
                 }
             }),
             rich_sub,
+            cx.subscribe(&cloud_search, |_, _, _: &InputEvent, cx| cx.notify()),
         ];
+        subscriptions.extend(Self::watch_account(window, cx));
 
         let template = registry
             .as_ref()
             .and_then(|r| r.setting("style_template").ok().flatten())
             .unwrap_or_else(|| "markie".into());
         crate::themes::apply(&template, Some(window), cx);
-        // The user's own light or dark choice outranks the system appearance.
-        match registry.as_ref().and_then(|r| r.setting("color_mode").ok().flatten()).as_deref() {
-            Some("dark") => Theme::change(ThemeMode::Dark, Some(window), cx),
-            Some("light") => Theme::change(ThemeMode::Light, Some(window), cx),
-            _ => {}
-        }
+        // The user's own light or dark choice outranks the system appearance;
+        // System follows macOS, also when it changes while the app runs.
+        let color_mode =
+            chrome::ColorMode::parse(registry.as_ref().and_then(|r| r.setting("color_mode").ok().flatten()).as_deref());
+        chrome::apply_color_mode(color_mode, window, cx);
+        subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| this.on_appearance_changed(window, cx)));
+        let (shell, shell_subs) = rail::Shell::new(color_mode, template, window, cx);
+        subscriptions.extend(shell_subs);
 
         let mut library = Library::default();
         if let Some(snapshot) = registry.as_ref().and_then(|r| r.load_snapshot().ok().flatten()) {
@@ -165,11 +179,17 @@ impl Workspace {
         let data_dir = paths::data_dir();
         let drafts = Drafts::new(&data_dir);
         let recovered = drafts.pending();
+        let cloud = cloud::CloudWorkspace::new(&data_dir, registry.as_deref());
         let mut this = Self {
+            agents: agents::AgentState::new(&data_dir),
+            skills: None,
             focus_handle: cx.focus_handle(),
             registry,
+            cloud,
+            cloud_office: Default::default(),
+            cloud_search,
             library,
-            search,
+            shell,
             editor,
             preview,
             rich,
@@ -193,11 +213,14 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
+            cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
             zoom: 1.0,
             page_width: 768.0,
             _subscriptions: subscriptions,
         };
         this.start_disk_poll(cx);
+        this.start_agent_bridge(window, cx);
+        this.start_cloud_poll(cx);
         if let Some(reg) = &this.registry {
             if let Some(z) = reg.setting("zoom").ok().flatten().and_then(|v| v.parse().ok()) {
                 this.zoom = z;
@@ -207,7 +230,6 @@ impl Workspace {
             }
         }
         this.refresh_lists();
-        this.import_once(cx);
 
         let mut first_file = None;
         for path in initial {
@@ -230,55 +252,15 @@ impl Workspace {
         let Some(reg) = &self.registry else { return };
         let recent = reg.recent(200).unwrap_or_default().into_iter().map(|r| r.path).collect();
         let starred = reg.stars().unwrap_or_default();
-        self.library.set_lists(recent, starred);
+        self.library.set_lists(Vec::new(), starred.clone());
+        self.shell.recent.set_lists(recent, starred);
+        self.shell.invalidate_browse();
     }
 
-    /// The first launch copies recents, folders and stars from the Electron
-    /// app, reading a copy of its registry. It never writes to Markie's data.
-    fn import_once(&mut self, cx: &mut Context<Self>) {
-        let Some(reg) = &self.registry else { return };
-        if reg.setting("electron_import").ok().flatten().is_some() {
-            return;
-        }
-        let _ = reg.set_setting("electron_import", "started");
-        self.import_from_markie(cx);
-    }
-
-    fn import_from_markie(&mut self, cx: &mut Context<Self>) {
-        let Some(source) = markie_core::import::electron_registry_path().filter(|p| p.exists()) else { return };
-        let db_path = paths::data_dir().join("registry.db");
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    let reg = Registry::open(&db_path)?;
-                    markie_core::import::import_from_electron(&source, &reg)
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(summary) => {
-                        if let Some(reg) = &this.registry {
-                            let _ = reg.set_setting(
-                                "electron_import",
-                                &format!("{} recents, {} folders, {} stars", summary.recents, summary.roots, summary.stars),
-                            );
-                        }
-                        this.refresh_lists();
-                        if summary.roots > 0 {
-                            this.rescan(cx);
-                        }
-                    }
-                    Err(e) => eprintln!("markie-rs: import from Markie failed: {e:#}"),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
 
     fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
-        self.zoom = (zoom * 10.0).round().clamp(5.0, 30.0) / 10.0;
+        // Hundredths: Electron's zoom presets include 0.75 and 1.25.
+        self.zoom = (zoom * 100.0).round().clamp(50.0, 300.0) / 100.0;
         if let Some(reg) = &self.registry {
             let _ = reg.set_setting("zoom", &self.zoom.to_string());
         }
@@ -294,11 +276,11 @@ impl Workspace {
     }
 
     fn on_zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.zoom + 0.1, cx);
+        self.set_zoom(markie_editor::style::step_zoom(self.zoom, true), cx);
     }
 
     fn on_zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.zoom - 0.1, cx);
+        self.set_zoom(markie_editor::style::step_zoom(self.zoom, false), cx);
     }
 
     fn on_zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
@@ -306,15 +288,15 @@ impl Workspace {
     }
 
     fn on_wider(&mut self, _: &PageWider, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_page_width(self.page_width + 96.0, cx);
+        self.step_page_width(true, cx);
     }
 
     fn on_narrower(&mut self, _: &PageNarrower, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_page_width(self.page_width - 96.0, cx);
+        self.step_page_width(false, cx);
     }
 
-    fn on_import(&mut self, _: &ImportFromMarkie, _: &mut Window, cx: &mut Context<Self>) {
-        self.import_from_markie(cx);
+    fn on_import(&mut self, _: &ImportFromMarkie, window: &mut Window, cx: &mut Context<Self>) {
+        window.push_notification("Markie RS does not read the installed Markie profile.", cx);
     }
 
     fn on_toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
@@ -322,13 +304,6 @@ impl Workspace {
         let _ = reg.toggle_star(&doc.path, "file");
         self.refresh_lists();
         cx.notify();
-    }
-
-    fn is_starred(&self) -> bool {
-        match (&self.registry, &self.doc) {
-            (Some(reg), Some(doc)) => reg.is_starred(&doc.path).unwrap_or(false),
-            _ => false,
-        }
     }
 
     fn most_recent(&self) -> Option<PathBuf> {
@@ -351,7 +326,11 @@ impl Workspace {
             .as_ref()
             .and_then(|r| r.roots().ok())
             .unwrap_or_default();
-        let opts = ScanOptions::from_env(paths::home_dir(), roots);
+        let opts = if std::env::var_os("MARKIE_RS_DATA_DIR").is_some() {
+            ScanOptions { roots, ..ScanOptions::for_home(paths::data_dir()) }
+        } else {
+            ScanOptions::from_env(paths::home_dir(), roots)
+        };
         cx.spawn(async move |this, cx| {
             let snapshot = cx.background_spawn(async move { scan(&opts) }).await;
             this.update(cx, |this, cx| {
@@ -360,6 +339,10 @@ impl Workspace {
                 }
                 this.library.scanning = false;
                 this.library.set_snapshot(snapshot);
+                if this.shell.search_open {
+                    this.shell.search.share_docs_from(&this.library);
+                }
+                this.shell.invalidate_browse();
                 cx.notify();
             })
             .ok();
@@ -402,8 +385,12 @@ impl Workspace {
                 let kind = match doc.content {
                     Content::Text { text, encoding, bom } => {
                         let language = doc.format.editor_language();
+                        // Electron shows literal text formats in a plain field:
+                        // no syntax colors and no line numbers.
+                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !large;
                         self.editor.update(cx, |state, cx| {
-                            state.set_highlighter(language, cx);
+                            state.set_highlighter(if literal { "text" } else { language }, cx);
+                            state.set_line_number(!literal, window, cx);
                             state.set_value(text.clone(), window, cx);
                         });
                         self.set_preview(&text, doc.format, cx);
@@ -425,7 +412,9 @@ impl Workspace {
                         match office::open(&doc.path, doc.format, window, cx) {
                             Ok(office) => DocKind::Office(office),
                             Err(message) => {
-                                window.push_notification(message, cx);
+                                // Deferred: a file passed at launch opens before the
+                                // window's notification root exists.
+                                window.defer(cx, move |window, cx| window.push_notification(message, cx));
                                 DocKind::Engine
                             }
                         }
@@ -448,6 +437,9 @@ impl Workspace {
                     self.disk.forget(&old.path);
                 }
                 self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind });
+                if self.shell.view == rail::LeftView::Cloud {
+                    self.shell.panel_open = false;
+                }
                 self.dirty = false;
                 self.autosave.cancel();
                 self.disk_conflict = None;
@@ -472,6 +464,7 @@ impl Workspace {
                     let _ = reg.track_opened(&doc.path);
                 }
                 self.refresh_lists();
+                self.refresh_cloud_resources(cx);
                 let title = doc
                     .path
                     .file_name()
@@ -543,7 +536,7 @@ impl Workspace {
         let text = self.current_text(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
         let _ = self.drafts.save(Some(&path), &text);
-        if self.write_text(&text).is_ok() {
+        if self.write_text(&text, cx).is_ok() {
             let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
         }
         cx.notify();
@@ -551,17 +544,19 @@ impl Workspace {
 
     /// Keep the previous text as a version, write the new text, and remember
     /// that this write was ours.
-    fn write_text(&mut self, text: &str) -> anyhow::Result<()> {
+    fn write_text(&mut self, text: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
         let Some(doc) = self.doc.as_mut() else { return Ok(()) };
         let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return Ok(()) };
         let _ = self.history.capture(&doc.path, text, Writer::User);
         document::save_text(&doc.path, text, *encoding, *bom)?;
         *saved = text.to_string();
         self.disk.remember(&doc.path, text, true);
+        let path = doc.path.clone();
         self.dirty = false;
         if self.side == SidePanel::History {
             self.refresh_versions();
         }
+        self.cloud_after_save(&path, cx);
         Ok(())
     }
 
@@ -630,7 +625,7 @@ impl Workspace {
         }
         let text = self.current_text(cx);
         self.autosave.cancel();
-        if let Err(err) = self.write_text(&text) {
+        if let Err(err) = self.write_text(&text, cx) {
             window.push_notification(format!("Markie could not save: {err:#}"), cx);
         } else if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
             let _ = self.drafts.discard(&Drafts::key_for(Some(&path)));
@@ -725,20 +720,11 @@ impl Workspace {
     }
 
     fn on_focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
-        let handle = self.search.read(cx).focus_handle(cx);
-        handle.focus(window, cx);
+        self.open_search(window, cx);
     }
 
     fn on_rescan(&mut self, _: &Rescan, _: &mut Window, cx: &mut Context<Self>) {
         self.rescan(cx);
-    }
-
-    fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
-        let next = if cx.theme().mode.is_dark() { ThemeMode::Light } else { ThemeMode::Dark };
-        Theme::change(next, Some(window), cx);
-        if let Some(reg) = &self.registry {
-            let _ = reg.set_setting("color_mode", if next.is_dark() { "dark" } else { "light" });
-        }
     }
 
     fn refresh_versions(&mut self) {
@@ -786,7 +772,7 @@ impl Workspace {
     /// version too and nothing is lost.
     fn restore_version(&mut self, cx: &mut Context<Self>) {
         let Some((_, text)) = self.viewing_version.take() else { return };
-        if self.write_text(&text).is_ok() {
+        if self.write_text(&text, cx).is_ok() {
             if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
                 self.load_text(&path, text, cx);
             }
@@ -807,7 +793,7 @@ impl Workspace {
         self.disk_conflict = None;
         let text = self.editor.read(cx).value().to_string();
         // History keeps the outside version first, so overwriting loses nothing.
-        let _ = self.write_text(&text);
+        let _ = self.write_text(&text, cx);
         cx.notify();
     }
 
@@ -970,210 +956,6 @@ impl Workspace {
 
     // ---------------------------------------------------------------- render
 
-    fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = self
-            .doc
-            .as_ref()
-            .and_then(|d| d.path.file_name())
-            .map_or_else(|| "No document".to_string(), |n| n.to_string_lossy().into_owned());
-        let is_md = self
-            .doc
-            .as_ref()
-            .is_some_and(|d| matches!(d.format, FormatKind::Markdown | FormatKind::Csv) && !d.large);
-        TitleBar::new().child(
-            h_flex()
-                .w_full()
-                .pr_2()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Markie RS"))
-                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child(name))
-                        .when(self.dirty, |el| {
-                            el.child(div().size(px(7.)).rounded_full().bg(cx.theme().warning))
-                        }),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .when(is_md, |el| {
-                            el.child(
-                                Button::new("mode-view")
-                                    .ghost()
-                                    .small()
-                                    .label("View")
-                                    .selected(self.mode == Mode::View)
-                                    .on_click(cx.listener(|this, _, window, cx| this.set_mode(Mode::View, window, cx))),
-                            )
-                            .child(
-                                Button::new("mode-source")
-                                    .ghost()
-                                    .small()
-                                    .label("Source")
-                                    .selected(self.mode == Mode::Source)
-                                    .on_click(cx.listener(|this, _, window, cx| this.set_mode(Mode::Source, window, cx))),
-                            )
-                        })
-                        .when(self.doc.is_some(), |el| {
-                            el.child(
-                                Button::new("star")
-                                    .ghost()
-                                    .small()
-                                    .icon(if self.is_starred() { IconName::StarFill } else { IconName::Star })
-                                    .tooltip("Star")
-                                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleStar), cx)),
-                            )
-                        })
-                        .child(
-                            Button::new("theme")
-                                .ghost()
-                                .small()
-                                .icon(if cx.theme().mode.is_dark() { IconName::Sun } else { IconName::Moon })
-                                .tooltip("Toggle dark mode")
-                                .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleTheme), cx)),
-                        ),
-                ),
-        )
-    }
-
-    fn render_library(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let counts = self.library.format_counts();
-        let shown = self.library.hits().len();
-        let summary = if self.library.scanning && self.library.total() == 0 {
-            "Finding documents…".to_string()
-        } else {
-            let mut s = format!("{shown} of {} documents", self.library.total());
-            if self.library.scanning {
-                s.push_str(" · scanning");
-            } else if self.library.truncated {
-                s.push_str(" · partial scan");
-            }
-            s
-        };
-        let current = self.doc.as_ref().map(|d| d.path.clone());
-
-        v_flex()
-            .size_full()
-            .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
-            .child(
-                v_flex()
-                    .p_2()
-                    .gap_2()
-                    .child(h_flex().gap_1().children([
-                        (LibraryTab::All, "All documents"),
-                        (LibraryTab::Recent, "Recent"),
-                        (LibraryTab::Starred, "Starred"),
-                    ]
-                    .into_iter()
-                    .map(|(tab, label)| {
-                        Button::new(SharedString::from(format!("tab-{label}")))
-                            .small()
-                            .ghost()
-                            .label(label)
-                            .selected(self.library.tab == tab)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.library.set_tab(tab);
-                                cx.notify();
-                            }))
-                    })))
-                    .child(Input::new(&self.search).small().cleanable(true).prefix(IconName::Search))
-                    .child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap_1()
-                            .child(
-                                Button::new("fmt-all")
-                                    .xsmall()
-                                    .ghost()
-                                    .label("All")
-                                    .selected(!self.library.has_filters())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.library.clear_formats();
-                                        cx.notify();
-                                    })),
-                            )
-                            .children(counts.into_iter().map(|(kind, n)| {
-                                Button::new(SharedString::from(format!("fmt-{kind:?}")))
-                                    .xsmall()
-                                    .ghost()
-                                    .label(format!("{} {n}", kind.label()))
-                                    .selected(self.library.is_filtered(kind))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.library.toggle_format(kind);
-                                        cx.notify();
-                                    }))
-                            })),
-                    )
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(summary)),
-            )
-            .child(
-                uniform_list(
-                    "library-list",
-                    shown,
-                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                        let theme = cx.theme().clone();
-                        range
-                            .map(|ix| {
-                                let hit = this.library.hits()[ix].clone();
-                                let doc = this.library.doc(&hit).clone();
-                                let active = current.as_ref() == Some(&doc.path);
-                                let detail: SharedString = hit
-                                    .excerpt
-                                    .clone()
-                                    .unwrap_or_else(|| short_dir(&doc.dir))
-                                    .into();
-                                let path = doc.path.clone();
-                                div()
-                                    .id(SharedString::from(doc.path.to_string_lossy().into_owned()))
-                                    .w_full()
-                                    .px_3()
-                                    .py_1()
-                                    .cursor_pointer()
-                                    .when(active, |el| el.bg(theme.list_active))
-                                    .hover(|el| el.bg(theme.list_hover))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.open_path(&path, window, cx);
-                                    }))
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .overflow_hidden()
-                                                    .text_ellipsis()
-                                                    .whitespace_nowrap()
-                                                    .text_sm()
-                                                    .child(doc.name.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme.muted_foreground)
-                                                    .child(doc.format.label()),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .text_color(theme.muted_foreground)
-                                            .child(detail),
-                                    )
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .flex_1(),
-            )
-    }
-
     fn render_document(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let Some(doc) = &self.doc else {
@@ -1225,34 +1007,25 @@ impl Workspace {
         match (&doc.kind, self.mode) {
             (DocKind::Office(office), _) => office::render(office, self.zoom, cx),
             (DocKind::Engine, _) => {
+                // The Office engine refused the file. Electron keeps the page
+                // and shows its reason in a red strip; the reason is in the
+                // notification, so the strip says what happened.
                 let path = doc.path.clone();
                 v_flex()
                     .size_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
                     .bg(theme.background)
                     .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("{} document", doc.format.label())),
-                    )
-                    .child(
-                        div()
-                            .max_w(px(420.))
-                            .text_sm()
-                            .text_center()
-                            .text_color(theme.muted_foreground)
-                            .child(
-                                "The native Office engine is Phase 4 of the Rust port. \
-                                 Until then this build opens the file in its own app.",
-                            ),
-                    )
-                    .child(
-                        Button::new("open-system")
-                            .label("Open in default app")
-                            .on_click(move |_, _, cx| cx.open_with_system(&path)),
+                        h_flex()
+                            .px(px(20.))
+                            .py(px(10.))
+                            .gap(px(12.))
+                            .text_size(px(12.))
+                            .bg(theme.muted)
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .text_color(theme.danger)
+                            .child(div().flex_1().child(format!("This {} document could not be opened. Nothing in the file was changed.", doc.format.label())))
+                            .child(Button::new("open-system").xsmall().ghost().label("Open in default app").on_click(move |_, _, cx| cx.open_with_system(&path))),
                     )
                     .into_any_element()
             }
@@ -1280,67 +1053,32 @@ impl Workspace {
                     )
                     .into_any_element()
             }
+            // Literal text formats look like Electron's TextDocumentEditor.
+            (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => self.render_text(cx),
             _ => div()
                 .size_full()
+                .flex()
+                .flex_col()
                 .bg(theme.background)
+                .when_some(
+                    match &doc.kind {
+                        DocKind::Text { saved, .. } if doc.large => Some(saved.len()),
+                        _ => None,
+                    },
+                    |d, bytes| d.child(text_view::large_strip(bytes, cx)),
+                )
+                .when(matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown), |d| d.child(self.source_toolbar(cx)))
                 .child(
                     Editor::new(&self.editor)
                         .bordered(false)
                         .h(relative(1.))
-                        .font_family(theme.mono_font_family.clone())
-                        .text_size(theme.mono_font_size * self.zoom),
+                        .font_family(markie_editor::MONO)
+                        .text_size(px(14. * self.zoom)),
                 )
                 .into_any_element(),
         }
     }
 
-    fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (left, right) = match &self.doc {
-            None => (String::new(), String::new()),
-            Some(doc) => {
-                let state = match &doc.kind {
-                    DocKind::Text { .. } if self.dirty => "Edited",
-                    DocKind::Text { .. } => "Saved",
-                    DocKind::Office(office) => office.status(cx),
-                    _ => "Read only",
-                };
-                let mut right = String::new();
-                if let (FormatKind::Csv, Some(rows)) = (doc.format, &self.csv_rows) {
-                    right = format!("{} · ", plural(rows.len().saturating_sub(1), "row"));
-                } else if matches!(doc.kind, DocKind::Text { .. }) {
-                    right = format!("{} · {} min read · ", plural(self.words, "word"), self.reading_minutes);
-                    if !self.sections.is_empty() {
-                        right = format!("{} · {right}", plural(self.sections.len(), "section"));
-                    }
-                }
-                if doc.large {
-                    right.push_str("Large file, Source only · ");
-                }
-                if (self.zoom - 1.0).abs() > 0.01 {
-                    right.push_str(&format!("{}% · ", (self.zoom * 100.0).round()));
-                }
-                right.push_str(state);
-                (format!("{} · {}", doc.format.label(), short_dir(&doc.path)), right)
-            }
-        };
-        StatusBar::new()
-            .left(div().text_xs().text_color(theme.muted_foreground).child(left))
-            .right(div().text_xs().text_color(theme.muted_foreground).child(right))
-    }
-}
-
-fn plural(n: usize, word: &str) -> String {
-    if n == 1 { format!("1 {word}") } else { format!("{n} {word}s") }
-}
-
-/// `~/Notes/plan.md` instead of the full home path.
-fn short_dir(path: &Path) -> String {
-    let home = paths::home_dir();
-    match path.strip_prefix(&home) {
-        Ok(rel) => format!("~/{}", rel.display()),
-        Err(_) => path.display().to_string(),
-    }
 }
 
 impl Focusable for Workspace {
@@ -1351,10 +1089,15 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(path) = self.cloud.pending_link.take() {
+            self.open_path(&path, window, cx);
+        }
         if let Some(text) = self.pending_editor_text.take() {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
+        self.ensure_browse_rows();
         let banner = self.render_banner(cx);
+        let cloud_banner = self.render_cloud_banner(cx);
         let history = match self.side {
             SidePanel::History => Some(self.render_history(cx).into_any_element()),
             SidePanel::Outline => Some(self.render_outline(cx).into_any_element()),
@@ -1390,6 +1133,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_trash))
             .on_action(cx.listener(Self::on_reveal))
             .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_open_account))
+            .on_action(cx.listener(Self::on_show_cloud))
+            .on_action(cx.listener(Self::on_toggle_library))
+            .relative()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -1399,25 +1146,26 @@ impl Render for Workspace {
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(
-                        div().flex_1().h_full().overflow_hidden().child(
-                            h_resizable("main")
-                                .child(
-                                    resizable_panel()
-                                        .size(px(300.))
-                                        .size_range(px(220.)..px(520.))
-                                        .child(self.render_library(cx)),
-                                )
-                                .child(resizable_panel().child(
-                                    v_flex()
-                                        .size_full()
-                                        .children(banner)
-                                        .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_document(cx))),
-                                )),
-                        ),
-                    )
-                    .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h))),
+                    .child(self.render_rail(cx))
+                    .children(self.render_side_panel(cx))
+                    .map(|el| {
+                        if self.workspace_page_open() {
+                            el.child(div().flex_1().min_w_0().h_full().child(self.render_workspace_page(cx)))
+                        } else {
+                            el.child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .overflow_hidden()
+                                    .children(banner)
+                                    .children(cloud_banner)
+                                    .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_document(cx))),
+                            )
+                            .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))
+                        }
+                    }),
             )
-            .child(self.render_status(cx))
+            .children(self.render_search(cx))
     }
 }

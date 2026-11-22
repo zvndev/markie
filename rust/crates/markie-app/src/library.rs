@@ -1,7 +1,7 @@
 //! The Library: every document the device index found, searchable and
 //! filterable by type. Plain state owned by the workspace; no rendering here.
 
-use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use markie_core::formats::FormatKind;
 use markie_core::index::{IndexSnapshot, IndexedDoc};
@@ -15,10 +15,35 @@ pub enum LibraryTab {
     Starred,
 }
 
+/// The Library panel's sort menu (`library-document-filters.tsx`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortOrder {
+    #[default]
+    Default,
+    Recent,
+    Name,
+    Type,
+}
+
+impl SortOrder {
+    pub const ALL: [SortOrder; 4] = [SortOrder::Default, SortOrder::Recent, SortOrder::Name, SortOrder::Type];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortOrder::Default => "Default order",
+            SortOrder::Recent => "Most recent",
+            SortOrder::Name => "Name",
+            SortOrder::Type => "Type",
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Library {
+    pub sort: SortOrder,
     pub tab: LibraryTab,
-    docs: Vec<IndexedDoc>,
+    /// Shared between the Browse panel and search, never copied.
+    docs: Rc<Vec<IndexedDoc>>,
     recent: Vec<IndexedDoc>,
     starred: Vec<IndexedDoc>,
     query: LibraryQuery,
@@ -30,7 +55,14 @@ pub struct Library {
 impl Library {
     pub fn set_snapshot(&mut self, snapshot: IndexSnapshot) {
         self.truncated = snapshot.truncated.is_some();
-        self.docs = snapshot.files;
+        self.docs = Rc::new(snapshot.files);
+        self.refresh();
+    }
+
+    /// Use another Library's index without copying it.
+    pub fn share_docs_from(&mut self, other: &Library) {
+        self.truncated = other.truncated;
+        self.docs = other.docs.clone();
         self.refresh();
     }
 
@@ -62,6 +94,38 @@ impl Library {
         self.refresh();
     }
 
+    /// One type or every type, as the Library's type menu picks.
+    pub fn set_only_format(&mut self, kind: Option<FormatKind>) {
+        self.query.formats = kind.into_iter().collect();
+        self.refresh();
+    }
+
+    pub fn only_format(&self) -> Option<FormatKind> {
+        match self.query.formats.as_slice() {
+            [k] => Some(*k),
+            _ => None,
+        }
+    }
+
+    pub fn set_sort(&mut self, sort: SortOrder) {
+        self.sort = sort;
+        self.refresh();
+    }
+
+    pub fn text(&self) -> &str {
+        &self.query.text
+    }
+
+    pub fn query_active(&self) -> bool {
+        !self.query.text.trim().is_empty() || !self.query.formats.is_empty() || self.sort != SortOrder::Default
+    }
+
+    pub fn clear_query(&mut self) {
+        self.query = LibraryQuery::default();
+        self.sort = SortOrder::Default;
+        self.refresh();
+    }
+
     pub fn clear_formats(&mut self) {
         self.query.formats.clear();
         self.refresh();
@@ -73,15 +137,6 @@ impl Library {
 
     pub fn has_filters(&self) -> bool {
         !self.query.formats.is_empty()
-    }
-
-    /// Formats present in the index, in display order, with their counts.
-    pub fn format_counts(&self) -> Vec<(FormatKind, usize)> {
-        let mut counts: BTreeMap<FormatKind, usize> = BTreeMap::new();
-        for doc in self.source() {
-            *counts.entry(doc.format).or_default() += 1;
-        }
-        FormatKind::OPENABLE.iter().filter_map(|k| counts.get(k).map(|n| (*k, *n))).collect()
     }
 
     pub fn total(&self) -> usize {
@@ -110,6 +165,13 @@ impl Library {
             // Recent keeps the registry's order (newest open first), not mtime.
             hits.sort_by_key(|h| h.index);
         }
+        let docs = self.source();
+        match self.sort {
+            SortOrder::Default => {}
+            SortOrder::Recent => hits.sort_by(|a, b| docs[b.index].mtime_ms.total_cmp(&docs[a.index].mtime_ms)),
+            SortOrder::Name => hits.sort_by_key(|h| docs[h.index].name.to_lowercase()),
+            SortOrder::Type => hits.sort_by_key(|h| (docs[h.index].format.label(), docs[h.index].name.to_lowercase())),
+        }
         self.hits = hits;
     }
 }
@@ -133,4 +195,43 @@ fn row_for(path: &std::path::Path) -> Option<IndexedDoc> {
         format: markie_core::formats::classify(&path.to_string_lossy()),
         snippet: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn doc(name: &str, ms: f64, format: FormatKind) -> IndexedDoc {
+        IndexedDoc {
+            path: PathBuf::from(format!("/x/{name}")),
+            name: name.into(),
+            dir: PathBuf::from("/x"),
+            mtime_ms: ms,
+            size: 1,
+            format,
+            snippet: None,
+        }
+    }
+
+    #[test]
+    fn sorts_and_filters_one_type() {
+        let mut lib = Library::default();
+        lib.set_snapshot(IndexSnapshot {
+            files: vec![doc("b.md", 1.0, FormatKind::Markdown), doc("a.txt", 3.0, FormatKind::Text), doc("c.md", 2.0, FormatKind::Markdown)],
+            ..Default::default()
+        });
+        lib.set_sort(SortOrder::Name);
+        let names: Vec<_> = lib.hits().iter().map(|h| lib.doc(h).name.clone()).collect();
+        assert_eq!(names, ["a.txt", "b.md", "c.md"]);
+        lib.set_sort(SortOrder::Recent);
+        assert_eq!(lib.doc(&lib.hits()[0].clone()).name, "a.txt");
+        lib.set_only_format(Some(FormatKind::Markdown));
+        assert_eq!(lib.hits().len(), 2);
+        assert_eq!(lib.only_format(), Some(FormatKind::Markdown));
+        assert!(lib.query_active());
+        lib.clear_query();
+        assert_eq!(lib.hits().len(), 3);
+        assert!(!lib.query_active());
+    }
 }

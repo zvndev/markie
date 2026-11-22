@@ -24,11 +24,14 @@ actions!(
         ToggleStar,
         ImportFromMarkie,
         OpenSettings,
+        OpenAccount,
+        ShowCloud,
         ZoomIn,
         ZoomOut,
         ZoomReset,
         PageWider,
         PageNarrower,
+        ToggleLibrary,
         Quit,
     ]
 );

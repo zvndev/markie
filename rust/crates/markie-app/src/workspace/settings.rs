@@ -29,9 +29,9 @@ fn typeface(id: &str) -> (&'static str, &'static str) {
         "optima" => ("Optima", "Optima"),
         "charter" => ("Charter", "Charter"),
         "iowan" => ("Iowan", "Iowan Old Style"),
-        "newyork" => ("New York", "New York"),
+        "newyork" => ("New York", markie_editor::style::SYSTEM_SERIF),
         "georgia" => ("Georgia", "Georgia"),
-        "mono" => ("Monospace", "Menlo"),
+        "mono" => ("Monospace", markie_editor::MONO),
         _ => ("System", ".SystemUIFont"),
     }
 }

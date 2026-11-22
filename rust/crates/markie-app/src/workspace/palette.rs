@@ -45,6 +45,11 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
         cmd("Save", "File", Some("⌘S"), "", action(Save)),
         cmd("Duplicate (Fork)", "File", Some("⇧⌘D"), "copy fork duplicate", action(DuplicateDocument)),
         cmd("Reveal in Finder", "File", Some("⌥⌘R"), "finder explorer folder show reveal drag locate", action(RevealDocument)),
+        // Electron lists ⇧⌘E beside Export PDF (Dark) but binds no key to it;
+        // in a rich pane ⇧⌘E centres text, here as there.
+        cmd("Export PDF (Dark)", "File", Some("⇧⌘E"), "print", action(ExportPdfDark)),
+        cmd("Export PDF (Light)", "File", None, "print", action(ExportPdfLight)),
+        cmd("Export HTML", "File", None, "", action(ExportHtml)),
         cmd("Rich Mode", "View", Some("⌘1"), "preview rich wysiwyg formatted view", Rc::new(|ws, w, cx| ws.set_mode(Mode::View, w, cx))),
         cmd("Source Mode", "View", Some("⌘2"), "source raw markdown edit", Rc::new(|ws, w, cx| ws.set_mode(Mode::Source, w, cx))),
         cmd("Split Mode", "View", Some("⌘3"), "both side by side", Rc::new(|ws, w, cx| ws.set_mode(Mode::Split, w, cx))),
@@ -182,7 +187,52 @@ impl Workspace {
 
     fn palette_results(&self, cx: &App) -> Vec<PaletteCommand> {
         let Overlay::Palette(p) = &self.dialogs.open else { return Vec::new() };
-        filter(commands(), &p.input.read(cx).value())
+        let mut list = commands();
+        // Electron puts the open document's enabled commands just before Save.
+        let at = list.iter().position(|c| c.title.as_ref() == "Save").unwrap_or(0);
+        let darkmown = self.darkmown_palette().into_iter().map(|(title, mode)| {
+            cmd(title, "View", None, "", Rc::new(move |ws, _, cx| ws.darkmown_command(mode, cx)))
+        });
+        list.splice(at..at, darkmown);
+        if let Some(at) = list.iter().position(|c| c.title.as_ref() == "Export HTML") {
+            list.splice(at + 1..at + 1, self.export_as_commands());
+        }
+        filter(list, &p.input.read(cx).value())
+    }
+
+    /// page.tsx's `exportFormatsFor(plainText ? "text" : "markdown")` rows, for
+    /// a document that is not a Word, RTF or ODT one.
+    fn export_as_commands(&self) -> Vec<PaletteCommand> {
+        use super::export::ExportKind;
+        use markie_export::convert::{ExportFormat, SourceKind};
+        let Some(doc) = &self.doc else { return Vec::new() };
+        if matches!(doc.kind, super::DocKind::Office(_)) {
+            return Vec::new();
+        }
+        let source = if doc.format == markie_core::formats::FormatKind::Markdown { SourceKind::Markdown } else { SourceKind::Text };
+        [
+            (ExportFormat::Docx, ExportKind::Docx),
+            (ExportFormat::Rtf, ExportKind::Rtf),
+            (ExportFormat::Odt, ExportKind::Odt),
+            (ExportFormat::Txt, ExportKind::Txt),
+            (ExportFormat::Md, ExportKind::Md),
+        ]
+        .into_iter()
+        .filter(|(format, _)| match source {
+            SourceKind::Markdown => *format != ExportFormat::Md,
+            SourceKind::Text => *format != ExportFormat::Txt,
+        })
+        .map(|(format, kind)| {
+            let info = format.info();
+            cmd(
+                format!("Export as {}", info.label),
+                "File",
+                None,
+                format!("export convert {}", info.extension),
+                Rc::new(move |ws, w, cx| ws.export_document(kind, w, cx)),
+            )
+        })
+        .collect()
     }
 
     /// Arrow keys move the selection; Return runs it.
@@ -306,5 +356,14 @@ mod tests {
     #[test]
     fn every_template_has_a_command() {
         assert_eq!(commands().iter().filter(|c| c.group == "Theme").count(), 9);
+    }
+
+    #[test]
+    fn export_commands_follow_electrons_list() {
+        let all = commands();
+        let titles: Vec<&str> = all.iter().map(|c| c.title.as_ref()).collect();
+        let at = titles.iter().position(|t| *t == "Reveal in Finder").unwrap();
+        assert_eq!(&titles[at + 1..at + 4], ["Export PDF (Dark)", "Export PDF (Light)", "Export HTML"]);
+        assert_eq!(all[at + 1].shortcut, Some("⇧⌘E"));
     }
 }

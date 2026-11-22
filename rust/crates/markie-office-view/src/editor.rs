@@ -84,6 +84,7 @@ pub enum Tool {
     Page,
     Spacing,
     Review,
+    Find,
 }
 
 impl Tool {
@@ -96,6 +97,7 @@ impl Tool {
             Tool::Page => "Page Setup",
             Tool::Spacing => "Paragraph Spacing",
             Tool::Review => "Document Review",
+            Tool::Find => "Find and Replace",
         }
     }
 }
@@ -216,6 +218,14 @@ impl WordEditor {
             error: None,
             host_read_only: false,
         }
+    }
+
+    /// A document that differs from the file on disk, such as a restored
+    /// recovery revision: dirty from the start, so Save writes it.
+    pub fn new_unsaved(doc: OfficeDocument) -> Self {
+        let mut editor = Self::new(doc);
+        editor.saved_generation = editor.generation.wrapping_sub(1);
+        editor
     }
 
     pub fn doc(&self) -> &OfficeDocument {
@@ -485,6 +495,74 @@ impl WordEditor {
     }
 
     // ----- typing ---------------------------------------------------------
+
+    /// Find case-sensitive, non-overlapping matches in paragraph order.
+    pub fn find_text(&self, query: &str) -> Vec<TextRange> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        self.doc.paragraphs.iter().flat_map(|paragraph| {
+            paragraph.text.match_indices(query).map(move |(offset, _)| TextRange {
+                anchor: TextPosition { paragraph_id: paragraph.id.clone(), offset },
+                focus: TextPosition { paragraph_id: paragraph.id.clone(), offset: offset + query.len() },
+            })
+        }).collect()
+    }
+
+    pub fn can_replace_found_text(&self) -> bool {
+        self.can_mutate() && !self.tracking && self.doc.revisions.is_empty()
+    }
+
+    /// Replace found text in one undo step without flattening unrelated runs.
+    pub fn replace_found_text(&mut self, query: &str, replacement: &str, index: Option<usize>) -> Result<usize, String> {
+        if !self.can_replace_found_text() {
+            return Err("This document is read-only.".into());
+        }
+        if replacement.contains(['\t', '\r', '\n']) {
+            return Err("Find and replace cannot insert tabs or paragraph breaks.".into());
+        }
+        let mut edits = Vec::new();
+        let mut ordinal = 0;
+        let mut count = 0;
+        for paragraph in &self.doc.paragraphs {
+            if query.is_empty() {
+                break;
+            }
+            let ranges: Vec<_> = paragraph.text.match_indices(query).filter_map(|(start, _)| {
+                let replace = index.is_none_or(|i| i == ordinal);
+                ordinal += 1;
+                replace.then_some(start..start + query.len())
+            }).collect();
+            count += ranges.len();
+            if ranges.is_empty() {
+                continue;
+            }
+            let mut start = 0;
+            for run in &paragraph.runs {
+                let end = start + run.text.len();
+                let mut text = run.text.clone();
+                for range in ranges.iter().rev() {
+                    if end <= range.start || start >= range.end {
+                        continue;
+                    }
+                    if !run.can_edit {
+                        return Err("A matching range includes unsupported text and was not changed.".into());
+                    }
+                    let insert = if range.start >= start { replacement } else { "" };
+                    text.replace_range(range.start.saturating_sub(start)..(range.end - start).min(run.text.len()), insert);
+                }
+                if text != run.text {
+                    edits.push(TextEdit { run_id: run.id.clone(), text });
+                }
+                start = end;
+            }
+        }
+        if !edits.is_empty() {
+            let next = replace_rich_text(&self.doc, &edits).map_err(|error| error.message)?;
+            self.perform(next, None);
+        }
+        Ok(count)
+    }
 
     /// Replace the selection with `text` (typing, paste, IME commit, Enter).
     pub fn replace_selection(&mut self, text: &str) -> bool {

@@ -1,6 +1,6 @@
-//! The GPUI Word page view. Paragraphs are `StyledText` runs; their
-//! `TextLayout`s from the last frame answer every caret, click and IME
-//! question. Pages are laid out from measured block heights.
+//! The GPUI Word page view. Paragraphs are `FlowText` runs; their
+//! `FlowLayout`s from the last frame answer every caret, click and IME
+//! question. The document is one sheet, as in Electron.
 //!
 //! The engine is the only place a document changes: every edit goes through
 //! `WordEditor`. This file owns pixels, focus, the platform input handler and
@@ -14,18 +14,21 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::InputState;
-use gpui_kit::component::{ActiveTheme, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{ActiveTheme, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use markie_office::model::{Block, Format, ImageType, Paragraph, TextPosition};
 use markie_office::rich_document::rich_image_bytes;
 
-use crate::actions::{self, CONTEXT, WordCopy, WordCut, WordPaste, WordRedo, WordSelectAll, WordUndo};
+use crate::actions::{self, CONTEXT, WordCopy, WordCut, WordFind, WordPaste, WordRedo, WordSelectAll, WordUndo};
 use crate::colors::{RunColor, display_run_color};
-use crate::commands::{available_commands, run_command};
-use crate::editor::{Outcome, Tool, WordEditor};
+use crate::commands::{available_commands, menu_commands, run_command};
+use crate::editor::{Common, Outcome, Tool, WordEditor};
+use crate::icons;
+use markie_office::model::RunFormat;
+use crate::flow::{FlowAlign, FlowLayout, FlowRun, FlowText};
 use crate::layout::{self, Alignment, BreakHint, DEFAULT_FONT, PX_PER_POINT};
 use crate::text;
 
@@ -49,7 +52,28 @@ pub enum WordViewEvent {
     Changed,
     /// View > Actual Size: the host owns the shared document zoom.
     ZoomReset,
+    /// The toolbar's zoom buttons stepped to this zoom.
+    Zoom(f32),
 }
+
+/// An open toolbar list.
+#[derive(Clone, Debug)]
+enum Picker {
+    Style(Vec<(String, String)>),
+    Font(Vec<String>),
+    Colour,
+}
+
+/// Electron's toolbar text colours: label and hex, `None` for the document color.
+const TEXT_COLOURS: [(&str, Option<&str>); 7] = [
+    ("Default", None),
+    ("Grey", Some("6b7280")),
+    ("Red", Some("dc2626")),
+    ("Orange", Some("ea580c")),
+    ("Green", Some("16a34a")),
+    ("Blue", Some("2563eb")),
+    ("Purple", Some("7c3aed")),
+];
 
 /// IME marked text: shown in place of `start..end` until the input method
 /// commits it, then applied to the engine as one edit.
@@ -66,8 +90,7 @@ struct Composition {
 /// A paragraph's text layout from the last frame and how its rows align.
 #[derive(Clone)]
 struct Painted {
-    layout: TextLayout,
-    align: TextAlign,
+    layout: FlowLayout,
 }
 
 /// The text-field inputs of the tool panel.
@@ -84,6 +107,8 @@ pub(crate) struct Inputs {
     pub author: Entity<InputState>,
     pub comment_author: Entity<InputState>,
     pub comment_text: Entity<InputState>,
+    pub find: Entity<InputState>,
+    pub replace: Entity<InputState>,
 }
 
 pub(crate) struct PageColors {
@@ -106,15 +131,24 @@ pub struct WordView {
     pub paper: PaperTone,
     pub(crate) tool: Option<Tool>,
     pub(crate) inputs: Inputs,
+    pub(crate) find_index: usize,
+    pub(crate) find_receipt: Option<String>,
+    _find_subscriptions: [Subscription; 2],
+    /// The toolbar's font-size field (Electron's `<input type=number>`).
+    size_field: Entity<InputState>,
+    _size_sub: Subscription,
     /// Layouts being built by this render, and the ones the last frame painted.
     building: RefCell<HashMap<String, Painted>>,
     painted: Rc<RefCell<HashMap<String, Painted>>>,
-    heights: Rc<RefCell<Vec<f32>>>,
     composition: Option<Composition>,
     dragging: bool,
     goal_x: Option<Pixels>,
     reveal: Rc<Cell<bool>>,
     images: HashMap<String, Arc<Image>>,
+    /// The toolbar's width last frame, for moving groups into More.
+    toolbar_width: Rc<Cell<f32>>,
+    overflow_open: bool,
+    picker: Option<(Picker, Point<Pixels>)>,
 }
 
 impl EventEmitter<WordViewEvent> for WordView {}
@@ -134,71 +168,23 @@ fn rgb_hsla([r, g, b]: [u8; 3]) -> Hsla {
     rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
 }
 
-fn text_align(alignment: Alignment) -> TextAlign {
+fn flow_align(alignment: Alignment) -> FlowAlign {
     match alignment {
-        Alignment::Center => TextAlign::Center,
-        Alignment::Right => TextAlign::Right,
-        // GPUI has no justified text; justified paragraphs show left aligned.
-        Alignment::Left | Alignment::Justify => TextAlign::Left,
+        Alignment::Center => FlowAlign::Center,
+        Alignment::Right => FlowAlign::Right,
+        Alignment::Justify => FlowAlign::Justify,
+        Alignment::Left => FlowAlign::Left,
     }
-}
-
-/// Per visual row, how far alignment moves the row right. GPUI paints rows
-/// aligned but measures carets unaligned, so the view corrects for it.
-fn row_shifts(painted: &Painted) -> Vec<Pixels> {
-    let layout = &painted.layout;
-    let width = layout.bounds().size.width;
-    let mut shifts = Vec::new();
-    for line in layout.line_layouts() {
-        let unwrapped = &line.unwrapped_layout;
-        let glyph_x = |b: &WrapBoundary| unwrapped.runs.get(b.run_ix).and_then(|r| r.glyphs.get(b.glyph_ix)).map_or(px(0.), |g| g.position.x);
-        let boundaries = &line.wrap_boundaries;
-        for row in 0..=boundaries.len() {
-            let start = if row == 0 { px(0.) } else { glyph_x(&boundaries[row - 1]) };
-            let end = boundaries.get(row).map_or(unwrapped.width, glyph_x);
-            let line_width = end - start;
-            shifts.push(match painted.align {
-                TextAlign::Left => px(0.),
-                TextAlign::Center => ((width - line_width) / 2.0).max(px(0.)),
-                TextAlign::Right => (width - line_width).max(px(0.)),
-            });
-        }
-    }
-    shifts
-}
-
-fn row_of(painted: &Painted, y: Pixels) -> usize {
-    let top = painted.layout.bounds().top();
-    let line_height = painted.layout.line_height();
-    if line_height <= px(0.) {
-        return 0;
-    }
-    ((y - top) / line_height).floor().max(0.0) as usize
 }
 
 /// Where the caret before byte `index` is drawn, in window coordinates.
 fn caret_point(painted: &Painted, index: usize) -> Point<Pixels> {
-    let layout = &painted.layout;
-    let mut point = layout.position_for_index(index).unwrap_or_else(|| {
-        let bounds = layout.bounds();
-        if index == 0 { bounds.origin } else { point(bounds.right(), bounds.bottom() - layout.line_height()) }
-    });
-    if painted.align != TextAlign::Left {
-        let shifts = row_shifts(painted);
-        point.x += shifts.get(row_of(painted, point.y)).copied().unwrap_or(px(0.));
-    }
-    point
+    painted.layout.caret(index).0
 }
 
 /// The byte index nearest a window point.
-fn index_at(painted: &Painted, mut position: Point<Pixels>) -> usize {
-    if painted.align != TextAlign::Left {
-        let shifts = row_shifts(painted);
-        position.x -= shifts.get(row_of(painted, position.y)).copied().unwrap_or(px(0.));
-    }
-    match painted.layout.index_for_position(position) {
-        Ok(index) | Err(index) => index,
-    }
+fn index_at(painted: &Painted, position: Point<Pixels>) -> usize {
+    painted.layout.index_at(position)
 }
 
 impl WordView {
@@ -220,8 +206,35 @@ impl WordView {
             author: input("Revision author"),
             comment_author: input("Comment author"),
             comment_text: input("Comment on the selected paragraph"),
+            find: input("Case-sensitive text"),
+            replace: input("Replacement text"),
         };
+        let find = cx.subscribe(&inputs.find, |this: &mut WordView, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.find_index = 0;
+                this.find_receipt = None;
+                cx.notify();
+            }
+        });
+        let replace = cx.subscribe(&inputs.replace, |this: &mut WordView, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.find_receipt = None;
+                cx.notify();
+            }
+        });
         let mode = if editor.is_docx() { ViewMode::Page } else { ViewMode::Continuous };
+        let size_field = cx.new(|cx| InputState::new(window, cx).placeholder("Auto"));
+        // As Electron's onChange: a valid size applies as it is typed.
+        let size_sub = cx.subscribe_in(&size_field, window, |this: &mut WordView, field, ev: &InputEvent, window, cx| {
+            if !matches!(ev, InputEvent::Change) || !field.read(cx).focus_handle(cx).is_focused(window) {
+                return;
+            }
+            if let Some(points) = parse_size(field.read(cx).value().as_ref()) {
+                if this.editor.selection_format().font_size_points.value() != Some(&Some(points)) {
+                    this.set_size(points, window, cx);
+                }
+            }
+        });
         WordView {
             editor,
             focus: cx.focus_handle(),
@@ -232,14 +245,21 @@ impl WordView {
             paper: PaperTone::Theme,
             tool: None,
             inputs,
+            find_index: 0,
+            find_receipt: None,
+            _find_subscriptions: [find, replace],
+            size_field,
+            _size_sub: size_sub,
             building: RefCell::new(HashMap::new()),
             painted: Rc::new(RefCell::new(HashMap::new())),
-            heights: Rc::new(RefCell::new(Vec::new())),
             composition: None,
             dragging: false,
             goal_x: None,
             reveal: Rc::new(Cell::new(false)),
             images: HashMap::new(),
+            toolbar_width: Rc::new(Cell::new(0.0)),
+            overflow_open: false,
+            picker: None,
         }
     }
 
@@ -268,6 +288,9 @@ impl WordView {
             "view-page" => self.mode = ViewMode::Page,
             "view-continuous" => self.mode = ViewMode::Continuous,
             "view-outline" => self.outline = !self.outline,
+            // Kirby's choice: paper follows the theme, as in Electron, with
+            // white paper one menu item away.
+            "view-light-paper" => self.paper = if self.paper == PaperTone::Light { PaperTone::Theme } else { PaperTone::Light },
             "view-zoom-reset" => {
                 self.zoom = 1.0;
                 cx.emit(WordViewEvent::ZoomReset);
@@ -361,7 +384,7 @@ impl WordView {
 
     fn caret_window_point(&self) -> Option<(Point<Pixels>, Pixels)> {
         let painted = self.focus_painted()?;
-        Some((caret_point(&painted, self.display_caret()), painted.layout.line_height()))
+        Some(painted.layout.caret(self.display_caret()))
     }
 
     // ----- mouse ----------------------------------------------------------
@@ -442,17 +465,7 @@ impl WordView {
 
     fn move_line_edge(&mut self, end: bool, extend: bool) {
         let Some(painted) = self.focus_painted() else { return };
-        let Some((caret, line_height)) = self.caret_window_point() else { return };
-        let bounds = painted.layout.bounds();
-        let x = if end { bounds.right() + px(10_000.) } else { bounds.left() - px(10_000.) };
-        let y = caret.y + line_height / 2.0;
-        let mut offset = match painted.layout.index_for_position(point(x, y)) {
-            Ok(i) | Err(i) => i,
-        };
-        if !end {
-            // Unaligned measure at the far left is the row start in every alignment.
-            offset = offset.min(self.editor.focus.offset);
-        }
+        let offset = painted.layout.line_edge(self.editor.focus.offset, end);
         let paragraph_id = self.editor.focus.paragraph_id.clone();
         self.editor.set_caret(TextPosition { paragraph_id, offset }, extend);
     }
@@ -590,7 +603,7 @@ impl WordView {
 
     /// The text runs of a paragraph, split where the selection and the marked
     /// text start and end.
-    fn text_runs(&self, paragraph: &Paragraph, display: &str, colors: &PageColors) -> Vec<TextRun> {
+    fn text_runs(&self, paragraph: &Paragraph, display: &str, colors: &PageColors) -> Vec<FlowRun> {
         let (shown, runs) = self.editor.shown(paragraph);
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
         // (length, run index) over the shown text.
@@ -625,7 +638,8 @@ impl WordView {
                     continue;
                 }
                 let selected = selection.is_some_and(|(a, b)| from >= a && to <= b && a < b);
-                out.push(self.text_run(to - from, look.as_ref(), marked, selected, colors));
+                let points = look.as_ref().map_or(layout::DEFAULT_SIZE_POINTS, |l| l.size_points);
+                out.push(FlowRun { run: self.text_run(to - from, look.as_ref(), marked, selected, colors), size: px(points as f32 * PX_PER_POINT * self.zoom) });
             }
             at += len;
         }
@@ -661,36 +675,45 @@ impl WordView {
     }
 
     /// One paragraph as styled text, with its list marker and change bar.
-    pub(crate) fn paragraph_element(&self, paragraph: &Paragraph, colors: &PageColors) -> AnyElement {
+    /// `collapse` is the space the previous sibling already left below
+    /// itself: CSS collapses adjacent vertical margins, so only the excess of
+    /// this paragraph's space before is added.
+    pub(crate) fn paragraph_element(&self, paragraph: &Paragraph, colors: &PageColors, collapse: Pixels) -> AnyElement {
+        self.paragraph_with_break(paragraph, colors, collapse, BreakHint::default())
+    }
+
+    /// A paragraph with Electron's page-break marker inside it: the marker
+    /// is a block inside the run, so a break at the end of the text leaves
+    /// the marker and then an empty line before the paragraph's space after.
+    fn paragraph_with_break(&self, paragraph: &Paragraph, colors: &PageColors, collapse: Pixels, hint: BreakHint) -> AnyElement {
         let zoom = self.zoom;
         let look = layout::paragraph_look(paragraph);
         let display = self.display_text(paragraph);
         let runs = self.text_runs(paragraph, &display, colors);
-        let size = px(layout::paragraph_size_points(paragraph) as f32 * PX_PER_POINT * zoom);
-        let line_height = size * look.line_multiple as f32;
-        let align = text_align(look.alignment);
-        let styled = StyledText::new(display).with_runs(runs);
-        self.building.borrow_mut().insert(paragraph.id.clone(), Painted { layout: styled.layout().clone(), align });
-        let before = px(look.before_points as f32 * PX_PER_POINT * zoom);
+        // Electron's paragraph box is Georgia 12 pt; runs set their own size
+        // and the box's line height is the strut every line keeps.
+        let size = px(layout::DEFAULT_SIZE_POINTS as f32 * PX_PER_POINT * zoom);
+        let multiple = look.line_multiple as f32;
+        let line_height = size * multiple;
+        let strut = TextRun { len: 1, font: font(DEFAULT_FONT), color: colors.text, background_color: None, underline: None, strikethrough: None };
+        let flow = FlowText::new(display, runs, flow_align(look.alignment), multiple, strut, size);
+        self.building.borrow_mut().insert(paragraph.id.clone(), Painted { layout: flow.layout().clone() });
+        let before = (px(look.before_points as f32 * PX_PER_POINT * zoom) - collapse).max(px(0.));
         let after = px(look.after_points as f32 * PX_PER_POINT * zoom);
         let indent = px(look.indent_px * zoom);
-        let revised = !paragraph.revision_ids.is_empty();
-        let marker_width = px(22. * zoom);
+        let marker_left = if look.marker.as_deref() == Some("•") { px(19.) } else { px(24.) } * zoom;
         div()
             .w_full()
             .relative()
             .pt(before)
             .pb(after)
             .pl(indent)
-            .when(revised, |d| d.border_l_2().border_color(rgb(0xd19a00)).pl(indent + px(6.)))
             .when_some(look.marker, |d, marker| {
                 d.child(
                     div()
                         .absolute()
                         .top(before)
-                        .left(indent - marker_width - px(2.))
-                        .w(marker_width)
-                        .text_right()
+                        .left(indent - marker_left)
                         .text_size(size)
                         .line_height(line_height)
                         .font_family(DEFAULT_FONT)
@@ -698,21 +721,9 @@ impl WordView {
                         .child(marker),
                 )
             })
-            .child(
-                div()
-                    .w_full()
-                    .min_h(line_height)
-                    .text_size(size)
-                    .line_height(line_height)
-                    .font_family(DEFAULT_FONT)
-                    .text_color(colors.text)
-                    .map(|d| match align {
-                        TextAlign::Center => d.text_center(),
-                        TextAlign::Right => d.text_right(),
-                        TextAlign::Left => d.text_left(),
-                    })
-                    .child(styled),
-            )
+            .when(hint.before, |d| d.child(self.break_marker(colors)))
+            .child(div().w_full().min_h(size * 1.4).child(flow))
+            .when(hint.after, |d| d.child(self.break_marker(colors)).child(div().h(line_height)))
             .into_any_element()
     }
 
@@ -748,151 +759,81 @@ impl WordView {
             .into_any_element()
     }
 
+    /// The space a paragraph leaves below itself, for margin collapsing.
+    fn after_px(&self, paragraph: &Paragraph) -> Pixels {
+        px(layout::paragraph_look(paragraph).after_points as f32 * PX_PER_POINT * self.zoom)
+    }
+
+    /// Electron's `.docs-page-break-marker`: a dashed rule labelled "Page break".
+    fn break_marker(&self, colors: &PageColors) -> AnyElement {
+        div()
+            .w_full()
+            .h(px(20. * self.zoom))
+            .my(px(10. * self.zoom))
+            .border_t_1()
+            .border_dashed()
+            .border_color(colors.muted)
+            .text_size(px(9.))
+            .line_height(px(12.))
+            .text_center()
+            .text_color(colors.muted)
+            .child("Page break")
+            .into_any_element()
+    }
+
     /// A block: a paragraph with its pictures and break marker, or a table.
-    fn block_element(&self, block: &Block, hint: BreakHint, colors: &PageColors, cx: &mut Context<Self>) -> AnyElement {
+    /// Returns the element and the space it leaves below itself.
+    fn block_element(&self, block: &Block, hint: BreakHint, collapse: Pixels, colors: &PageColors, cx: &mut Context<Self>) -> (AnyElement, Pixels) {
         let zoom = self.zoom;
         let doc = self.editor.rich();
         match block {
             Block::Paragraph(id) => {
-                let Some(paragraph) = doc.paragraph(id) else { return div().into_any_element() };
+                let Some(paragraph) = doc.paragraph(id) else { return (div().into_any_element(), collapse) };
                 let pictures: Vec<(String, f64, f64)> = if doc.format == Format::Docx {
                     doc.images.iter().filter(|i| &i.paragraph_id == id).map(|i| (i.id.clone(), i.width_points, i.height_points)).collect()
                 } else {
                     Vec::new()
                 };
                 let show_text = pictures.is_empty() || !paragraph.text.is_empty() || !paragraph.runs.iter().all(|r| r.page_breaks.is_empty());
-                let marker = self.mode == ViewMode::Continuous && hint.after;
-                v_flex()
+                let collapse = if pictures.is_empty() { collapse } else { px(0.) };
+                let element = v_flex()
                     .w_full()
                     .children(pictures.iter().map(|(pid, w, h)| self.picture_element(pid, *w, *h, colors, cx)))
-                    .when(show_text, |d| d.child(self.paragraph_element(paragraph, colors)))
-                    .when(marker || (self.mode == ViewMode::Continuous && hint.before), |d| {
-                        let rule = div()
-                            .w_full()
-                            .my(px(8. * zoom))
-                            .border_t_1()
-                            .border_dashed()
-                            .border_color(colors.muted)
-                            .pt(px(2.))
-                            .text_size(px(9.))
-                            .text_center()
-                            .text_color(colors.muted)
-                            .child("Page break");
-                        if hint.before { d.flex_col_reverse().child(rule) } else { d.child(rule) }
-                    })
-                    .into_any_element()
+                    .when(show_text, |d| d.child(self.paragraph_with_break(paragraph, colors, collapse, hint)))
+                    .when(!show_text && (hint.before || hint.after), |d| d.child(self.break_marker(colors)))
+                    .into_any_element();
+                let after = if show_text { self.after_px(paragraph) } else { px(0.) };
+                (element, after)
             }
             Block::Table(id) => {
-                let Some(table) = doc.tables.iter().find(|t| &t.id == id) else { return div().into_any_element() };
-                v_flex()
+                let Some(table) = doc.tables.iter().find(|t| &t.id == id) else { return (div().into_any_element(), collapse) };
+                let cell_pad = px(7. * zoom);
+                let element = v_flex()
                     .w_full()
-                    .my(px(4. * zoom))
                     .border_l_1()
                     .border_t_1()
                     .border_color(colors.rule)
                     .children(table.rows.iter().map(|row| {
                         h_flex().w_full().items_stretch().children(row.cells.iter().map(|cell| {
+                            let mut previous = px(0.);
                             v_flex()
                                 .flex_1()
                                 .min_w(px(60. * zoom))
                                 .border_r_1()
                                 .border_b_1()
                                 .border_color(colors.rule)
-                                .px(px(7. * zoom))
-                                .pt(px(7. * zoom))
-                                .children(cell.paragraph_ids.iter().filter_map(|pid| doc.paragraph(pid)).map(|p| self.paragraph_element(p, colors)))
+                                .p(cell_pad)
+                                .children(cell.paragraph_ids.iter().filter_map(|pid| doc.paragraph(pid)).map(|p| {
+                                    let element = self.paragraph_element(p, colors, previous);
+                                    previous = self.after_px(p);
+                                    element
+                                }))
                         }))
                     }))
-                    .into_any_element()
+                    .into_any_element();
+                (element, px(0.))
             }
         }
-    }
-
-    fn block_paragraph_ids(&self, block: &Block) -> Vec<String> {
-        let doc = self.editor.rich();
-        match block {
-            Block::Paragraph(id) => vec![id.clone()],
-            Block::Table(id) => doc
-                .tables
-                .iter()
-                .filter(|t| &t.id == id)
-                .flat_map(|t| t.rows.iter().flat_map(|r| r.cells.iter().flat_map(|c| c.paragraph_ids.clone())))
-                .collect(),
-        }
-    }
-
-    /// Comments and tracked changes for these paragraphs, in the margin.
-    fn margin(&self, paragraph_ids: &[String], colors: &PageColors, cx: &mut Context<Self>) -> AnyElement {
-        let doc = self.editor.rich();
-        let theme = cx.theme().clone();
-        let can_review = self.editor.can_mutate();
-        let mut cards: Vec<AnyElement> = Vec::new();
-        for comment in doc.comments.iter().filter(|c| paragraph_ids.contains(&c.paragraph_id)) {
-            let paragraph = comment.paragraph_id.clone();
-            cards.push(
-                v_flex()
-                    .id(SharedString::from(format!("comment-{}", comment.id)))
-                    .p_2()
-                    .gap_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.background)
-                    .text_xs()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(comment.author.clone()))
-                    .child(div().text_color(theme.foreground).child(comment.text.clone()))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.editor.set_caret(TextPosition { paragraph_id: paragraph.clone(), offset: 0 }, false);
-                        this.reveal.set(true);
-                        this.changed(window, cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
-        for revision in doc.revisions.iter().filter(|r| paragraph_ids.contains(&r.paragraph_id)) {
-            let (accept, reject) = (revision.id.clone(), revision.id.clone());
-            let inserted = revision.kind == markie_office::model::RevisionKind::Insertion;
-            let shown = if revision.text.is_empty() { "Empty text".to_string() } else { revision.text.clone() };
-            cards.push(
-                v_flex()
-                    .p_2()
-                    .gap_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(0xd19a00))
-                    .bg(theme.background)
-                    .text_xs()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {}", if inserted { "Inserted" } else { "Deleted" }, revision.author)))
-                    .child(
-                        div()
-                            .text_color(if inserted { theme.green } else { theme.red })
-                            .when(inserted, |d| d.underline())
-                            .when(!inserted, |d| d.line_through())
-                            .child(shown),
-                    )
-                    .when(can_review, |d| {
-                        d.child(
-                            h_flex()
-                                .gap_1()
-                                .child(Button::new(SharedString::from(format!("accept-{accept}"))).xsmall().label("Accept").on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        this.editor.accept_revision(&accept);
-                                        this.edited(window, cx);
-                                    },
-                                )))
-                                .child(Button::new(SharedString::from(format!("reject-{reject}"))).xsmall().label("Reject").on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        this.editor.reject_revision(&reject);
-                                        this.edited(window, cx);
-                                    },
-                                ))),
-                        )
-                    })
-                    .into_any_element(),
-            );
-        }
-        let _ = colors;
-        v_flex().w(px(220.)).flex_none().gap_2().children(cards).into_any_element()
     }
 
     fn refresh_images(&mut self) {
@@ -912,111 +853,46 @@ impl WordView {
         }
     }
 
-    fn render_pages(&self, colors: &PageColors, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The document on one sheet, as Electron draws it: the paper size,
+    /// margins and shadow in Page view, a 960 px column in Continuous view.
+    /// Explicit page breaks show as markers; the sheet is never split.
+    fn render_sheet(&self, colors: &PageColors, cx: &mut Context<Self>) -> AnyElement {
         let doc = self.editor.rich().clone();
         let zoom = self.zoom;
         let scale = PX_PER_POINT * zoom;
-        let hints: Vec<BreakHint> = doc.blocks.iter().map(|b| layout::break_hint(&doc, b)).collect();
-        let with_margin = !doc.comments.is_empty() || !doc.revisions.is_empty();
         let theme = cx.theme().clone();
-        let sheet = |content: AnyElement, page: bool| {
-            let l = doc.page_layout;
-            div()
+        let mut collapse = px(0.);
+        let blocks: Vec<AnyElement> = doc
+            .blocks
+            .iter()
+            .map(|block| {
+                let (element, after) = self.block_element(block, layout::break_hint(&doc, block), collapse, colors, cx);
+                collapse = after;
+                element
+            })
+            .collect();
+        let content = v_flex().w_full().children(blocks);
+        let l = doc.page_layout;
+        match self.mode {
+            ViewMode::Page => div()
                 .flex_none()
+                .mx_auto()
                 .bg(colors.paper)
                 .border_1()
                 .border_color(theme.border)
-                .shadow_md()
-                .when(page, |d| {
-                    d.w(px(l.width_points as f32 * scale))
-                        .min_h(px(l.height_points as f32 * scale))
-                        .pt(px(l.margin_top_points as f32 * scale))
-                        .pr(px(l.margin_right_points as f32 * scale))
-                        .pb(px(l.margin_bottom_points as f32 * scale))
-                        .pl(px(l.margin_left_points as f32 * scale))
-                })
-                .when(!page, |d| d.w_full().max_w(px(960. * zoom)).p(px(32. * zoom)))
+                .shadow(vec![BoxShadow { color: hsla(0., 0., 0., 0.133), offset: point(px(0.), px(1.)), blur_radius: px(7.), spread_radius: px(0.), inset: false }])
+                .w(px(l.width_points as f32 * scale))
+                .min_h(px(l.height_points as f32 * scale))
+                .pt(px(l.margin_top_points as f32 * scale))
+                .pr(px(l.margin_right_points as f32 * scale))
+                .pb(px(l.margin_bottom_points as f32 * scale))
+                .pl(px(l.margin_left_points as f32 * scale))
                 .child(content)
-        };
-        let record = |indices: Vec<usize>, heights: Rc<RefCell<Vec<f32>>>| {
-            move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, _: &mut App| {
-                if bounds.len() != indices.len() {
-                    return;
-                }
-                let mut heights = heights.borrow_mut();
-                let mut changed = false;
-                for (index, bound) in indices.iter().zip(bounds) {
-                    let height = f32::from(bound.size.height);
-                    if let Some(slot) = heights.get_mut(*index)
-                        && (*slot - height).abs() > 0.5
-                    {
-                        *slot = height;
-                        changed = true;
-                    }
-                }
-                if changed {
-                    window.request_animation_frame();
-                }
-            }
-        };
-        {
-            let mut heights = self.heights.borrow_mut();
-            if heights.len() != doc.blocks.len() {
-                heights.resize(doc.blocks.len(), 0.0);
-                // Unmeasured blocks get an estimate; the next frame corrects it.
-                for h in heights.iter_mut().filter(|h| **h == 0.0) {
-                    *h = 28.0 * zoom;
-                }
+                .into_any_element(),
+            ViewMode::Continuous => {
+                div().w_full().max_w(px(960. * zoom)).flex_1().mx_auto().bg(colors.paper).p(px(32. * zoom)).child(content).into_any_element()
             }
         }
-        let mut rows = Vec::new();
-        if self.mode == ViewMode::Continuous {
-            let indices: Vec<usize> = (0..doc.blocks.len()).collect();
-            let content = v_flex()
-                .w_full()
-                .on_children_prepainted(record(indices, self.heights.clone()))
-                .children(doc.blocks.iter().zip(&hints).map(|(b, h)| self.block_element(b, *h, colors, cx)))
-                .into_any_element();
-            let ids: Vec<String> = doc.blocks.iter().flat_map(|b| self.block_paragraph_ids(b)).collect();
-            rows.push(
-                h_flex()
-                    .w_full()
-                    .items_start()
-                    .justify_center()
-                    .gap_4()
-                    .child(sheet(content, false))
-                    .when(with_margin, |d| d.child(self.margin(&ids, colors, cx)))
-                    .into_any_element(),
-            );
-            return rows;
-        }
-        let l = doc.page_layout;
-        let content_height = ((l.height_points - l.margin_top_points - l.margin_bottom_points) as f32 * scale).max(40.);
-        let pages = layout::paginate(&self.heights.borrow(), &hints, content_height);
-        let count = pages.len();
-        for (number, indices) in pages.into_iter().enumerate() {
-            let content = v_flex()
-                .w_full()
-                .on_children_prepainted(record(indices.clone(), self.heights.clone()))
-                .children(indices.iter().map(|&i| self.block_element(&doc.blocks[i], hints[i], colors, cx)))
-                .into_any_element();
-            let ids: Vec<String> = indices.iter().flat_map(|&i| self.block_paragraph_ids(&doc.blocks[i])).collect();
-            rows.push(
-                v_flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .gap_4()
-                            .child(sheet(content, true))
-                            .when(with_margin, |d| d.child(self.margin(&ids, colors, cx))),
-                    )
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(format!("Page {} of {count}", number + 1)))
-                    .into_any_element(),
-            );
-        }
-        rows
     }
 
     fn render_outline(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1060,39 +936,40 @@ impl WordView {
             }))
     }
 
+    /// Electron's banners in its order: `.docs-tracking-banner` notes in the
+    /// status blue, then `.docs-warning` in yellow and `.docs-error` in red,
+    /// both on the surface color.
     fn banners(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let theme = cx.theme().clone();
-        let banner = |text: String, color: Hsla| {
-            div().px_4().py_1p5().text_xs().border_b_1().border_color(theme.border).bg(color.opacity(0.12)).text_color(theme.foreground).child(text).into_any_element()
+        let note = |text: String| {
+            div().px(px(16.)).py(px(7.)).text_size(px(11.)).border_b_1().border_color(theme.border).text_color(theme.info).child(text).into_any_element()
         };
+        let strip = |color: Hsla| div().px(px(20.)).py(px(10.)).text_size(px(12.)).line_height(px(19.2)).border_b_1().border_color(theme.border).bg(theme.muted).text_color(color);
         let editor = &self.editor;
         let doc = editor.rich();
         let mut out = Vec::new();
-        if !doc.can_edit && !editor.host_read_only {
-            let name = if doc.format == Format::Docx { "Word".to_string() } else { format!("{:?}", doc.format).to_uppercase() };
-            let reason = doc.diagnostics.iter().find(|d| d.severity == markie_office::model::Severity::Warning).map(|d| format!(" {}", d.message)).unwrap_or_default();
-            out.push(banner(format!("Read-only to protect unsupported {name} features. Saving keeps the unchanged original.{reason}"), theme.warning));
-        }
         if editor.tracking {
             let author = if editor.review_author.trim().is_empty() { "an author is required".to_string() } else { editor.review_author.clone() };
-            out.push(banner(format!("Tracking paragraph text as {author}. Formatting, layout and inserted content are not tracked."), theme.info));
+            out.push(note(format!("Tracking paragraph text as {author}. Formatting, layout and inserted content are not tracked.")));
         }
         if editor.original_view {
-            out.push(banner("Original text view. Switch to Final text to edit.".into(), theme.info));
+            out.push(note("Original text view. Switch to Final text to edit.".into()));
         }
         if !editor.tracking && !doc.revisions.is_empty() {
-            out.push(banner("Paragraphs with pending revisions are read-only until you accept or reject them, or turn on paragraph text tracking.".into(), theme.info));
+            out.push(note("Paragraphs with pending revisions are read-only until you accept/reject them or enable same-author paragraph tracking.".into()));
+        }
+        if !doc.can_edit && !editor.host_read_only {
+            let name = if doc.format == Format::Docx { "Word".to_string() } else { format!("{:?}", doc.format).to_uppercase() };
+            // Electron offers Export here; Markie RS has no export yet, and
+            // Save never writes a read-only document.
+            out.push(strip(theme.warning).child(format!("Read-only to protect unsupported {name} features. Saving keeps the unchanged original.")).into_any_element());
         }
         if let Some(error) = &editor.error {
             out.push(
-                h_flex()
-                    .px_4()
-                    .py_1p5()
-                    .gap_2()
-                    .text_xs()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .bg(theme.danger.opacity(0.12))
+                strip(theme.danger)
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
                     .child(div().flex_1().child(error.clone()))
                     .child(Button::new("dismiss-error").xsmall().ghost().label("Dismiss").on_click(cx.listener(|this, _, window, cx| {
                         this.editor.error = None;
@@ -1104,97 +981,547 @@ impl WordView {
         out
     }
 
+    /// Electron's zoom presets: one step at a time from the nearest preset.
+    fn step_zoom(&mut self, direction: i32, cx: &mut Context<Self>) {
+        const STEPS: [f32; 8] = [0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0];
+        let nearest = (0..STEPS.len()).min_by(|a, b| (STEPS[*a] - self.zoom).abs().total_cmp(&(STEPS[*b] - self.zoom).abs())).unwrap_or(3);
+        let next = STEPS[(nearest as i32 + direction).clamp(0, STEPS.len() as i32 - 1) as usize];
+        self.zoom = next;
+        cx.emit(WordViewEvent::Zoom(next));
+        cx.notify();
+    }
+
+    /// The field shows the selection's size, or empty under its Auto or
+    /// Mixed placeholder, unless the person is typing in it.
+    fn sync_size_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.size_field.read(cx).focus_handle(cx).is_focused(window) {
+            return;
+        }
+        let format = self.editor.selection_format();
+        let (value, placeholder) = match &format.font_size_points {
+            Common::Value(Some(points)) => (trim_size(*points), "Auto"),
+            Common::Mixed => (String::new(), "Mixed"),
+            _ => (String::new(), "Auto"),
+        };
+        self.size_field.update(cx, |field, cx| {
+            if field.value().as_ref() as &str != value.as_str() {
+                field.set_value(value, window, cx);
+            }
+            field.set_placeholder(placeholder, window, cx);
+        });
+    }
+
+    fn set_size(&mut self, points: f64, window: &mut Window, cx: &mut Context<Self>) {
+        if (1.0..=400.0).contains(&points) {
+            self.editor.format_selection(RunFormat { font_size_points: Some(Some(points)), ..Default::default() });
+        }
+        self.edited(window, cx);
+    }
+
+    fn open_picker(&mut self, picker: Picker, position: Point<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+        self.picker = Some((picker, position));
+        cx.notify();
+    }
+
+    fn pick(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((picker, _)) = self.picker.take() else { return };
+        match picker {
+            Picker::Style(styles) => {
+                if let Some((id, _)) = styles.get(index) {
+                    self.editor.set_paragraph_style((!id.is_empty()).then_some(id.as_str()));
+                }
+            }
+            Picker::Font(fonts) => {
+                let family = if index == 0 { None } else { fonts.get(index - 1).cloned() };
+                self.editor.format_selection(RunFormat { font_family: Some(family), ..Default::default() });
+            }
+            Picker::Colour => {
+                if let Some((_, color)) = TEXT_COLOURS.get(index) {
+                    self.editor.format_selection(RunFormat { color: Some(color.map(str::to_string)), ..Default::default() });
+                }
+            }
+        }
+        self.focus.focus(window, cx);
+        self.edited(window, cx);
+    }
+
+    /// The open style, font or color list, under the pointer like a native select.
+    fn render_picker(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (picker, position) = self.picker.as_ref()?;
+        let theme = cx.theme().clone();
+        let format = self.editor.selection_format();
+        let items: Vec<(String, bool)> = match picker {
+            Picker::Style(styles) => {
+                let current = self.editor.paragraph(&self.editor.focus.paragraph_id).and_then(|p| p.style_id.clone()).unwrap_or_default();
+                styles.iter().map(|(id, label)| (label.clone(), *id == current)).collect()
+            }
+            Picker::Font(fonts) => {
+                let current = format.font_family.value().cloned().flatten();
+                let placeholder = if format.font_family == Common::Mixed { "Mixed fonts" } else { "Inherited font" };
+                std::iter::once((placeholder.to_string(), current.is_none())).chain(fonts.iter().map(|f| (f.clone(), current.as_deref() == Some(f)))).collect()
+            }
+            Picker::Colour => TEXT_COLOURS.iter().map(|(label, _)| (label.to_string(), false)).collect(),
+        };
+        Some(
+            deferred(
+                anchored().position(*position).snap_to_window_with_margin(px(8.)).child(
+                    v_flex()
+                        .id("word-picker")
+                        .occlude()
+                        .min_w(px(160.))
+                        .max_h(px(360.))
+                        .overflow_y_scroll()
+                        .p(px(4.))
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.popover)
+                        .shadow_lg()
+                        .text_size(px(12.))
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.picker = None;
+                            cx.notify();
+                        }))
+                        .children(items.into_iter().enumerate().map(|(index, (label, checked))| {
+                            h_flex()
+                                .id(("word-pick", index))
+                                .gap(px(6.))
+                                .px(px(8.))
+                                .py(px(3.))
+                                .rounded(px(4.))
+                                .hover(|s| s.bg(theme.accent))
+                                .child(div().w(px(12.)).child(if checked { "✓" } else { "" }))
+                                .child(label)
+                                .on_click(cx.listener(move |this, _, window, cx| this.pick(index, window, cx)))
+                        })),
+                ),
+            )
+            .with_priority(2)
+            .into_any_element(),
+        )
+    }
+
+    /// Electron's `FormattingToolbar` as the Word editor configures it: the
+    /// page setup and spacing buttons, history, zoom, style and font
+    /// pickers, size, marks, color, insert, lists, alignment and clear. Groups
+    /// that do not fit move into the More menu in Electron's order.
     fn toolbar(&self, available: &[&'static str], cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let format = self.editor.selection_format();
+        let caps = self.editor.capabilities();
+        let docx = self.editor.is_docx();
+        let editable = self.editor.can_mutate();
+        let can_format = self.editor.can_format_runs() && self.tool.is_none();
         let paragraph = self.editor.paragraph(&self.editor.focus.paragraph_id).cloned();
-        let button = |id: &'static str, label: &'static str, selected: bool, cx: &mut Context<Self>| {
-            Button::new(id).xsmall().ghost().label(label).selected(selected).disabled(!available.contains(&id)).on_click(cx.listener(move |this, _, window, cx| {
-                this.command(id, window, cx);
-                this.focus.focus(window, cx);
-            }))
-        };
-        let style = paragraph.as_ref().and_then(|p| p.style_id.clone()).unwrap_or_default();
         let list = paragraph.as_ref().and_then(|p| p.list_kind);
         let align = paragraph.as_ref().and_then(|p| p.alignment.clone()).unwrap_or_else(|| "left".into());
-        let separator = || div().w(px(1.)).h(px(16.)).mx_1().bg(theme.border);
+        let can_paragraph = available.contains(&"format-align-left");
+        let width = self.toolbar_width.get();
+
+        // Group widths and the fitting rule from formatting-toolbar.tsx.
+        let start_width = if caps.page_layout || caps.paragraph_formatting { 60.0 + 2.0 } else { 0.0 };
+        let groups: [(&str, f32); 9] = [
+            ("selectors", if docx { 114.0 } else { 0.0 } + 106.0),
+            ("colour", 40.0),
+            ("lists", if docx { 60.0 } else { 0.0 }),
+            ("alignment", 90.0),
+            ("history", 60.0),
+            ("insert", if docx { 60.0 } else { 0.0 }),
+            ("clear", 30.0),
+            ("size", 60.0),
+            ("view", 100.0),
+        ];
+        let primary = 40.0 + 90.0;
+        let full = 16.0 + start_width + primary + groups.iter().map(|g| g.1).sum::<f32>() + if docx { 64.0 } else { 36.0 } + 60.0;
+        let compact = width > 0.0 && width < full;
+        let primary_over = compact && width - 16.0 - start_width - 30.0 < primary;
+        let mut room = width - 16.0 - start_width - if primary_over { 0.0 } else { primary } - 30.0;
+        let mut over: Vec<&str> = Vec::new();
+        if compact {
+            for (name, size) in groups {
+                if size <= room {
+                    room -= size;
+                } else {
+                    over.push(name);
+                }
+            }
+        }
+        let over = |name: &str| over.contains(&name);
+        let in_menu = |name: &str| if name == "primary" { primary_over } else { over(name) };
+
+        let fg = theme.foreground;
+        let muted = theme.muted_foreground;
+        let hover = theme.accent.opacity(0.4);
+        let active_bg = theme.accent;
+        let button = |id: &'static str, icon: Option<&'static [u8]>, glyph: Option<AnyElement>, label: &'static str, active: bool, enabled: bool, menu: bool| {
+            div()
+                .id(id)
+                .h(px(28.))
+                .min_w(px(28.))
+                .px(px(6.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(8.))
+                .rounded(px(4.))
+                .text_size(px(11.))
+                .text_color(if active { fg } else { muted })
+                .when(active, |d| d.bg(active_bg))
+                .when(enabled && !active, |d| d.hover(move |s| s.bg(hover).text_color(fg)))
+                .when(!enabled, |d| d.opacity(0.35))
+                .when_some(icon, |d, bytes| d.child(svg().data(bytes).size(px(15.)).flex_none().text_color(if active { fg } else { muted })))
+                .children(glyph)
+                .when(menu, |d| d.child(label))
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+        };
+        let command = |this: &mut Self, id: &'static str, window: &mut Window, cx: &mut Context<Self>| {
+            this.overflow_open = false;
+            this.command(id, window, cx);
+            this.focus.focus(window, cx);
+        };
+        let action = |id: &'static str, icon: &'static [u8], label: &'static str, active: bool, menu: bool, cx: &mut Context<Self>| {
+            let enabled = available.contains(&id);
+            button(id, Some(icon), None, label, active, enabled, menu).when(enabled, |d| d.on_click(cx.listener(move |this, _, window, cx| command(this, id, window, cx))))
+        };
+        let divider = || div().w(px(1.)).h(px(20.)).mx(px(4.)).flex_none().bg(theme.border);
+        let mark = |text: &'static str, weight: FontWeight, italic: bool, underline: bool| {
+            div()
+                .text_size(px(13.))
+                .font_weight(weight)
+                .when(italic, |d| d.italic().font_family("Georgia"))
+                .when(underline, |d| d.underline())
+                .child(text)
+                .into_any_element()
+        };
+        // Electron dims a disabled style picker, but not the font picker or
+        // the size field: their classes have no disabled opacity.
+        let field = |id: &'static str, width: f32, label: String, placeholder: bool, dim: bool| {
+            div()
+                .id(id)
+                .w(px(width))
+                .h(px(28.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .pl(px(6.))
+                .pr(px(4.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.background)
+                .text_size(px(11.))
+                .text_color(if placeholder { muted } else { fg })
+                .when(dim, |d| d.opacity(0.35))
+                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label))
+                .child(svg().data(icons::CHEVRON).size(px(12.)).flex_none().text_color(fg))
+        };
+
+        // Each group as a list of elements, in render order.
+        let mut row: Vec<(&str, AnyElement)> = Vec::new();
+        let weak = cx.entity().downgrade();
+        if caps.page_layout {
+            let enabled = self.tool.map_or(available.contains(&"layout-page-setup"), |t| t == Tool::Page);
+            row.push((
+                "start",
+                button("word-page-setup", Some(icons::PAGE_SETUP), None, "Page setup", self.tool == Some(Tool::Page), enabled, false)
+                    .when(enabled, |d| {
+                        d.on_click(cx.listener(|this, _, window, cx| {
+                            if this.tool == Some(Tool::Page) { this.tool = None; this.changed(window, cx) } else { this.command("layout-page-setup", window, cx) }
+                        }))
+                    })
+                    .into_any_element(),
+            ));
+        }
+        if caps.paragraph_formatting {
+            let enabled = self.tool.map_or(available.contains(&"layout-paragraph-spacing"), |t| t == Tool::Spacing);
+            row.push((
+                "start",
+                button("word-spacing", Some(icons::SPACING), None, "Paragraph spacing", self.tool == Some(Tool::Spacing), enabled, false)
+                    .when(enabled, |d| {
+                        d.on_click(cx.listener(|this, _, window, cx| {
+                            if this.tool == Some(Tool::Spacing) { this.tool = None; this.changed(window, cx) } else { this.command("layout-paragraph-spacing", window, cx) }
+                        }))
+                    })
+                    .into_any_element(),
+            ));
+        }
+        let menu = in_menu("history");
+        let undo = editable && self.editor.can_undo();
+        let redo = editable && self.editor.can_redo();
+        row.push(("history", button("word-undo", Some(icons::UNDO), None, "Undo", false, undo, menu).when(undo, |d| d.on_click(cx.listener(|this, _, window, cx| this.on_undo(&WordUndo, window, cx)))).into_any_element()));
+        row.push(("history", button("word-redo", Some(icons::REDO), None, "Redo", false, redo, menu).when(redo, |d| d.on_click(cx.listener(|this, _, window, cx| this.on_redo(&WordRedo, window, cx)))).into_any_element()));
+        if !compact {
+            row.push(("history", divider().into_any_element()));
+        }
+        let menu = in_menu("view");
+        row.push(("view", button("word-zoom-out", Some(icons::ZOOM_OUT), None, "Zoom out", false, true, menu).on_click(cx.listener(|this, _, _, cx| this.step_zoom(-1, cx))).into_any_element()));
+        row.push(("view", div().w(px(38.)).flex_none().text_center().text_size(px(11.)).text_color(muted).child(format!("{}%", (self.zoom * 100.0).round())).into_any_element()));
+        row.push(("view", button("word-zoom-in", Some(icons::ZOOM_IN), None, "Zoom in", false, true, menu).on_click(cx.listener(|this, _, _, cx| this.step_zoom(1, cx))).into_any_element()));
+        if !compact {
+            row.push(("view", divider().into_any_element()));
+        }
+        let selector_width = if compact { 112.0 } else { 140.0 };
+        if docx {
+            let style_id = paragraph.as_ref().and_then(|p| p.style_id.clone()).unwrap_or_default();
+            let mut styles: Vec<(String, String)> = vec![
+                (String::new(), "Default paragraph".into()),
+                ("Normal".into(), "Normal".into()),
+                ("Heading1".into(), "Heading 1".into()),
+                ("Heading2".into(), "Heading 2".into()),
+                ("Heading3".into(), "Heading 3".into()),
+            ];
+            for style in &self.editor.rich().styles {
+                let label = if style.name.is_empty() { style.id.clone() } else { style.name.clone() };
+                match styles.iter_mut().find(|(id, _)| *id == style.id) {
+                    Some(entry) => entry.1 = label,
+                    None => styles.push((style.id.clone(), label)),
+                }
+            }
+            if !styles.iter().any(|(id, _)| *id == style_id) {
+                styles.push((style_id.clone(), style_id.clone()));
+            }
+            let label = styles.iter().find(|(id, _)| *id == style_id).map(|s| s.1.clone()).unwrap_or_default();
+            let enabled = can_paragraph && caps.named_styles && self.tool.is_none();
+            let weak = weak.clone();
+            row.push((
+                "selectors",
+                field("word-style", if compact { 112.0 } else { 140.0 }, label, false, !enabled)
+                    .when(enabled, |d| {
+                        d.on_click(move |event, window, cx| {
+                            let styles = styles.clone();
+                            let weak = weak.clone();
+                            let position = event.position();
+                            window.defer(cx, move |window, cx| {
+                                if let Some(view) = weak.upgrade() {
+                                    view.update(cx, |this, cx| this.open_picker(Picker::Style(styles), position, window, cx));
+                                }
+                            });
+                        })
+                    })
+                    .into_any_element(),
+            ));
+        }
+        let fonts: Vec<String> = {
+            let mut fonts: Vec<String> = ["Arial", "Calibri", "Georgia", "Times New Roman", "Helvetica"].map(String::from).to_vec();
+            for paragraph in &self.editor.rich().paragraphs {
+                for run in &paragraph.runs {
+                    if let Some(family) = run.resolved_style.as_ref().unwrap_or(&run.style).font_family.clone()
+                        && !fonts.contains(&family)
+                    {
+                        fonts.push(family);
+                    }
+                }
+            }
+            fonts
+        };
+        let (font_label, font_placeholder) = match &format.font_family {
+            Common::Mixed => ("Mixed fonts".to_string(), true),
+            Common::Value(Some(family)) => (family.clone(), false),
+            _ => ("Inherited font".to_string(), true),
+        };
+        {
+            let weak = weak.clone();
+            row.push((
+                "selectors",
+                field("word-font", selector_width, font_label, font_placeholder, false)
+                    .when(can_format, |d| {
+                        d.on_click(move |event, window, cx| {
+                            let fonts = fonts.clone();
+                            let weak = weak.clone();
+                            let position = event.position();
+                            window.defer(cx, move |window, cx| {
+                                if let Some(view) = weak.upgrade() {
+                                    view.update(cx, |this, cx| this.open_picker(Picker::Font(fonts), position, window, cx));
+                                }
+                            });
+                        })
+                    })
+                    .into_any_element(),
+            ));
+        }
+        let size = match &format.font_size_points {
+            Common::Value(Some(points)) => Some(*points),
+            _ => None,
+        };
+        let size_tip = "Size of the selected text";
+        let menu = in_menu("size");
+        let smaller = can_format && size.is_some_and(|s| s > 1.0);
+        let larger = can_format && size.is_some_and(|s| s < 400.0);
+        row.push((
+            "size",
+            button("word-size-down", Some(icons::MINUS), None, "Decrease font size", false, smaller, menu)
+                .when(smaller, |d| d.on_click(cx.listener(move |this, _, window, cx| this.set_size(size.unwrap_or(12.0) - 1.0, window, cx))))
+                .into_any_element(),
+        ));
+        row.push((
+            "primary",
+            // `markie-overlay-field text-[11px] h-7 w-[38px] text-center`.
+            div()
+                .id("word-size-field")
+                .w(px(38.))
+                .h(px(28.))
+                .flex_none()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.background)
+                .text_size(px(11.))
+                .text_color(if size.is_some() { fg } else { muted })
+                .when(!can_format, |d| d.opacity(0.5))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(size_tip).build(window, cx))
+                .child(Input::new(&self.size_field).appearance(false).xsmall().text_center().disabled(!can_format))
+                .into_any_element(),
+        ));
+        row.push((
+            "size",
+            button("word-size-up", Some(icons::PLUS), None, "Increase font size", false, larger, menu)
+                .when(larger, |d| d.on_click(cx.listener(move |this, _, window, cx| this.set_size(size.unwrap_or(12.0) + 1.0, window, cx))))
+                .into_any_element(),
+        ));
+        if !compact {
+            row.push(("size", divider().into_any_element()));
+        }
+        let menu = in_menu("primary");
+        for (id, glyph, label, active) in [
+            ("format-bold", mark("B", FontWeight::BOLD, false, false), "Bold", format.bold.value() == Some(&true)),
+            ("format-italic", mark("I", FontWeight::NORMAL, true, false), "Italic", format.italic.value() == Some(&true)),
+            ("format-underline", mark("U", FontWeight::NORMAL, false, true), "Underline", format.underline.value() == Some(&true)),
+        ] {
+            let enabled = can_format;
+            row.push(("primary", button(id, None, Some(glyph), label, active, enabled, menu).when(enabled, |d| d.on_click(cx.listener(move |this, _, window, cx| command(this, id, window, cx)))).into_any_element()));
+        }
+        {
+            let weak = weak.clone();
+            row.push((
+                "colour",
+                button("word-colour", None, Some(h_flex().gap(px(2.)).child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("A")).child(div().text_size(px(10.)).child("▾")).into_any_element()), "Text colour", false, can_format, in_menu("colour"))
+                    .when(can_format, |d| {
+                        d.on_click(move |event, window, cx| {
+                            let weak = weak.clone();
+                            let position = event.position();
+                            window.defer(cx, move |window, cx| {
+                                if let Some(view) = weak.upgrade() {
+                                    view.update(cx, |this, cx| this.open_picker(Picker::Colour, position, window, cx));
+                                }
+                            });
+                        })
+                    })
+                    .into_any_element(),
+            ));
+        }
+        if docx {
+            if !compact {
+                row.push(("insert", divider().into_any_element()));
+            }
+            let menu = in_menu("insert");
+            row.push(("insert", action("insert-link", icons::LINK, "Insert link", false, menu, cx).into_any_element()));
+            row.push(("insert", action("insert-picture", icons::IMAGE, "Insert image", false, menu, cx).into_any_element()));
+        }
+        if !compact {
+            row.push(("lists", divider().into_any_element()));
+        }
+        if docx {
+            let menu = in_menu("lists");
+            row.push(("lists", action("format-bullets", icons::BULLETS, "Bullet list", list == Some(markie_office::model::ListKind::Bullet), menu, cx).into_any_element()));
+            row.push(("lists", action("format-numbering", icons::NUMBERED, "Numbered list", list == Some(markie_office::model::ListKind::Numbered), menu, cx).into_any_element()));
+        }
+        let menu = in_menu("alignment");
+        row.push(("alignment", action("format-align-left", icons::ALIGN_LEFT, "Align left", align == "left", menu, cx).into_any_element()));
+        row.push(("alignment", action("format-align-center", icons::ALIGN_CENTER, "Align centre", align == "center", menu, cx).into_any_element()));
+        row.push(("alignment", action("format-align-right", icons::ALIGN_RIGHT, "Align right", align == "right", menu, cx).into_any_element()));
+        if !compact {
+            row.push(("clear", divider().into_any_element()));
+        }
+        row.push(("clear", action("format-clear", icons::CLEAR, "Clear formatting", false, in_menu("clear"), cx).into_any_element()));
+
+        let mut shown = Vec::new();
+        let mut hidden: Vec<(&str, Vec<AnyElement>)> = Vec::new();
+        for (group, element) in row {
+            if group != "start" && in_menu(group) {
+                match hidden.iter_mut().find(|(g, _)| *g == group) {
+                    Some((_, items)) => items.push(element),
+                    None => hidden.push((group, vec![element])),
+                }
+            } else {
+                shown.push(element);
+            }
+        }
+        let measure = self.toolbar_width.clone();
         h_flex()
             .id("word-toolbar")
+            .relative()
             .w_full()
-            .flex_wrap()
-            .gap_0p5()
-            .px_2()
-            .py_1()
+            .min_w_0()
+            .flex_none()
+            .gap(px(2.))
+            .px(px(8.))
+            .py(px(4.))
             .border_b_1()
             .border_color(theme.border)
-            .bg(theme.background)
+            .bg(theme.muted)
             .child(
-                Button::new("word-undo").xsmall().ghost().label("Undo").disabled(!self.editor.can_undo()).on_click(cx.listener(|this, _, window, cx| {
-                    this.on_undo(&WordUndo, window, cx);
-                })),
+                canvas(
+                    move |bounds, window, _| {
+                        let width = f32::from(bounds.size.width);
+                        if (measure.get() - width).abs() > 0.5 {
+                            measure.set(width);
+                            window.refresh();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
             )
-            .child(
-                Button::new("word-redo").xsmall().ghost().label("Redo").disabled(!self.editor.can_redo()).on_click(cx.listener(|this, _, window, cx| {
-                    this.on_redo(&WordRedo, window, cx);
-                })),
-            )
-            .child(separator())
-            .child(button("format-bold", "B", format.bold.value() == Some(&true), cx))
-            .child(button("format-italic", "I", format.italic.value() == Some(&true), cx))
-            .child(button("format-underline", "U", format.underline.value() == Some(&true), cx))
-            .child(button("format-clear", "Clear", false, cx))
-            .child(button("format-font", "Font…", self.tool == Some(Tool::Font), cx))
-            .child(separator())
-            .child(button("format-normal", "Normal", style == "Normal", cx))
-            .child(button("format-heading-1", "H1", style == "Heading1", cx))
-            .child(button("format-heading-2", "H2", style == "Heading2", cx))
-            .child(button("format-heading-3", "H3", style == "Heading3", cx))
-            .child(separator())
-            .child(button("format-bullets", "• List", list == Some(markie_office::model::ListKind::Bullet), cx))
-            .child(button("format-numbering", "1. List", list == Some(markie_office::model::ListKind::Numbered), cx))
-            .child(separator())
-            .child(button("format-align-left", "Left", align == "left", cx))
-            .child(button("format-align-center", "Center", align == "center", cx))
-            .child(button("format-align-right", "Right", align == "right", cx))
-            .child(button("format-align-justify", "Justify", align == "both", cx))
-            .child(separator())
-            .child(button("insert-picture", "Picture…", self.tool == Some(Tool::Picture), cx))
-            .child(button("insert-table", "Table…", self.tool == Some(Tool::Table), cx))
-            .child(button("insert-link", "Link…", self.tool == Some(Tool::Link), cx))
-            .child(button("insert-page-break", "Break", false, cx))
-            .child(button("layout-page-setup", "Page…", self.tool == Some(Tool::Page), cx))
-            .child(button("layout-paragraph-spacing", "Spacing…", self.tool == Some(Tool::Spacing), cx))
-            .child(button("review-changes", "Review…", self.tool == Some(Tool::Review), cx))
-            .child(separator())
-            .child(button("view-page", "Page", self.mode == ViewMode::Page, cx))
-            .child(button("view-continuous", "Continuous", self.mode == ViewMode::Continuous, cx))
-            .child(button("view-outline", "Outline", self.outline, cx))
-            .child(
-                Button::new("word-paper")
-                    .xsmall()
-                    .ghost()
-                    .label(if self.paper == PaperTone::Light { "Light paper" } else { "Theme paper" })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.paper = if this.paper == PaperTone::Light { PaperTone::Theme } else { PaperTone::Light };
-                        this.changed(window, cx);
-                    })),
-            )
+            .children(shown)
+            .when(compact, |d| {
+                d.child(button("word-more", Some(icons::MORE), None, "More formatting", self.overflow_open, true, false).on_click(cx.listener(|this, _, _, cx| {
+                    this.overflow_open = !this.overflow_open;
+                    cx.notify();
+                })))
+            })
+            .when(compact && self.overflow_open, |d| {
+                d.child(
+                    deferred(
+                        v_flex()
+                            .id("word-more-menu")
+                            .occlude()
+                            .absolute()
+                            .right(px(8.))
+                            .top(px(40.))
+                            .w(px(320.))
+                            .p(px(4.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.secondary)
+                            .shadow_lg()
+                            .children(hidden.into_iter().map(|(_, items)| {
+                                h_flex().flex_wrap().gap(px(4.)).p(px(4.)).border_b_1().border_color(theme.border).children(items)
+                            })),
+                    )
+                    .with_priority(1),
+                )
+            })
     }
+
 }
 
 impl Render for WordView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_images();
+        self.sync_size_field(window, cx);
         self.building.borrow_mut().clear();
         let theme = cx.theme().clone();
         let colors = self.page_colors(cx);
         let available = available_commands(&self.editor);
-        let pages = self.render_pages(&colors, cx);
+        let sheet = self.render_sheet(&colors, cx);
         let content_width = {
             let doc = self.editor.rich();
             let page = if self.mode == ViewMode::Page { doc.page_layout.width_points as f32 * PX_PER_POINT * self.zoom } else { 0.0 };
-            let margin = if doc.comments.is_empty() && doc.revisions.is_empty() { 0.0 } else { 236.0 };
-            px(page + margin + 60.0)
+            px(page + 60.0)
         };
         let built = Rc::new(RefCell::new(std::mem::take(&mut *self.building.borrow_mut())));
 
@@ -1208,13 +1535,14 @@ impl Render for WordView {
         let focused = self.focus.is_focused(window);
         let caret_paragraph = self.editor.focus.paragraph_id.clone();
         let caret_index = self.display_caret();
-        let show_caret = focused && (self.editor.is_collapsed() || self.composition.is_some());
+        // A read-only page has no caret, as Electron's non-editable paragraphs have none.
+        let show_caret = focused && self.editor.can_mutate() && (self.editor.is_collapsed() || self.composition.is_some());
         let caret_color = colors.text;
         let overlay = canvas(
             move |_, window, _| {
                 let ready = std::mem::take(&mut *built.borrow_mut());
                 *painted.borrow_mut() = ready;
-                let caret = painted.borrow().get(&caret_paragraph).map(|p| (caret_point(p, caret_index), p.layout.line_height()));
+                let caret = painted.borrow().get(&caret_paragraph).map(|p| p.layout.caret(caret_index));
                 if reveal.replace(false)
                     && let Some((point, line_height)) = caret
                 {
@@ -1258,13 +1586,13 @@ impl Render for WordView {
             .h_full()
             .overflow_scroll()
             .track_scroll(&self.scroll)
-            .bg(theme.muted)
+            .bg(theme.secondary)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _: &MouseUpEvent, _, _| this.dragging = false))
-            // Rows center with auto margins, which never push a page wider
-            // than the window past the left edge; the scroll area grows instead.
-            .child(v_flex().min_w_full().w(content_width).gap_6().p(px(30.)).children(pages));
+            // The sheet centers with auto margins, which never push a page
+            // wider than the window past the left edge; the scroll area grows instead.
+            .child(v_flex().min_w_full().min_h_full().w(content_width).p(px(30.)).child(sheet));
 
         let editing = div()
             .key_context(CONTEXT)
@@ -1276,7 +1604,13 @@ impl Render for WordView {
             .on_action(cx.listener(Self::on_select_all))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo));
-        let editing = actions::register_commands(editing, &available, cx)
+        let editing = editing.on_action(cx.listener(|this, _: &WordFind, window, cx| {
+            if this.tool.is_none() || this.tool == Some(Tool::Find) {
+                this.open_tool(Tool::Find, window, cx);
+                cx.notify();
+            }
+        }));
+        let editing = actions::register_commands(editing, &menu_commands(&self.editor, self.tool), cx)
             .relative()
             .flex_1()
             .h_full()
@@ -1294,6 +1628,7 @@ impl Render for WordView {
             .text_color(theme.foreground)
             .child(editing)
             .when_some(self.tool, |d, tool| d.child(self.render_tool(tool, cx)))
+            .children(self.render_picker(cx))
     }
 }
 
@@ -1394,9 +1729,8 @@ impl EntityInputHandler for WordView {
         let painted = self.focus_painted()?;
         let display = self.focus_display();
         let bytes = text::utf16_range_to_utf8(&display, range);
-        let start = caret_point(&painted, bytes.start);
+        let (start, line_height) = painted.layout.caret(bytes.start);
         let end = caret_point(&painted, bytes.end);
-        let line_height = painted.layout.line_height();
         let right = if end.y == start.y && end.x > start.x { end.x } else { start.x + px(1.) };
         Some(Bounds::from_corners(start, point(right, start.y + line_height)))
     }
@@ -1413,5 +1747,40 @@ impl EntityInputHandler for WordView {
 
     fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
         self.editor.can_mutate()
+    }
+}
+
+/// A size Electron's field accepts: 1 to 400 points in half-point steps.
+pub(crate) fn parse_size(text: &str) -> Option<f64> {
+    let value: f64 = text.trim().parse().ok()?;
+    (value.is_finite() && (1.0..=400.0).contains(&value) && (value * 2.0).fract() == 0.0).then_some(value)
+}
+
+fn trim_size(points: f64) -> String {
+    let p = (points * 2.0).round() / 2.0;
+    if p.fract() == 0.0 { format!("{}", p as i64) } else { format!("{p}") }
+}
+
+#[cfg(test)]
+mod size_field_tests {
+    use super::{parse_size, trim_size};
+
+    #[test]
+    fn takes_what_electrons_number_field_takes() {
+        assert_eq!(parse_size("12"), Some(12.0));
+        assert_eq!(parse_size(" 10.5 "), Some(10.5));
+        assert_eq!(parse_size("400"), Some(400.0));
+        assert_eq!(parse_size("0.5"), None);
+        assert_eq!(parse_size("401"), None);
+        assert_eq!(parse_size("10.25"), None);
+        assert_eq!(parse_size(""), None);
+        assert_eq!(parse_size("abc"), None);
+        assert_eq!(parse_size("NaN"), None);
+    }
+
+    #[test]
+    fn shows_sizes_without_trailing_zeros() {
+        assert_eq!(trim_size(12.0), "12");
+        assert_eq!(trim_size(10.5), "10.5");
     }
 }

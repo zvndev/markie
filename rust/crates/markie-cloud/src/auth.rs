@@ -121,7 +121,7 @@ impl<'a> AuthClient<'a> {
         }
         let advertised = caps.data.as_ref().and_then(|d| d.get("verifiedIdentities")).and_then(Value::as_bool) == Some(true);
         if !caps.ok() || !advertised {
-            return Err(CloudError::Status { status: if caps.ok() { 503 } else { caps.status }, message: None });
+            return Err(CloudError::Status { status: if caps.ok() { 503 } else { caps.status }, message: None, code: None });
         }
         let started = self
             .client
@@ -195,12 +195,43 @@ impl<'a> AuthClient<'a> {
     }
 
     /// The browser start URL for Google or Apple, with a fresh single-use nonce
-    /// tied to this server. Open it in the system browser; the answer comes
-    /// back as a `markie://auth` deep link checked by `resolve_auth_deep_link`.
+    /// tied to this server. Open it in the system browser. `app=markie-rs`
+    /// asks the server's bridge to answer on Markie RS's own scheme, so the
+    /// answer comes back as a `markie-rs://auth` link checked by
+    /// `resolve_auth_deep_link`. A server that predates that parameter answers
+    /// `markie://auth`, which this app never claims and always refuses.
     pub fn browser_start_url(&self, provider: Provider, states: &AuthStates) -> Option<String> {
         let state = states.create(self.client.origin())?;
-        Some(format!("{}/auth/{}-start?state={}", self.client.origin(), provider.slug(), state))
+        Some(format!("{}/auth/{}-start?state={}&app={}", self.client.origin(), provider.slug(), state, HAND_BACK_APP))
     }
+
+    /// Adopt the token a checked hand-back link carried, and confirm whose it
+    /// is. None when the server does not recognise it.
+    pub async fn adopt_token(&self, token: &str) -> Result<Option<MarkieUser>> {
+        self.client.set_token(Some(token))?;
+        match self.me().await {
+            Ok(Some(user)) => Ok(Some(user)),
+            other => {
+                // A token the server will not name is no session; do not keep it.
+                if self.client.token().as_deref() == Some(token) {
+                    self.client.set_token(None)?;
+                }
+                other
+            }
+        }
+    }
+}
+
+/// The URL scheme Markie RS registers for the Google and Apple hand-back. It is
+/// never `markie`: that scheme belongs to the Electron app.
+pub const HAND_BACK_SCHEME: &str = "markie-rs";
+
+/// The `app` value that asks the server's desktop bridge for `markie-rs://`.
+pub const HAND_BACK_APP: &str = "markie-rs";
+
+/// Whether a URL macOS handed the app is a sign-in hand-back for it.
+pub fn is_hand_back_link(link: &str) -> bool {
+    url::Url::parse(link).is_ok_and(|u| u.scheme() == HAND_BACK_SCHEME)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,7 +325,9 @@ fn normalize_origin(v: &str) -> Option<String> {
     origin_of(v).map(|o| canonical_cloud_origin(&o))
 }
 
-/// Decide what a `markie://auth?token=…&state=…&iss=…` link may do. The nonce
+/// Decide what a `markie-rs://auth?token=…&state=…&iss=…` link may do. Only
+/// Markie RS's own scheme is accepted; `markie://` belongs to the Electron app
+/// and is refused like any other URL. The nonce
 /// says which server the sign-in started against; `iss` says which server
 /// minted the token. They must agree. The pending nonce is consumed whatever
 /// the answer, so a refused link cannot be replayed.
@@ -302,7 +335,7 @@ pub fn resolve_auth_deep_link(link: &str, primary_origin: &str, states: &AuthSta
     let Ok(u) = url::Url::parse(link) else { return Err(DeepLinkRefusal::NotAuth) };
     let q = |k: &str| u.query_pairs().find(|(n, _)| n == k).map(|(_, v)| v.into_owned());
     let token = q("token").filter(|t| !t.is_empty());
-    if u.scheme() != "markie" || u.host_str() != Some("auth") || token.is_none() {
+    if u.scheme() != HAND_BACK_SCHEME || u.host_str() != Some("auth") || token.is_none() {
         return Err(DeepLinkRefusal::NotAuth);
     }
     let Some(pending_origin) = states.consume(q("state").as_deref()) else { return Err(DeepLinkRefusal::NoPending) };
@@ -350,15 +383,15 @@ mod tests {
         let (s, _) = states();
         let n = s.create(DEFAULT_SERVER).unwrap();
         assert_eq!(n.len(), 32);
-        let link = format!("markie://auth?token=tok&state={n}");
+        let link = format!("markie-rs://auth?token=tok&state={n}");
         assert_eq!(resolve_auth_deep_link(&link, DEFAULT_SERVER, &s), Ok(DeepLinkToken { token: "tok".into(), origin: None }));
         // Single use.
         assert_eq!(resolve_auth_deep_link(&link, DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NoPending));
         let n = s.create(DEFAULT_SERVER).unwrap();
-        let link = format!("markie://auth?token=tok&state={n}&iss={}", urlenc("https://api-production-602f.up.railway.app"));
+        let link = format!("markie-rs://auth?token=tok&state={n}&iss={}", urlenc("https://api-production-602f.up.railway.app"));
         assert!(resolve_auth_deep_link(&link, DEFAULT_SERVER, &s).is_ok());
         let n = s.create(DEFAULT_SERVER).unwrap();
-        let link = format!("markie://auth?token=tok&state={n}&iss={}", urlenc(SELF));
+        let link = format!("markie-rs://auth?token=tok&state={n}&iss={}", urlenc(SELF));
         assert_eq!(resolve_auth_deep_link(&link, DEFAULT_SERVER, &s), Err(DeepLinkRefusal::IssuerMismatch));
     }
 
@@ -366,12 +399,12 @@ mod tests {
     fn another_server_needs_its_issuer() {
         let (s, _) = states();
         let n = s.create(SELF).unwrap();
-        assert_eq!(resolve_auth_deep_link(&format!("markie://auth?token=t&state={n}"), DEFAULT_SERVER, &s), Err(DeepLinkRefusal::IssuerMismatch));
+        assert_eq!(resolve_auth_deep_link(&format!("markie-rs://auth?token=t&state={n}"), DEFAULT_SERVER, &s), Err(DeepLinkRefusal::IssuerMismatch));
         let n = s.create(SELF).unwrap();
-        let ok = resolve_auth_deep_link(&format!("markie://auth?token=t&state={n}&iss={}", urlenc(SELF)), DEFAULT_SERVER, &s);
+        let ok = resolve_auth_deep_link(&format!("markie-rs://auth?token=t&state={n}&iss={}", urlenc(SELF)), DEFAULT_SERVER, &s);
         assert_eq!(ok, Ok(DeepLinkToken { token: "t".into(), origin: Some(SELF.into()) }));
         let n = s.create(SELF).unwrap();
-        let bounced = resolve_auth_deep_link(&format!("markie://auth?token=t&state={n}&iss={}", urlenc(DEFAULT_SERVER)), DEFAULT_SERVER, &s);
+        let bounced = resolve_auth_deep_link(&format!("markie-rs://auth?token=t&state={n}&iss={}", urlenc(DEFAULT_SERVER)), DEFAULT_SERVER, &s);
         assert_eq!(bounced, Err(DeepLinkRefusal::IssuerMismatch));
     }
 
@@ -380,12 +413,51 @@ mod tests {
         let (s, t) = states();
         let n = s.create(DEFAULT_SERVER).unwrap();
         t.fetch_add(AUTH_STATE_TTL_MS + 1, Ordering::SeqCst);
-        assert_eq!(resolve_auth_deep_link(&format!("markie://auth?token=t&state={n}"), DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NoPending));
+        assert_eq!(resolve_auth_deep_link(&format!("markie-rs://auth?token=t&state={n}"), DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NoPending));
         s.create(DEFAULT_SERVER).unwrap();
-        assert_eq!(resolve_auth_deep_link("markie://auth?token=t&state=beef", DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NoPending));
-        assert_eq!(resolve_auth_deep_link("markie://open?token=t", DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NotAuth));
-        assert_eq!(resolve_auth_deep_link("markie://auth?state=x", DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NotAuth));
+        assert_eq!(resolve_auth_deep_link("markie-rs://auth?token=t&state=beef", DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NoPending));
+        assert_eq!(resolve_auth_deep_link("markie-rs://open?token=t", DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NotAuth));
+        assert_eq!(resolve_auth_deep_link("markie-rs://auth?state=x", DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NotAuth));
         assert_eq!(resolve_auth_deep_link("https://auth?token=t", DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NotAuth));
+    }
+
+    #[test]
+    fn the_electron_scheme_is_refused_and_keeps_the_pending_sign_in() {
+        let (s, _) = states();
+        let n = s.create(DEFAULT_SERVER).unwrap();
+        // Electron's scheme, a lookalike and a different host are all refused
+        // before the nonce is touched, so the real answer still lands.
+        for link in [
+            format!("markie://auth?token=t&state={n}"),
+            format!("markie-rs2://auth?token=t&state={n}"),
+            format!("MARKIE://auth?token=t&state={n}"),
+            format!("markie-rs://doc?token=t&state={n}"),
+            format!("markie-rs:auth?token=t&state={n}"),
+        ] {
+            assert_eq!(resolve_auth_deep_link(&link, DEFAULT_SERVER, &s), Err(DeepLinkRefusal::NotAuth), "{link}");
+        }
+        assert!(resolve_auth_deep_link(&format!("markie-rs://auth?token=t&state={n}"), DEFAULT_SERVER, &s).is_ok());
+    }
+
+    #[test]
+    fn start_urls_ask_for_the_markie_rs_hand_back() {
+        use crate::http::Transport;
+        use crate::origin::Trust;
+        use crate::tokens::MemoryTokenStore;
+        let trust = Arc::new(std::sync::RwLock::new(Trust::cloud_only()));
+        let client = CloudClient::new(DEFAULT_SERVER, trust, Arc::new(MemoryTokenStore::new()), Transport::new()).unwrap();
+        let (s, _) = states();
+        for (provider, slug) in [(Provider::Google, "google"), (Provider::Apple, "apple")] {
+            let url = AuthClient::new(&client).browser_start_url(provider, &s).unwrap();
+            let u = url::Url::parse(&url).unwrap();
+            assert_eq!(u.path(), format!("/auth/{slug}-start"));
+            let q: std::collections::HashMap<_, _> = u.query_pairs().into_owned().collect();
+            assert_eq!(q.get("app").map(String::as_str), Some("markie-rs"));
+            assert_eq!(q.get("state").map(String::len), Some(32));
+        }
+        assert!(is_hand_back_link("markie-rs://auth?token=t"));
+        assert!(!is_hand_back_link("markie://auth?token=t"));
+        assert!(!is_hand_back_link("file:///tmp/a.md"));
     }
 
     fn urlenc(s: &str) -> String {

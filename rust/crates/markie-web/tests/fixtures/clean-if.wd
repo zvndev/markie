@@ -1,0 +1,6 @@
+:state open = false
+:if open
+Yes
+:else
+No
+:endif

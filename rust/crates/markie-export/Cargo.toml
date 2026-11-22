@@ -1,0 +1,28 @@
+[package]
+name = "markie-export"
+description = "Markie RS export: Markdown to sanitized HTML, standalone HTML, PDF through Typst, print, and converted copies (Word, RTF, ODT, text). No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+markie-math = { path = "../markie-math" }
+markie-office = { path = "../markie-office" }
+pulldown-cmark.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy"] }
+two-face = { version = "0.4.5", default-features = false, features = ["syntect-fancy"] }
+url = "2"
+base64 = "0.22"
+typst = "0.15.1"
+typst-layout = "0.15.1"
+typst-pdf = "0.15.1"
+typst-assets = { version = "0.15.1", features = ["fonts"] }
+imagesize = "0.13"
+
+[dev-dependencies]
+tempfile.workspace = true

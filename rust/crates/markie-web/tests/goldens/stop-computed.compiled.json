@@ -1,0 +1,3 @@
+{
+ "error": "[WD234] :computed references unknown state \"a\" in /site/pages/document.wd. Declare it with :state or :fetch first."
+}

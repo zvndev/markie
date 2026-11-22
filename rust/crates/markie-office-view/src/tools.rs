@@ -71,6 +71,10 @@ impl WordView {
                 }
             }
             Tool::Picture => {}
+            Tool::Find => {
+                self.editor.set_original_view(false);
+                self.inputs.find.read(cx).focus_handle(cx).focus(window, cx);
+            }
         }
     }
 
@@ -100,7 +104,7 @@ impl WordView {
         let theme = cx.theme().clone();
         let editor = &self.editor;
         let docx = editor.is_docx();
-        let supported = docx || matches!(tool, Tool::Font | Tool::Spacing | Tool::Page);
+        let supported = docx || matches!(tool, Tool::Font | Tool::Spacing | Tool::Page | Tool::Find);
         let read_only = !editor.can_mutate() || !supported;
         let label = |text: &str| div().text_xs().text_color(theme.muted_foreground).child(text.to_string());
         let note = |text: &str| div().text_xs().text_color(theme.muted_foreground).child(text.to_string());
@@ -120,6 +124,7 @@ impl WordView {
                 Tool::Page => self.page_tool(read_only, &field, cx),
                 Tool::Spacing => self.spacing_tool(read_only, &field, cx),
                 Tool::Review => self.review_tool(read_only, &field, cx),
+                Tool::Find => self.find_tool(&field, cx),
             };
         }
         v_flex()
@@ -145,6 +150,45 @@ impl WordView {
             )
             .child(body)
             .into_any_element()
+    }
+
+    fn find_tool(&self, field: &dyn Fn(&str, &Entity<InputState>) -> Div, cx: &mut Context<Self>) -> Div {
+        let count = self.editor.find_text(self.inputs.find.read(cx).value().as_ref()).len();
+        let disabled = count == 0 || !self.editor.can_replace_found_text();
+        let replace_button = |id: &'static str, label: &'static str, all: bool, cx: &mut Context<Self>| {
+            Button::new(id).small().label(label).disabled(disabled).on_click(cx.listener(move |this, _, window, cx| {
+                let query = this.inputs.find.read(cx).value().to_string();
+                let replacement = this.inputs.replace.read(cx).value().to_string();
+                let index = (!all && count != 0).then(|| this.find_index % count);
+                match this.editor.replace_found_text(&query, &replacement, index) {
+                    Ok(count) => {
+                        this.find_index = 0;
+                        let noun = if count == 1 { "match" } else { "matches" };
+                        this.find_receipt = Some(format!("Replaced {count} {noun}."));
+                    }
+                    Err(reason) => this.editor.error = Some(reason),
+                }
+                this.edited(window, cx);
+            }))
+        };
+        v_flex()
+            .gap_2()
+            .child(field("Find text", &self.inputs.find))
+            .child(Button::new("word-find-next").small().label("Find next").disabled(count == 0).on_click(cx.listener(|this, _, window, cx| {
+                let query = this.inputs.find.read(cx).value().to_string();
+                let matches = this.editor.find_text(&query);
+                if !matches.is_empty() {
+                    let range = &matches[this.find_index % matches.len()];
+                    this.editor.select(range.anchor.clone(), range.focus.clone());
+                    this.find_index = (this.find_index % matches.len()) + 1;
+                    this.edited(window, cx);
+                    this.inputs.find.read(cx).focus_handle(cx).focus(window, cx);
+                }
+            })))
+            .child(field("Replace with", &self.inputs.replace))
+            .child(replace_button("word-replace-next", "Replace next", false, cx))
+            .child(replace_button("word-replace-all", "Replace all", true, cx))
+            .child(div().text_xs().child(self.find_receipt.clone().unwrap_or_else(|| format!("{count} matches"))))
     }
 
     fn font_tool(&self, read_only: bool, field: &dyn Fn(&str, &Entity<InputState>) -> Div, cx: &mut Context<Self>) -> Div {

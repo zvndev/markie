@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<script type=\"application/json\" data-wd-state>{\"on\":true}</script>\n<section data-wd-class=\"[[&quot;card&quot;,[&quot;S&quot;,&quot;on&quot;]]]\">\n<p>Card</p>\n\n</section>\n</main>\n<script type=\"module\" src=\"/__wd/runtime.js\"></script>",
+ "title": "Interactive document",
+ "warnings": [],
+ "requiresRuntime": true,
+ "hasCode": false
+}

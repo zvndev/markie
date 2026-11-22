@@ -11,6 +11,9 @@ members = [
   "crates/markie-office-view",
   "crates/markie-vault",
   "crates/markie-migrate",
+  "crates/markie-agent",
+  "crates/markie-export",
+  "crates/markie-web",
 ]
 
 [workspace.package]

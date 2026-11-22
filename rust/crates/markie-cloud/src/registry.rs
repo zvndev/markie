@@ -282,6 +282,9 @@ pub struct ServerStore {
     file: Option<PathBuf>,
     allow_dev: bool,
     added: Vec<Server>,
+    /// Servers on this computer trusted for this run only, never written to
+    /// the file: the test server `MARKIE_RS_CLOUD_SERVER` names.
+    pinned: Vec<Server>,
     default_sign_in: SignIn,
     default_version: Option<String>,
     default_checked_at: Option<u64>,
@@ -301,6 +304,7 @@ impl ServerStore {
             file,
             allow_dev,
             added: Vec::new(),
+            pinned: Vec::new(),
             default_sign_in: SignIn::cloud_default(),
             default_version: None,
             default_checked_at: None,
@@ -320,7 +324,8 @@ impl ServerStore {
     }
 
     fn publish(&self) {
-        *self.trust.write().unwrap() = Trust::new(self.added.iter().map(|s| s.origin.clone()), self.allow_dev);
+        *self.trust.write().unwrap() =
+            Trust::new(self.added.iter().chain(&self.pinned).map(|s| s.origin.clone()), self.allow_dev);
     }
 
     fn load(&self) -> Vec<Server> {
@@ -371,7 +376,37 @@ impl ServerStore {
             is_default: true,
         }];
         out.extend(self.added.iter().cloned());
+        out.extend(self.pinned.iter().cloned());
         out
+    }
+
+    /// Trust a server on this computer for this run, without asking it who it
+    /// is and without writing it to the list. Only a store opened for
+    /// development takes one, and only a loopback address.
+    pub fn pin_local(&mut self, origin: &str) -> std::result::Result<String, String> {
+        if !self.allow_dev {
+            return Err("Markie can't use a server on this computer.".into());
+        }
+        let typed = parse_server_origin(origin, true)?;
+        let local = url::Url::parse(&typed.origin)
+            .ok()
+            .and_then(|u| u.host().map(|h| crate::origin::is_loopback_host(&h)))
+            .unwrap_or(false);
+        if !local {
+            return Err("Only a server on this computer can be pinned.".into());
+        }
+        if !self.list().iter().any(|s| s.origin == typed.origin) {
+            self.pinned.push(Server {
+                name: server_name(None, &typed.host),
+                origin: typed.origin.clone(),
+                sign_in: SignIn::cloud_default(),
+                version: None,
+                added_at: None,
+                is_default: false,
+            });
+            self.publish();
+        }
+        Ok(typed.origin)
     }
 
     pub fn origins(&self) -> Vec<String> {
@@ -405,6 +440,21 @@ impl ServerStore {
         let probe_id = random_id();
         self.probes.insert(probe_id.clone(), Pending { origin: origin.clone(), info: info.clone(), at: (self.now)() });
         Ok(Probe { probe_id, already_added: self.is_trusted(&origin), origin, host, info })
+    }
+
+    /// Step one split for a UI thread that cannot hold the store across the
+    /// request: the checked address and host to probe (`parseServerOrigin`).
+    pub fn probe_target(&self, input: &str) -> std::result::Result<(String, String), String> {
+        let typed = parse_server_origin(input, self.allow_dev)?;
+        Ok(if is_cloud_origin(&typed.origin) { (DEFAULT_SERVER.to_string(), host_of(DEFAULT_SERVER)) } else { (typed.origin, typed.host) })
+    }
+
+    /// ...then, with the server's answer, remember the probe for `add`.
+    pub fn record_probe(&mut self, origin: &str, host: &str, info: ServerInfo) -> Probe {
+        self.prune();
+        let probe_id = random_id();
+        self.probes.insert(probe_id.clone(), Pending { origin: origin.to_string(), info: info.clone(), at: (self.now)() });
+        Probe { probe_id, already_added: self.is_trusted(origin), origin: origin.to_string(), host: host.to_string(), info }
     }
 
     /// Step two: the user confirmed what the probe showed them.
@@ -518,6 +568,26 @@ mod tests {
     }
     const SELF: &str = "https://docs.example.com";
     const RAILWAY: &str = "https://api-production-602f.up.railway.app";
+
+    #[test]
+    fn a_pinned_local_server_is_trusted_for_the_run_and_never_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("servers.json");
+        let mut store = ServerStore::open(Some(file.clone()), true);
+        let origin = store.pin_local("http://localhost:18787").unwrap();
+        assert_eq!(origin, "http://localhost:18787");
+        assert!(store.is_trusted(&origin));
+        assert!(store.trust_handle().read().unwrap().is_allowed_server_origin(&origin));
+        assert_eq!(store.origins(), vec![DEFAULT_SERVER.to_string(), origin.clone()]);
+        // Pinning twice keeps one row; nothing reaches the file.
+        store.pin_local("http://localhost:18787/").unwrap();
+        assert_eq!(store.origins().len(), 2);
+        assert!(!file.exists());
+        assert!(ServerStore::open(Some(file), true).origins() == vec![DEFAULT_SERVER.to_string()]);
+        // Never a real server, and never in a store opened for production.
+        assert!(store.pin_local(SELF).is_err());
+        assert!(ServerStore::open(None, false).pin_local("http://localhost:18787").is_err());
+    }
 
     /// A fake server answering every probe with one status and body, counting calls.
     struct Fake {
@@ -663,6 +733,23 @@ mod tests {
         assert!(!store.is_trusted(SELF));
         assert!(!store.trust_handle().read().unwrap().is_allowed_server_origin(SELF));
         assert_eq!(ServerStore::open(Some(file), false).origins(), vec![DEFAULT_SERVER]);
+    }
+
+    #[tokio::test]
+    async fn a_split_probe_adds_like_the_whole_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ServerStore::open(Some(dir.path().join("servers.json")), false);
+        let (origin, host) = store.probe_target(&format!("{SELF}/")).unwrap();
+        assert_eq!(origin, SELF);
+        assert!(store.probe_target("not a server").is_err());
+        let info = probe_server_info(&Fake::new(200, info()), &origin).await.unwrap();
+        let probe = store.record_probe(&origin, &host, info);
+        assert!(!probe.already_added);
+        assert!(!store.is_trusted(SELF), "recording a probe is not adding");
+        store.add(&probe.probe_id).unwrap();
+        assert!(store.is_trusted(SELF));
+        let again = store.record_probe(&origin, &host, probe.info.clone());
+        assert!(again.already_added);
     }
 
     #[tokio::test]

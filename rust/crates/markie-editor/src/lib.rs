@@ -13,10 +13,26 @@
 pub mod layout;
 pub mod element;
 pub mod media;
+/// Live-room binding (no rendering): see `collab/mod.rs`.
+pub mod collab;
 mod render;
+pub use render::MONO;
 mod chrome;
+pub mod attach;
+mod behaviour;
+pub use behaviour::NOT_SHARED;
+mod table_bar;
+mod math_field;
+pub mod a11y;
+pub mod spell;
+pub mod link_preview;
+mod link_card;
+mod rail;
+mod video;
+pub mod style;
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -134,8 +150,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-right", LineEnd, c),
         KeyBinding::new("home", LineStart, c),
         KeyBinding::new("end", LineEnd, c),
-        KeyBinding::new("ctrl-a", LineStart, c),
-        KeyBinding::new("ctrl-e", LineEnd, c),
         KeyBinding::new("cmd-shift-left", SelectLineStart, c),
         KeyBinding::new("cmd-shift-right", SelectLineEnd, c),
         KeyBinding::new("shift-home", SelectLineStart, c),
@@ -182,13 +196,48 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-g", FindPrev, c),
         KeyBinding::new("escape", Escape, c),
     ]);
+    behaviour::bind_keys(cx);
 }
 
-/// Emitted when the document changes, so the host can autosave.
+/// Emitted when the document changes, so the host can autosave. In a live
+/// room (`collab_undo`), ⌘Z and ⌘⇧Z go to the host, whose shared undo
+/// takes back only this person's edits.
 #[derive(Debug, Clone)]
 pub enum RichEvent {
     Changed,
+    Undo,
+    Redo,
+    DocumentLink(String),
+    /// Documents dropped on the editor, to open (attach.ts leaves them to
+    /// the window's open path).
+    OpenPaths(Vec<PathBuf>),
+    /// A local link click. The host applies its own workspace grants.
+    OpenLocal(String),
+    /// The toolbar asked for a zoom (a `ZOOM_STEPS` value) or a page width
+    /// (a `WIDTH_STEPS` value); the host stores both.
+    Zoom(f32),
+    PageWidth(f32),
+    Print,
+    History,
 }
+
+/// Someone else's caret and selection in a live room, already resolved to
+/// editor positions by the collab binding. Drawn like TipTap's
+/// CollaborationCaret: a 2px bar in their colour, a name tag that shows for a
+/// moment after they move, and their selection in their colour at 44%.
+#[derive(Debug, Clone)]
+pub struct RemoteCursor {
+    pub client: u64,
+    pub name: SharedString,
+    pub color: Hsla,
+    pub anchor: Pos,
+    pub head: Pos,
+    pub moved_at: std::time::Instant,
+}
+
+/// How long a remote caret's name tag shows after a move (globals.css
+/// `markie-caret-label`: full for 62% of 2.4 s, then fading).
+pub const CARET_LABEL_MS: u128 = 2400;
 
 impl EventEmitter<RichEvent> for RichView {}
 
@@ -223,6 +272,13 @@ pub(crate) struct FindBar {
     replace: Entity<InputState>,
     matches: Vec<FindMatch>,
     current: usize,
+    /// `Aa` and `ab`, and whether the replace row shows (`find-bar.tsx`).
+    pub(crate) case_sensitive: bool,
+    pub(crate) whole_word: bool,
+    pub(crate) show_replace: bool,
+    /// What `matches` was computed from: the query, the document version
+    /// and the two toggles. A frame with the same key searches nothing.
+    searched: Option<(String, u64, bool, bool)>,
     _subs: Vec<Subscription>,
 }
 
@@ -232,10 +288,19 @@ pub struct RichView {
     scroll: ScrollHandle,
     store: SharedStore,
     base_dir: Option<PathBuf>,
+    cloud_media: HashMap<String, PathBuf>,
+    cloud_links: HashSet<String>,
+    /// Document links the server knows and this account may not follow
+    /// (`data-doc-link="none"`): drawn muted, and a click says so.
+    unshared_links: HashSet<String>,
+    restrict_local_media: bool,
     pub zoom: f32,
     pub page_width: f32,
     pub read_only: bool,
     drag: Option<(Granularity, Pos, Pos)>,
+    /// A press inside the selection: where it started, and once the pointer
+    /// has moved, where the selection would land (ProseMirror's drag).
+    pub(crate) text_drag: Option<(Point<Pixels>, Option<Pos>)>,
     /// The IME's marked (composing) text: its start and length in units.
     marked: Option<(Pos, usize)>,
     pub(crate) find: Option<FindBar>,
@@ -253,7 +318,80 @@ pub struct RichView {
     pub(crate) resize: Option<(Pos, f32, f32)>,
     pub(crate) live_width: Option<(Pos, f32)>,
     emitted: u64,
-    pub(crate) highlighters: RefCell<std::collections::HashMap<String, gpui_kit::component::highlighter::SyntaxHighlighter>>,
+    /// A link under a plain click, followed on release (behaviour.rs).
+    pub(crate) link_click: Option<String>,
+    /// An inline formula open for editing in place (math_field.rs).
+    pub(crate) math_field: Option<math_field::MathField>,
+    /// The macOS spell checker's answers (spell.rs).
+    pub(crate) spell: spell::SpellCache,
+    /// The link preview card (link_card.rs).
+    pub(crate) link_hover: link_card::LinkHover,
+    /// Settings: fetch a card for a link the pointer rests on.
+    pub link_previews: bool,
+    /// Peers' carets in a live room (set by the host's collab binding).
+    pub remote: Vec<RemoteCursor>,
+    /// Commented passages to tint (local comments), with their colour.
+    pub comment_marks: Vec<(Pos, Pos, Hsla)>,
+    /// Undo and redo belong to the live room's shared history.
+    pub collab_undo: bool,
+    /// The template's typography and doc rule (`style.rs`).
+    pub style: style::DocStyle,
+    /// The toolbar's font and size for the whole document, when nothing is
+    /// selected: a `DOC_FONTS` id, and px (16 means "the template's").
+    pub doc_font: &'static str,
+    pub doc_size: f32,
+    /// Where each block starts and how tall the page is, as last drawn
+    /// (for the section rail).
+    pub(crate) block_tops: Vec<Pixels>,
+    pub(crate) content_height: Pixels,
+    pub(crate) outline: (u64, Vec<markie_rich::editor::OutlineEntry>),
+    /// The toolbar's width last frame, to fit its groups.
+    pub(crate) toolbar_width: Pixels,
+    /// The typed font size box (`chrome.rs`), made on the first frame.
+    pub(crate) size_field: Option<chrome::SizeField>,
+    /// The pointer on the section rail, and its card (`rail.rs`).
+    pub(crate) rail_hover: rail::RailHover,
+    /// A message over the page (a refused link), and its generation, so a
+    /// newer one keeps its own six seconds (`linkError` in rich-view.tsx).
+    pub(crate) notice: Option<(SharedString, u64)>,
+    /// A video card's player, while it plays (`video.rs`).
+    pub(crate) video: Option<video::VideoViewer>,
+    /// The toolbar's "more" popover is open.
+    pub(crate) more_open: bool,
+    /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
+    /// does nothing there, as in Electron, where the rich editor is gone.
+    pub(crate) source_mode: bool,
+    source_toolbar: Option<Entity<SourceToolbar>>,
+    split_toolbar: Option<Entity<SourceToolbar>>,
+    /// Set by the host each frame its Split layout draws the row above both
+    /// panes; the rich pane then draws none of its own.
+    toolbar_outside: bool,
+}
+
+/// The formatting row above the Source pane. Electron keeps its toolbar
+/// when Source shows: zoom, page width and history still work, the
+/// formatting buttons have no editor to act on.
+///
+/// In Split it is the one row above both panes, and it formats the rich
+/// pane, as Electron's single DocToolbar does (`split`).
+pub struct SourceToolbar {
+    rich: WeakEntity<RichView>,
+    split: bool,
+    _observe: Subscription,
+}
+
+impl Render for SourceToolbar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(rich) = self.rich.upgrade() else { return div().into_any_element() };
+        let split = self.split;
+        rich.update(cx, |r, cx| {
+            if split && r.read_only {
+                return div().into_any_element();
+            }
+            r.source_mode = !split;
+            r.render_toolbar(window, cx)
+        })
+    }
 }
 
 impl RichView {
@@ -264,10 +402,15 @@ impl RichView {
             scroll: ScrollHandle::new(),
             store: Rc::new(RefCell::new(element::Store::default())),
             base_dir: None,
+            cloud_media: HashMap::new(),
+            cloud_links: HashSet::new(),
+            unshared_links: HashSet::new(),
+            restrict_local_media: false,
             zoom: 1.0,
-            page_width: 768.0,
+            page_width: 0.0,
             read_only: false,
             drag: None,
+            text_drag: None,
             marked: None,
             find: None,
             prompt: None,
@@ -280,7 +423,30 @@ impl RichView {
             resize: None,
             live_width: None,
             emitted: 0,
-            highlighters: RefCell::new(Default::default()),
+            link_click: None,
+            math_field: None,
+            spell: spell::SpellCache::default(),
+            link_hover: Default::default(),
+            link_previews: true,
+            remote: Vec::new(),
+            comment_marks: Vec::new(),
+            collab_undo: false,
+            style: style::DocStyle::default(),
+            doc_font: "system",
+            doc_size: 16.0,
+            block_tops: Vec::new(),
+            content_height: px(0.),
+            outline: (u64::MAX, Vec::new()),
+            toolbar_width: px(0.),
+            size_field: None,
+            notice: None,
+            video: None,
+            more_open: false,
+            rail_hover: Default::default(),
+            source_mode: false,
+            source_toolbar: None,
+            split_toolbar: None,
+            toolbar_outside: false,
         }
     }
 
@@ -289,6 +455,7 @@ impl RichView {
     /// pictures.
     pub fn load(&mut self, markdown: &str, base_dir: Option<PathBuf>, cx: &mut Context<Self>) {
         self.editor = Editor::parse(markdown);
+        self.video = None;
         self.heights.clear();
         self.emitted = self.editor.version;
         self.base_dir = base_dir;
@@ -301,9 +468,53 @@ impl RichView {
         cx.notify();
     }
 
+    /// After the live room changed the document under the editor (the host's
+    /// collab binding replaced `editor`): redraw without reporting a local
+    /// edit, so the change is not sent back.
+    pub fn remote_changed(&mut self, cx: &mut Context<Self>) {
+        if self.heights.len() != self.editor.block_count() {
+            self.heights.clear();
+        }
+        self.emitted = self.editor.version;
+        self.marked = None;
+        self.drag = None;
+        self.refresh_find();
+        cx.notify();
+    }
+
+    /// Where a position's caret was last drawn, in window coordinates. None
+    /// for a leaf not on screen.
+    pub fn caret_rect(&self, p: Pos) -> Option<Bounds<Pixels>> {
+        let pl = self.placement(p)?;
+        let c = pl.laid.caret(p.offset.min(pl.laid.len), false);
+        Some(Bounds::new(point(pl.bounds.origin.x + c.origin.x, pl.bounds.origin.y + c.origin.y), c.size))
+    }
+
+    /// The scrolling document area as last drawn, in window coordinates.
+    pub fn viewport(&self) -> Bounds<Pixels> {
+        self.scroll.bounds()
+    }
+
     /// The document as it would be saved.
     pub fn markdown(&self) -> String {
         self.editor.to_markdown()
+    }
+
+    /// Install per-document resources without modifying its Markdown.
+    pub fn set_cloud_resources(&mut self, media: HashMap<String, PathBuf>, links: HashSet<String>,
+        restrict_local: bool, cx: &mut Context<Self>) {
+        self.cloud_media = media;
+        self.cloud_links = links;
+        self.restrict_local_media = restrict_local;
+        cx.notify();
+    }
+
+    /// The links `markDocLinks` marks "none" for this reader.
+    pub fn set_unshared_links(&mut self, links: HashSet<String>, cx: &mut Context<Self>) {
+        if self.unshared_links != links {
+            self.unshared_links = links;
+            cx.notify();
+        }
     }
 
     pub fn focus_handle(&self) -> &FocusHandle {
@@ -320,6 +531,58 @@ impl RichView {
         cx.notify();
     }
 
+    /// Show a short message at the top of the page for six seconds, as
+    /// Electron shows a link it would not open.
+    pub fn show_notice(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let generation = self.notice.as_ref().map(|(_, g)| g + 1).unwrap_or(0);
+        self.notice = Some((message.into(), generation));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(6000)).await;
+            this.update(cx, |this, cx| {
+                if this.notice.as_ref().is_some_and(|(_, g)| *g == generation) {
+                    this.notice = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The toolbar to draw above the Source pane.
+    pub fn source_toolbar(&mut self, cx: &mut Context<Self>) -> Entity<SourceToolbar> {
+        if let Some(t) = &self.source_toolbar {
+            return t.clone();
+        }
+        let rich = cx.entity();
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), split: false, _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        self.source_toolbar = Some(t.clone());
+        t
+    }
+
+    /// The row to draw above both panes in Split. Call it on every frame the
+    /// Split layout draws: that frame, the rich pane leaves its own row out.
+    pub fn split_toolbar(&mut self, cx: &mut Context<Self>) -> Entity<SourceToolbar> {
+        self.toolbar_outside = true;
+        if let Some(t) = &self.split_toolbar {
+            return t.clone();
+        }
+        let rich = cx.entity();
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), split: true, _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        self.split_toolbar = Some(t.clone());
+        t
+    }
+
+    /// The style template's typography and doc rule.
+    pub fn set_style(&mut self, style: style::DocStyle, cx: &mut Context<Self>) {
+        if self.style != style {
+            self.style = style;
+            self.heights.iter_mut().for_each(|h| *h = None);
+            cx.notify();
+        }
+    }
+
     /// Put the caret on a heading and scroll it to the top (the outline).
     pub fn reveal_heading(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(e) = self.editor.outline().get(index) {
@@ -332,6 +595,7 @@ impl RichView {
 
     /// After a change: tell the host, scroll to the caret, redraw.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.hide_link_card(cx);
         if self.editor.version != self.emitted {
             self.emitted = self.editor.version;
             cx.emit(RichEvent::Changed);
@@ -421,6 +685,16 @@ impl RichView {
         self.vertical(false, false, cx);
     }
     fn on_down(&mut self, _: &MoveDown, _: &mut Window, cx: &mut Context<Self>) {
+        // CodeBlock's exitOnArrowDown, at the very end of a code block.
+        if !self.read_only && self.editor.kind(self.editor.head) == Some(LeafKind::Code) && !self.editor.has_selection() {
+            let h = self.editor.head;
+            if h.offset == self.editor.leaf_len(h.block, h.leaf) {
+                self.edit(cx, |e| {
+                    e.code_arrow_down();
+                });
+                return;
+            }
+        }
         self.vertical(true, false, cx);
     }
     fn on_select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -488,11 +762,23 @@ impl RichView {
         self.edit(cx, |e| e.paste_markdown(&text));
     }
     fn on_undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.collab_undo {
+            if !self.read_only {
+                cx.emit(RichEvent::Undo);
+            }
+            return;
+        }
         self.edit(cx, |e| {
             e.undo();
         });
     }
     fn on_redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.collab_undo {
+            if !self.read_only {
+                cx.emit(RichEvent::Redo);
+            }
+            return;
+        }
         self.edit(cx, |e| {
             e.redo();
         });
@@ -576,6 +862,20 @@ impl RichView {
         self.find_step(false, cx);
     }
     fn on_escape(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_video(cx) {
+            return;
+        }
+        if self.cancel_math_field(window, cx) {
+            return;
+        }
+        if self.link_hover_visible() {
+            self.hide_link_card(cx);
+            return;
+        }
+        if std::mem::take(&mut self.more_open) {
+            cx.notify();
+            return;
+        }
         if self.prompt.take().is_some() || self.find.take().is_some() {
             self.focus(window, cx);
         } else if self.editor.has_selection() {
@@ -722,13 +1022,9 @@ impl RichView {
         if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
             eprintln!("mouse down {:?} clicks {} -> {:?}", ev.position, ev.click_count, p);
         }
-        if ev.modifiers.platform {
-            // ⌘-click opens a link.
-            if let Some((_, _, l)) = self.editor.link_range(p) {
-                cx.open_url(&l.href);
-                return;
-            }
-        }
+        // A click on a link follows it on release (behaviour.rs); a link
+        // to a cloud document goes to the host.
+        self.note_link_click(p, ev.click_count, ev.modifiers.shift);
         let units = self.editor.units(p.block, p.leaf);
         match ev.click_count {
             2 if self.editor.kind(p).is_some_and(|k| k.has_text()) => {
@@ -740,6 +1036,13 @@ impl RichView {
                 let len = self.editor.leaf_len(p.block, p.leaf);
                 self.editor.set_selection(Pos { offset: 0, ..p }, Pos { offset: len, ..p });
                 self.drag = Some((Granularity::Leaf, Pos { offset: 0, ..p }, Pos { offset: len, ..p }));
+            }
+            1 if self.starts_text_drag(p, ev.modifiers.shift) => {
+                // A press inside the selection may be a drag of it; the
+                // caret moves only if it turns out to be a click.
+                self.link_click = None;
+                self.drag = None;
+                self.text_drag = Some((ev.position, None));
             }
             _ => {
                 if self.editor.kind(p) == Some(LeafKind::Atom) {
@@ -760,6 +1063,22 @@ impl RichView {
             let w = (w0 + (f32::from(ev.position.x) - x0) / self.zoom).max(48.);
             self.live_width = Some((start, w));
             cx.notify();
+            return;
+        }
+        if let Some((origin, drop)) = self.text_drag {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.text_drag = None;
+                cx.notify();
+                return;
+            }
+            let moved = (ev.position.x - origin.x).abs() > px(4.) || (ev.position.y - origin.y).abs() > px(4.);
+            if moved || drop.is_some() {
+                let next = self.hit(ev.position);
+                if next != drop {
+                    self.text_drag = Some((origin, next));
+                    cx.notify();
+                }
+            }
             return;
         }
         let Some((g, a0, a1)) = self.drag else { return };
@@ -786,13 +1105,38 @@ impl RichView {
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, ev: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.drag = None;
+        if let Some((origin, drop)) = self.text_drag.take() {
+            match drop {
+                // ⌥ copies, as ProseMirror's `dragCopyModifier` on macOS.
+                Some(at) => self.edit(cx, |e| {
+                    e.move_selection_to(at, ev.modifiers.alt);
+                }),
+                // No drag: a click inside the selection puts the caret there.
+                None => {
+                    if let Some(p) = self.hit(origin) {
+                        self.editor.set_caret(p, false);
+                    }
+                    cx.notify();
+                }
+            }
+            return;
+        }
         if let Some((p, w)) = self.live_width.take() {
             self.resize = None;
             self.edit(cx, |e| e.set_image_width(p, Some(w.round() as u32)));
         }
         self.resize = None;
+    }
+
+    /// A plain press inside a text selection, in an editable document.
+    fn starts_text_drag(&self, p: Pos, shift: bool) -> bool {
+        if shift || self.read_only || !self.editor.has_selection() || self.editor.selected_atom().is_some() {
+            return false;
+        }
+        let (from, to) = self.editor.range();
+        from <= p && p <= to
     }
 
     // ---- find ----
@@ -823,7 +1167,17 @@ impl RichView {
                     }
                 }),
             ];
-            self.find = Some(FindBar { query, replace, matches: vec![], current: 0, _subs: subs });
+            self.find = Some(FindBar {
+                query,
+                replace,
+                matches: vec![],
+                current: 0,
+                case_sensitive: false,
+                whole_word: false,
+                show_replace: false,
+                searched: None,
+                _subs: subs,
+            });
         }
         if let Some(f) = &self.find {
             if self.editor.has_selection() {
@@ -850,10 +1204,27 @@ impl RichView {
 
     pub(crate) fn recompute_find(&mut self, cx: &App) {
         let q = self.find_query(cx);
+        let Some(f) = &self.find else { return };
+        let key = (q.clone(), self.editor.version, f.case_sensitive, f.whole_word);
+        if f.searched.as_ref() == Some(&key) {
+            return;
+        }
+        let (case, whole) = (f.case_sensitive, f.whole_word);
+        let mut matches = if q.is_empty() { vec![] } else { self.editor.find(&q, case) };
+        if whole {
+            let word = |u: Option<&Unit>| matches!(u, Some(Unit::Char(c, _)) if c.is_alphanumeric() || *c == '_');
+            matches.retain(|m| {
+                let units = self.editor.units(m.start.block, m.start.leaf);
+                let before = m.start.offset.checked_sub(1).and_then(|i| units.get(i));
+                let after = if (m.end.block, m.end.leaf) == (m.start.block, m.start.leaf) { units.get(m.end.offset) } else { None };
+                !word(before) && !word(after)
+            });
+        }
+        let head = self.editor.range().0;
         if let Some(f) = &mut self.find {
-            f.matches = if q.is_empty() { vec![] } else { self.editor.find(&q, false) };
-            let head = self.editor.range().0;
-            f.current = f.matches.iter().position(|m| m.start >= head).unwrap_or(0);
+            f.current = matches.iter().position(|m| m.start >= head).unwrap_or(0);
+            f.matches = matches;
+            f.searched = Some(key);
         }
     }
 
@@ -881,7 +1252,8 @@ impl RichView {
         let with = f.replace.read(cx).value().to_string();
         let q = self.find_query(cx);
         let (a, b) = self.editor.range();
-        let hit = self.editor.find(&q, false).into_iter().find(|m| m.start == a && m.end == b);
+        let case = self.find.as_ref().is_some_and(|f| f.case_sensitive);
+        let hit = self.editor.find(&q, case).into_iter().find(|m| m.start == a && m.end == b);
         if let Some(m) = hit {
             self.edit(cx, |e| e.replace_match(m, &with));
         }
@@ -903,7 +1275,7 @@ impl RichView {
     // ---- prompt ----
 
     pub(crate) fn open_prompt(&mut self, kind: PromptKind, window: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only {
+        if self.read_only || self.source_mode {
             return;
         }
         let (label, value) = match &kind {
@@ -1154,5 +1526,35 @@ fn f_insert(e: &mut Editor, t: &str, typing: Option<markie_rich::model::Marks>) 
 impl Focusable for RichView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+impl RichView {
+    /// Misspelled ranges for a leaf's units, sparing the word at the caret;
+    /// unknown text is checked shortly after, off the keystroke.
+    pub(crate) fn misspelled(&mut self, key: element::LeafKey, units: &[Unit], cx: &mut Context<Self>) -> Vec<Range<usize>> {
+        let text: String = units.iter().map(|u| match u { Unit::Char(c, _) => *c, Unit::Atom(_) => '\u{fffc}' }).collect();
+        let h = self.editor.head;
+        let caret = (!self.editor.has_selection() && (h.block, h.leaf) == key).then_some(h.offset);
+        match self.spell.ranges(&text, caret) {
+            Some(r) => r,
+            None => {
+                if !self.spell.scheduled {
+                    self.spell.scheduled = true;
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+                        this.update(cx, |this, cx| {
+                            this.spell.scheduled = false;
+                            if this.spell.drain() {
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+                vec![]
+            }
+        }
     }
 }

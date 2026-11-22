@@ -83,6 +83,21 @@ Electron 0.2% (0.1 to 0.3). Markie RS 0.0%.
 | Index scan | Both apps stop at the same 30 s budget on a real home folder | The fixed 20,000-file tree in the benchmark compares their speed; pending the final run |
 
 
+## Parity behaviour kept over speed
+
+Merging the parity audit (1ef4318) brought features that need the whole text on every edit. Where they clash with the deferred edit path, parity wins:
+
+| Case | What happens per keystroke | Cost |
+|---|---|---|
+| Split view (Source beside View) | Each side copies the other's whole text, compares it with the saved text and recounts words and the outline, as before the fix | Grows with the document again, as before the fix. Not measured in split view; the smoke run without split was 17 to 18 ms a key at 900 KB and 1 MB |
+| A live collaboration room | Source edits go to the room with the full text; rich edits serialize the document | Same as split view, while a room is live |
+| Everything else | Only the edited marker; the full-text work runs 150 ms after typing pauses | As fixed |
+
+Two smaller notes:
+
+- With a scratch `MARKIE_RS_DATA_DIR`, the app now scans the data folder instead of the home folder (from the audit). The benchmark's launches therefore index only scratch files; its scratch `HOME` is a second guard.
+- The Library's search now has a background body search from the audit (`doc_text::search_documents`). The per-keystroke instant filter still uses `SearchIndex`; the body search runs off the main thread and is not in the search table.
+
 ## Hot spots found and fixed
 
 Found with samply on a release build with line tables (`profile.sh`, `hot.py`, `timeline.py`). Times are from single profiled launches.

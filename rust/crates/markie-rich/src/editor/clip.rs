@@ -138,6 +138,15 @@ impl Editor {
             self.insert_plain(&text);
             return;
         }
+        // Link's `linkOnPaste`: an address pasted over a selection links it.
+        if self.has_selection() && kind.is_some_and(|k| k.is_rich()) {
+            if let Some((0, len, href)) = crate::linkify::find(&text) {
+                if len == text.len() {
+                    self.set_link(&href);
+                    return;
+                }
+            }
+        }
         let pasted = Document::parse_body(&text);
         let nodes = pasted.nodes();
         let single_inline = pasted.blocks.len() == 1 && matches!(nodes.as_slice(), [Node::Paragraph { .. }]);
@@ -169,7 +178,7 @@ impl Editor {
         self.insert_pasted_nodes(nodes);
     }
 
-    fn insert_plain(&mut self, text: &str) {
+    pub(super) fn insert_plain(&mut self, text: &str) {
         let (from, to) = self.range();
         let text = text.to_string();
         self.transact(from.block..to.block + 1, EditKind::Other, |ed| {

@@ -1,0 +1,3 @@
+{
+ "error": "[WD602] Could not resolve include \"/rows.json\" from /site/pages/document.wd:1. Looked in site/pages and site/_ — check the path and leading slash."
+}

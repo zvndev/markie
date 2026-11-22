@@ -1,0 +1,17 @@
+{
+ "untrusted": {
+  "error": "[WD234] :computed references unknown state \"a\" in /site/pages/document.wd. Declare it with :state or :fetch first."
+ },
+ "trusted": {
+  "error": "[WD234] :computed references unknown state \"a\" in /site/pages/document.wd. Declare it with :state or :fetch first."
+ },
+ "trusted-dark": {
+  "error": "[WD234] :computed references unknown state \"a\" in /site/pages/document.wd. Declare it with :state or :fetch first."
+ },
+ "untrusted-links": {
+  "error": "[WD234] :computed references unknown state \"a\" in /site/pages/document.wd. Declare it with :state or :fetch first."
+ },
+ "trusted-links": {
+  "error": "[WD234] :computed references unknown state \"a\" in /site/pages/document.wd. Declare it with :state or :fetch first."
+ }
+}

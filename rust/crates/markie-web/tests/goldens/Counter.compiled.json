@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<h1 id=\"a-document-you-can-use\">A document you can use</h1>\n<p>This is real Darkmown source. Trust this document to enable its local controls.</p>\n\n<script type=\"application/json\" data-wd-state>{\"count\":0}</script>\n<span data-wd-computed data-wd-computed-key=\"doubled\" data-wd-computed-expr=\"[&quot;*&quot;,[&quot;S&quot;,&quot;count&quot;],[&quot;L&quot;,2]]\"></span><script type=\"application/json\" data-wd-state>{\"doubled\":0}</script>\n<p>Count: <span data-wd-bind=\"count\">0</span>.</p>\n<p>Double: <span data-wd-bind=\"doubled\">0</span>.</p>\n\n<button type=\"button\" data-wd-action=\"inc\" data-wd-target=\"count\">Add one</button>\n<button type=\"button\" data-wd-action=\"dec\" data-wd-target=\"count\">Subtract one</button>\n<p>These values are temporary preview state. Saving the document saves the source, not your current count.</p>\n\n</main>\n<script type=\"module\" src=\"/__wd/runtime.js\"></script>",
+ "title": "Interactive counter",
+ "warnings": [],
+ "requiresRuntime": true,
+ "hasCode": false
+}

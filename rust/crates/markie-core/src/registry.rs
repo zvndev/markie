@@ -100,9 +100,19 @@ impl Registry {
              CREATE TABLE IF NOT EXISTS rs_settings (
                key TEXT PRIMARY KEY,
                value TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS rs_cloud_sync (
+               path TEXT PRIMARY KEY,
+               record TEXT NOT NULL
              );",
         )?;
         Ok(Self { db })
+    }
+
+    /// The underlying connection, for modules that keep their own tables here
+    /// (Projects). They create their tables idempotently on first use.
+    pub fn conn(&self) -> &Connection {
+        &self.db
     }
 
     pub fn track_opened(&self, path: &Path) -> Result<()> {
@@ -181,6 +191,48 @@ impl Registry {
         Ok(())
     }
 
+    /// Every table with a `path` column: they all follow a moved file.
+    fn path_keyed_tables(&self) -> Result<Vec<String>> {
+        let mut stmt = self.db.prepare(
+            "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) p
+             WHERE m.type = 'table' AND p.name = 'path'",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// `registry.movePath`: a stale row at the destination loses.
+    pub fn move_path(&self, from: &Path, to: &Path) -> Result<()> {
+        let name = to.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute("UPDATE OR REPLACE files SET path = ?1, name = ?2 WHERE path = ?3", params![key(to), name, key(from)])?;
+        for table in self.path_keyed_tables()? {
+            if table != "files" {
+                tx.execute(&format!("UPDATE OR REPLACE \"{table}\" SET path = ?1 WHERE path = ?2"), params![key(to), key(from)])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// `registry.movePrefix`: everything under a moved folder.
+    pub fn move_prefix(&self, from: &str, to: &str) -> Result<()> {
+        let (from, to) = if cfg!(windows) { (from.to_lowercase(), to.to_lowercase()) } else { (from.to_string(), to.to_string()) };
+        let tx = self.db.unchecked_transaction()?;
+        for table in self.path_keyed_tables()? {
+            let paths: Vec<String> = {
+                let mut stmt = tx.prepare(&format!("SELECT path FROM \"{table}\" WHERE substr(path, 1, ?1) = ?2"))?;
+                stmt.query_map(params![from.len() as i64, from], |r| r.get(0))?.collect::<Result<_, _>>()?
+            };
+            for p in paths {
+                let next = format!("{to}{}", &p[from.len()..]);
+                tx.execute(&format!("UPDATE OR REPLACE \"{table}\" SET path = ?1 WHERE path = ?2"), params![next, p])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn toggle_star(&self, path: &Path, kind: &str) -> Result<bool> {
         let k = key(path);
         let removed = self.db.execute("DELETE FROM md_stars WHERE path = ?1", [&k])?;
@@ -241,6 +293,33 @@ impl Registry {
         )?;
         Ok(())
     }
+
+    /// Cloud records live beside the local registry, with no networking dependency.
+    pub fn cloud_record<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<Option<T>> {
+        let record: Option<String> = self.db
+            .query_row("SELECT record FROM rs_cloud_sync WHERE path = ?1", [key(path)], |r| r.get(0))
+            .optional()?;
+        record.map(|json| serde_json::from_str(&json).map_err(Into::into)).transpose()
+    }
+
+    pub fn cloud_records<T: serde::de::DeserializeOwned>(&self) -> Result<Vec<(PathBuf, T)>> {
+        let mut stmt = self.db.prepare("SELECT path, record FROM rs_cloud_sync ORDER BY path")?;
+        stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .map(|row| {
+                let (path, json) = row?;
+                Ok((PathBuf::from(path), serde_json::from_str(&json)?))
+            })
+            .collect()
+    }
+
+    pub fn set_cloud_record(&self, path: &Path, record: &impl serde::Serialize) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO rs_cloud_sync (path, record) VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET record = excluded.record",
+            params![key(path), serde_json::to_string(record)?],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -272,5 +351,25 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(20_413), (2025, 11, 21));
         assert!(now_iso().ends_with('Z'));
+    }
+
+    #[test]
+    fn cloud_records_survive_reopen_and_keep_recents() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("registry.db");
+        let path = dir.path().join("sample.md");
+        let record = serde_json::json!({
+            "user": "scratch-principal",
+            "record": {"cloud_doc_id": "sample", "cloud_version": 3, "state": "conflict"}
+        });
+        {
+            let reg = Registry::open(&db).unwrap();
+            reg.track_opened(&path).unwrap();
+            reg.set_cloud_record(&path, &record).unwrap();
+        }
+        let reg = Registry::open(&db).unwrap();
+        assert_eq!(reg.cloud_record::<serde_json::Value>(&path).unwrap(), Some(record.clone()));
+        assert_eq!(reg.recent(1).unwrap()[0].path, path);
+        assert_eq!(reg.cloud_records::<serde_json::Value>().unwrap(), vec![(path, record)]);
     }
 }

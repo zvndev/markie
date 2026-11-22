@@ -38,7 +38,7 @@ pub enum CloseReason {
 }
 
 impl CloseReason {
-    fn from_code(code: u16) -> Self {
+    pub fn from_code(code: u16) -> Self {
         match code {
             CLOSE_ACCESS_REVOKED => CloseReason::AccessRevoked,
             CLOSE_ROOM_TOO_NEW => CloseReason::RoomTooNew,
@@ -200,7 +200,7 @@ impl TextRoom {
     /// Connect to a room URL that already carries its ticket.
     pub async fn connect(url: &str, opts: RoomOptions) -> Result<TextRoom> {
         let (ws, _) = tokio_tungstenite::connect_async(url).await.map_err(|e| match e {
-            tokio_tungstenite::tungstenite::Error::Http(res) => CloudError::Status { status: res.status().as_u16(), message: None },
+            tokio_tungstenite::tungstenite::Error::Http(res) => CloudError::Status { status: res.status().as_u16(), message: None, code: None },
             _ => CloudError::Offline,
         })?;
         let (mut sink, mut stream) = ws.split();
@@ -209,7 +209,7 @@ impl TextRoom {
         doc.get_or_insert_map(META_MAP);
         let binding = TextBinding::new(&doc, text.clone());
         let mut awareness = Awareness::new(doc.clone());
-        let state = json!({ "user": opts.user, SNAPSHOT_WRITER_FIELD: opts.offer_snapshot_writer });
+        let state = if opts.offer_snapshot_writer { json!({ "user": opts.user, SNAPSHOT_WRITER_FIELD: true }) } else { json!({ "user": opts.user }) };
         awareness.set_local_state(state).map_err(|e| CloudError::Invalid(e.to_string()))?;
         let (out, mut rx) = mpsc::unbounded_channel::<Ws>();
         let (events, _) = broadcast::channel(256);
@@ -271,7 +271,9 @@ impl TextRoom {
                 if h.status.lock().unwrap().closed.is_some() {
                     return;
                 }
-                if let Some(m) = h.local_awareness() {
+                // Raise the clock, as y-protocols' renewal does.
+                let renewed = crate::collab::session::renew_local(&mut h.awareness.lock().unwrap());
+                if let Some(m) = renewed {
                     h.send(m);
                 }
             }

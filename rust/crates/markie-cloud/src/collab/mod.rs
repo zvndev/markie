@@ -1,7 +1,10 @@
 //! Live text rooms: plain-text documents edited together over y-websocket.
 //! Port of src/lib/collab.ts, text-collab.ts and the text half of
-//! live-snapshot.ts. Rich rooms (the TipTap XmlFragment) are out of scope here.
+//! live-snapshot.ts. `session` is the supervised room both kinds use; the
+//! rich room's XmlFragment binding lives with the editor (markie-editor).
 pub mod room;
+pub mod runtime;
+pub mod session;
 pub mod snapshot;
 pub mod text;
 pub mod ticket;
@@ -62,6 +65,12 @@ pub fn collab_ws_base(origin: &str) -> String {
 /// The socket address for a room, with its ticket.
 pub fn room_url(ws_base: &str, doc_id: &str, ticket: &str) -> String {
     format!("{ws_base}/{}?ticket={}", crate::client::seg(doc_id), crate::client::seg(ticket))
+}
+
+/// The socket address for a room on a server from before tickets, which only
+/// takes the session token (`provider.params = { token }` in collab.ts).
+pub fn legacy_room_url(ws_base: &str, doc_id: &str, token: &str) -> String {
+    format!("{ws_base}/{}?token={}", crate::client::seg(doc_id), crate::client::seg(token))
 }
 
 #[cfg(test)]

@@ -4,7 +4,12 @@
 //! and nothing in the Electron release pipeline knows it exists.
 
 mod actions;
+mod deeplinks;
+mod default_apps;
+mod icons;
+mod instance;
 mod library;
+mod logs;
 mod open_urls;
 mod perf;
 mod themes;
@@ -18,19 +23,30 @@ use crate::actions::*;
 use crate::workspace::Workspace;
 
 fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
+    cx.bind_keys(key_bindings());
+    markie_office_view::actions::bind_keys(cx);
+}
+
+fn key_bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("cmd-o", Open, None),
         KeyBinding::new("cmd-shift-o", OpenFolder, None),
         KeyBinding::new("cmd-n", NewDocument, None),
         KeyBinding::new("cmd-s", Save, None),
         KeyBinding::new("cmd-e", ToggleMode, None),
-        KeyBinding::new("cmd-p", FocusSearch, None),
+        // Electron: ⌘P prints (File menu); search is ⇧⌘F.
+        KeyBinding::new("cmd-p", Print, None),
         KeyBinding::new("cmd-shift-f", FocusSearch, None),
+        // GPUI Kit's code editor binds ⌘⇧F to its replace bar. Electron's
+        // ⌘⇧F searches all documents from anywhere; replace is ⌥⌘F. Bound
+        // after gpui_kit::init, so this one wins in the editor's context.
+        KeyBinding::new("cmd-shift-f", FocusSearch, Some("Input")),
         KeyBinding::new("cmd-k", CommandPalette, None),
         KeyBinding::new("cmd-shift-d", DuplicateDocument, None),
         KeyBinding::new("cmd-alt-r", RevealDocument, None),
         KeyBinding::new("cmd-r", Rescan, None),
         KeyBinding::new("cmd-shift-l", ToggleTheme, None),
+        KeyBinding::new("cmd-l", ToggleLibrary, None),
         KeyBinding::new("cmd-alt-y", ShowHistory, None),
         KeyBinding::new("cmd-shift-i", ToggleStats, None),
         KeyBinding::new("cmd-alt-o", ToggleOutline, None),
@@ -42,8 +58,45 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-0", ZoomReset, None),
         KeyBinding::new("cmd-alt-]", PageWider, None),
         KeyBinding::new("cmd-alt-[", PageNarrower, None),
-    ]);
-    markie_office_view::actions::bind_keys(cx);
+        // Electron's mode and help shortcuts (src/app/page.tsx).
+        KeyBinding::new("cmd-1", RichMode, None),
+        KeyBinding::new("cmd-2", SourceMode, None),
+        KeyBinding::new("cmd-3", SplitMode, None),
+        KeyBinding::new("cmd-/", ShowShortcuts, None),
+    ]
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::key_bindings;
+    use gpui_kit::Keystroke;
+
+    fn bound(keys: &'static str) -> Vec<(String, Option<String>)> {
+        let typed = [Keystroke::parse(keys).unwrap()];
+        key_bindings()
+            .iter()
+            .filter(|b| b.match_keystrokes(&typed) == Some(false))
+            .map(|b| (b.action().name().to_string(), b.predicate().map(|p| p.to_string())))
+            .collect()
+    }
+
+    #[test]
+    fn view_modes_are_cmd_1_2_3() {
+        assert!(bound("cmd-1").iter().any(|(a, _)| a.ends_with("RichMode")));
+        assert!(bound("cmd-2").iter().any(|(a, _)| a.ends_with("SourceMode")));
+        assert!(bound("cmd-3").iter().any(|(a, _)| a.ends_with("SplitMode")));
+    }
+
+    #[test]
+    fn cmd_shift_f_searches_all_documents_inside_the_source_editor() {
+        let found = bound("cmd-shift-f");
+        assert!(found.iter().any(|(a, ctx)| a.ends_with("FocusSearch") && ctx.as_deref() == Some("Input")), "{found:?}");
+    }
+
+    #[test]
+    fn cmd_p_prints() {
+        assert!(bound("cmd-p").iter().any(|(a, _)| a.ends_with("Print")));
+    }
 }
 
 fn set_menus(cx: &mut App) {
@@ -51,7 +104,10 @@ fn set_menus(cx: &mut App) {
         Menu {
             name: "Markie RS".into(),
             items: vec![
+                MenuItem::action("About Markie RS", ShowAbout),
+                MenuItem::separator(),
                 MenuItem::action("Settings…", OpenSettings),
+                MenuItem::action("Sign In…", OpenAccount),
                 MenuItem::separator(),
                 MenuItem::action("Quit Markie RS", Quit),
             ],
@@ -65,13 +121,26 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("Open Folder…", OpenFolder),
                 MenuItem::separator(),
                 MenuItem::action("Save", Save),
+                MenuItem::action("Make Interactive", MakeInteractive),
                 MenuItem::action("Version History", ShowHistory),
                 MenuItem::separator(),
                 MenuItem::action("Rename…", RenameDocument),
                 MenuItem::action("Duplicate", DuplicateDocument),
                 MenuItem::action("Reveal in Finder", RevealDocument),
                 MenuItem::action("Copy Path", CopyPath),
+                MenuItem::action("Move To…", MoveDocument),
                 MenuItem::action("Move to Trash", TrashDocument),
+                MenuItem::separator(),
+                MenuItem::action("Print…", Print),
+                MenuItem::submenu(Menu {
+                    name: "Export".into(),
+                    items: vec![
+                        MenuItem::action("PDF (Dark)…", ExportPdfDark),
+                        MenuItem::action("PDF (Light)…", ExportPdfLight),
+                        MenuItem::action("HTML…", ExportHtml),
+                    ],
+                    disabled: false,
+                }),
             ],
             disabled: false,
         },
@@ -79,10 +148,15 @@ fn set_menus(cx: &mut App) {
             name: "View".into(),
             items: vec![
                 MenuItem::action("Command Palette", CommandPalette),
+                MenuItem::action("Library", ToggleLibrary),
+                MenuItem::action("Rich Text", RichMode),
+                MenuItem::action("Markdown Source", SourceMode),
+                MenuItem::action("Split", SplitMode),
                 MenuItem::action("Toggle View and Source", ToggleMode),
                 MenuItem::action("Outline", ToggleOutline),
                 MenuItem::action("Statistics", ToggleStats),
-                MenuItem::action("Search Documents", FocusSearch),
+                MenuItem::action("Search All Documents", FocusSearch),
+                MenuItem::action("Cloud", ShowCloud),
                 MenuItem::action("Rescan Documents", Rescan),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ZoomIn),
@@ -93,6 +167,8 @@ fn set_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Toggle Dark Mode", ToggleTheme),
                 MenuItem::separator(),
+                MenuItem::action("Vault", workspace::vault::ToggleVault),
+                MenuItem::separator(),
                 MenuItem::submenu(Menu { name: "Word Layout".into(), items: markie_office_view::actions::view_menu_items(), disabled: false }),
             ],
             disabled: false,
@@ -101,35 +177,85 @@ fn set_menus(cx: &mut App) {
     // Format, Insert, Layout and Review act on the Word page view; they show
     // disabled when another document has focus.
     menus.extend(markie_office_view::actions::menus());
+    menus.push(Menu {
+        name: "Help".into(),
+        items: vec![
+            MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
+            MenuItem::separator(),
+            MenuItem::action(logs::reveal_menu_label(), logs::RevealCrashLog),
+        ],
+        disabled: false,
+    });
     cx.set_menus(menus);
 }
 
 fn main() {
-    let initial: Vec<std::path::PathBuf> = std::env::args_os()
-        .skip(1)
-        .map(std::path::PathBuf::from)
-        .collect();
+    logs::install_panic_hook();
+    let args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+
+    // One Markie RS per data folder. A second launch hands its files and
+    // links to the running one and exits.
+    let data_dir = markie_core::paths::data_dir();
+    let second_launches = match instance::claim(&data_dir, &args) {
+        instance::Claim::Handed => return,
+        instance::Claim::Primary(rx) => rx,
+    };
+    // A markie-rs:// link in argv (Windows and Linux hand links over this
+    // way) waits for the window; everything else is a file to open.
+    let mut launch_links: Vec<String> = args.iter().filter(|a| a.starts_with(deeplinks::SCHEME)).cloned().collect();
+    let mut initial = open_urls::launch_file_paths(&args);
 
     // macOS hands files to a running app (Finder, `open -a`) and, on a cold
     // launch through Launch Services, often hands the first file the same way
     // instead of in argv. The callback has no App, so it only queues.
     let (open_tx, mut open_rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    let app = gpui_kit::application().with_assets(icons::MarkieAssets);
+    let instance_tx = open_tx.clone();
     app.on_open_urls(move |urls| {
         let _ = open_tx.unbounded_send(urls);
+    });
+    // Second launches arrive on their own thread; an empty list only raises.
+    std::thread::spawn(move || {
+        while let Ok(args) = second_launches.recv() {
+            let urls = instance::as_urls(&args);
+            if instance_tx.unbounded_send(urls).is_err() {
+                break;
+            }
+        }
     });
     app.run(move |cx| {
             gpui_kit::init(cx);
             perf::init(cx);
             bind_keys(cx);
             markie_editor::bind_keys(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
+            workspace::source::bind_keys(cx);
+            cx.on_action(|_: &Quit, cx| {
+                instance::release(&markie_core::paths::data_dir());
+                cx.quit()
+            });
             cx.activate(true);
+            // The Markie Cloud session, restored from the Keychain, and this
+            // copy registered as the one markie-rs:// sign-ins come back to.
+            workspace::account::AccountStore::init(cx);
+            std::thread::spawn(open_urls::register_url_scheme);
 
+            // Include Finder's already delivered launch documents before the
+            // workspace chooses its first document or marks the welcome seen.
+            while let Ok(urls) = open_rx.try_recv() {
+                initial.extend(open_urls::file_paths(&urls));
+                launch_links.extend(urls.into_iter().filter(|u| u.starts_with(deeplinks::SCHEME)));
+            }
             let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(640.), px(420.))),
+                // Electron's minWidth 600, minHeight 400.
+                window_min_size: Some(size(px(600.), px(400.))),
+                // Electron's `hiddenInset` traffic lights sit at x 14, y 14 in its
+                // 40px title bar (electron/main.js).
+                titlebar: Some(TitlebarOptions {
+                    traffic_light_position: Some(point(px(14.), px(14.))),
+                    ..TitleBar::title_bar_options()
+                }),
                 ..TitleBar::window_options()
             };
             let (window_handle, workspace) = gpui_kit::open_window(options, cx, move |window, cx| {
@@ -146,10 +272,40 @@ fn main() {
             })
             .expect("failed to open the Markie RS window");
 
+            cx.on_action(move |_: &logs::RevealCrashLog, cx| {
+                let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
+            });
+            workspace::account::handle_open_urls(open_urls::hand_back_links(&launch_links), cx);
+            for link in open_urls::deep_links(&launch_links) {
+                deeplinks::deliver(link, window_handle, workspace.clone(), cx);
+            }
+
             cx.spawn(async move |cx| {
                 while let Some(urls) = open_rx.next().await {
+                    // A Google or Apple sign-in coming back on markie-rs://.
+                    let hand_backs = open_urls::hand_back_links(&urls);
+                    if !hand_backs.is_empty() {
+                        let _ = window_handle.update(cx, move |_, window, cx| {
+                            open_urls::bring_to_front(window, cx);
+                            workspace::account::handle_open_urls(hand_backs, cx);
+                        });
+                    }
+                    // Shared documents and public links on markie-rs://.
+                    let links = open_urls::deep_links(&urls);
+                    if !links.is_empty() {
+                        let workspace = workspace.clone();
+                        let _ = cx.update(|cx| {
+                            for link in links {
+                                deeplinks::deliver(link, window_handle, workspace.clone(), cx);
+                            }
+                        });
+                    }
                     let paths = open_urls::file_paths(&urls);
                     if paths.is_empty() {
+                        // A second launch with nothing to open raises the window.
+                        if urls.is_empty() {
+                            let _ = window_handle.update(cx, |_, window, cx| open_urls::bring_to_front(window, cx));
+                        }
                         continue;
                     }
                     let workspace = workspace.clone();

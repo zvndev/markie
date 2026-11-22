@@ -1,0 +1,7 @@
+{
+ "bodyHtml": "<a class=\"wd-skip-link\" href=\"#main\">Skip to content</a>\n<main id=\"main\">\n<script type=\"application/json\" data-wd-state>{\"rows\":[1,2]}</script>\n<div data-wd-loop=\"rows\"><template data-wd-loop-template><div data-wd-loop-piece><p><span data-wd-each></span></p></div></template><div data-wd-loop-out><div data-wd-loop-key=\"1\" data-wd-loop-piece><p><span data-wd-each>1</span></p></div><div data-wd-loop-key=\"2\" data-wd-loop-piece><p><span data-wd-each>2</span></p></div></div></div>\n</main>\n<script type=\"module\" src=\"/__wd/runtime.js\"></script>",
+ "title": "Interactive document",
+ "warnings": [],
+ "requiresRuntime": true,
+ "hasCode": false
+}

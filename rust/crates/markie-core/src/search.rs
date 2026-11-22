@@ -84,6 +84,8 @@ pub struct Hit {
     pub score: u32,
     /// A one-line excerpt around the first body match, when the body matched.
     pub excerpt: Option<String>,
+    /// Byte ranges of the query terms inside `excerpt`, for highlighting.
+    pub marks: Vec<(usize, usize)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -177,7 +179,7 @@ impl SearchIndex {
                 .by_recency
                 .iter()
                 .filter(|&&i| format_ok(&docs[i]))
-                .map(|&index| Hit { index, score: 0, excerpt: None })
+                .map(|&index| Hit { index, score: 0, excerpt: None, marks: Vec::new() })
                 .collect();
         }
         let mut hits: Vec<(Hit, f64)> = docs
@@ -213,7 +215,7 @@ impl SearchIndex {
                         }
                     }
                 }
-                Some((Hit { index, score, excerpt }, doc.mtime_ms))
+                Some((Hit { index, score, excerpt, marks: Vec::new() }, doc.mtime_ms))
             })
             .collect();
         hits.sort_by(|a, b| {

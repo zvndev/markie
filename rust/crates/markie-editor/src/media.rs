@@ -78,6 +78,10 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
 
+pub(crate) fn reference_key(source: &str) -> String {
+    percent_decode(source.trim().split(['?', '#']).next().unwrap_or_default())
+}
+
 /// `image/png;base64,...` to an image.
 fn data_uri(rest: &str) -> Option<Image> {
     let (meta, data) = rest.split_once(',')?;
@@ -142,7 +146,48 @@ pub fn sniff(b: &[u8]) -> Option<ImageFormat> {
 
 /// Fetch a remote picture (on a background thread), with the same caps
 /// a browser would hit sooner or later: 20 MB and 15 seconds.
+/// A remote picture, from the on-disk cache when it was fetched in the last
+/// week (Electron gets this from Chromium's HTTP cache). The cache lives in
+/// Markie RS's own data folder.
 pub fn fetch(url: &str) -> Option<Image> {
+    fetch_cached(url, &markie_core::paths::data_dir().join("Cache").join("pictures"))
+}
+
+const CACHE_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+const CACHE_MAX_FILES: usize = 2000;
+
+fn cache_name(url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut h);
+    format!("{:016x}-{}", h.finish(), url.len())
+}
+
+pub fn fetch_cached(url: &str, dir: &Path) -> Option<Image> {
+    let file = dir.join(cache_name(url));
+    if let Ok(meta) = std::fs::metadata(&file) {
+        let fresh = meta.modified().ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age < CACHE_AGE);
+        if fresh {
+            if let Ok(bytes) = std::fs::read(&file) {
+                if let Some(format) = sniff(&bytes) {
+                    return Some(Image::from_bytes(format, bytes));
+                }
+            }
+        }
+    }
+    let img = fetch_remote(url)?;
+    if std::fs::create_dir_all(dir).is_ok() {
+        if std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0) >= CACHE_MAX_FILES {
+            // Simple bound: start again rather than grow without limit.
+            let _ = std::fs::remove_dir_all(dir);
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&file, img.bytes());
+    }
+    Some(img)
+}
+
+fn fetch_remote(url: &str) -> Option<Image> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .user_agent("Markie RS")
@@ -235,10 +280,15 @@ pub fn font_family(stack: &str) -> Option<SharedString> {
     if first.is_empty() || first.starts_with("var(") {
         return None;
     }
+    // Names CoreText cannot find by family, as Chromium resolves them on
+    // macOS: SF Mono and New York are the system's monospaced and serif
+    // designs, the system sans is the theme's own face.
     let generic = match first {
         "serif" => "Times New Roman",
-        "sans-serif" | "system-ui" => return None,
+        "sans-serif" | "system-ui" | "ui-sans-serif" | "-apple-system" | "BlinkMacSystemFont" => return None,
         "monospace" => "Menlo",
+        "SF Mono" | "SFMono-Regular" | "ui-monospace" => super::render::MONO,
+        "New York" | "ui-serif" => super::style::SYSTEM_SERIF,
         other => other,
     };
     Some(SharedString::from(generic.to_string()))
@@ -288,5 +338,22 @@ impl Media {
         }
         self.math.insert(key, out.clone());
         out
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::font_family;
+
+    #[test]
+    fn font_stacks_resolve_to_families_coretext_can_load() {
+        // The toolbar's stacks (`DOC_FONTS`), first family first.
+        assert_eq!(font_family("Charter, Georgia, 'Times New Roman', serif").as_deref(), Some("Charter"));
+        assert_eq!(font_family("'Iowan Old Style', Palatino, Georgia, serif").as_deref(), Some("Iowan Old Style"));
+        // Hidden from font lists: the system designs stand in, as in Chromium.
+        assert_eq!(font_family("'SF Mono', ui-monospace, Menlo, monospace").as_deref(), Some(".AppleSystemUIFontMonospaced"));
+        assert_eq!(font_family("ui-serif, 'New York', 'Iowan Old Style', Charter, Georgia, serif").as_deref(), Some(".AppleSystemUIFontSerif"));
+        assert_eq!(font_family("-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"), None);
+        assert_eq!(font_family("var(--font-geist-sans)"), None);
     }
 }

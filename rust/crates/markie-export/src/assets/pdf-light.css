@@ -1,0 +1,37 @@
+
+  body { background: #fff; color: #1a1a2e; }
+  .markdown-body { color: #1a1a2e; }
+  .markdown-body h1 { border-bottom: 1px solid #e4e4e7; color: #09090b; }
+  .markdown-body h2 { border-bottom: 1px solid #e4e4e7; color: #18181b; }
+  .markdown-body h3, .markdown-body h4 { color: #27272a; }
+  .markdown-body h5, .markdown-body h6 { color: #71717a; }
+  .markdown-body a { color: #2563eb; }
+  .markdown-body strong { color: #09090b; }
+  .markdown-body blockquote { border-left-color: #8b5cf6; background: #f5f3ff; color: #52525b; }
+  .markdown-body li::marker { color: #71717a; }
+  .markdown-body code { background: #f4f4f5; border-color: #e4e4e7; color: #c2410c; }
+  .markdown-body pre { background: #fafafa; border-color: #e4e4e7; }
+  .markdown-body pre code { color: #1a1a2e; }
+  .markdown-body hr { background: #e4e4e7; }
+  .markdown-body thead th { background: #f4f4f5; border-bottom: 2px solid #e4e4e7; color: #71717a; }
+  .markdown-body tbody td { border-bottom: 1px solid #e4e4e7; }
+  .markdown-body del { color: #a1a1aa; }
+  .markdown-body input[type="checkbox"] { border-color: #d4d4d8; }
+  .markdown-body input[type="checkbox"]:checked { background: #2563eb; border-color: #2563eb; }
+  .markdown-body input[type="checkbox"]:checked::after { color: #fff; }
+
+  /* highlight.js light */
+  .hljs { color: #24292e; }
+  .hljs-keyword { color: #d73a49; }
+  .hljs-string { color: #032f62; }
+  .hljs-title { color: #6f42c1; }
+  .hljs-built_in { color: #e36209; }
+  .hljs-comment { color: #6a737d; }
+  .hljs-number { color: #005cc5; }
+  .hljs-attr { color: #005cc5; }
+  .hljs-subst { color: #24292e; }
+  .hljs-literal { color: #005cc5; }
+  .hljs-type { color: #e36209; }
+  .hljs-params { color: #24292e; }
+  .hljs-variable { color: #e36209; }
+  .hljs-function { color: #6f42c1; }

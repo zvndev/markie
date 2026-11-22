@@ -13,76 +13,218 @@ use super::{CONTEXT, RichView};
 use markie_rich::edit::Unit;
 use markie_rich::editor::Pos;
 use markie_rich::model::*;
+use std::collections::HashSet;
 
-/// Sizes and colours for one frame.
+/// Sizes and colours for one frame: the `.markdown-body` rules of
+/// `globals.css`, with the template's typography (`style.rs`).
 pub(crate) struct Look {
+    /// The body size, zoom included (`--doc-font-size`).
     pub size: f32,
     pub zoom: f32,
+    pub line_height: f32,
+    /// em between paragraphs (`--doc-paragraph-gap`).
+    pub gap: f32,
     pub fg: Hsla,
     pub muted: Hsla,
+    /// `--blue`: links, checked boxes, selected pictures.
     pub link: Hsla,
-    /// Checked boxes and the picture frame: a blue that reads in both themes.
+    /// `--accent`: the unchecked box's edge.
     pub accent: Hsla,
+    /// `--surface` and `--surface-2`.
+    pub surface: Hsla,
+    pub surface2: Hsla,
+    pub background: Hsla,
     pub border: Hsla,
-    pub code_bg: Hsla,
+    /// `--doc-rule`: heading rules, table lines, code edges.
+    pub rule: Hsla,
+    /// `--status-yellow`: inline code's ink.
+    pub code_fg: Hsla,
     pub selection: Hsla,
     pub caret: Hsla,
     pub find: Hsla,
     pub find_current: Hsla,
     pub font: Font,
+    /// The template's heading face, when it is not the body's.
+    pub heading_family: Option<SharedString>,
     pub mono: SharedString,
     pub focused: bool,
     pub scale: f32,
+    /// Reference keys of document links this reader may not follow.
+    pub unshared_links: HashSet<String>,
 }
 
+/// `--font-geist-mono`: SF Mono, which macOS only hands out under its
+/// system name.
+pub const MONO: &str = ".AppleSystemUIFontMonospaced";
+
+/// The quote's rule: `--purple`, the same in both tones.
+const QUOTE_RULE: u32 = 0xc084fc;
 
 /// Unmeasured blocks away from the screen drawn per frame while a document
 /// is still being measured.
 const UNMEASURED_PER_FRAME: usize = 48;
 
 impl Look {
-    fn base(&self, size: f32) -> SegStyle {
-        SegStyle { font: self.font.clone(), size: px(size), color: self.fg, background: None, underline: false, strike: false }
+    pub(crate) fn base(&self, size: f32) -> SegStyle {
+        SegStyle {
+            font: self.font.clone(),
+            size: px(size),
+            color: self.fg,
+            background: None,
+            underline: false,
+            strike: false,
+            pad_x: px(0.),
+            border: None,
+        }
     }
 }
 
-fn heading_scale(level: u8) -> f32 {
+/// `h1` to `h6`: size and margins in em of the heading, and weight.
+fn heading_metrics(level: u8) -> (f32, f32, f32, f32) {
     match level {
-        1 => 2.0,
-        2 => 1.5,
-        3 => 1.25,
-        4 => 1.1,
-        5 => 1.0,
-        _ => 0.9,
+        1 => (2.0, 1.5, 0.6, 700.),
+        2 => (1.5, 1.4, 0.5, 650.),
+        3 => (1.25, 1.3, 0.4, 600.),
+        4 => (1.1, 1.2, 0.4, 600.),
+        _ => (1.0, 1.0, 0.3, 600.),
     }
+}
+
+/// What a container does to the blocks inside it.
+#[derive(Clone, Copy)]
+pub(crate) struct Ctx {
+    /// A paragraph's margin in em, when not the template's gap (a quote's
+    /// `0.3em`, a task's `0`).
+    pub para_em: Option<f32>,
+    /// A paragraph's line height, when not the template's (a task's 1.6).
+    pub line_height: Option<f32>,
+    /// Text colour, when not the ink (a quote is muted).
+    pub color: Option<Hsla>,
+}
+
+impl Ctx {
+    const DOC: Ctx = Ctx { para_em: None, line_height: None, color: None };
+}
+
+/// Stack blocks the way CSS collapses vertical margins: the space between
+/// two neighbours is the larger of their margins. Returns the stack and the
+/// first top and last bottom margins, which escape to the container.
+fn stack(children: Vec<(AnyElement, f32, f32)>) -> (AnyElement, f32, f32) {
+    let mut top = 0.;
+    let mut prev: Option<f32> = None;
+    let mut out = Vec::with_capacity(children.len());
+    for (el, t, b) in children {
+        match prev {
+            None => top = t,
+            Some(pb) => out.push(div().flex_none().h(px(pb.max(t))).into_any_element()),
+        }
+        out.push(el);
+        prev = Some(b);
+    }
+    (v_flex().w_full().children(out).into_any_element(), top, prev.unwrap_or(0.))
 }
 
 impl RichView {
     pub(crate) fn look(&self, theme: &Theme, window: &Window) -> Look {
         let mut font = window.text_style().font();
-        font.family = theme.font_family.clone();
+        font.family = match self.doc_font {
+            "system" => super::style::typeface(&self.style.body_font).map(SharedString::from).unwrap_or_else(|| theme.font_family.clone()),
+            "sans" => theme.font_family.clone(),
+            "mono" => SharedString::from(MONO),
+            id => super::style::typeface(id).map(SharedString::from).unwrap_or_else(|| theme.font_family.clone()),
+        };
+        if self.doc_font == "system" && self.style.body_font == "mono" {
+            font.family = SharedString::from(MONO);
+        }
+        // Headings follow the body unless the template names a face, and a
+        // font picked for this document wins over the template's, as there.
+        let heading_family = match self.style.heading_font.as_str() {
+            "body" => None,
+            _ if self.doc_font != "system" => None,
+            "system" => Some(theme.font_family.clone()),
+            "mono" => Some(SharedString::from(MONO)),
+            id => super::style::typeface(id).map(SharedString::from),
+        };
         let mut sel = theme.selection;
         if !self.focus.is_focused(window) {
             sel.a *= 0.6;
         }
+        // At the default 16 the template's own size shows through
+        // (`appearanceVars`); a size picked for this document wins.
+        let base = if (self.doc_size - 16.0).abs() < 0.01 { self.style.font_size } else { self.doc_size };
         Look {
-            size: 16.0 * self.zoom,
+            size: base * self.zoom,
             zoom: self.zoom,
+            line_height: self.style.line_height,
+            gap: self.style.paragraph_gap,
             fg: theme.foreground,
             muted: theme.muted_foreground,
-            link: theme.link,
-            accent: rgb(0x2563eb).into(),
+            link: self.style.link,
+            accent: theme.accent,
+            surface: theme.muted,
+            surface2: theme.secondary,
+            background: theme.background,
             border: theme.border,
-            code_bg: theme.muted,
+            rule: self.style.doc_rule,
+            code_fg: theme.warning,
             selection: sel,
             caret: theme.caret,
             find: theme.warning.opacity(0.35),
             find_current: theme.warning.opacity(0.75),
             font,
-            mono: theme.mono_font_family.clone(),
+            heading_family,
+            mono: SharedString::from(MONO),
             focused: self.focus.is_focused(window),
             scale: window.scale_factor(),
+            unshared_links: self.unshared_links.clone(),
         }
+    }
+
+    /// A block's outer margins (top, bottom) in px, before collapsing.
+    pub(crate) fn margins(n: &Node, look: &Look, ctx: Ctx) -> (f32, f32) {
+        let s = look.size;
+        match n {
+            Node::Paragraph { .. } => {
+                let m = ctx.para_em.unwrap_or(look.gap) * s;
+                (m, m)
+            }
+            Node::Heading { level, .. } => {
+                let (k, t, b, _) = heading_metrics(*level);
+                (t * k * s, b * k * s)
+            }
+            Node::HorizontalRule => (2. * s, 2. * s),
+            Node::Table { .. } => (0.9 * s, 0.9 * s),
+            Node::BulletList { items, .. } | Node::OrderedList { items, .. } => {
+                let own = 0.6 * s;
+                let li = 0.3 * s;
+                let first = items.first().and_then(|i| i.first()).map(|n| Self::margins(n, look, Ctx { para_em: None, ..ctx }).0).unwrap_or(0.);
+                let last = items.last().and_then(|i| i.last()).map(|n| Self::margins(n, look, Ctx { para_em: None, ..ctx }).1).unwrap_or(0.);
+                (own.max(li).max(first), own.max(li).max(last))
+            }
+            Node::TaskList { .. } => {
+                let m = (0.6 * s).max(2.4 * look.zoom);
+                (m, m)
+            }
+            _ => (s, s),
+        }
+    }
+
+    /// The margins of a whole top-level block.
+    fn block_margins(&self, b: usize, look: &Look) -> (f32, f32) {
+        let block = &self.editor.doc.blocks[b];
+        if block.is_opaque() {
+            let m = look.gap * look.size;
+            return (m, m);
+        }
+        let nodes = block.nodes();
+        let top = nodes.first().map(|n| Self::margins(n, look, Ctx::DOC).0).unwrap_or(0.);
+        let bottom = nodes.last().map(|n| Self::margins(n, look, Ctx::DOC).1).unwrap_or(0.);
+        (top, bottom)
+    }
+
+    /// Is the document's first block an `h1` (whose top margin CSS drops)?
+    fn starts_with_h1(&self) -> bool {
+        self.editor.doc.blocks.first().is_some_and(|b| !b.is_opaque() && matches!(b.nodes().first(), Some(Node::Heading { level: 1, .. })))
     }
 
     pub(crate) fn render_document(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -115,7 +257,20 @@ impl RichView {
         }
         let theme = cx.theme().clone();
         let look = self.look(&theme, window);
-        let col = px(self.page_width);
+        // `.markie-document-scroll`'s padding: clamp(1.25rem, 3vw, 2.25rem)
+        // above and below, clamp(1.5rem, 4vw, 3rem) at the sides, then the
+        // column at min(100%, --doc-width).
+        let vw = f32::from(window.viewport_size().width);
+        let pad_y = (vw * 0.03).clamp(20., 36.);
+        let pad_x = (vw * 0.04).clamp(24., 48.);
+        let col = match super::style::width_index(self.page_width) {
+            0 => px(self.style.content_width),
+            4 => px(100_000.),
+            _ => px(self.page_width),
+        };
+        let first_h1 = self.starts_with_h1();
+        let mut prev_bottom: Option<f32> = None;
+        let mut tops: Vec<Pixels> = Vec::with_capacity(self.editor.block_count());
         // Draw what is on screen (with a screen of margin either way), the
         // caret's and selection's ends, and any block not measured yet;
         // the rest is space of its last height.
@@ -123,12 +278,12 @@ impl RichView {
         let screen = viewport.size.height.max(px(400.));
         let (lo, hi) = (top_visible - screen, top_visible + screen * 2.);
         let (a, h) = (self.editor.anchor.block, self.editor.head.block);
-        let mut y = px(28.);
+        let mut y = px(pad_y);
         let mut blocks: Vec<AnyElement> = Vec::new();
         // Consecutive off-screen blocks share one spacer: one element per
         // block made layout cost grow with the document (4 to 5 ms a frame
         // at 900 KB) even though only a screenful is drawn.
-        let mut gap = px(0.);
+        let mut spacer = px(0.);
         // Blocks not measured yet are drawn (and so measured) when near the
         // screen, plus a small batch elsewhere each frame until all are
         // known. Measuring every block in the first frame cost 680 ms at
@@ -136,6 +291,16 @@ impl RichView {
         let mut unmeasured_budget = UNMEASURED_PER_FRAME;
         let mut more_to_measure = false;
         for b in 0..self.editor.block_count() {
+            // The space above: CSS's collapsed margin between this block and
+            // the last, or the first block's own (an h1 has none there).
+            let (mt, mb) = self.block_margins(b, &look);
+            let gap = match prev_bottom {
+                None if first_h1 => 0.,
+                None => mt,
+                Some(pb) => pb.max(mt),
+            };
+            prev_bottom = Some(mb);
+            tops.push(y + px(gap));
             let height = self.heights.get(b).copied().flatten();
             let near = match height {
                 Some(ht) => y + ht >= lo && y <= hi,
@@ -151,12 +316,12 @@ impl RichView {
             };
             y += height.unwrap_or(px(30.));
             if !near && b != a && b != h {
-                gap += height.unwrap_or(px(30.));
+                spacer += height.unwrap_or(px(30.));
                 continue;
             }
-            if gap > px(0.) {
-                blocks.push(div().w_full().h(gap).into_any_element());
-                gap = px(0.);
+            if spacer > px(0.) {
+                blocks.push(div().w_full().h(spacer).into_any_element());
+                spacer = px(0.);
             }
             let el = self.render_block(b, &look, window, cx);
             let store = self.store.clone();
@@ -166,7 +331,9 @@ impl RichView {
                     .w_full()
                     .flex()
                     .justify_center()
-                    .child(div().w_full().max_w(col).px(px(40.)).child(el))
+                    .px(px(pad_x))
+                    .pt(px(gap))
+                    .child(div().w_full().max_w(col).child(el))
                     .child(
                         canvas(move |bounds, _, _| {
                             store.borrow_mut().blocks.insert(b, bounds);
@@ -179,12 +346,16 @@ impl RichView {
                     .into_any_element(),
             );
         }
-        if gap > px(0.) {
-            blocks.push(div().w_full().h(gap).into_any_element());
+        if spacer > px(0.) {
+            blocks.push(div().w_full().h(spacer).into_any_element());
         }
         if more_to_measure {
             window.request_animation_frame();
         }
+        // For the section rail: where each block starts, and how tall the
+        // page is, from the same pass.
+        self.block_tops = tops;
+        self.content_height = y + px(pad_y);
         let view = cx.entity();
         let store = self.store.clone();
         let focus = self.focus.clone();
@@ -263,6 +434,8 @@ impl RichView {
             .on_action(cx.listener(Self::on_find_next))
             .on_action(cx.listener(Self::on_find_prev))
             .on_action(cx.listener(Self::on_escape))
+            .map(|d| self.accessibility(d, window))
+            .map(|d| Self::behaviour(d, cx))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -272,12 +445,12 @@ impl RichView {
             .relative()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .pt(px(28.))
+            .pt(px(pad_y))
             .bg(theme.background)
             .text_color(theme.foreground)
             .children(blocks)
             // Room past the end, as a page has: a click there goes to the end.
-            .child(div().h(px(240.)).w_full())
+            .child(div().h(px(prev_bottom.unwrap_or(0.) + pad_y + 200.)).w_full())
             .child(
                 canvas(
                     move |_bounds, window, cx| {
@@ -349,23 +522,18 @@ impl RichView {
         let block = &self.editor.doc.blocks[b];
         if block.is_opaque() {
             // Kept as source: shown as written, and edited as written.
-            let leaf = self.plain_leaf((b, 0), look, look.size * 0.85, true, None, window, cx);
-            return div()
-                .my(px(6.))
-                .pl(px(10.))
-                .border_l_2()
-                .border_color(look.border)
-                .text_color(look.muted)
-                .child(leaf)
-                .into_any_element();
+            let leaf = self.plain_leaf((b, 0), look, look.size * 0.85, 1.6, look.muted, false, window, cx);
+            return div().pl(px(10.)).border_l_2().border_color(look.rule).child(leaf).into_any_element();
         }
         let nodes = block.nodes().to_vec();
         let mut counter = 0usize;
         let mut out = Vec::new();
         for (i, n) in nodes.iter().enumerate() {
-            out.push(self.render_node(b, n, vec![i], &mut counter, 0, look, window, cx));
+            let el = self.render_node(b, n, vec![i], &mut counter, 0, Ctx::DOC, look, window, cx);
+            let (t, bm) = Self::margins(n, look, Ctx::DOC);
+            out.push((el, t, bm));
         }
-        v_flex().children(out).into_any_element()
+        stack(out).0
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -376,6 +544,7 @@ impl RichView {
         path: Vec<usize>,
         counter: &mut usize,
         depth: usize,
+        ctx: Ctx,
         look: &Look,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -384,47 +553,75 @@ impl RichView {
         match n {
             Node::Paragraph { align, .. } => {
                 *counter += 1;
-                let el = self.rich_leaf(key, look, look.size, 1.65, false, align_of(align), window, cx);
-                div().pb(px(10. * look.zoom)).child(el).into_any_element()
+                let mut base = look.base(look.size);
+                if let Some(c) = ctx.color {
+                    base.color = c;
+                }
+                let lh = ctx.line_height.unwrap_or(look.line_height);
+                self.rich_leaf(key, look, base, lh, align_of(align), window, cx)
             }
             Node::Heading { level, align, .. } => {
                 *counter += 1;
-                let size = look.size * heading_scale(*level);
-                let el = self.rich_leaf(key, look, size, 1.3, true, align_of(align), window, cx);
-                div()
-                    .pt(px(size * 0.55))
-                    .pb(px(size * 0.3))
-                    .when(*level <= 2, |d| d.mb(px(4.)))
-                    .child(el)
-                    .into_any_element()
+                let (k, _, _, weight) = heading_metrics(*level);
+                let size = look.size * k;
+                let mut base = look.base(size);
+                base.font.weight = FontWeight(weight);
+                if let Some(f) = &look.heading_family {
+                    base.font.family = f.clone();
+                }
+                if *level >= 5 {
+                    base.color = look.muted;
+                }
+                let el = self.rich_leaf(key, look, base, look.line_height, align_of(align), window, cx);
+                // h1 and h2 carry a hairline under them, a little below the text.
+                let rule = match level {
+                    1 => Some(0.3),
+                    2 => Some(0.25),
+                    _ => None,
+                };
+                match rule {
+                    Some(em) => div().pb(px(em * size)).border_b_1().border_color(look.rule).child(el).into_any_element(),
+                    None => el,
+                }
             }
             Node::CodeBlock { language, .. } => {
                 *counter += 1;
-                let el = self.plain_leaf(key, look, look.size * 0.88, false, language.clone(), window, cx);
-                let label = language.clone().unwrap_or_else(|| "plain text".into());
+                // `pre code` is 0.87em at line-height 1.6, but each line box
+                // also holds the `pre`'s own strut (the body size at the
+                // template's line height), which is what sets the spacing.
+                let code = look.size * 0.87;
+                let lh = (look.size * look.line_height).max(code * 1.6) / code;
+                let el = self.plain_leaf(key, look, code, lh, look.fg, true, window, cx);
                 let pos = Pos::new(b, key.1, 0);
-                let lang_button = div()
-                    .id(SharedString::from(format!("lang-{b}-{}", key.1)))
-                    .absolute()
-                    .top(px(4.))
-                    .right(px(8.))
-                    .text_size(px(11. * look.zoom))
-                    .text_color(look.muted)
-                    .cursor_pointer()
-                    .child(label)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.open_prompt(super::PromptKind::CodeLanguage(pos), window, cx);
-                    }));
+                // TipTap shows no language: the label appears only while the
+                // caret is in the block, so it can still be changed.
+                let here = self.editor.head.block == b && self.editor.head.leaf == key.1;
+                let lang_button = here.then(|| {
+                    let label = language.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| "plain text".into());
+                    div()
+                        .id(SharedString::from(format!("lang-{b}-{}", key.1)))
+                        .absolute()
+                        .top(px(6.))
+                        .right(px(10.))
+                        .text_size(px(11.))
+                        .text_color(look.muted)
+                        .cursor_pointer()
+                        .child(label)
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.open_prompt(super::PromptKind::CodeLanguage(pos), window, cx);
+                        }))
+                });
                 div()
                     .relative()
-                    .mb(px(12. * look.zoom))
-                    .p(px(14. * look.zoom))
-                    .pt(px(18. * look.zoom))
-                    .rounded(px(6.))
-                    .bg(look.code_bg)
+                    .px(px(look.size * 1.2))
+                    .py(px(look.size))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(look.rule)
+                    .bg(look.surface)
                     .child(el)
-                    .child(lang_button)
+                    .children(lang_button)
                     .into_any_element()
             }
             Node::MathBlock { source } => {
@@ -434,7 +631,9 @@ impl RichView {
                     let (f, t) = self.editor.range();
                     self.editor.has_selection() && (f.block, f.leaf) <= key && key <= (t.block, t.leaf)
                 };
-                let img = self.media.math(source, true, look.fg, look.size * 1.1, look.scale);
+                // KaTeX draws at 1.21em of its own metrics; typst's glyphs
+                // run larger, so 1.05em matches it on screen.
+                let img = self.media.math(source, true, look.fg, look.size * 1.05, look.scale);
                 let rendered = match img {
                     Some(m) => div()
                         .flex()
@@ -442,29 +641,29 @@ impl RichView {
                         .child(img_el(m.image.clone()).w(px(m.width)).h(px(m.height)))
                         .into_any_element(),
                     None => div()
-                        .text_color(gpui_kit::red())
+                        .text_color(look.muted)
                         .font_family(look.mono.clone())
-                        .text_size(px(look.size * 0.85))
+                        .text_size(px(look.size * 0.9))
                         .child(source.clone())
                         .into_any_element(),
                 };
                 if editing {
-                    let el = self.plain_leaf(key, look, look.size * 0.88, false, None, window, cx);
+                    let el = self.plain_leaf(key, look, look.size * 0.9, 1.5, look.fg, false, window, cx);
                     v_flex()
-                        .mb(px(12. * look.zoom))
-                        .gap(px(6.))
-                        .child(div().p(px(10.)).rounded(px(6.)).bg(look.code_bg).child(el))
+                        .gap(px(8.))
+                        .child(div().px(px(8.)).py(px(6.)).rounded(px(6.)).border_1().border_color(look.rule).bg(look.surface).child(el))
                         .child(rendered)
                         .into_any_element()
                 } else {
                     // Not editing: the formula, a click away from its source.
                     let store = self.store.clone();
+                    let hover = look.fg.opacity(0.05);
                     div()
                         .id(SharedString::from(format!("math-{b}-{}", key.1)))
                         .relative()
-                        .py(px(8. * look.zoom))
-                        .mb(px(8. * look.zoom))
+                        .rounded(px(6.))
                         .cursor_pointer()
+                        .when(!self.read_only, |d| d.hover(move |s| s.bg(hover)))
                         .child(rendered)
                         .child(track(store, key))
                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, window, cx| {
@@ -482,9 +681,9 @@ impl RichView {
                 let selected = self.is_atom_selected(key);
                 div()
                     .relative()
-                    .py(px(12. * look.zoom))
-                    .child(div().h(px(1.)).w_full().bg(if selected { look.link } else { look.border }))
-                    .when(selected, |d| d.rounded(px(3.)).bg(look.selection))
+                    .h(px(1.))
+                    .w_full()
+                    .bg(if selected { look.link } else { look.rule })
                     .child(track(self.store.clone(), key))
                     .into_any_element()
             }
@@ -497,19 +696,28 @@ impl RichView {
                 self.render_embed(key, url, look, cx)
             }
             Node::Blockquote(children) => {
+                let inner = Ctx { para_em: Some(0.3), color: Some(look.muted), ..ctx };
                 let mut kids = Vec::new();
                 for (i, c) in children.iter().enumerate() {
                     let mut p = path.clone();
                     p.push(i);
-                    kids.push(self.render_node(b, c, p, counter, depth, look, window, cx));
+                    let el = self.render_node(b, c, p, counter, depth, inner, look, window, cx);
+                    let (t, bm) = Self::margins(c, look, inner);
+                    kids.push((el, t, bm));
                 }
+                // The quote has padding, so its children's margins stay inside.
+                let (el, t, bm) = stack(kids);
                 div()
-                    .mb(px(10. * look.zoom))
-                    .pl(px(16.))
-                    .border_l_4()
-                    .border_color(look.border)
-                    .text_color(look.muted)
-                    .child(v_flex().children(kids))
+                    .relative()
+                    .pl(px(look.size + 3.))
+                    .pr(px(look.size))
+                    .pt(px(look.size * 0.5 + t))
+                    .pb(px(look.size * 0.5 + bm))
+                    .bg(look.surface)
+                    .rounded_tr(px(6.))
+                    .rounded_br(px(6.))
+                    .child(div().absolute().top_0().bottom_0().left_0().w(px(3.)).bg(rgb(QUOTE_RULE)))
+                    .child(el)
                     .into_any_element()
             }
             Node::BulletList { items, .. } | Node::OrderedList { items, .. } => {
@@ -517,37 +725,44 @@ impl RichView {
                     Node::OrderedList { start, .. } => Some(*start),
                     _ => None,
                 };
+                let item_ctx = Ctx { para_em: None, ..ctx };
+                let li = 0.3 * look.size;
+                let gutter = 1.8 * look.size;
                 let mut rows = Vec::new();
                 for (k, item) in items.iter().enumerate() {
-                    let marker = match start {
-                        Some(s) => format!("{}.", s + k as u64),
-                        None => ["•", "◦", "▪"][depth % 3].to_string(),
-                    };
                     let mut ip = path.clone();
                     ip.push(k);
-                    let body = self.render_item(b, item, ip, counter, depth, look, window, cx);
-                    rows.push(
-                        h_flex()
-                            .items_start()
-                            .child(
-                                div()
-                                    .w(px(look.size * 1.5))
-                                    .flex_none()
-                                    .flex()
-                                    .justify_end()
-                                    .pr(px(6.))
-                                    .text_size(px(look.size))
-                                    .line_height(px(look.size * 1.65))
-                                    .text_color(look.muted)
-                                    .child(marker),
-                            )
-                            .child(div().flex_1().min_w_0().child(body))
-                            .into_any_element(),
-                    );
+                    let (body, t, bm) = self.render_item(b, item, ip, counter, depth, item_ctx, look, window, cx);
+                    // `::marker`: outside, muted, at the item's own size.
+                    let (marker, gap) = match start {
+                        Some(s) => (format!("{}.", s + k as u64), 0.3),
+                        None => ("•".to_string(), 0.45),
+                    };
+                    let lh = look.size * ctx.line_height.unwrap_or(look.line_height);
+                    let row = h_flex()
+                        .items_start()
+                        .child(
+                            div()
+                                .w(px(gutter))
+                                .flex_none()
+                                .flex()
+                                .justify_end()
+                                .pr(px(look.size * gap))
+                                .text_size(px(look.size))
+                                .line_height(px(lh))
+                                .font_family(look.font.family.clone())
+                                .text_color(look.muted)
+                                .child(marker),
+                        )
+                        .child(div().flex_1().min_w_0().child(body))
+                        .into_any_element();
+                    rows.push((row, li.max(t), li.max(bm)));
                 }
-                v_flex().mb(px(if depth == 0 { 10. * look.zoom } else { 0. })).children(rows).into_any_element()
+                stack(rows).0
             }
             Node::TaskList { items } => {
+                let item_ctx = Ctx { para_em: Some(0.), line_height: Some(1.6), ..ctx };
+                let li = 2.4 * look.zoom;
                 let mut rows = Vec::new();
                 for (k, item) in items.iter().enumerate() {
                     let mut ip = path.clone();
@@ -556,91 +771,160 @@ impl RichView {
                     let item_path = ip.clone();
                     let bx = div()
                         .id(SharedString::from(format!("task-{b}-{}", ip.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("-"))))
-                        .mt(px(look.size * 0.33))
-                        .mr(px(8.))
-                        .size(px(look.size * 0.95))
+                        .size(px(16.))
                         .flex_none()
-                        .rounded(px(3.))
-                        .border_1()
-                        .border_color(if checked { look.accent } else { look.muted })
-                        .when(checked, |d| d.bg(look.accent))
+                        .rounded(px(4.))
+                        .border_2()
+                        .border_color(if checked { look.link } else { look.accent })
+                        .when(checked, |d| d.bg(look.link))
                         .flex()
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
                         .when(checked, |d| {
-                            d.child(svg().path("icons/check.svg").size(px(look.size * 0.7)).text_color(gpui_kit::white()))
+                            d.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .line_height(px(11.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(look.background)
+                                    .child("✓"),
+                            )
                         })
                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                             cx.stop_propagation();
                             let p = item_path.clone();
                             this.edit(cx, |e| e.toggle_task(b, &p));
                         }));
-                    let body = self.render_item(b, &item.content, ip, counter, depth, look, window, cx);
-                    rows.push(
-                        h_flex()
-                            .items_start()
-                            .pl(px(look.size * 0.3))
-                            .child(bx)
-                            .child(div().flex_1().min_w_0().when(checked, |d| d.text_color(look.muted)).child(body))
-                            .into_any_element(),
-                    );
+                    let (body, _, _) = self.render_item(b, &item.content, ip, counter, depth, item_ctx, look, window, cx);
+                    let row = h_flex()
+                        .items_start()
+                        .gap(px(8.))
+                        .pl(px(4.))
+                        // The box is centred on a 1.6em label, the first line's height.
+                        .child(div().h(px(look.size * 1.6)).flex_none().flex().items_center().child(bx))
+                        .child(div().flex_1().min_w_0().child(body))
+                        .into_any_element();
+                    rows.push((row, li, li));
                 }
-                v_flex().mb(px(if depth == 0 { 10. * look.zoom } else { 0. })).children(rows).into_any_element()
+                stack(rows).0
             }
-            Node::Table { rows } => {
-                let mut out_rows = Vec::new();
-                for (r, row) in rows.iter().enumerate() {
-                    let mut cells = Vec::new();
-                    for (c, cell) in row.iter().enumerate() {
-                        let mut cp = path.clone();
-                        cp.push(r);
-                        cp.push(c);
-                        let mut kids = Vec::new();
-                        for (j, n) in cell.content.iter().enumerate() {
-                            let mut p = cp.clone();
-                            p.push(j);
-                            let k = (b, *counter);
-                            match n {
-                                Node::Paragraph { .. } => {
-                                    *counter += 1;
-                                    let align = match cell.align {
-                                        Some(markie_rich::model::Align::Center) => Align::Center,
-                                        Some(markie_rich::model::Align::Right) => Align::Right,
-                                        _ => Align::Left,
-                                    };
-                                    kids.push(self.rich_leaf(k, look, look.size * 0.95, 1.5, cell.header, align, window, cx));
-                                }
-                                other => kids.push(self.render_node(b, other, p, counter, depth, look, window, cx)),
-                            }
-                        }
-                        cells.push(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .px(px(10.))
-                                .py(px(6.))
-                                .border_r_1()
-                                .border_color(look.border)
-                                .when(cell.header, |d| d.bg(look.code_bg))
-                                .children(kids)
-                                .into_any_element(),
-                        );
-                    }
-                    out_rows.push(h_flex().items_stretch().border_b_1().border_color(look.border).children(cells).into_any_element());
-                }
-                div()
-                    .mb(px(12. * look.zoom))
-                    .border_l_1()
-                    .border_t_1()
-                    .border_color(look.border)
-                    .rounded(px(4.))
-                    .children(out_rows)
-                    .into_any_element()
-            }
+            Node::Table { rows } => self.render_table(b, rows, path, counter, depth, look, window, cx),
         }
     }
 
+    /// `.markdown-body table`: columns as wide as their text (the table is
+    /// `display: block`, so it does not stretch), header cells bold and
+    /// centred unless aligned, a hairline under each body row.
+    #[allow(clippy::too_many_arguments)]
+    fn render_table(
+        &mut self,
+        b: usize,
+        rows: &[Vec<markie_rich::model::Cell>],
+        path: Vec<usize>,
+        counter: &mut usize,
+        depth: usize,
+        look: &Look,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let size = look.size * 0.9;
+        let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        let pad = |header: bool| if header { 1. } else { size };
+        // Column widths from each cell's text on one line.
+        let mut widths = vec![48f32 * look.zoom; ncols];
+        for row in rows {
+            for (c, cell) in row.iter().enumerate() {
+                let text = cell_text(&cell.content);
+                let mut st = look.base(size);
+                if cell.header {
+                    st.font.weight = FontWeight::BOLD;
+                }
+                let w = if text.is_empty() {
+                    0.
+                } else {
+                    let run = TextRun { len: text.len(), font: st.font.clone(), color: st.color, background_color: None, underline: None, strikethrough: None };
+                    f32::from(window.text_system().shape_line(SharedString::from(text), st.size, &[run], None).width)
+                };
+                widths[c] = widths[c].max(w + 2. * pad(cell.header) + 2.);
+            }
+        }
+        // Narrower than the column: share the room in proportion.
+        let room = f32::from(self.scroll.bounds().size.width).max(200.) - 2. * (f32::from(window.viewport_size().width) * 0.04).clamp(24., 48.);
+        let total: f32 = widths.iter().sum();
+        if total > room && total > 0. {
+            let k = room / total;
+            widths.iter_mut().for_each(|w| *w *= k);
+        }
+        let para = Ctx::DOC;
+        let mut out_rows = Vec::new();
+        for (r, row) in rows.iter().enumerate() {
+            let header_row = row.iter().all(|c| c.header);
+            let mut cells = Vec::new();
+            for (c, cell) in row.iter().enumerate() {
+                let mut cp = path.clone();
+                cp.push(r);
+                cp.push(c);
+                let align = match cell.align {
+                    Some(markie_rich::model::Align::Center) => Align::Center,
+                    Some(markie_rich::model::Align::Right) => Align::Right,
+                    Some(_) => Align::Left,
+                    None if cell.header => Align::Center,
+                    None => Align::Left,
+                };
+                let mut kids = Vec::new();
+                for (j, n) in cell.content.iter().enumerate() {
+                    let mut p = cp.clone();
+                    p.push(j);
+                    let k = (b, *counter);
+                    match n {
+                        Node::Paragraph { .. } => {
+                            *counter += 1;
+                            let mut base = look.base(size);
+                            if cell.header {
+                                base.font.weight = FontWeight::BOLD;
+                            }
+                            let el = self.rich_leaf(k, look, base, look.line_height, align, window, cx);
+                            let m = look.gap * size;
+                            kids.push((el, m, m));
+                        }
+                        other => {
+                            let el = self.render_node(b, other, p, counter, depth, para, look, window, cx);
+                            let (t, bm) = Self::margins(other, look, para);
+                            kids.push((el, t, bm));
+                        }
+                    }
+                }
+                let (el, t, bm) = stack(kids);
+                let (px_, py_) = if cell.header { (1., 1.) } else { (size, size * 0.55) };
+                cells.push(
+                    div()
+                        .w(px(widths.get(c).copied().unwrap_or(48.)))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .justify_center()
+                        .px(px(px_))
+                        .pt(px(py_ + t))
+                        .pb(px(py_ + bm))
+                        .child(el)
+                        .into_any_element(),
+                );
+            }
+            let surface = look.surface;
+            out_rows.push(
+                h_flex()
+                    .id(SharedString::from(format!("row-{b}-{r}")))
+                    .items_stretch()
+                    .when(!header_row, |d| d.border_b_1().border_color(look.rule).hover(move |s| s.bg(surface)))
+                    .children(cells)
+                    .into_any_element(),
+            );
+        }
+        div().flex().child(v_flex().children(out_rows)).into_any_element()
+    }
+
+    /// A list item's blocks, stacked; returns its outer margins too.
     #[allow(clippy::too_many_arguments)]
     fn render_item(
         &mut self,
@@ -649,32 +933,27 @@ impl RichView {
         path: Vec<usize>,
         counter: &mut usize,
         depth: usize,
+        ctx: Ctx,
         look: &Look,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> (AnyElement, f32, f32) {
         if item.is_empty() {
             // The virtual leaf of an empty item.
             let key = (b, *counter);
             *counter += 1;
-            return self.rich_leaf(key, look, look.size, 1.65, false, Align::Left, window, cx);
+            let lh = ctx.line_height.unwrap_or(look.line_height);
+            return (self.rich_leaf(key, look, look.base(look.size), lh, Align::Left, window, cx), 0., 0.);
         }
         let mut kids = Vec::new();
         for (j, n) in item.iter().enumerate() {
             let mut p = path.clone();
             p.push(j);
-            let el = match n {
-                // Paragraphs in a list sit close together.
-                Node::Paragraph { .. } => {
-                    let key = (b, *counter);
-                    *counter += 1;
-                    self.rich_leaf(key, look, look.size, 1.65, false, Align::Left, window, cx)
-                }
-                other => self.render_node(b, other, p, counter, depth + 1, look, window, cx),
-            };
-            kids.push(el);
+            let el = self.render_node(b, n, p, counter, depth + 1, ctx, look, window, cx);
+            let (t, bm) = Self::margins(n, look, ctx);
+            kids.push((el, t, bm));
         }
-        v_flex().pb(px(2.)).children(kids).into_any_element()
+        stack(kids)
     }
 
     fn is_atom_selected(&self, key: LeafKey) -> bool {
@@ -691,13 +970,26 @@ impl RichView {
         let live = self.live_width.filter(|(p, _)| *p == pos).map(|(_, w)| w);
         let w = live.or(width.map(|w| w as f32));
         let kind = markie_rich::html::media_kind(src);
-        let source = media::resolve(src, self.base_dir.as_deref());
+        let source = match media::resolve(src, self.base_dir.as_deref()) {
+            Source::Local(path) => {
+                let allowed = !self.restrict_local_media || self.base_dir.as_ref()
+                    .and_then(|dir| Some(path.canonicalize().ok()?.starts_with(dir.canonicalize().ok()?)))
+                    .unwrap_or(false);
+                if allowed && path.is_file() {
+                    Source::Local(path)
+                } else {
+                    self.cloud_media.get(&media::reference_key(src))
+                        .cloned().map(Source::Local).unwrap_or(Source::None)
+                }
+            }
+            source => source,
+        };
         let image: AnyElement = if kind != markie_rich::html::MediaKind::Image {
             // Playback is phase 5: a card for the clip.
             div()
                 .p(px(12.))
                 .rounded(px(6.))
-                .bg(look.code_bg)
+                .bg(look.surface)
                 .text_color(look.muted)
                 .text_size(px(look.size * 0.9))
                 .child(format!("{} · {src}", if kind == markie_rich::html::MediaKind::Video { "Video" } else { "Audio" }))
@@ -733,7 +1025,7 @@ impl RichView {
             let alt_text = alt.unwrap_or("").to_string();
             let fallback = {
                 let muted = look.muted;
-                let bg = look.code_bg;
+                let bg = look.surface;
                 let label = if alt_text.is_empty() { src.to_string() } else { alt_text.clone() };
                 move || {
                     div().p(px(12.)).rounded(px(6.)).bg(bg).text_color(muted).child(format!("Picture: {label}")).into_any_element()
@@ -741,7 +1033,7 @@ impl RichView {
             };
             match el {
                 Some(i) => {
-                    let i = i.object_fit(ObjectFit::Contain).with_fallback(fallback.clone()).max_w_full();
+                    let i = i.object_fit(ObjectFit::Contain).with_fallback(fallback.clone()).max_w_full().rounded(px(8.));
                     match w {
                         Some(w) => i.w(px(w * look.zoom)).into_any_element(),
                         None => i.into_any_element(),
@@ -757,9 +1049,10 @@ impl RichView {
             .right(px(-5.))
             .size(px(12.))
             .rounded(px(2.))
-            .bg(look.accent)
-            .border_1()
-            .border_color(gpui_kit::white())
+            .bg(look.link)
+            .border_2()
+            .border_color(look.background)
+            .rounded(px(3.))
             .cursor(CursorStyle::ResizeLeftRight)
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
@@ -770,17 +1063,20 @@ impl RichView {
                 this.resize = Some((pos, f32::from(ev.position.x), start));
                 this.live_width = Some((pos, start));
             }));
+        // The selected picture has a 2px blue outline, 2px off its edge.
         div()
-            .py(px(6.))
-            .mb(px(6.))
+            .flex()
             .child(
                 div()
                     .relative()
                     .flex_none()
                     .max_w_full()
                     .when(w.is_some(), |d| d.w(px(w.unwrap() * look.zoom)))
-                    .when(selected, |d| d.border_2().border_color(look.accent).rounded(px(3.)))
+                    .rounded(px(8.))
                     .child(image)
+                    .when(selected, |d| {
+                        d.child(div().absolute().top(px(-4.)).left(px(-4.)).right(px(-4.)).bottom(px(-4.)).rounded(px(10.)).border_2().border_color(look.link))
+                    })
                     .child(track(self.store.clone(), key))
                     .when(selected && kind == markie_rich::html::MediaKind::Image, |d| d.child(handle)),
             )
@@ -791,65 +1087,92 @@ impl RichView {
         let selected = self.is_atom_selected(key);
         let yt = media::youtube_id(url);
         let site = if yt.is_some() { "YouTube" } else { "Vimeo" };
-        let thumb = yt.map(|id| format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"));
-        let thumb_el: Option<AnyElement> = thumb.and_then(|t| {
-            match self.media.remote.get(&t) {
-                Some(media::Remote::Ready(i)) => Some(img(i.clone()).w(px(160.)).h(px(90.)).object_fit(ObjectFit::Cover).rounded(px(4.)).into_any_element()),
-                Some(_) => None,
-                None => {
-                    self.media.remote.insert(t.clone(), media::Remote::Loading);
-                    let u = t.clone();
-                    cx.spawn(async move |this, cx| {
-                        let fetched = cx.background_executor().spawn(async move { media::fetch(&u) }).await;
-                        this.update(cx, |this, cx| {
-                            this.media.remote.insert(t, match fetched {
-                                Some(i) => media::Remote::Ready(Arc::new(i)),
-                                None => media::Remote::Failed,
-                            });
-                            cx.notify();
-                        })
-                        .ok();
-                    })
-                    .detach();
-                    None
-                }
-            }
-        });
+        // Nothing is fetched until the card is hovered (link_card.rs and
+        // rich-embed.ts): then its title and picture come from the guarded
+        // preview fetch, for YouTube and Vimeo alike.
+        let _ = &yt;
+        let fetched = self.link_hover.embeds.get(url).cloned();
+        let title = fetched.as_ref().and_then(|(t, _)| t.clone()).unwrap_or_else(|| url.to_string());
+        let thumb_el: Option<AnyElement> = fetched
+            .and_then(|(_, i)| i)
+            .map(|i| img(i).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).into_any_element());
+        let hover_url = url.to_string();
+        // `.markie-embed-card`: the thumbnail at 16:9 with a play button
+        // and a strip carrying the address and the site. A click plays it
+        // (video.rs).
         let open_url = url.to_string();
+        let width = self.store.borrow().atoms.get(&key).map(|b| b.size.width);
+        let height = width.map(|w| w * (9. / 16.)).unwrap_or(px(360.));
+        let blue = look.link;
         div()
+            .id(SharedString::from(format!("embed-{}-{}", key.0, key.1)))
+            .group("embed")
             .relative()
-            .mb(px(10.))
-            .p(px(10.))
+            .w_full()
+            .h(height)
             .rounded(px(8.))
             .border_1()
-            .border_color(if selected { look.link } else { look.border })
-            .bg(look.code_bg)
+            .border_color(look.border)
+            .bg(look.surface2)
+            .overflow_hidden()
+            .cursor_pointer()
+            .children(thumb_el)
             .child(
-                h_flex()
-                    .gap(px(12.))
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .flex()
                     .items_center()
-                    .children(thumb_el.or_else(|| Some(div().w(px(160.)).h(px(90.)).rounded(px(4.)).bg(look.border).into_any_element())))
+                    .justify_center()
                     .child(
-                        v_flex()
-                            .gap(px(4.))
-                            .min_w_0()
-                            .child(div().text_size(px(look.size * 0.95)).font_weight(FontWeight::SEMIBOLD).child(format!("{site} video")))
-                            .child(div().text_size(px(look.size * 0.8)).text_color(look.muted).truncate().child(url.to_string()))
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("embed-open-{}-{}", key.0, key.1)))
-                                    .text_size(px(look.size * 0.8))
-                                    .text_color(look.link)
-                                    .cursor_pointer()
-                                    .child(format!("Open in {site}"))
-                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        cx.open_url(&open_url);
-                                    }),
-                            ),
+                        div()
+                            .w(px(68.))
+                            .h(px(48.))
+                            .rounded(px(14.))
+                            .bg(gpui_kit::black().opacity(0.7))
+                            .group_hover("embed", move |s| s.bg(blue))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(div().pl(px(4.)).text_size(px(22.)).line_height(px(22.)).text_color(gpui_kit::white()).child("▶")),
                     ),
             )
+            .child(
+                h_flex()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .px(px(12.))
+                    .py(px(10.))
+                    .gap(px(10.))
+                    .items_end()
+                    .bg(linear_gradient(
+                        180.,
+                        linear_color_stop(gpui_kit::black().opacity(0.0), 0.),
+                        linear_color_stop(gpui_kit::black().opacity(0.72), 1.),
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(gpui_kit::white())
+                            .child(title),
+                    )
+                    .child(div().flex_none().text_size(px(10.)).text_color(gpui_kit::white().opacity(0.85)).child(site.to_uppercase())),
+            )
+            .when(selected, |d| d.border_2().border_color(look.link))
             .child(track(self.store.clone(), key))
+            .on_hover(cx.listener(move |this, over: &bool, _, cx| this.embed_hover(hover_url.clone(), *over, cx)))
+            // The press selects the card, as on any block; the click plays
+            // it in the video viewer (`requestVideoViewer`).
+            .on_click(cx.listener(move |this, _, window, cx| this.open_video(&open_url, window, cx)))
             .into_any_element()
     }
 
@@ -872,6 +1195,12 @@ impl RichView {
         if look.focused && !self.editor.has_selection() && (h.block, h.leaf) == key && self.prompt.is_none() {
             d.caret = Some((h.offset, false));
         }
+        // While dragging the selection, the caret shows where it would land.
+        if let Some((_, Some(at))) = self.text_drag {
+            if (at.block, at.leaf) == key {
+                d.caret = Some((at.offset, false));
+            }
+        }
         if let Some(f) = &self.find {
             let _ = cx;
             for (i, m) in f.matches.iter().enumerate() {
@@ -885,17 +1214,47 @@ impl RichView {
                 d.marked = Some(m.offset..m.offset + n);
             }
         }
+        // Live peers and commented passages (markie-editor collab binding).
+        let span = |a: Pos, b: Pos| -> Option<std::ops::Range<usize>> {
+            let (a, b) = if a <= b { (a, b) } else { (b, a) };
+            if a == b || !((a.block, a.leaf) <= key && key <= (b.block, b.leaf)) {
+                return None;
+            }
+            let x = if (a.block, a.leaf) == key { a.offset } else { 0 };
+            let y = if (b.block, b.leaf) == key { b.offset } else { len + 1 };
+            Some(x..y)
+        };
+        for (a, b, color) in &self.comment_marks {
+            if let Some(r) = span(*a, *b) {
+                d.marks.push((r, *color));
+            }
+        }
+        for rc in &self.remote {
+            if let Some(r) = span(rc.anchor, rc.head) {
+                let mut c = rc.color;
+                c.a = 0x70 as f32 / 255.;
+                d.remote_selections.push((r, c));
+            }
+            if (rc.head.block, rc.head.leaf) == key {
+                let ms = rc.moved_at.elapsed().as_millis();
+                let label = if ms < crate::CARET_LABEL_MS * 62 / 100 {
+                    1.
+                } else if ms < crate::CARET_LABEL_MS {
+                    1. - (ms - crate::CARET_LABEL_MS * 62 / 100) as f32 / (crate::CARET_LABEL_MS * 38 / 100) as f32
+                } else {
+                    0.
+                };
+                d.remote_carets.push((rc.head.offset, rc.color, rc.name.clone(), label));
+            }
+        }
         d
     }
 
     /// A paragraph, heading or cell: styled runs, inline formulas, breaks.
     #[allow(clippy::too_many_arguments)]
-    fn rich_leaf(&mut self, key: LeafKey, look: &Look, size: f32, line_height: f32, bold: bool, align: Align, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn rich_leaf(&mut self, key: LeafKey, look: &Look, base: SegStyle, line_height: f32, align: Align, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let units = self.editor.units(key.0, key.1);
-        let mut base = look.base(size);
-        if bold {
-            base.font.weight = FontWeight::BOLD;
-        }
+        let size = f32::from(base.size);
         let mut segs: Vec<Seg> = Vec::new();
         let mut i = 0;
         while i < units.len() {
@@ -919,7 +1278,8 @@ impl RichView {
                     i += 1;
                 }
                 Unit::Atom(Inline::Math { source }) => {
-                    let m = self.media.math(source, false, base.color, size, look.scale);
+                    // KaTeX draws inline formulas at 1.21em too.
+                    let m = self.media.math(source, false, base.color, size * 1.21, look.scale);
                     let fallback_style = SegStyle { color: gpui_kit::red(), font: Font { family: look.mono.clone(), ..base.font.clone() }, ..base.clone() };
                     segs.push(Seg {
                         kind: match m {
@@ -943,7 +1303,10 @@ impl RichView {
             }
         }
         let len = units.len();
-        let deco = self.deco(key, len, look, cx);
+        let mut deco = self.deco(key, len, look, cx);
+        if !self.read_only {
+            deco.misspelled = self.misspelled(key, &units, cx);
+        }
         let spec = LeafSpec { segs, base, line_height, align, len };
         let el = LeafElement::new(key, spec, deco, self.store.clone());
         // Inline formulas open their source on a click.
@@ -956,15 +1319,12 @@ impl RichView {
             .w_full()
             .child(el)
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                if ev.click_count < 2 {
-                    return;
-                }
-                // A double click on a formula edits it.
+                // A click on a formula edits it in place (math_field.rs).
                 if let Some(p) = this.hit(ev.position) {
                     for i in [p.offset, p.offset.saturating_sub(1)] {
-                        if math_at.contains(&i) && (p.block, p.leaf) == (pos.block, pos.leaf) {
+                        if math_at.contains(&i) && (p.block, p.leaf) == (pos.block, pos.leaf) && this.hit_is_atom(ev.position, pos, i) {
                             cx.stop_propagation();
-                            this.open_prompt(super::PromptKind::InlineMath { at: Some((pos, i)) }, window, cx);
+                            this.open_math_field(pos, i, window, cx);
                             return;
                         }
                     }
@@ -973,63 +1333,41 @@ impl RichView {
             .into_any_element()
     }
 
-    /// Code, display math source or a raw block: plain text in mono.
+    /// Code, display math source or a raw block: plain text in mono. Code
+    /// blocks are drawn in one ink, as TipTap draws them. `spell` checks
+    /// spelling: Chromium checks a code block in the contenteditable like any
+    /// other text; the formula field turns it off (`rich-math.ts`).
     #[allow(clippy::too_many_arguments)]
-    fn plain_leaf(&mut self, key: LeafKey, look: &Look, size: f32, _raw: bool, language: Option<String>, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn plain_leaf(&mut self, key: LeafKey, look: &Look, size: f32, line_height: f32, color: Hsla, spell: bool, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let units = self.editor.units(key.0, key.1);
         let text: String = units.iter().map(|u| u.display()).collect();
         let mut base = look.base(size);
         base.font.family = look.mono.clone();
-        // Syntax colours by byte range, from GPUI Kit's highlighter.
-        let styles: Vec<(std::ops::Range<usize>, HighlightStyle)> = match language.as_deref().filter(|l| !l.is_empty()) {
-            Some(lang) => self.highlight(lang, &text, cx),
-            None => vec![],
-        };
+        base.color = color;
         let mut segs: Vec<Seg> = Vec::new();
-        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        let chars: Vec<char> = text.chars().collect();
         let mut i = 0;
-        let style_at = |byte: usize| styles.iter().find(|(r, _)| r.start <= byte && byte < r.end).map(|(_, s)| s.clone());
         while i < chars.len() {
-            if chars[i].1 == '\n' {
+            if chars[i] == '\n' {
                 segs.push(Seg { kind: SegKind::Break, units: i..i + 1 });
                 i += 1;
                 continue;
             }
             let start = i;
-            let st = style_at(chars[i].0);
             let mut s = String::new();
-            while i < chars.len() && chars[i].1 != '\n' && style_at(chars[i].0) == st {
-                s.push(chars[i].1);
+            while i < chars.len() && chars[i] != '\n' {
+                s.push(chars[i]);
                 i += 1;
             }
-            let mut seg_style = base.clone();
-            if let Some(h) = st {
-                if let Some(c) = h.color {
-                    seg_style.color = c;
-                }
-                if let Some(w) = h.font_weight {
-                    seg_style.font.weight = w;
-                }
-                if let Some(fs) = h.font_style {
-                    seg_style.font.style = fs;
-                }
-            }
-            segs.push(Seg { kind: SegKind::Text(s, seg_style), units: start..i });
+            segs.push(Seg { kind: SegKind::Text(s, base.clone()), units: start..i });
         }
         let len = units.len();
-        let deco = self.deco(key, len, look, cx);
-        let spec = LeafSpec { segs, base, line_height: 1.5, align: Align::Left, len };
+        let mut deco = self.deco(key, len, look, cx);
+        if spell && !self.read_only {
+            deco.misspelled = self.misspelled(key, &units, cx);
+        }
+        let spec = LeafSpec { segs, base, line_height, align: Align::Left, len };
         div().w_full().child(LeafElement::new(key, spec, deco, self.store.clone())).into_any_element()
-    }
-
-    fn highlight(&self, lang: &str, code: &str, cx: &App) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
-        use gpui_kit::component::highlighter::SyntaxHighlighter;
-        let theme = cx.theme().highlight_theme.clone();
-        let mut map = self.highlighters.borrow_mut();
-        let h = map.entry(lang.to_string()).or_insert_with(|| SyntaxHighlighter::new(lang));
-        let rope = gpui_kit::base::input::Rope::from_str(code);
-        h.update(None, &rope, None);
-        h.styles(&(0..code.len()), theme.as_ref())
     }
 }
 
@@ -1059,17 +1397,21 @@ fn align_of(a: &Option<String>) -> Align {
     }
 }
 
-/// A run's look from its marks.
+/// A run's look from its marks (`strong`, `em`, `del`, `code`, `a`,
+/// `mark`, `u` and TipTap's `textStyle` in `.markdown-body`).
 fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
     let mut s = base.clone();
     if m.bold {
-        s.font.weight = FontWeight::BOLD;
+        s.font.weight = FontWeight(650.);
     }
     if m.italic {
         s.font.style = FontStyle::Italic;
     }
     s.underline = m.underline;
-    s.strike = m.strike;
+    if m.strike {
+        s.strike = true;
+        s.color = look.muted;
+    }
     if let Some(t) = &m.text_style {
         if let Some(c) = t.color.as_deref().and_then(media::css_color) {
             s.color = c;
@@ -1081,20 +1423,42 @@ fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
             s.size = px(z * look.zoom);
         }
     }
-    if m.link.is_some() {
-        s.color = look.link;
-        s.underline = true;
+    if let Some(link) = &m.link {
+        // `a[data-doc-link="none"]`: muted, for a document not shared with
+        // this reader.
+        s.color = if !look.unshared_links.is_empty() && look.unshared_links.contains(&media::reference_key(&link.href)) { look.muted } else { look.link };
     }
     if let Some(h) = &m.highlight {
         let c = h.color.as_deref().and_then(media::css_color).unwrap_or_else(|| rgb(0xfef08a).into());
         s.background = Some(c);
-        // A highlighter is drawn on paper: dark text on it in either theme.
+        // A highlighter is drawn on paper: dark ink on it in either theme.
+        // (Electron keeps the page's ink, which is white on yellow in dark.)
         s.color = rgb(0x1f2328).into();
     }
     if m.code {
         s.font.family = look.mono.clone();
-        s.size = s.size * 0.9;
-        s.background = Some(look.code_bg);
+        s.size = s.size * 0.88;
+        s.color = look.code_fg;
+        s.background = Some(look.surface);
+        s.border = Some(look.rule);
+        s.pad_x = s.size * 0.4;
     }
     s
+}
+
+/// A cell's text on one line, to size its column.
+fn cell_text(nodes: &[Node]) -> String {
+    let mut out = String::new();
+    for n in nodes {
+        if let Node::Paragraph { content, .. } | Node::Heading { content, .. } = n {
+            for i in content {
+                match i {
+                    Inline::Text { text, .. } => out.push_str(text),
+                    Inline::Math { source } => out.push_str(source),
+                    Inline::HardBreak => out.push(' '),
+                }
+            }
+        }
+    }
+    out
 }

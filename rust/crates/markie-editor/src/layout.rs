@@ -21,6 +21,11 @@ pub struct SegStyle {
     pub background: Option<Hsla>,
     pub underline: bool,
     pub strike: bool,
+    /// Room inside the run's background at its two ends (inline code's
+    /// `padding: 0.2em 0.4em`). Zero for plain text.
+    pub pad_x: Pixels,
+    /// A hairline round the background (inline code's `border`).
+    pub border: Option<Hsla>,
 }
 
 #[derive(Clone)]
@@ -60,7 +65,9 @@ pub struct LeafSpec {
 }
 
 enum PlacedKind {
-    Text { shaped: ShapedLine, style: SegStyle, chars: Vec<usize> },
+    /// `lead` is the padding before the glyphs; `seg` groups the pieces of
+    /// one run so its background is drawn as one box.
+    Text { shaped: ShapedLine, style: SegStyle, chars: Vec<usize>, lead: Pixels, seg: usize },
     Box { height: Pixels, baseline: Pixels, image: Option<Arc<Image>>, fallback: Option<ShapedLine> },
     Break,
 }
@@ -139,7 +146,7 @@ struct Piece {
 
 fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
     let mut out = Vec::new();
-    for seg in &spec.segs {
+    for (seg_index, seg) in spec.segs.iter().enumerate() {
         match &seg.kind {
             SegKind::Break => out.push(Piece {
                 units: seg.units.clone(),
@@ -171,6 +178,7 @@ fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
             SegKind::Text(text, style) => {
                 let chars: Vec<(usize, char)> = text.char_indices().collect();
                 let mut k = 0usize;
+                let first_piece = out.len();
                 while k < chars.len() {
                     let start = k;
                     while k < chars.len() && !chars[k].1.is_whitespace() {
@@ -185,14 +193,16 @@ fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
                     let shaped = shape(piece, style, window);
                     let trimmed = piece.trim_end();
                     let fit = shaped.x_for_index(trimmed.len());
+                    let lead = if out.len() == first_piece { style.pad_x } else { px(0.) };
+                    let trail = if k >= chars.len() { style.pad_x } else { px(0.) };
                     out.push(Piece {
                         units: seg.units.start + start..seg.units.start + k,
-                        width: shaped.width,
+                        width: lead + shaped.width + trail,
                         ascent: shaped.ascent,
                         descent: shaped.descent,
-                        fit,
+                        fit: lead + fit + trail,
                         joins_next: trimmed.len() == piece.len(),
-                        kind: PlacedKind::Text { chars: char_bytes(piece), shaped, style: style.clone() },
+                        kind: PlacedKind::Text { chars: char_bytes(piece), shaped, style: style.clone(), lead, seg: seg_index },
                         text: Some((piece.to_string(), style.clone())),
                     });
                 }
@@ -268,6 +278,10 @@ pub fn layout(spec: &LeafSpec, width: Pixels, window: &Window) -> Laid {
                 line_has = true;
                 continue;
             };
+            let seg = match &p.kind {
+                PlacedKind::Text { seg, .. } => *seg,
+                _ => usize::MAX,
+            };
             let mut piece: &str = &text;
             let mut unit0 = p.units.start;
             while !piece.is_empty() {
@@ -282,7 +296,7 @@ pub fn layout(spec: &LeafSpec, width: Pixels, window: &Window) -> Laid {
                         ascent: shaped.ascent,
                         descent: shaped.descent,
                         line,
-                        kind: PlacedKind::Text { chars: char_bytes(piece), shaped, style: style.clone() },
+                        kind: PlacedKind::Text { chars: char_bytes(piece), shaped, style: style.clone(), lead: px(0.), seg },
                     });
                     x += w;
                     line_has = true;
@@ -311,7 +325,7 @@ pub fn layout(spec: &LeafSpec, width: Pixels, window: &Window) -> Laid {
                     ascent: hs.ascent,
                     descent: hs.descent,
                     line,
-                    kind: PlacedKind::Text { chars: char_bytes(head), shaped: hs, style: style.clone() },
+                    kind: PlacedKind::Text { chars: char_bytes(head), shaped: hs, style: style.clone(), lead: px(0.), seg },
                 });
                 line += 1;
                 x = px(0.);
@@ -417,9 +431,9 @@ impl Laid {
             }
             if u <= it.units.end {
                 let x = match &it.kind {
-                    PlacedKind::Text { shaped, chars, .. } => {
+                    PlacedKind::Text { shaped, chars, lead, .. } => {
                         let k = (u - it.units.start).min(chars.len() - 1);
-                        it.x + shaped.x_for_index(chars[k])
+                        it.x + *lead + shaped.x_for_index(chars[k])
                     }
                     PlacedKind::Box { .. } => it.x + it.width,
                     PlacedKind::Break => it.x,
@@ -461,8 +475,8 @@ impl Laid {
         for it in &visible {
             if x < it.x + it.width {
                 return match &it.kind {
-                    PlacedKind::Text { shaped, chars, .. } => {
-                        let byte = shaped.closest_index_for_x(x - it.x);
+                    PlacedKind::Text { shaped, chars, lead, .. } => {
+                        let byte = shaped.closest_index_for_x(x - it.x - *lead);
                         let k = chars.iter().position(|b| *b >= byte).unwrap_or(chars.len() - 1);
                         it.units.start + k
                     }
@@ -519,19 +533,53 @@ impl Laid {
     /// Paint at `origin` (the leaf's top left).
     pub fn paint(&self, origin: Point<Pixels>, window: &mut Window, cx: &mut App) {
         for l in &self.lines {
+            // Backgrounds first, one box per run on each line, so a run of
+            // inline code reads as one chip and not as one per word.
+            let items = &self.items[l.items.clone()];
+            let mut k = 0;
+            while k < items.len() {
+                let PlacedKind::Text { style, seg, .. } = &items[k].kind else {
+                    k += 1;
+                    continue;
+                };
+                let Some(bg) = style.background else {
+                    k += 1;
+                    continue;
+                };
+                let (x0, mut x1) = (items[k].x, items[k].x + items[k].width);
+                let (mut asc, mut desc) = (items[k].ascent, items[k].descent);
+                let mut j = k + 1;
+                while j < items.len() {
+                    match &items[j].kind {
+                        PlacedKind::Text { seg: s2, .. } if s2 == seg => {
+                            x1 = items[j].x + items[j].width;
+                            asc = asc.max(items[j].ascent);
+                            desc = desc.max(items[j].descent);
+                            j += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                let base_y = origin.y + l.top + l.baseline;
+                let pad_y = if style.border.is_some() { style.size * 0.2 } else { px(0.) };
+                let b = Bounds::new(
+                    point(origin.x + l.x_offset + x0, base_y - asc - pad_y),
+                    size(x1 - x0, asc + desc + pad_y * 2.),
+                );
+                let mut q = fill(b, bg);
+                if let Some(c) = style.border {
+                    q = q.corner_radii(px(5.)).border_widths(px(1.)).border_color(c);
+                }
+                window.paint_quad(q);
+                k = j;
+            }
             for it in &self.items[l.items.clone()] {
                 let x = origin.x + l.x_offset + it.x;
                 let base_y = origin.y + l.top + l.baseline;
                 match &it.kind {
-                    PlacedKind::Text { shaped, style, .. } => {
-                        if let Some(bg) = style.background {
-                            // Around the glyphs, not the whole line.
-                            let pad = it.descent * 0.5;
-                            let b = Bounds::new(point(x, base_y - it.ascent - pad), size(it.width, it.ascent + it.descent + pad * 2.));
-                            window.paint_quad(fill(b, bg).corner_radii(px(3.)));
-                        }
+                    PlacedKind::Text { shaped, lead, .. } => {
                         let _ = shaped.paint(
-                            point(x, base_y - it.ascent),
+                            point(x + *lead, base_y - it.ascent),
                             it.ascent + it.descent,
                             TextAlign::Left,
                             None,

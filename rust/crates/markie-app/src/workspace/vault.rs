@@ -37,6 +37,10 @@ pub const IDLE_LOCK: Duration = Duration::from_secs(5 * 60);
 pub const CHECKPOINT: Duration = Duration::from_secs(2);
 /// Revealed values mask themselves again this long after the last reveal.
 pub const REVEAL_REMASK: Duration = Duration::from_secs(60);
+
+fn should_auto_lock(locked: bool, shielded: bool, hidden: bool, idle: Duration) -> bool {
+    !locked && !shielded && (hidden || idle >= IDLE_LOCK)
+}
 const MASK: &str = "••••••••••••";
 const ENV_MEDIA_TYPE: &str = "text/plain";
 const COPY_NOTE: &str = "It is now on the clipboard, outside the vault. Markie clears it after 30 seconds if it is still there.";
@@ -313,7 +317,13 @@ impl VaultPage {
         let text_editor = cx.new(|cx| EditorState::new(window, cx).language("text").line_number(false).soft_wrap(true));
         let raw_editor = cx.new(|cx| EditorState::new(window, cx).language("text").line_number(false).soft_wrap(true));
 
+        let page = cx.weak_entity();
         let subscriptions = vec![
+            window.observe_window_visibility(move |visibility, window, cx| {
+                if !visibility.is_visible() {
+                    let _ = page.update(cx, |page, cx| page.maybe_auto_lock(true, window, cx));
+                }
+            }),
             cx.subscribe(&passphrase, |this, _, e: &InputEvent, cx| match e {
                 InputEvent::Change => cx.notify(),
                 InputEvent::PressEnter { .. } => this.pending_submit = Some(Submit::Authenticate),
@@ -543,7 +553,30 @@ impl VaultPage {
     /// `lockNow`.
     pub fn lock_now(&mut self, message: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.operation += 1;
-        self.repo.lock().unwrap_or_else(|p| p.into_inner()).lock();
+        let ticket = self.operation;
+        let mut deferred_lock = false;
+        match self.repo.try_lock() {
+            Ok(mut repo) => repo.lock(),
+            Err(std::sync::TryLockError::Poisoned(repo)) => repo.into_inner().lock(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // A save or biometric operation may still own the repository.
+                // Shield the UI now, even when releasing the key has to wait.
+                deferred_lock = true;
+                let repo = self.repo.clone();
+                let lock = cx.background_spawn(async move {
+                    repo.lock().unwrap_or_else(|p| p.into_inner()).lock();
+                });
+                cx.spawn(async move |this, cx| {
+                    lock.await;
+                    let _ = this.update(cx, |page, cx| {
+                        if page.operation == ticket {
+                            page.busy = false;
+                            cx.notify();
+                        }
+                    });
+                }).detach();
+            }
+        }
         self.gate = None;
         self.gate_busy = false;
         self.pending_confirm = None;
@@ -560,7 +593,7 @@ impl VaultPage {
         self.error = None;
         self.locked = true;
         self.shielded = false;
-        self.busy = false;
+        self.busy = deferred_lock;
         self.notice = message.into();
         self.clear_secret_inputs(window, cx);
         self.set_editor_text(&self.text_editor.clone(), "", window, cx);
@@ -575,7 +608,7 @@ impl VaultPage {
 
     /// Whether leaving the page would lose edits. The caller asks first.
     pub fn has_unsaved(&self) -> bool {
-        self.opened.as_ref().is_some_and(|d| d.dirty) || self.repo.lock().map(|r| r.has_volatile_recovery()).unwrap_or(false)
+        self.opened.as_ref().is_some_and(|d| d.dirty) || self.repo.try_lock().map(|r| r.has_volatile_recovery()).unwrap_or(true)
     }
 
     /// The shared tail of every way in.
@@ -584,6 +617,10 @@ impl VaultPage {
         match listed {
             Ok(entries) => {
                 self.has_vault = Some(true);
+                if !window.is_visible() {
+                    self.lock_now("Vault locked because this page is hidden.", window, cx);
+                    return;
+                }
                 self.locked = false;
                 self.entries = entries;
                 self.suggested = None;
@@ -1268,14 +1305,18 @@ impl VaultPage {
                         this.sync_env_masks(window, cx);
                         cx.notify();
                     }
-                    if !this.locked && !this.shielded && this.last_activity.elapsed() >= IDLE_LOCK {
-                        this.automatic_lock(window, cx);
-                    }
+                    this.maybe_auto_lock(false, window, cx);
                 }) else {
                     break;
                 };
             }
         });
+    }
+
+    fn maybe_auto_lock(&mut self, hidden: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if should_auto_lock(self.locked, self.shielded, hidden, self.last_activity.elapsed()) {
+            self.automatic_lock(window, cx);
+        }
     }
 
     fn automatic_lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1284,6 +1325,7 @@ impl VaultPage {
         let ticket = self.operation;
         self.busy = true;
         self.clear_secret_inputs(window, cx);
+        cx.notify();
         let checkpoint = self.opened.as_ref().filter(|d| d.dirty).map(|d| {
             let name = if valid_filename(&d.original_name, &d.name) { d.name.clone() } else { d.original_name.clone() };
             (d.id.clone(), d.current_bytes(), VaultDocumentMetadata { name, media_type: d.media_type.clone() })
@@ -1306,7 +1348,7 @@ impl VaultPage {
                 if ticket != this.operation {
                     return;
                 }
-                let recovery = this.repo.lock().map(|r| r.has_volatile_recovery()).unwrap_or(false);
+                let recovery = this.repo.try_lock().map(|r| r.has_volatile_recovery()).unwrap_or(false);
                 let message = match outcome {
                     None => "Locked after the checkpoint time limit. The last saved copy is retained; check encrypted recovery after unlocking.",
                     Some(Ok(())) => "Automatically locked. Encrypted changes were checkpointed before releasing the key.",
@@ -2192,6 +2234,15 @@ mod tests {
     }
 
     /// The whole flow the page drives, on a scratch file and in-memory Touch ID.
+    #[test]
+    fn hidden_window_triggers_the_same_lock_as_idle_without_reentering() {
+        assert!(should_auto_lock(false, false, true, Duration::ZERO));
+        assert!(should_auto_lock(false, false, false, IDLE_LOCK));
+        assert!(!should_auto_lock(false, false, false, IDLE_LOCK - Duration::from_secs(1)));
+        assert!(!should_auto_lock(false, true, true, IDLE_LOCK));
+        assert!(!should_auto_lock(true, false, true, IDLE_LOCK));
+    }
+
     #[test]
     fn create_save_lock_unlock_backup_restore() {
         use markie_vault::device::{FakeBiometric, MemorySecretStore};

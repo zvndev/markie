@@ -210,9 +210,8 @@ pub enum RichEvent {
     /// Documents dropped on the editor, to open (attach.ts leaves them to
     /// the window's open path).
     OpenPaths(Vec<PathBuf>),
-    /// A click on a link to a file, as `classify_click` decided it: the
-    /// host opens, reveals or refuses it.
-    OpenLocal(markie_core::links::LinkClick),
+    /// A local link click. The host applies its own workspace grants.
+    OpenLocal(String),
     /// The toolbar asked for a zoom (a `ZOOM_STEPS` value) or a page width
     /// (a `WIDTH_STEPS` value); the host stores both.
     Zoom(f32),

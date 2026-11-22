@@ -22,6 +22,7 @@ pub(crate) struct NumberingLevel {
 
 pub(crate) struct NumberingInspection {
     pub definitions: BTreeMap<String, BTreeMap<u32, NumberingLevel>>,
+    definition_order: Vec<String>,
     pub problem: Option<&'static str>,
 }
 
@@ -69,7 +70,7 @@ fn canonical(id: &str, max_digits: usize, allow_zero: bool) -> bool {
 }
 
 pub(crate) fn inspect_docx_numbering(state: &State) -> Result<NumberingInspection> {
-    let mut out = NumberingInspection { definitions: BTreeMap::new(), problem: None };
+    let mut out = NumberingInspection { definitions: BTreeMap::new(), definition_order: Vec::new(), problem: None };
     let Some(name) = related_docx_part(state, "numbering")? else { return Ok(out) };
     let Some(source) = docx_part_source(state, &name)? else { return Ok(out) };
     let root = parse_xml(&source)?;
@@ -155,7 +156,9 @@ pub(crate) fn inspect_docx_numbering(state: &State) -> Result<NumberingInspectio
                 }
             }
         }
-        out.definitions.insert(id.unwrap_or("").to_string(), levels);
+        let id = id.unwrap_or("").to_string();
+        out.definition_order.push(id.clone());
+        out.definitions.insert(id, levels);
     }
     Ok(out)
 }
@@ -165,8 +168,10 @@ fn ensure_docx_list(state: &State, kind: ListKind) -> Result<(State, String)> {
     if let Some(p) = inspected.problem {
         return Err(invalid("unsupported-numbering", p));
     }
-    // Definitions iterate in insertion (document) order in TypeScript; numeric ids sort the same here for found lists.
-    if let Some((id, _)) = inspected.definitions.iter().find(|(_, d)| d.get(&0).is_some_and(|l| l.kind == kind)) {
+    // TypeScript's Map reuses the first matching instance in the document.
+    if let Some(id) = inspected.definition_order.iter().find(|id| {
+        inspected.definitions[*id].get(&0).is_some_and(|level| level.kind == kind)
+    }) {
         return Ok((state.clone(), id.clone()));
     }
     let namespace = parse_xml(&state.source)?.namespace;

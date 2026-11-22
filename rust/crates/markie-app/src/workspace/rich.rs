@@ -132,28 +132,21 @@ impl Workspace {
         });
     }
 
-    /// A click on a link to a file, already classified by
-    /// `markie_core::links::classify_click` (local-link.ts and
-    /// local-open-policy.js): a document opens here, another passive file in
-    /// its own app, and programs, installers and bundles only in Finder.
-    fn open_rich_link(&mut self, click: &markie_core::links::LinkClick, window: &mut Window, cx: &mut Context<Self>) {
-        use markie_core::links::LinkClick;
-        match click {
-            LinkClick::Open(path) => {
-                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                if markie_editor::attach::opens_as_document(&name) {
-                    self.open_path(path, window, cx);
-                } else {
-                    cx.open_with_system(path);
-                }
-            }
+    /// Like Electron's open-local-file handler, apply the workspace's
+    /// grants before handing a passive file to the OS default app.
+    fn open_rich_link(&mut self, href: &str, _window: &mut Window, cx: &mut Context<Self>) {
+        use markie_core::links::{LinkClick, classify_click_with_roots};
+        let dir = self.doc.as_ref().filter(|d| !d.untitled).and_then(|d| d.path.parent());
+        let roots = self.registry.as_ref().and_then(|r| r.roots().ok()).unwrap_or_default();
+        match classify_click_with_roots(href, dir, &roots) {
+            LinkClick::Open(path) => cx.open_with_system(&path),
             // Programs and installers are shown in Finder, not run, and the
             // page says so (`openAsLocalFile`).
             LinkClick::Reveal(path) => {
-                cx.reveal_path(path);
+                cx.reveal_path(&path);
                 self.rich.update(cx, |r, cx| r.show_notice("Shown in Finder. Markie doesn't run programs or installers from a document link.", cx));
             }
-            LinkClick::Refuse(why) => self.rich.update(cx, |r, cx| r.show_notice(*why, cx)),
+            LinkClick::Refuse(why) => self.rich.update(cx, |r, cx| r.show_notice(why, cx)),
             LinkClick::Web(_) | LinkClick::Ignore => {}
         }
     }

@@ -7,7 +7,9 @@
 //   node accounts.mjs accept <base> <token> <docIdFile>
 //   node accounts.mjs bobjson <base> <docIdFile> <token> <dir> <out>
 //   node accounts.mjs docs <base> <token>
+//   node accounts.mjs put <base> <token> <name> <content>
 import { readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 
 const [cmd, base, ...rest] = process.argv.slice(2);
 if (!/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(base)) throw new Error("local servers only");
@@ -100,6 +102,11 @@ if (cmd === "signup") {
   const docs = await call("GET", "/api/docs", undefined, read(tokenFile));
   const rows = docs.data?.docs ?? docs.data ?? [];
   for (const d of rows) console.log(JSON.stringify({ name: d.name, version: d.version, shared: d.shared, origin: d.origin ?? d.createdBy ?? null }));
+} else if (cmd === "put") {
+  const [tokenFile, name, content] = rest;
+  const hash = createHash("sha256").update(content).digest("hex");
+  const r = await call("PUT", `/api/docs/${randomUUID()}`, { name, content, hash, baseVersion: 0 }, read(tokenFile));
+  console.log(`put ${r.status}`);
 } else {
   throw new Error(`unknown ${cmd}`);
 }

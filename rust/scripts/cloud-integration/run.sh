@@ -27,8 +27,9 @@ TMPDIR="$scratch" MARKIE_TEST_PORT="$port" "$repo/rust/crates/markie-cloud/scrip
 server=$!
 cleanup() { touch "$scratch/stop"; [ -n "${app:-}" ] && kill "$app" 2>/dev/null; [ -n "${peer:-}" ] && kill "$peer" 2>/dev/null; kill "$server" 2>/dev/null; rm -rf "$data"; rm -f "$scratch"/*.token "$scratch/bob.json"; }
 trap cleanup EXIT INT TERM
-for _ in $(seq 1 60); do curl -fsS "$base/health" >/dev/null 2>&1 && break; sleep 0.5; done
+for _ in $(seq 1 60); do grep -q "(log " "$scratch/serve.out" 2>/dev/null && curl -fsS "$base/health" >/dev/null 2>&1 && break; sleep 0.5; done
 log=$(sed -n 's/.*(log \(.*\))$/\1/p' "$scratch/serve.out")
+[ -n "$log" ] || { echo "the scratch server did not start" >&2; exit 1; }
 
 cat > "$scratch/home/Docs/plan.md" <<'MD'
 # Launch plan
@@ -76,12 +77,18 @@ peer=$!
 for _ in $(seq 1 120); do [ -f "$scratch/peer-sees.json" ] && grep -q "Bob is typing" "$scratch/home/Docs/plan.md" && break; sleep 0.5; done
 sleep 6
 
+# Bob shares a document of his own with Alice, who has not accepted him:
+# it waits in the Cloud page's Requests.
+node "$here/accounts.mjs" put "$base" "$scratch/bob.token" from-bob.md "# From Bob"
+node "$here/accounts.mjs" share "$base" "$scratch/bob.token" from-bob.md "$alice" editor "$scratch/bobdoc"
+
 disc="$data/agent/agent-bridge-a65.json"
 node "$here/agent.mjs" "$repo" "$disc" cloud_status "{\"path\":\"$scratch/home/Docs/plan.md\"}" >"$out/agent-status.json"
 node "$here/agent.mjs" "$repo" "$disc" comments_add "{\"path\":\"$scratch/home/Docs/plan.md\",\"quote\":\"quick brown fox\",\"body\":\"Is Friday still the date?\",\"agent\":\"Claude Code\"}" >"$out/agent-comment.json"
 node "$here/agent.mjs" "$repo" "$disc" comments_list "{\"path\":\"$scratch/home/Docs/plan.md\"}" >"$out/agent-comments-list.json"
 node "$here/agent.mjs" "$repo" "$disc" cloud_sync "{\"path\":\"$scratch/home/Docs/notes.md\",\"agent\":\"Claude Code\"}" >"$out/agent-sync.json"
-sleep 5
+wait_for "1 share requests waiting"
+sleep 3
 node "$here/accounts.mjs" docs "$base" "$scratch/alice2.token" >"$out/server-docs.txt"
 cp "$scratch/peer-sees.json" "$out/" ; cp "$scratch/home/Docs/plan.md" "$out/plan-after.md"
 cp "$data"/doc-meta/*/comments.json "$out/comments.json" 2>/dev/null || true

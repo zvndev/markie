@@ -864,6 +864,8 @@ impl Workspace {
             )
             .children(chips)
             .when(!booting, |el| el.children(self.render_share_requests(cx)))
+            // Nothing has arrived yet: the skeleton stands for the whole list.
+            .when(booting, |el| el.child(skeleton(&p)))
             .when(show_list, |el| {
                 el.child(
                     v_flex()

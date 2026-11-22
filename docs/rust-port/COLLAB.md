@@ -64,7 +64,7 @@ Small changes in other agents' files, each a few lines:
 | Caret kept through remote edits | Matches | The caret is held as relative positions across each remote update. | `a_remote_edit_keeps_the_local_caret_on_its_character` |
 | When a document goes live | Matches | A cloud copy (the sync binding's signed-in scope, `CloudWorkspace::bound_scope`), a server answer, at least one member, and not a large document (page.tsx). Read-only while checking; an offline role proved before for this account still counts. Membership changes from the share sheet re-check without restarting a running session. | window run (`alice-owner.log`: "access Owner, 2 members") |
 | Presence renewal | Matches (fixed in this work) | Every 15 s the local state is set again with its clock raised, as y-protocols' renewal does. Resending the same clock was ignored by the server and peers, which dropped Markie RS after 30 s and then left its socket silent enough to reconnect. | `renewing_presence_raises_its_clock`; `live_interop` waits 36 s and checks both peers are still present with no reconnect |
-| Cursor published only while focused | Differs | Markie RS publishes the caret whenever it moves in a live document, focused or not. | |
+| Cursor published only while focused | Matches | As y-tiptap's `updateCursorInfo`: published on moves only while the rich editor has focus, removed from awareness when focus leaves (INTEGRATION-CLOUD.md). | integration run: an unfocused window shows the peer no caret |
 
 ## Section 12: comments
 
@@ -75,7 +75,7 @@ Small changes in other agents' files, each a few lines:
 | Add, reply, resolve, reopen, delete | Built | Margin layer over a live rich document, as `comments.tsx`: bubbles at anchors (24 px, author colour, comment count, 30 px apart), the thread card at the bubble, "Comment" on a selection, the composer, "N resolved ▾" list. Delete shows for your own comments, and for the owner on any. | REST: markie-cloud `local_server`; layer not yet screenshot |
 | Anchor format, Y.RelativePosition JSON | Matches | Made with y-tiptap's `absolutePositionToRelativePosition` and written as `Y.relativePositionToJSON` writes it; read back with `relativePositionToAbsolutePosition`. A deleted passage hides the bubble, as the web does. | `live_interop` (TipTap's anchor on "fox" resolves in Rust; Rust's anchor on "quick brown" resolves in TipTap); `comment_anchors_survive_edits_before_them`, `every_position_round_trips_through_a_relative_position` |
 | Poll every 15 s | Matches | Pausing while the window is hidden is not built. | |
-| Composer keys | Differs | Enter sends. The field is one line, so Shift+Enter does not start a new line, and Escape does not cancel (Cancel does). | |
+| Composer keys | Matches | A two-row text area: Enter sends, Shift+Enter starts a new line, Escape cancels a new comment (INTEGRATION-CLOUD.md). | |
 | Shown only in live rich sessions | Matches | As RichView mounts the layer. | |
 
 ### Local comments
@@ -86,9 +86,9 @@ Small changes in other agents' files, each a few lines:
 | Quote anchors | Matches | `text-anchor.mjs` ported in UTF-16 offsets: context of 32, whitespace-collapsed fallback, prefix and suffix scoring, nearest hint, the agent's `locateQuote` with its exact error strings. | `comments::anchor::tests` |
 | Detached threads | Matches | Listed apart with "The text these were on has changed or been removed."; never dropped. | `threads_round_trip…` |
 | Panel, toggle, highlights in View | Built | 300 px panel, "Comments" toggle at 40 px from the top, "Comment" on a selection, passages tinted `rgba(96,165,250,0.14)` (0.32 when active). View-to-Markdown mapping is `local-comments.ts`'s projection, byte for byte. | `comments::project::tests` (matches the TypeScript output); panel not yet screenshot |
-| Highlights in Source | Not built | Source mode's editor (GPUI Kit) has no decoration hook for this yet. The panel still works. | |
+| Highlights in Source | Matches | GPUI Kit's decoration collections tint each open, anchored passage as source-comments.ts does (INTEGRATION-CLOUD.md). "Comment" on a Source selection is not built. | `source_marks_cover_the_quote_in_bytes` |
 | An agent's comment shows without a reload | Matches in effect | The panel re-reads `comments.json` when its modification time changes (checked each second) instead of an IPC event. | |
-| Agents add, reply and resolve through MCP | Not wired | `LocalComments::{add_from_agent, reply, set_status}` exist with the MCP's rules; the Markie RS agent bridge (another agent) has to call them. | |
+| Agents add, reply and resolve through MCP | Matches | The bridge's `comments_*` methods port agent-comments.js on top of `LocalComments` (INTEGRATION-CLOUD.md). | markie-agent `comments` tests; live bridge run |
 | Records follow a rename or move | Not wired | `LocalComments::move_records` ports `doc-meta.js` `move()`, including `.replaced-N`; the rename and move code (another agent) has to call it. | `threads_round_trip…` (rename case) |
 | Super-nightly gate | Matches | Off unless `MARKIE_RS_NIGHTLY=1` or the `nightly` setting is `1`, as `nightlyFeaturesEnabled`. Hidden while a document is live. | |
 
@@ -103,8 +103,8 @@ Small changes in other agents' files, each a few lines:
 | General access and public link | Built | Restricted or Anyone with the link, which publishes at once; "See what a stranger sees"; Live Doc variants with Electron's two lines. | `links` |
 | Copy link | Matches | The public page when there is one (never for a Live Doc), else `/d/:id` on the docs origin; "Link copied" for 2 s. | `links` |
 | Files on this computer note | Matches | `localAssetCount` ported; same sentence. | `local_files_are_counted_like_attach_ts` |
-| Accept, decline, block, unblock, remove people | Partly placed | The account sheet (sign-in work) already lists accepted people. `Workspace::render_share_requests` (Requests, with Accept, Decline and Block) and `render_people_settings` port `share-people.tsx` with its wording; the requests panel belongs on the Cloud page (sync work) and is not placed there yet. | REST in `local_server` |
-| Shared by me, shared with me | Not built here | The Cloud page is the sync work's; `SharesClient::shared_by_me` exists. | |
+| Accept, decline, block, unblock, remove people | Built | Requests (Accept, Decline, Block) sit on the Cloud page; Remove, Block and Unblock are in the account sheet (INTEGRATION-CLOUD.md). | REST in `local_server`; requests counted in the integration run |
+| Shared by me, shared with me | Built | The Cloud page's source chips and badges, from the listing and `GET /api/docs/shared-by-me` (INTEGRATION-CLOUD.md). | `cloud_page` tests |
 | View-only banner | Matches | "Shared with you · view only" (with "by …" when known), "Checking your access…", the unreachable line, and Make a copy (duplicates the file). | `roles_and_banners` |
 | Role remembered offline per account | Matches | Kept in Markie RS's registry settings as `share_role:<path>` = `role|userId`, read only for the same account. | |
 | Hosted Live Doc address | Not built | `SharesClient::live_doc_address` exists; Live Docs are a nightly area owned elsewhere. | |
@@ -169,10 +169,6 @@ Evidence from the runs recorded here:
 |---|---|---|
 | Screenshots of the share sheet, margin, panel, carets, avatars and banner | this work, with screen permission | Needs Screen Recording for the agent's shell and a focusable window. The scenario script sets everything else up. |
 | Side-by-side with Electron | Kirby's call | The packaged Electron app refuses a localhost server; a dev build of Electron, or a staging server, would allow it. |
-| Re-check after sync turns on | cloud sync | The live session looks for a binding when a document opens and when Share is pressed; calling `Workspace::collab_recheck` (or `attach_cloud_doc`) right after sync turns on would start it at once. |
-| Place the requests panel | cloud sync | `render_share_requests` on the Cloud page. |
-| Local comments from agents, and on rename | agent bridge, dialogs | `add_from_agent`, `reply`, `set_status`; `move_records`. |
+| Local comments on rename | dialogs | `move_records`. Agents now comment through the bridge (INTEGRATION-CLOUD.md). |
 | Legacy room migration of `$…$` and front matter | this work | Rare: only rooms seeded by builds before the model stamp. |
-| Multi-line comment composer | this work | A text area with Enter to send. |
-| Highlights in Source | editor behaviour | Needs a decoration hook in the Source editor. |
 | The access-removed line contains an em dash | Kirby | It is Electron's wording (rich-view.tsx), copied for parity. Change both apps or neither. |

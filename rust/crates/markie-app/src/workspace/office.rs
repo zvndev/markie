@@ -84,6 +84,13 @@ fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>
             view.update(cx, |v, _| v.set_zoom(1.0));
             cx.notify();
         }
+        WordViewEvent::Zoom(zoom) => {
+            // Electron's presets (0.75, 1.25) are finer than the shared
+            // setting's tenths; the Word view keeps the exact preset.
+            this.set_zoom(*zoom, cx);
+            this.zoom = *zoom;
+            cx.notify();
+        }
     });
     (view, subscription)
 }

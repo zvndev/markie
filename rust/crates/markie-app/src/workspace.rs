@@ -36,6 +36,7 @@ mod palette;
 mod panels;
 mod rail;
 mod rich;
+mod text_view;
 mod settings;
 
 /// The panel on the right of the document.
@@ -398,8 +399,12 @@ impl Workspace {
                 let kind = match doc.content {
                     Content::Text { text, encoding, bom } => {
                         let language = doc.format.editor_language();
+                        // Electron shows literal text formats in a plain field:
+                        // no syntax colors and no line numbers.
+                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !large;
                         self.editor.update(cx, |state, cx| {
-                            state.set_highlighter(language, cx);
+                            state.set_highlighter(if literal { "text" } else { language }, cx);
+                            state.set_line_number(!literal, window, cx);
                             state.set_value(text.clone(), window, cx);
                         });
                         self.set_preview(&text, doc.format, cx);
@@ -421,7 +426,9 @@ impl Workspace {
                         match office::open(&doc.path, doc.format, window, cx) {
                             Ok(office) => DocKind::Office(office),
                             Err(message) => {
-                                window.push_notification(message, cx);
+                                // Deferred: a file passed at launch opens before the
+                                // window's notification root exists.
+                                window.defer(cx, move |window, cx| window.push_notification(message, cx));
                                 DocKind::Engine
                             }
                         }
@@ -1008,34 +1015,25 @@ impl Workspace {
         match (&doc.kind, self.mode) {
             (DocKind::Office(office), _) => office::render(office, self.zoom, cx),
             (DocKind::Engine, _) => {
+                // The Office engine refused the file. Electron keeps the page
+                // and shows its reason in a red strip; the reason is in the
+                // notification, so the strip says what happened.
                 let path = doc.path.clone();
                 v_flex()
                     .size_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
                     .bg(theme.background)
                     .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("{} document", doc.format.label())),
-                    )
-                    .child(
-                        div()
-                            .max_w(px(420.))
-                            .text_sm()
-                            .text_center()
-                            .text_color(theme.muted_foreground)
-                            .child(
-                                "The native Office engine is Phase 4 of the Rust port. \
-                                 Until then this build opens the file in its own app.",
-                            ),
-                    )
-                    .child(
-                        Button::new("open-system")
-                            .label("Open in default app")
-                            .on_click(move |_, _, cx| cx.open_with_system(&path)),
+                        h_flex()
+                            .px(px(20.))
+                            .py(px(10.))
+                            .gap(px(12.))
+                            .text_size(px(12.))
+                            .bg(theme.muted)
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .text_color(theme.danger)
+                            .child(div().flex_1().child(format!("This {} document could not be opened. Nothing in the file was changed.", doc.format.label())))
+                            .child(Button::new("open-system").xsmall().ghost().label("Open in default app").on_click(move |_, _, cx| cx.open_with_system(&path))),
                     )
                     .into_any_element()
             }
@@ -1063,9 +1061,20 @@ impl Workspace {
                     )
                     .into_any_element()
             }
+            // Literal text formats look like Electron's TextDocumentEditor.
+            (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => self.render_text(cx),
             _ => div()
                 .size_full()
+                .flex()
+                .flex_col()
                 .bg(theme.background)
+                .when_some(
+                    match &doc.kind {
+                        DocKind::Text { saved, .. } if doc.large => Some(saved.len()),
+                        _ => None,
+                    },
+                    |d, bytes| d.child(text_view::large_strip(bytes, cx)),
+                )
                 .child(
                     Editor::new(&self.editor)
                         .bordered(false)

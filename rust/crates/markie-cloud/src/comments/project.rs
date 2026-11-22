@@ -400,8 +400,10 @@ mod tests {
 
     #[test]
     fn projection_drops_syntax() {
+        // The expected text is what src/lib/local-comments.ts projectMarkdown
+        // returns for the same input.
         let p = project_markdown("---\ntitle: x\n---\n# Head\n\nSome **bold** and [a link](https://x.y) `code`.\n\n- [ ] task\n\n| a | b |\n|---|---|\n");
-        assert_eq!(s(&p.text), "Head\n\nSome bold and a link code.\n\ntask\n\n a   b \n");
+        assert_eq!(s(&p.text), "Head\n\nSome bold and a link code.\n\ntask\n\n  a   b  \n\n");
     }
 
     #[test]

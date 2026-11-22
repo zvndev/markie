@@ -170,7 +170,7 @@ async fn markie_rs_and_tiptap_share_a_room() {
     );
     let mut binding = RichBinding::new(doc.clone());
     let mut ed = Editor::parse(DOC);
-    until(&session, &mut binding, &mut ed, 20, "first sync", |s, ..| s.synced()).await;
+    until(&session, &mut binding, &mut ed, 20, "first sync", |s, _, _| s.synced()).await;
     tokio::time::sleep(Duration::from_millis(markie_cloud::collab::SEED_SETTLE_MS)).await;
     assert!(binding.is_empty(), "a new room is empty");
     assert!(session.send_update(binding.seed_update(&ed, false)));
@@ -289,9 +289,9 @@ async fn markie_rs_and_tiptap_share_a_room() {
     let mut ced = Editor::parse("");
     until(&carol_session, &mut cb, &mut ced, 20, "Carol's sync", |s, b, _| s.synced() && !b.is_empty()).await;
     assert_eq!(ced.to_markdown().trim_end(), ed.to_markdown().trim_end());
-    until(&session, &mut binding, &mut ed, 20, "Carol's presence", |s, ..| s.peers().iter().any(|p| p.user.name == "Carol Viewer")).await;
+    until(&session, &mut binding, &mut ed, 20, "Carol's presence", |s, _, _| s.peers().iter().any(|p| p.user.name == "Carol Viewer")).await;
     SharesClient::new(&alice).remove(&doc_id, &carol_id(&carol).await).await.unwrap();
-    until(&carol_session, &mut cb, &mut ced, 20, "the 4403", |s, ..| s.status().is_final()).await;
+    until(&carol_session, &mut cb, &mut ced, 20, "the 4403", |s, _, _| s.status().is_final()).await;
     assert_eq!(carol_session.status(), LiveStatus::Closed(CloseReason::AccessRevoked));
     let _ = alice_id;
     session.shutdown().await;

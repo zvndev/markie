@@ -253,6 +253,56 @@ pub const REQUESTS_INTRO: &str = "Nothing someone shares reaches your Markie unt
 pub const PEOPLE_INTRO: &str = "What these people share lands in your Markie. Removing someone takes everything they shared out of your Markie at once.";
 pub const PEOPLE_EMPTY: &str = "Nobody yet. When someone shares with you, accept them in Requests.";
 
+/// How many things the document points at that live on this computer
+/// (attach.ts `localAssetCount`): sharing sends the text and nothing else.
+pub fn local_asset_count(markdown: &str) -> usize {
+    use std::sync::OnceLock;
+    static MD: OnceLock<regex::Regex> = OnceLock::new();
+    static HTML: OnceLock<regex::Regex> = OnceLock::new();
+    static SCHEME: OnceLock<regex::Regex> = OnceLock::new();
+    static DOC: OnceLock<regex::Regex> = OnceLock::new();
+    let md = MD.get_or_init(|| regex::Regex::new(r"!?\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]+)").unwrap());
+    let html = HTML.get_or_init(|| regex::Regex::new(r#"(?i)<(?:img|video|audio|source)\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))"#).unwrap());
+    let scheme = SCHEME.get_or_init(|| regex::Regex::new(r"(?i)^[a-z][a-z0-9+.-]*:").unwrap());
+    let doc = DOC.get_or_init(|| regex::Regex::new(r"(?i)\.(md|markdown|mdx|txt|text|log|csv)$").unwrap());
+    let mut targets: Vec<String> = md
+        .captures_iter(markdown)
+        .map(|c| {
+            let t = c[1].to_string();
+            if t.starts_with('<') && t.ends_with('>') { t[1..t.len() - 1].to_string() } else { t }
+        })
+        .collect();
+    targets.extend(html.captures_iter(markdown).map(|c| c.get(1).or(c.get(2)).or(c.get(3)).map(|m| m.as_str().to_string()).unwrap_or_default()));
+    let mut seen = HashSet::new();
+    for t in targets {
+        if t.is_empty() || t.starts_with('#') || t.starts_with("//") || scheme.is_match(&t) {
+            continue;
+        }
+        let bare = t.split('#').next().unwrap_or("").split('?').next().unwrap_or("");
+        if doc.is_match(bare) {
+            continue;
+        }
+        seen.insert(t);
+    }
+    seen.len()
+}
+
+/// The note about local files (share-dialog.tsx `LocalFilesNotice`), as its
+/// bold lead and the rest.
+pub fn local_files_notice(count: usize) -> Option<(String, String)> {
+    if count < 1 {
+        return None;
+    }
+    let lead = if count == 1 { "1 file on this computer".to_string() } else { format!("{count} files on this computer") };
+    let rest = format!(
+        " {} linked from this document. Sharing sends the text, so whoever opens it will see a gap where {}. To send {} along, use Export, which folds pictures into the file itself.",
+        if count == 1 { "is" } else { "are" },
+        if count == 1 { "it is" } else { "they are" },
+        if count == 1 { "it" } else { "them" }
+    );
+    Some((lead, rest))
+}
+
 /// A person's display name: their name, else their address.
 pub fn who(name: Option<&str>, email: &str) -> String {
     name.filter(|n| !n.is_empty()).unwrap_or(email).to_string()
@@ -316,6 +366,14 @@ mod tests {
         assert!(can_edit_document(ShareRoleState::Local));
         assert_eq!(share_banner_for(ShareRoleState::Viewer, Some("Ada")).unwrap().1, "Shared with you by Ada · view only");
         assert_eq!(share_banner_for(ShareRoleState::Editor, None), None);
+    }
+
+    #[test]
+    fn local_files_are_counted_like_attach_ts() {
+        let md = "![a](pic.png) ![b](https://x.io/b.png) [c](other.md) [d](<my file.pdf>) <img src=\"pic.png\" width=\"3\"> ![e](data:image/png;base64,AA) [f](#top)";
+        assert_eq!(local_asset_count(md), 2);
+        assert_eq!(local_files_notice(2).unwrap().0, "2 files on this computer");
+        assert!(local_files_notice(0).is_none());
     }
 
     #[test]

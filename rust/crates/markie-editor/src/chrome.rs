@@ -325,6 +325,10 @@ impl Render for RichView {
         let prompt = self.render_prompt(cx);
         let doc = self.render_document(window, cx);
         let find = self.render_find(cx);
+        // Peers' name tags fade out after a move; keep drawing until they have.
+        if self.remote.iter().any(|r| r.moved_at.elapsed().as_millis() < crate::CARET_LABEL_MS) {
+            window.request_animation_frame();
+        }
         if std::env::var("MARKIE_RICH_DEBUG").is_ok() {
             eprintln!("render {} blocks in {:?}", self.editor.block_count(), started.elapsed());
         }

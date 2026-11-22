@@ -4648,10 +4648,12 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "markie-cloud",
  "markie-core",
  "markie-editor",
  "markie-office",
  "markie-office-view",
+ "markie-rich",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "pulldown-cmark",
@@ -4660,17 +4662,20 @@ dependencies = [
  "serde_json",
  "trash",
  "url",
+ "yrs",
 ]
 
 [[package]]
 name = "markie-cloud"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "getrandom 0.3.4",
  "hex",
  "keyring",
  "percent-encoding",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -4711,10 +4716,14 @@ name = "markie-editor"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "markie-cloud",
  "markie-math",
  "markie-rich",
  "reqwest",
  "serde_json",
+ "tokio",
+ "url",
+ "uuid",
  "yrs",
 ]
 

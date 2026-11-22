@@ -849,6 +849,39 @@ impl RichView {
                 d.marked = Some(m.offset..m.offset + n);
             }
         }
+        // Live peers and commented passages (markie-editor collab binding).
+        let span = |a: Pos, b: Pos| -> Option<std::ops::Range<usize>> {
+            let (a, b) = if a <= b { (a, b) } else { (b, a) };
+            if a == b || !((a.block, a.leaf) <= key && key <= (b.block, b.leaf)) {
+                return None;
+            }
+            let x = if (a.block, a.leaf) == key { a.offset } else { 0 };
+            let y = if (b.block, b.leaf) == key { b.offset } else { len + 1 };
+            Some(x..y)
+        };
+        for (a, b, color) in &self.comment_marks {
+            if let Some(r) = span(*a, *b) {
+                d.marks.push((r, *color));
+            }
+        }
+        for rc in &self.remote {
+            if let Some(r) = span(rc.anchor, rc.head) {
+                let mut c = rc.color;
+                c.a = 0x70 as f32 / 255.;
+                d.remote_selections.push((r, c));
+            }
+            if (rc.head.block, rc.head.leaf) == key {
+                let ms = rc.moved_at.elapsed().as_millis();
+                let label = if ms < crate::CARET_LABEL_MS * 62 / 100 {
+                    1.
+                } else if ms < crate::CARET_LABEL_MS {
+                    1. - (ms - crate::CARET_LABEL_MS * 62 / 100) as f32 / (crate::CARET_LABEL_MS * 38 / 100) as f32
+                } else {
+                    0.
+                };
+                d.remote_carets.push((rc.head.offset, rc.color, rc.name.clone(), label));
+            }
+        }
         d
     }
 

@@ -186,11 +186,33 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// Emitted when the document changes, so the host can autosave.
+/// Emitted when the document changes, so the host can autosave. In a live
+/// room (`collab_undo`), ⌘Z and ⌘⇧Z go to the host, whose shared undo
+/// takes back only this person's edits.
 #[derive(Debug, Clone)]
 pub enum RichEvent {
     Changed,
+    Undo,
+    Redo,
 }
+
+/// Someone else's caret and selection in a live room, already resolved to
+/// editor positions by the collab binding. Drawn like TipTap's
+/// CollaborationCaret: a 2px bar in their colour, a name tag that shows for a
+/// moment after they move, and their selection in their colour at 44%.
+#[derive(Debug, Clone)]
+pub struct RemoteCursor {
+    pub client: u64,
+    pub name: SharedString,
+    pub color: Hsla,
+    pub anchor: Pos,
+    pub head: Pos,
+    pub moved_at: std::time::Instant,
+}
+
+/// How long a remote caret's name tag shows after a move (globals.css
+/// `markie-caret-label`: full for 62% of 2.4 s, then fading).
+pub const CARET_LABEL_MS: u128 = 2400;
 
 impl EventEmitter<RichEvent> for RichView {}
 
@@ -255,6 +277,12 @@ pub struct RichView {
     pub(crate) resize: Option<(Pos, f32, f32)>,
     pub(crate) live_width: Option<(Pos, f32)>,
     emitted: u64,
+    /// Peers' carets in a live room (set by the host's collab binding).
+    pub remote: Vec<RemoteCursor>,
+    /// Commented passages to tint (local comments), with their colour.
+    pub comment_marks: Vec<(Pos, Pos, Hsla)>,
+    /// Undo and redo belong to the live room's shared history.
+    pub collab_undo: bool,
     pub(crate) highlighters: RefCell<std::collections::HashMap<String, gpui_kit::component::highlighter::SyntaxHighlighter>>,
 }
 
@@ -282,6 +310,9 @@ impl RichView {
             resize: None,
             live_width: None,
             emitted: 0,
+            remote: Vec::new(),
+            comment_marks: Vec::new(),
+            collab_undo: false,
             highlighters: RefCell::new(Default::default()),
         }
     }
@@ -301,6 +332,33 @@ impl RichView {
         }
         self.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
+    }
+
+    /// After the live room changed the document under the editor (the host's
+    /// collab binding replaced `editor`): redraw without reporting a local
+    /// edit, so the change is not sent back.
+    pub fn remote_changed(&mut self, cx: &mut Context<Self>) {
+        if self.heights.len() != self.editor.block_count() {
+            self.heights.clear();
+        }
+        self.emitted = self.editor.version;
+        self.marked = None;
+        self.drag = None;
+        self.refresh_find();
+        cx.notify();
+    }
+
+    /// Where a position's caret was last drawn, in window coordinates. None
+    /// for a leaf not on screen.
+    pub fn caret_rect(&self, p: Pos) -> Option<Bounds<Pixels>> {
+        let pl = self.placement(p)?;
+        let c = pl.laid.caret(p.offset.min(pl.laid.len), false);
+        Some(Bounds::new(point(pl.bounds.origin.x + c.origin.x, pl.bounds.origin.y + c.origin.y), c.size))
+    }
+
+    /// The scrolling document area as last drawn, in window coordinates.
+    pub fn viewport(&self) -> Bounds<Pixels> {
+        self.scroll.bounds()
     }
 
     /// The document as it would be saved.
@@ -490,11 +548,23 @@ impl RichView {
         self.edit(cx, |e| e.paste_markdown(&text));
     }
     fn on_undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.collab_undo {
+            if !self.read_only {
+                cx.emit(RichEvent::Undo);
+            }
+            return;
+        }
         self.edit(cx, |e| {
             e.undo();
         });
     }
     fn on_redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.collab_undo {
+            if !self.read_only {
+                cx.emit(RichEvent::Redo);
+            }
+            return;
+        }
         self.edit(cx, |e| {
             e.redo();
         });

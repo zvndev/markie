@@ -36,7 +36,8 @@ fn pair(md: &str) -> (RichBinding, Editor, RichBinding, Editor) {
     a.refresh();
     let mut b = RichBinding::new(new_doc(2));
     sync(a.doc(), b.doc());
-    let mut eb = Editor::parse("");
+    // Both people open the same file; the room then matches it.
+    let mut eb = Editor::parse(md);
     b.pull(&mut eb, None).unwrap();
     (a, ea, b, eb)
 }
@@ -94,8 +95,15 @@ fn concurrent_edits_in_one_paragraph_converge() {
     a.pull(&mut ea, ca).unwrap();
     let cb = b.caret(&eb);
     b.pull(&mut eb, cb).unwrap();
+    assert_eq!(ea.doc.nodes(), eb.doc.nodes());
     assert_eq!(ea.to_markdown(), eb.to_markdown());
     assert!(ea.to_markdown().contains("First ALPHA paragraph here BETA."), "{}", ea.to_markdown());
+    // A client that never had the file draws the same document.
+    let mut fresh = Editor::parse("");
+    let mut c = RichBinding::new(new_doc(3));
+    sync(a.doc(), c.doc());
+    c.pull(&mut fresh, None).unwrap();
+    assert_eq!(fresh.doc.nodes(), ea.doc.nodes());
     // Untouched blocks kept their bytes on both sides.
     assert!(ea.to_markdown().contains("| a | b |\n|---|---|\n| 1 | 2 |"));
 }

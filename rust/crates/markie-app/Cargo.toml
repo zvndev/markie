@@ -15,6 +15,9 @@ markie-core.workspace = true
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }
+markie-cloud = { path = "../markie-cloud" }
+markie-rich = { path = "../markie-rich" }
+yrs = "=0.28.2"
 anyhow.workspace = true
 serde_json.workspace = true
 serde.workspace = true

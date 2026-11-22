@@ -30,6 +30,9 @@ use crate::library::Library;
 
 mod account;
 mod chrome;
+mod collab;
+mod comments;
+mod share;
 mod file_ops;
 mod office;
 mod palette;
@@ -112,6 +115,8 @@ pub struct Workspace {
     page_width: f32,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
+    /// Live collaboration, comments and sharing (collab.rs, comments.rs, share.rs).
+    collab: collab::Collab,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -191,6 +196,7 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             pending_editor_text: None,
+            collab: collab::Collab::default(),
             zoom: 1.0,
             page_width: 768.0,
             _subscriptions: subscriptions,
@@ -480,6 +486,7 @@ impl Workspace {
                     .file_name()
                     .map_or_else(|| paths::APP_NAME.to_string(), |n| n.to_string_lossy().into_owned());
                 window.set_window_title(&title);
+                self.collab_on_open(cx);
             }
             Err(err) => {
                 window.push_notification(err.to_string(), cx);
@@ -513,6 +520,7 @@ impl Workspace {
     }
 
     fn on_edit(&mut self, cx: &mut Context<Self>) {
+        self.live_source_edit(cx);
         let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         let text = self.editor.read(cx).value().to_string();
         self.dirty = &text != saved;
@@ -1160,12 +1168,22 @@ impl Render for Workspace {
                                     .h_full()
                                     .overflow_hidden()
                                     .children(banner)
-                                    .child(div().flex_1().min_h_0().overflow_hidden().child(self.render_document(cx))),
+                                    .children(self.render_live_banner(cx))
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .flex_1()
+                                            .min_h_0()
+                                            .overflow_hidden()
+                                            .child(self.render_document(cx))
+                                            .children(self.render_comments(window, cx)),
+                                    ),
                             )
                             .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))
                         }
                     }),
             )
             .children(self.render_search(cx))
+            .children(self.render_share(window, cx))
     }
 }

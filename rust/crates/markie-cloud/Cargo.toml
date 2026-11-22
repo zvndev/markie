@@ -25,6 +25,7 @@ uuid = { version = "1", features = ["v4"] }
 getrandom = "0.3"
 percent-encoding = "2"
 base64 = "0.22"
+regex = "1"
 
 [dev-dependencies]
 wiremock = "0.6"

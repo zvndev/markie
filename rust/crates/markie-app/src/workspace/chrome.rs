@@ -187,11 +187,7 @@ impl Workspace {
         }
     }
 
-    /// The Share button. Markie RS has no cloud session yet; the cloud work
-    /// replaces this body with the share sheet.
-    pub(crate) fn open_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.push_notification("Sharing arrives with Markie Cloud sign-in.", cx);
-    }
+    // The Share button opens `open_share` (share.rs).
 
     fn copy_all(&mut self, cx: &mut Context<Self>) {
         let text = self.current_text(cx);
@@ -322,6 +318,8 @@ impl Workspace {
                 &p,
                 cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(CommandPalette), cx)),
             ))
+            // The live dot and peers' avatars (collab.rs), as toolbar.tsx.
+            .children(self.render_presence(&p))
             .child(self.render_mode_switch(&p, cx))
             .child(self.render_theme_button(&p, cx))
             .child(vrule(&p))

@@ -117,3 +117,12 @@ fn table_bar() {
     while ed.undo() {}
     assert_eq!(ed.to_markdown(), md);
 }
+
+#[test]
+fn an_address_pasted_over_a_selection_links_it() {
+    let mut ed = Editor::parse("read this\n");
+    ed.set_caret(Pos::new(0, 0, 5), false);
+    ed.set_caret(Pos::new(0, 0, 9), true);
+    ed.paste_markdown("https://example.com");
+    assert_eq!(ed.to_markdown(), "read [this](https://example.com)\n");
+}

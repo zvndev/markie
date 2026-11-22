@@ -36,6 +36,7 @@ mod palette;
 mod panels;
 mod rich;
 mod settings;
+pub mod source;
 
 /// The panel on the right of the document.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -127,7 +128,7 @@ impl Workspace {
                 .searchable(true)
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx).selectable(true));
-        let (rich, rich_sub) = Self::new_rich(cx);
+        let (rich, rich_sub) = Self::new_rich(window, cx);
 
         let subscriptions = vec![
             cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
@@ -1365,6 +1366,7 @@ impl Render for Workspace {
             .id("workspace")
             .track_focus(&self.focus_handle)
             .key_context("Workspace")
+            .map(|d| Self::source_actions(d, cx))
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))

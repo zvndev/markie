@@ -10,10 +10,16 @@ use markie_editor::{RichEvent, RichView};
 use super::{DocKind, Mode, OpenDoc, Workspace};
 
 impl Workspace {
-    pub(super) fn new_rich(cx: &mut Context<Self>) -> (Entity<RichView>, Subscription) {
+    pub(super) fn new_rich(window: &mut Window, cx: &mut Context<Self>) -> (Entity<RichView>, Subscription) {
         let rich = cx.new(RichView::new);
-        let sub = cx.subscribe(&rich, |this, _, ev: &RichEvent, cx| match ev {
+        let sub = cx.subscribe_in(&rich, window, |this, _, ev: &RichEvent, window, cx| match ev {
             RichEvent::Changed => this.on_rich_edit(cx),
+            RichEvent::OpenPaths(paths) => {
+                if let Some(p) = paths.first() {
+                    this.open_path(p, window, cx);
+                }
+            }
+            RichEvent::OpenLocal(href) => this.open_rich_link(href, window, cx),
         });
         (rich, sub)
     }
@@ -102,4 +108,39 @@ impl Workspace {
             }
         });
     }
+
+    /// A click on a link to a file (local-link.ts `openLocalFile`): a
+    /// document opens here, anything else in its own app.
+    fn open_rich_link(&mut self, href: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let href = href.split('#').next().unwrap_or("");
+        if href.is_empty() {
+            return;
+        }
+        let decoded = href.replace("%20", " ");
+        let raw = decoded.strip_prefix("file://").unwrap_or(&decoded);
+        let path = std::path::Path::new(raw);
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            let Some(dir) = self.doc.as_ref().and_then(|d| d.path.parent().map(|p| p.to_path_buf())) else { return };
+            dir.join(path)
+        };
+        if !path.exists() {
+            return;
+        }
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if markie_editor::attach::opens_as_document(&name) {
+            self.open_path(&path, window, cx);
+        } else if path.is_dir() || is_program(&path) {
+            // Programs and installers are shown in Finder, never run.
+            cx.reveal_path(&path);
+        } else {
+            cx.open_with_system(&path);
+        }
+    }
+}
+
+fn is_program(p: &std::path::Path) -> bool {
+    let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    matches!(ext.as_str(), "app" | "command" | "sh" | "pkg" | "dmg" | "exe" | "msi" | "bat" | "cmd" | "jar" | "scpt" | "workflow" | "terminal")
 }

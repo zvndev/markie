@@ -142,7 +142,48 @@ pub fn sniff(b: &[u8]) -> Option<ImageFormat> {
 
 /// Fetch a remote picture (on a background thread), with the same caps
 /// a browser would hit sooner or later: 20 MB and 15 seconds.
+/// A remote picture, from the on-disk cache when it was fetched in the last
+/// week (Electron gets this from Chromium's HTTP cache). The cache lives in
+/// Markie RS's own data folder.
 pub fn fetch(url: &str) -> Option<Image> {
+    fetch_cached(url, &markie_core::paths::data_dir().join("Cache").join("pictures"))
+}
+
+const CACHE_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+const CACHE_MAX_FILES: usize = 2000;
+
+fn cache_name(url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut h);
+    format!("{:016x}-{}", h.finish(), url.len())
+}
+
+pub fn fetch_cached(url: &str, dir: &Path) -> Option<Image> {
+    let file = dir.join(cache_name(url));
+    if let Ok(meta) = std::fs::metadata(&file) {
+        let fresh = meta.modified().ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age < CACHE_AGE);
+        if fresh {
+            if let Ok(bytes) = std::fs::read(&file) {
+                if let Some(format) = sniff(&bytes) {
+                    return Some(Image::from_bytes(format, bytes));
+                }
+            }
+        }
+    }
+    let img = fetch_remote(url)?;
+    if std::fs::create_dir_all(dir).is_ok() {
+        if std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0) >= CACHE_MAX_FILES {
+            // Simple bound: start again rather than grow without limit.
+            let _ = std::fs::remove_dir_all(dir);
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&file, img.bytes());
+    }
+    Some(img)
+}
+
+fn fetch_remote(url: &str) -> Option<Image> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .user_agent("Markie RS")

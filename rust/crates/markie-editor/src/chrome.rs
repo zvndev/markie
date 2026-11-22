@@ -333,6 +333,15 @@ impl Render for RichView {
             .children(toolbar)
             .children(prompt)
             .children(find)
-            .child(div().flex_1().min_h_0().child(doc))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(doc)
+                    .children(self.render_table_bar(cx))
+                    .children(self.render_math_field(cx))
+                    .children(self.render_link_card(window, cx)),
+            )
     }
 }

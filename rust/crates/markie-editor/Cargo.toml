@@ -10,4 +10,10 @@ publish.workspace = true
 markie-rich = { path = "../markie-rich" }
 markie-math = { path = "../markie-math" }
 gpui-kit = "=0.10.0"
+markie-core.workspace = true
+url = "2"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSSpellChecker"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSRange", "NSArray"] }

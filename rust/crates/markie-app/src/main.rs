@@ -121,6 +121,7 @@ fn main() {
             gpui_kit::init(cx);
             bind_keys(cx);
             markie_editor::bind_keys(cx);
+            workspace::source::bind_keys(cx);
             set_menus(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.activate(true);

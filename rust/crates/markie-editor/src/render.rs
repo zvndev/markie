@@ -227,6 +227,8 @@ impl RichView {
             .on_action(cx.listener(Self::on_find_next))
             .on_action(cx.listener(Self::on_find_prev))
             .on_action(cx.listener(Self::on_escape))
+            .map(|d| self.accessibility(d, window))
+            .map(|d| Self::behaviour(d, cx))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -755,30 +757,13 @@ impl RichView {
         let selected = self.is_atom_selected(key);
         let yt = media::youtube_id(url);
         let site = if yt.is_some() { "YouTube" } else { "Vimeo" };
-        let thumb = yt.map(|id| format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"));
-        let thumb_el: Option<AnyElement> = thumb.and_then(|t| {
-            match self.media.remote.get(&t) {
-                Some(media::Remote::Ready(i)) => Some(img(i.clone()).w(px(160.)).h(px(90.)).object_fit(ObjectFit::Cover).rounded(px(4.)).into_any_element()),
-                Some(_) => None,
-                None => {
-                    self.media.remote.insert(t.clone(), media::Remote::Loading);
-                    let u = t.clone();
-                    cx.spawn(async move |this, cx| {
-                        let fetched = cx.background_executor().spawn(async move { media::fetch(&u) }).await;
-                        this.update(cx, |this, cx| {
-                            this.media.remote.insert(t, match fetched {
-                                Some(i) => media::Remote::Ready(Arc::new(i)),
-                                None => media::Remote::Failed,
-                            });
-                            cx.notify();
-                        })
-                        .ok();
-                    })
-                    .detach();
-                    None
-                }
-            }
-        });
+        // Nothing is fetched until the card is hovered (link_card.rs).
+        let fetched = self.link_hover.embeds.get(url).cloned();
+        let title = fetched.as_ref().and_then(|(t, _)| t.clone()).unwrap_or_else(|| url.to_string());
+        let thumb_el: Option<AnyElement> = fetched
+            .and_then(|(_, i)| i)
+            .map(|i| img(i).w(px(160.)).h(px(90.)).object_fit(ObjectFit::Cover).rounded(px(4.)).into_any_element());
+        let hover_url = url.to_string();
         let open_url = url.to_string();
         div()
             .relative()
@@ -798,7 +783,7 @@ impl RichView {
                             .gap(px(4.))
                             .min_w_0()
                             .child(div().text_size(px(look.size * 0.95)).font_weight(FontWeight::SEMIBOLD).child(format!("{site} video")))
-                            .child(div().text_size(px(look.size * 0.8)).text_color(look.muted).truncate().child(url.to_string()))
+                            .child(div().text_size(px(look.size * 0.8)).text_color(look.muted).truncate().child(title))
                             .child(
                                 div()
                                     .id(SharedString::from(format!("embed-open-{}-{}", key.0, key.1)))
@@ -814,6 +799,8 @@ impl RichView {
                     ),
             )
             .child(track(self.store.clone(), key))
+            .id(SharedString::from(format!("embed-card-{}-{}", key.0, key.1)))
+            .on_hover(cx.listener(move |this, over: &bool, _, cx| this.embed_hover(hover_url.clone(), *over, cx)))
             .into_any_element()
     }
 
@@ -907,7 +894,10 @@ impl RichView {
             }
         }
         let len = units.len();
-        let deco = self.deco(key, len, look, cx);
+        let mut deco = self.deco(key, len, look, cx);
+        if !self.read_only {
+            deco.misspelled = self.misspelled(key, &units, cx);
+        }
         let spec = LeafSpec { segs, base, line_height, align, len };
         let el = LeafElement::new(key, spec, deco, self.store.clone());
         // Inline formulas open their source on a click.
@@ -920,15 +910,12 @@ impl RichView {
             .w_full()
             .child(el)
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                if ev.click_count < 2 {
-                    return;
-                }
-                // A double click on a formula edits it.
+                // A click on a formula edits it in place (math_field.rs).
                 if let Some(p) = this.hit(ev.position) {
                     for i in [p.offset, p.offset.saturating_sub(1)] {
-                        if math_at.contains(&i) && (p.block, p.leaf) == (pos.block, pos.leaf) {
+                        if math_at.contains(&i) && (p.block, p.leaf) == (pos.block, pos.leaf) && this.hit_is_atom(ev.position, pos, i) {
                             cx.stop_propagation();
-                            this.open_prompt(super::PromptKind::InlineMath { at: Some((pos, i)) }, window, cx);
+                            this.open_math_field(pos, i, window, cx);
                             return;
                         }
                     }

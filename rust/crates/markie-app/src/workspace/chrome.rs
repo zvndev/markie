@@ -187,7 +187,8 @@ impl Workspace {
         }
     }
 
-    // The Share button opens `open_share` (share.rs).
+    // The Share button opens `open_share` (share.rs): the share sheet for a
+    // document with a cloud copy, else the sync opt-in or an Office snapshot.
 
     fn copy_all(&mut self, cx: &mut Context<Self>) {
         let text = self.current_text(cx);

@@ -233,6 +233,18 @@ impl History {
     /// Keep what `file` says now, before `next` replaces it.
     pub fn capture(&self, file: &Path, next: &str, writer: Writer) -> std::io::Result<Captured> {
         let next_hash = sha256_hex(next.as_bytes());
+        self.capture_hash(file, next_hash, writer)
+    }
+
+    /// The Node MCP announces the hash just before replacing the file.
+    pub fn note_agent_write(&self, file: &Path, hash: &str, agent: String) -> std::io::Result<Captured> {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "sha256 is required."));
+        }
+        self.capture_hash(file, hash.to_ascii_lowercase(), Writer::Agent(agent))
+    }
+
+    fn capture_hash(&self, file: &Path, next_hash: String, writer: Writer) -> std::io::Result<Captured> {
         let stamp_writer = |this: &Self| {
             let (author, agent) = match &writer {
                 Writer::User => ("user".to_string(), None),
@@ -250,7 +262,7 @@ impl History {
             stamp_writer(self);
             return Ok(Captured::Duplicate);
         }
-        if previous == next {
+        if prev_hash == next_hash {
             stamp_writer(self);
             return Ok(Captured::Unchanged);
         }

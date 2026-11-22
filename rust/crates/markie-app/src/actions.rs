@@ -24,6 +24,8 @@ actions!(
         ToggleStar,
         ImportFromMarkie,
         OpenSettings,
+        OpenAccount,
+        ShowCloud,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -31,5 +33,10 @@ actions!(
         PageNarrower,
         ToggleLibrary,
         Quit,
+        ShowShortcuts,
+        ShowAbout,
+        RichMode,
+        SourceMode,
+        MoveDocument,
     ]
 );

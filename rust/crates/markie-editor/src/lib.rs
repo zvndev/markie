@@ -16,9 +16,13 @@ pub mod media;
 /// Live-room binding (no rendering): see `collab/mod.rs`.
 pub mod collab;
 mod render;
+pub use render::MONO;
 mod chrome;
+mod rail;
+pub mod style;
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -194,6 +198,13 @@ pub enum RichEvent {
     Changed,
     Undo,
     Redo,
+    DocumentLink(String),
+    /// The toolbar asked for a zoom (a `ZOOM_STEPS` value) or a page width
+    /// (a `WIDTH_STEPS` value); the host stores both.
+    Zoom(f32),
+    PageWidth(f32),
+    Print,
+    History,
 }
 
 /// Someone else's caret and selection in a live room, already resolved to
@@ -247,6 +258,13 @@ pub(crate) struct FindBar {
     replace: Entity<InputState>,
     matches: Vec<FindMatch>,
     current: usize,
+    /// `Aa` and `ab`, and whether the replace row shows (`find-bar.tsx`).
+    pub(crate) case_sensitive: bool,
+    pub(crate) whole_word: bool,
+    pub(crate) show_replace: bool,
+    /// What `matches` was computed from: the query, the document version
+    /// and the two toggles. A frame with the same key searches nothing.
+    searched: Option<(String, u64, bool, bool)>,
     _subs: Vec<Subscription>,
 }
 
@@ -256,6 +274,9 @@ pub struct RichView {
     scroll: ScrollHandle,
     store: SharedStore,
     base_dir: Option<PathBuf>,
+    cloud_media: HashMap<String, PathBuf>,
+    cloud_links: HashSet<String>,
+    restrict_local_media: bool,
     pub zoom: f32,
     pub page_width: f32,
     pub read_only: bool,
@@ -283,7 +304,41 @@ pub struct RichView {
     pub comment_marks: Vec<(Pos, Pos, Hsla)>,
     /// Undo and redo belong to the live room's shared history.
     pub collab_undo: bool,
-    pub(crate) highlighters: RefCell<std::collections::HashMap<String, gpui_kit::component::highlighter::SyntaxHighlighter>>,
+    /// The template's typography and doc rule (`style.rs`).
+    pub style: style::DocStyle,
+    /// The toolbar's font and size for the whole document, when nothing is
+    /// selected: a `DOC_FONTS` id, and px (16 means "the template's").
+    pub doc_font: &'static str,
+    pub doc_size: f32,
+    /// Where each block starts and how tall the page is, as last drawn
+    /// (for the section rail).
+    pub(crate) block_tops: Vec<Pixels>,
+    pub(crate) content_height: Pixels,
+    pub(crate) outline: (u64, Vec<markie_rich::editor::OutlineEntry>),
+    /// The toolbar's width last frame, to fit its groups.
+    pub(crate) toolbar_width: Pixels,
+    /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
+    /// does nothing there, as in Electron, where the rich editor is gone.
+    pub(crate) source_mode: bool,
+    source_toolbar: Option<Entity<SourceToolbar>>,
+}
+
+/// The formatting row above the Source pane. Electron keeps its toolbar
+/// when Source shows: zoom, page width and history still work, the
+/// formatting buttons have no editor to act on.
+pub struct SourceToolbar {
+    rich: WeakEntity<RichView>,
+    _observe: Subscription,
+}
+
+impl Render for SourceToolbar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(rich) = self.rich.upgrade() else { return div().into_any_element() };
+        rich.update(cx, |r, cx| {
+            r.source_mode = true;
+            r.render_toolbar(window, cx)
+        })
+    }
 }
 
 impl RichView {
@@ -294,8 +349,11 @@ impl RichView {
             scroll: ScrollHandle::new(),
             store: Rc::new(RefCell::new(element::Store::default())),
             base_dir: None,
+            cloud_media: HashMap::new(),
+            cloud_links: HashSet::new(),
+            restrict_local_media: false,
             zoom: 1.0,
-            page_width: 768.0,
+            page_width: 0.0,
             read_only: false,
             drag: None,
             marked: None,
@@ -313,7 +371,15 @@ impl RichView {
             remote: Vec::new(),
             comment_marks: Vec::new(),
             collab_undo: false,
-            highlighters: RefCell::new(Default::default()),
+            style: style::DocStyle::default(),
+            doc_font: "system",
+            doc_size: 16.0,
+            block_tops: Vec::new(),
+            content_height: px(0.),
+            outline: (u64::MAX, Vec::new()),
+            toolbar_width: px(0.),
+            source_mode: false,
+            source_toolbar: None,
         }
     }
 
@@ -366,6 +432,15 @@ impl RichView {
         self.editor.to_markdown()
     }
 
+    /// Install per-document resources without modifying its Markdown.
+    pub fn set_cloud_resources(&mut self, media: HashMap<String, PathBuf>, links: HashSet<String>,
+        restrict_local: bool, cx: &mut Context<Self>) {
+        self.cloud_media = media;
+        self.cloud_links = links;
+        self.restrict_local_media = restrict_local;
+        cx.notify();
+    }
+
     pub fn focus_handle(&self) -> &FocusHandle {
         &self.focus
     }
@@ -378,6 +453,26 @@ impl RichView {
         self.zoom = zoom;
         self.page_width = page_width;
         cx.notify();
+    }
+
+    /// The toolbar to draw above the Source pane.
+    pub fn source_toolbar(&mut self, cx: &mut Context<Self>) -> Entity<SourceToolbar> {
+        if let Some(t) = &self.source_toolbar {
+            return t.clone();
+        }
+        let rich = cx.entity();
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        self.source_toolbar = Some(t.clone());
+        t
+    }
+
+    /// The style template's typography and doc rule.
+    pub fn set_style(&mut self, style: style::DocStyle, cx: &mut Context<Self>) {
+        if self.style != style {
+            self.style = style;
+            self.heights.iter_mut().for_each(|h| *h = None);
+            cx.notify();
+        }
     }
 
     /// Put the caret on a heading and scroll it to the top (the outline).
@@ -797,7 +892,12 @@ impl RichView {
         if ev.modifiers.platform {
             // ⌘-click opens a link.
             if let Some((_, _, l)) = self.editor.link_range(p) {
-                cx.open_url(&l.href);
+                let reference = media::reference_key(&l.href);
+                if self.cloud_links.contains(&reference) {
+                    cx.emit(RichEvent::DocumentLink(reference));
+                } else {
+                    cx.open_url(&l.href);
+                }
                 return;
             }
         }
@@ -895,7 +995,17 @@ impl RichView {
                     }
                 }),
             ];
-            self.find = Some(FindBar { query, replace, matches: vec![], current: 0, _subs: subs });
+            self.find = Some(FindBar {
+                query,
+                replace,
+                matches: vec![],
+                current: 0,
+                case_sensitive: false,
+                whole_word: false,
+                show_replace: false,
+                searched: None,
+                _subs: subs,
+            });
         }
         if let Some(f) = &self.find {
             if self.editor.has_selection() {
@@ -922,10 +1032,27 @@ impl RichView {
 
     pub(crate) fn recompute_find(&mut self, cx: &App) {
         let q = self.find_query(cx);
+        let Some(f) = &self.find else { return };
+        let key = (q.clone(), self.editor.version, f.case_sensitive, f.whole_word);
+        if f.searched.as_ref() == Some(&key) {
+            return;
+        }
+        let (case, whole) = (f.case_sensitive, f.whole_word);
+        let mut matches = if q.is_empty() { vec![] } else { self.editor.find(&q, case) };
+        if whole {
+            let word = |u: Option<&Unit>| matches!(u, Some(Unit::Char(c, _)) if c.is_alphanumeric() || *c == '_');
+            matches.retain(|m| {
+                let units = self.editor.units(m.start.block, m.start.leaf);
+                let before = m.start.offset.checked_sub(1).and_then(|i| units.get(i));
+                let after = if (m.end.block, m.end.leaf) == (m.start.block, m.start.leaf) { units.get(m.end.offset) } else { None };
+                !word(before) && !word(after)
+            });
+        }
+        let head = self.editor.range().0;
         if let Some(f) = &mut self.find {
-            f.matches = if q.is_empty() { vec![] } else { self.editor.find(&q, false) };
-            let head = self.editor.range().0;
-            f.current = f.matches.iter().position(|m| m.start >= head).unwrap_or(0);
+            f.current = matches.iter().position(|m| m.start >= head).unwrap_or(0);
+            f.matches = matches;
+            f.searched = Some(key);
         }
     }
 
@@ -953,7 +1080,8 @@ impl RichView {
         let with = f.replace.read(cx).value().to_string();
         let q = self.find_query(cx);
         let (a, b) = self.editor.range();
-        let hit = self.editor.find(&q, false).into_iter().find(|m| m.start == a && m.end == b);
+        let case = self.find.as_ref().is_some_and(|f| f.case_sensitive);
+        let hit = self.editor.find(&q, case).into_iter().find(|m| m.start == a && m.end == b);
         if let Some(m) = hit {
             self.edit(cx, |e| e.replace_match(m, &with));
         }
@@ -975,7 +1103,7 @@ impl RichView {
     // ---- prompt ----
 
     pub(crate) fn open_prompt(&mut self, kind: PromptKind, window: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only {
+        if self.read_only || self.source_mode {
             return;
         }
         let (label, value) = match &kind {

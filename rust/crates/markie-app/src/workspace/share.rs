@@ -28,6 +28,8 @@ use crate::themes::{self, Palette, hex, mix};
 
 #[derive(Clone, PartialEq)]
 enum Gate {
+    /// The cloud copy is known; the server has not said who we are yet.
+    Loading,
     Unsaved,
     SignedOut,
     Local,
@@ -82,17 +84,30 @@ impl Workspace {
         let subs = vec![cx.subscribe_in(&query, window, |w, state, ev: &InputEvent, window, cx| w.share_field_event(state, ev, window, cx))];
         let file_name = self.doc.as_ref().and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
         let body = self.current_text(cx);
+        // Not shared yet: the gate's "only on this Mac" step is turning sync
+        // on, which the sync work's sheet does (cloud_ui.rs), or an Office
+        // snapshot (cloud_office.rs).
+        if let Some(open) = self.doc.as_ref() {
+            if !self.has_cloud_copy() {
+                if matches!(open.kind, DocKind::Text { .. }) {
+                    self.show_text_sync(window, cx);
+                    return;
+                }
+                if markie_cloud::platform::supported_name(&super::cloud::name(&open.path)).is_some() {
+                    self.show_office_upload(window, cx);
+                    return;
+                }
+            }
+        }
         let saved = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }) | Some(DocKind::Office(_)) | Some(DocKind::Html));
-        let any_account = self.collab.cloud.is_some();
         let gate = if self.doc.is_none() || !saved {
             Gate::Unsaved
-        } else if let Some(c) = &self.collab.cloud {
-            let _ = c;
+        } else if self.collab.cloud.is_some() {
             Gate::Ready
-        } else if any_account {
-            Gate::Local
+        } else if self.has_cloud_copy() {
+            Gate::Loading
         } else {
-            Gate::SignedOut
+            Gate::Local
         };
         let doc = self.collab.cloud.clone();
         self.collab.share = Some(ShareSheet {
@@ -123,8 +138,22 @@ impl Workspace {
         if gate == Gate::Ready {
             self.share_load(cx);
             query.update(cx, |s, cx| s.focus(window, cx));
+        } else if gate == Gate::Loading {
+            self.collab_recheck(cx);
         }
         cx.notify();
+    }
+
+    /// The server answered while the sheet waited: show the dialog.
+    pub(super) fn share_cloud_ready(&mut self, cx: &mut Context<Self>) {
+        let cloud = self.collab.cloud.clone();
+        let Some(s) = self.collab.share.as_mut() else { return };
+        if s.gate != Gate::Loading || cloud.is_none() {
+            return;
+        }
+        s.gate = Gate::Ready;
+        s.doc = cloud;
+        self.share_load(cx);
     }
 
     fn close_share(&mut self, cx: &mut Context<Self>) {
@@ -494,6 +523,7 @@ impl Workspace {
     fn render_share_gate(&mut self, gate: &Gate, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let name = self.collab.share.as_ref().map(|s| s.file_name.clone()).unwrap_or_default();
         let (title, line, action): (&str, String, Option<(&str, bool)>) = match gate {
+            Gate::Loading => ("Share this document", "Checking this document…".into(), None),
             Gate::Unsaved => ("Share this document", "Save this document to a file before you share it.".into(), None),
             Gate::Local => (
                 "Share this document",

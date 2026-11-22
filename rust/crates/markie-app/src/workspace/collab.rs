@@ -273,44 +273,53 @@ impl Workspace {
     fn collab_check(&mut self, cx: &mut Context<Self>) {
         self.collab.run += 1;
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
-        let Some(cloud) = self.collab.docs.get(&path).cloned() else {
+        // The cloud copy: attached by the sync work or the test session, else
+        // the sync binding (cloud.rs) with its signed-in scope.
+        let source = self
+            .collab
+            .docs
+            .get(&path)
+            .map(|d| (d.account.client.clone(), d.doc_id.clone(), d.account.user.id.clone(), Some(d.account.user.clone())))
+            .or_else(|| self.cloud.bound_scope(&path).map(|(scope, id)| (Arc::new(scope.client), id, scope.user, None)));
+        let Some((client, doc_id, user_id, known_user)) = source else {
             self.collab.cloud = None;
             self.apply_lock(cx);
             self.local_comments_open(cx);
             cx.notify();
             return;
         };
-        self.collab.cloud = Some(cloud.clone());
         // Read-only until the server answers (a recheck keeps the role it has).
         if self.collab.role.is_none() {
             self.collab.role = Some(ShareRoleState::Checking);
         }
         self.apply_lock(cx);
         let run = self.collab.run;
-        let client = cloud.account.client.clone();
-        let doc_id = cloud.doc_id.clone();
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let task = runtime::handle().spawn(async move {
+            let me = match known_user {
+                Some(u) => Some(u),
+                None => markie_cloud::auth::AuthClient::new(&client).me().await.ok().flatten(),
+            };
             let shares = SharesClient::new(&client);
             let access = shares.access(&doc_id).await;
             let members = shares.list(&doc_id).await;
-            (access, members)
+            (client, doc_id, me, access, members)
         });
         self.collab._resolve = Some(cx.spawn(async move |this, cx| {
-            let Ok((access, members)) = task.await else { return };
+            let Ok((client, doc_id, me, access, members)) = task.await else { return };
             this.update(cx, |w, cx| {
                 if w.collab.run != run {
                     return;
                 }
-                w.collab_resolved(path, access.ok(), members.ok(), cx);
+                w.collab.cloud = me.map(|user| CloudDoc { account: Arc::new(CloudAccount { client, user }), doc_id, name });
+                w.collab_resolved(path, user_id, access.ok(), members.ok(), cx);
             })
             .ok();
         }));
         cx.notify();
     }
 
-    fn collab_resolved(&mut self, path: PathBuf, access: Option<ShareAccess>, members: Option<Vec<markie_cloud::sharing::ShareMember>>, cx: &mut Context<Self>) {
-        let Some(cloud) = self.collab.cloud.clone() else { return };
-        let me = cloud.account.user.id.clone();
+    fn collab_resolved(&mut self, path: PathBuf, me: String, access: Option<ShareAccess>, members: Option<Vec<markie_cloud::sharing::ShareMember>>, cx: &mut Context<Self>) {
         let (Some(access), Some(members)) = (access, members) else {
             // Unreachable: a role proved before for this account still counts.
             let remembered = self
@@ -331,6 +340,8 @@ impl Workspace {
             cx.notify();
             return;
         };
+        let Some(cloud) = self.collab.cloud.clone() else { return };
+        self.share_cloud_ready(cx);
         debug(|| format!("access {:?}, {} members", access.role, members.len()));
         let owner = (access.role == Role::Owner).then(|| me.clone());
         let role = role_for(Some(&members), Some(&me), owner.as_deref());
@@ -792,6 +803,12 @@ impl Workspace {
             Some(Live { room: Room::Rich(b), stage: Stage::Ready, .. }) => Some(b),
             _ => None,
         }
+    }
+
+    /// Whether the open document has a cloud copy this window can reach.
+    pub(super) fn has_cloud_copy(&self) -> bool {
+        let Some(path) = self.doc.as_ref().map(|d| &d.path) else { return false };
+        self.collab.cloud.is_some() || self.collab.docs.contains_key(path) || self.cloud.bound_scope(path).is_some()
     }
 
     pub(super) fn live_running(&self) -> bool {

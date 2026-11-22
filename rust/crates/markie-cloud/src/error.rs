@@ -23,7 +23,13 @@ pub enum CloudError {
     Unreadable,
     /// The server answered with a non-2xx status.
     #[error("The server answered {status}{}", message.as_deref().map(|m| format!(": {m}")).unwrap_or_default())]
-    Status { status: u16, message: Option<String> },
+    Status {
+        status: u16,
+        message: Option<String>,
+        /// The machine-readable `code` from the failure body (better-auth's
+        /// `EMAIL_NOT_VERIFIED`, the server's `signup_invite_required`), if any.
+        code: Option<String>,
+    },
     /// The session changed while the request was in flight; its answer was dropped.
     #[error("Your sign-in changed during the request.")]
     StaleSession,
@@ -39,6 +45,14 @@ impl CloudError {
     pub fn status(&self) -> Option<u16> {
         match self {
             CloudError::Status { status, .. } => Some(*status),
+            _ => None,
+        }
+    }
+
+    /// The failure body's `code`, for choosing what to tell the user.
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            CloudError::Status { code, .. } => code.as_deref(),
             _ => None,
         }
     }

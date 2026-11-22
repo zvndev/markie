@@ -263,8 +263,9 @@ impl Workspace {
         Some(markie_core::doc_text::text_from_bytes(&bytes, format).unwrap_or_default())
     }
 
-    /// Restore a recovery revision: it becomes the newest revision and the
-    /// open document, and it is written to the file like any autosave.
+    /// Restore a recovery revision, as Electron does: it becomes the newest
+    /// revision and the open, unsaved document. The file is unchanged until
+    /// the user saves.
     pub(super) fn restore_office_version(&mut self, stamp: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(OpenDoc { path, format, kind: DocKind::Office(_), .. }) = &self.doc else { return };
         let (path, format) = (path.clone(), *format);
@@ -278,18 +279,13 @@ impl Workspace {
             Ok(d) => d,
             Err(e) => return window.push_notification(format!("This revision could not be opened. {}", e.message), cx),
         };
-        if let Err(e) = markie_core::save::atomic_write(&path, &bytes) {
-            return window.push_notification(format!("Markie could not save: {e}"), cx);
-        }
         if let Some(OpenDoc { kind: DocKind::Office(office), .. }) = &self.doc {
             office.view.update(cx, |view, cx| {
-                view.editor = WordEditor::new(document);
+                view.editor = WordEditor::new_unsaved(document);
                 cx.notify();
             });
         }
-        if let Some(newest) = self.recovery.list(&path).first() {
-            let _ = self.recovery.mark_exported(&path, newest.revision);
-        }
+        window.push_notification("Restored a recovery revision. The file was not changed. Save to keep it.", cx);
         self.refresh_versions();
         cx.notify();
     }

@@ -218,6 +218,14 @@ impl WordEditor {
         }
     }
 
+    /// A document that differs from the file on disk, such as a restored
+    /// recovery revision: dirty from the start, so Save writes it.
+    pub fn new_unsaved(doc: OfficeDocument) -> Self {
+        let mut editor = Self::new(doc);
+        editor.saved_generation = editor.generation.wrapping_sub(1);
+        editor
+    }
+
     pub fn doc(&self) -> &OfficeDocument {
         &self.doc
     }

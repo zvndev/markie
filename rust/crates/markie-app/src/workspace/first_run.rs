@@ -1,8 +1,11 @@
 //! One-time, local-first onboarding from the original desktop workspace.
 
 /// One key for both modules: `markie.seen.v1`, as first-run.ts names it.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) const SEEN_KEY: &str = super::welcome::SEEN_KEY;
 
+/// The launch itself decides through welcome.rs; this stays for its test.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn should_show_welcome(opened_file: bool, seen: bool) -> bool {
     !opened_file && !seen
 }

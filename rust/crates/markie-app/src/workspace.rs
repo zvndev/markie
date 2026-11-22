@@ -35,6 +35,7 @@ mod office;
 mod palette;
 mod panels;
 mod rich;
+mod text_view;
 mod settings;
 
 /// The panel on the right of the document.
@@ -402,8 +403,12 @@ impl Workspace {
                 let kind = match doc.content {
                     Content::Text { text, encoding, bom } => {
                         let language = doc.format.editor_language();
+                        // Electron shows literal text formats in a plain field:
+                        // no syntax colors and no line numbers.
+                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !large;
                         self.editor.update(cx, |state, cx| {
-                            state.set_highlighter(language, cx);
+                            state.set_highlighter(if literal { "text" } else { language }, cx);
+                            state.set_line_number(!literal, window, cx);
                             state.set_value(text.clone(), window, cx);
                         });
                         self.set_preview(&text, doc.format, cx);
@@ -1280,9 +1285,20 @@ impl Workspace {
                     )
                     .into_any_element()
             }
+            // Literal text formats look like Electron's TextDocumentEditor.
+            (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => self.render_text(cx),
             _ => div()
                 .size_full()
+                .flex()
+                .flex_col()
                 .bg(theme.background)
+                .when_some(
+                    match &doc.kind {
+                        DocKind::Text { saved, .. } if doc.large => Some(saved.len()),
+                        _ => None,
+                    },
+                    |d, bytes| d.child(text_view::large_strip(bytes, cx)),
+                )
                 .child(
                     Editor::new(&self.editor)
                         .bordered(false)

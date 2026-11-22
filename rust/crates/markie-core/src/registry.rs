@@ -102,6 +102,12 @@ impl Registry {
         Ok(Self { db })
     }
 
+    /// The underlying connection, for modules that keep their own tables here
+    /// (Projects). They create their tables idempotently on first use.
+    pub fn conn(&self) -> &Connection {
+        &self.db
+    }
+
     pub fn track_opened(&self, path: &Path) -> Result<()> {
         let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         self.db.execute(

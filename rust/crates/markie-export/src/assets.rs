@@ -129,6 +129,8 @@ pub fn allowed_real_path(abs: &Path, doc_dir: &Path, grants: &Grants) -> Option<
 
 /// `resolveMedia`: a reference to a file that may be shown or played.
 pub fn resolve_media(src: &str, doc_dir: &Path, grants: &Grants) -> Option<(PathBuf, &'static str, MediaKind)> {
+    // `path.resolve` against the process directory for a relative folder.
+    let doc_dir = &std::fs::canonicalize(doc_dir).unwrap_or_else(|_| doc_dir.to_path_buf());
     let abs = candidate_path(src, doc_dir)?;
     media_mime(&abs)?;
     let real = allowed_real_path(&abs, doc_dir, grants)?;

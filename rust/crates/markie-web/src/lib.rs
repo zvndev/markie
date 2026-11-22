@@ -8,3 +8,5 @@
 pub mod darkmown;
 pub mod json;
 pub mod live_docs;
+#[cfg(feature = "wry")]
+pub mod island;

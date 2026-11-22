@@ -672,14 +672,14 @@ impl Ctx<'_, '_> {
                 let al = text_align(e).unwrap_or("left");
                 let body = self.inline_run(&e.children)?;
                 let body = self.styled(e, body);
-                format!("mk-par(align({al}, {body}), {quote})")
+                format!("align({al}, mk-par({body}, {quote}))")
             }
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 let level = e.tag[1..].parse::<usize>().unwrap_or(1);
                 let al = text_align(e).unwrap_or("left");
                 let body = self.inline_run(&e.children).unwrap_or_else(|| "[]".into());
                 let body = self.styled(e, body);
-                format!("mk-h{level}(align({al}, {body}))")
+                format!("align({al}, mk-h{level}({body}))")
             }
             "hr" => "mk-hr()".into(),
             "blockquote" => {
@@ -910,6 +910,7 @@ fn prelude(p: &Palette) -> String {
 #set text(font: sans, size: 10.5pt, fill: c-fg, top-edge: "ascender", bottom-edge: "descender", hyphenate: false, lang: "en", tracking: {t_body:.5}em)
 #set par(leading: 0.557em, spacing: 13.2pt, justify: false)
 #show raw: set text(font: mono, tracking: 0em, size: 1.25em)
+#show raw.where(block: true): set par(leading: 18.375pt - 8.925pt * 1.164)
 #set raw(theme: "/markie/hljs.tmTheme")
 #let L = 5.85pt
 #let col = {col:.2}pt
@@ -929,7 +930,7 @@ fn prelude(p: &Palette) -> String {
 #let mk-hr() = block(above: 18.9pt + L, below: 18.9pt + L, line(length: 100%, stroke: 0.75pt + c-border))
 #let mk-quote(body) = block(above: 10.5pt + L, below: 10.5pt + L, width: 100%, fill: rgb("{quote_bg}"), stroke: (left: 2.25pt + rgb("{quote_bar}")), radius: (right: 4.5pt), inset: (x: 10.5pt, y: 5.25pt), {{ set text(fill: rgb("{quote_fg}")); body }})
 #let mk-code(s) = box(fill: rgb("{code_bg}"), stroke: 0.75pt + rgb("{code_border}"), radius: 3pt, inset: (x: 0.35em * 0.88), outset: (y: 0.2em), text(size: 0.88em, fill: rgb("{code_fg}"), raw(s)))
-#let mk-pre(body) = block(above: 10.5pt + L, below: 10.5pt + L, width: 100%, avoid(block(width: 100%, fill: rgb("{pre_bg}"), stroke: 0.75pt + c-border, radius: 6pt, inset: (x: 12.6pt, y: 10.5pt), {{ set text(size: 8.925pt, fill: rgb("{pre_fg}"), top-edge: "ascender", bottom-edge: "descender"); set par(leading: 0.35em); body }})))
+#let mk-pre(body) = block(above: 10.5pt + L, below: 10.5pt + L, width: 100%, avoid(block(width: 100%, fill: rgb("{pre_bg}"), stroke: 0.75pt + c-border, radius: 6pt, inset: (x: 12.6pt, y: 10.5pt + (18.375pt - 8.925pt * 1.164) / 2), {{ set text(size: 8.925pt, fill: rgb("{pre_fg}"), top-edge: "ascender", bottom-edge: "descender"); set par(leading: 18.375pt - 8.925pt * 1.164); body }})))
 #let mk-list(items) = block(above: 6.3pt + L, below: 6.3pt + L, width: 100%, items)
 #let mk-li(marker, gap, body) = block(above: gap + L, below: gap + L, width: 100%, if marker == none {{ pad(left: 0.3em, body) }} else {{ grid(columns: (1.8em, 1fr), align(right, text(fill: c-marker, marker) + h(0.45em)), body) }})
 #let mk-box(on) = box(baseline: 15%, width: 10.5pt, height: 10.5pt, stroke: 1.5pt + (if on {{ rgb("{box_on}") }} else {{ rgb("{box_border}") }}), radius: 2.25pt, fill: if on {{ rgb("{box_on}") }} else {{ none }}, if on {{ align(center + horizon, text(size: 7.5pt, weight: 700, fill: rgb("{box_tick}"), "✓")) }}) + h(3.75pt)
@@ -946,7 +947,7 @@ fn prelude(p: &Palette) -> String {
 #let mk-td(body) = body
 #let mk-table(n, cells) = block(above: 10.5pt + L, below: 10.5pt + L, avoid({{
   set text(size: 0.9em, tracking: {t_td:.5}em)
-  table(columns: n, stroke: none, inset: (x: 0.8em, y: 0.5em), fill: (x, y) => if y == 0 {{ rgb("{th_bg}") }} else {{ none }}, ..cells)
+  table(columns: n, stroke: none, inset: (x: 0.8em, y: 0.5em + 0.28em), fill: (x, y) => if y == 0 {{ rgb("{th_bg}") }} else {{ none }}, ..cells)
 }}))
 "##,
         fg = p.fg,

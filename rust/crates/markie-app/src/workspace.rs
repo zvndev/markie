@@ -1076,12 +1076,13 @@ impl Workspace {
                     },
                     |d, bytes| d.child(text_view::large_strip(bytes, cx)),
                 )
+                .when(matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown), |d| d.child(self.source_toolbar(cx)))
                 .child(
                     Editor::new(&self.editor)
                         .bordered(false)
                         .h(relative(1.))
-                        .font_family(theme.mono_font_family.clone())
-                        .text_size(theme.mono_font_size * self.zoom),
+                        .font_family(markie_editor::MONO)
+                        .text_size(px(14. * self.zoom)),
                 )
                 .into_any_element(),
         }

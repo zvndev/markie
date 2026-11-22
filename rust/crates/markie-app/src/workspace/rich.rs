@@ -116,6 +116,12 @@ impl Workspace {
         });
     }
 
+    /// Electron's formatting row, above the Source pane too.
+    pub(super) fn source_toolbar(&self, cx: &mut Context<Self>) -> Entity<markie_editor::SourceToolbar> {
+        self.sync_rich_appearance(cx);
+        self.rich.update(cx, |r, cx| r.source_toolbar(cx))
+    }
+
     /// A step of Electron's page widths. "Default" is stored as 768, the
     /// width this setting always meant, and "Full" as the 1600 ceiling.
     pub(super) fn set_width_step(&mut self, step: f32, cx: &mut Context<Self>) {

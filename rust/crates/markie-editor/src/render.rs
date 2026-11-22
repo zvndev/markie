@@ -52,7 +52,7 @@ pub(crate) struct Look {
 
 /// `--font-geist-mono`: SF Mono, which macOS only hands out under its
 /// system name.
-pub(crate) const MONO: &str = ".AppleSystemUIFontMonospaced";
+pub const MONO: &str = ".AppleSystemUIFontMonospaced";
 
 /// The quote's rule: `--purple`, the same in both tones.
 const QUOTE_RULE: u32 = 0xc084fc;

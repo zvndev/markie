@@ -158,6 +158,9 @@ fn fit(width: f32) -> (bool, bool, Vec<Group>) {
 impl RichView {
     /// Run an editor command from the toolbar and give the document focus.
     fn tool_edit(&mut self, window: &mut Window, cx: &mut Context<Self>, f: impl FnOnce(&mut Editor)) {
+        if self.source_mode {
+            return;
+        }
         self.edit(cx, f);
         self.focus(window, cx);
     }
@@ -256,11 +259,12 @@ impl RichView {
     }
 
     pub(crate) fn render_toolbar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let t = self.editor.toolbar();
+        let t = if self.source_mode { Default::default() } else { self.editor.toolbar() };
         let theme = cx.theme().clone();
         let weak = cx.entity().downgrade();
         let can_edit = !self.read_only;
-        let selecting = self.editor.has_selection() && can_edit;
+        let source = self.source_mode;
+        let selecting = self.editor.has_selection() && can_edit && !source;
         let (compact, primary_out, out) = fit(f32::from(self.toolbar_width));
         let shows = |g: Group| !out.contains(&g);
         let divider = || div().w(px(1.)).h(px(20.)).mx(px(4.)).bg(theme.border).flex_none();
@@ -397,10 +401,10 @@ impl RichView {
 
         let mut row: Vec<AnyElement> = Vec::new();
         if shows(Group::History) {
-            row.push(self.tool("rt-undo", "icons/undo-2.svg", "Undo (⌘Z)", false, !can_edit || !t.can_undo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
+            row.push(self.tool("rt-undo", "icons/undo-2.svg", "Undo (⌘Z)", false, !can_edit || source || !t.can_undo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
                 e.undo();
             })).into_any_element());
-            row.push(self.tool("rt-redo", "icons/redo-2.svg", "Redo (⇧⌘Z)", false, !can_edit || !t.can_redo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
+            row.push(self.tool("rt-redo", "icons/redo-2.svg", "Redo (⇧⌘Z)", false, !can_edit || source || !t.can_redo, cx, |this, w, cx| this.tool_edit(w, cx, |e| {
                 e.redo();
             })).into_any_element());
         }
@@ -805,6 +809,7 @@ impl RichView {
 impl Render for RichView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let started = std::time::Instant::now();
+        self.source_mode = false;
         let toolbar = (!self.read_only).then(|| self.render_toolbar(window, cx));
         let prompt = self.render_prompt(cx);
         let doc = self.render_document(window, cx);

@@ -14,6 +14,7 @@ pub mod layout;
 pub mod element;
 pub mod media;
 mod render;
+pub use render::MONO;
 mod chrome;
 mod rail;
 pub mod style;
@@ -281,6 +282,28 @@ pub struct RichView {
     pub(crate) outline: (u64, Vec<markie_rich::editor::OutlineEntry>),
     /// The toolbar's width last frame, to fit its groups.
     pub(crate) toolbar_width: Pixels,
+    /// The toolbar is drawn above Source (by `SourceToolbar`): formatting
+    /// does nothing there, as in Electron, where the rich editor is gone.
+    pub(crate) source_mode: bool,
+    source_toolbar: Option<Entity<SourceToolbar>>,
+}
+
+/// The formatting row above the Source pane. Electron keeps its toolbar
+/// when Source shows: zoom, page width and history still work, the
+/// formatting buttons have no editor to act on.
+pub struct SourceToolbar {
+    rich: WeakEntity<RichView>,
+    _observe: Subscription,
+}
+
+impl Render for SourceToolbar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(rich) = self.rich.upgrade() else { return div().into_any_element() };
+        rich.update(cx, |r, cx| {
+            r.source_mode = true;
+            r.render_toolbar(window, cx)
+        })
+    }
 }
 
 impl RichView {
@@ -314,6 +337,8 @@ impl RichView {
             content_height: px(0.),
             outline: (u64::MAX, Vec::new()),
             toolbar_width: px(0.),
+            source_mode: false,
+            source_toolbar: None,
         }
     }
 
@@ -351,6 +376,17 @@ impl RichView {
         self.zoom = zoom;
         self.page_width = page_width;
         cx.notify();
+    }
+
+    /// The toolbar to draw above the Source pane.
+    pub fn source_toolbar(&mut self, cx: &mut Context<Self>) -> Entity<SourceToolbar> {
+        if let Some(t) = &self.source_toolbar {
+            return t.clone();
+        }
+        let rich = cx.entity();
+        let t = cx.new(|cx| SourceToolbar { rich: rich.downgrade(), _observe: cx.observe(&rich, |_, _, cx| cx.notify()) });
+        self.source_toolbar = Some(t.clone());
+        t
     }
 
     /// The style template's typography and doc rule.
@@ -973,7 +1009,7 @@ impl RichView {
     // ---- prompt ----
 
     pub(crate) fn open_prompt(&mut self, kind: PromptKind, window: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only {
+        if self.read_only || self.source_mode {
             return;
         }
         let (label, value) = match &kind {

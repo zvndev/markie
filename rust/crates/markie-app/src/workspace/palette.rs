@@ -71,6 +71,7 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
             "open with finder double click default handler txt json yaml csv xml markdown associate",
             Rc::new(|ws, w, cx| ws.open_settings(SettingsSection::Files, w, cx)),
         ),
+        cmd("Cloud…", "File", None, "synced shared sharing people cloud sync backup invited", action(ShowCloud)),
         cmd("Search All Documents…", "File", Some("⇧⌘F"), "find files everywhere full text global", action(FocusSearch)),
         cmd("New file", "File", Some("⌘N"), "blank create empty document", action(NewDocument)),
         cmd("History…", "File", None, "versions restore snapshot revert previous", action(ShowHistory)),
@@ -85,6 +86,7 @@ pub(super) fn commands() -> Vec<PaletteCommand> {
         cmd("Add Folder to Library…", "File", Some("⇧⌘O"), "workspace root", action(OpenFolder)),
         cmd("Rescan Documents", "File", Some("⌘R"), "index refresh", action(Rescan)),
         cmd("Import Recents and Stars from Markie", "File", None, "electron migrate", action(ImportFromMarkie)),
+        cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
         cmd("About Markie RS", "Help", None, "version", action(ShowAbout)),
     ]);
     list

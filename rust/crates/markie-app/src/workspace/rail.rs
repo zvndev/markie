@@ -198,7 +198,7 @@ impl Shell {
 impl Workspace {
     /// A rail click (`selectLeftView` in left-rail.ts): the current panel
     /// again closes it; the pencil twice returns to the last panel.
-    fn select_view(&mut self, clicked: LeftView, cx: &mut Context<Self>) {
+    pub(super) fn select_view(&mut self, clicked: LeftView, cx: &mut Context<Self>) {
         let s = &mut self.shell;
         if clicked == LeftView::Edit {
             if s.view == LeftView::Edit {
@@ -215,6 +215,9 @@ impl Workspace {
             s.panel_open = !closing;
         }
         s.filter_menu = None;
+        if self.shell.view == LeftView::Cloud && self.shell.panel_open {
+            self.refresh_cloud(false, cx);
+        }
         if self.shell.view == LeftView::Browse && self.shell.panel_open && self.library.total() == 0 && !self.library.scanning {
             self.rescan(cx);
         }
@@ -375,23 +378,6 @@ impl Workspace {
         self.shell.browse_rows = Some(Rc::new(rows));
     }
 
-    fn show_agents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let p = themes::palette(cx);
-        window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title("Connect an agent").w(px(460.)).child(
-                v_flex()
-                    .gap(px(8.))
-                    .text_size(px(12.5))
-                    .child(div().text_color(p.fg(0.85)).child(
-                        "Markie lets Claude, Codex and other agents read and edit your documents through its MCP server.",
-                    ))
-                    .child(div().text_color(p.muted).child(
-                        "Markie RS does not run the agent bridge yet. Connect agents from the Markie app for now.",
-                    )),
-            )
-        });
-    }
-
     fn show_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let p = themes::palette(cx);
         window.open_dialog(cx, move |dialog, _, _| {
@@ -539,7 +525,10 @@ impl Workspace {
                 false,
                 &p,
                 cx,
-                |this, _, cx| this.select_view(LeftView::Skills, cx),
+                |this, window, cx| {
+                    this.prepare_skills(window, cx);
+                    this.select_view(LeftView::Skills, cx);
+                },
             ))
             .child(self.rail_button(
                 "rail-vault",
@@ -571,7 +560,7 @@ impl Workspace {
                 false,
                 &p,
                 cx,
-                |this, w, cx| this.show_agents(w, cx),
+                |this, w, cx| this.open_agents(w, cx),
             ))
             .child(self.rail_button(
                 "rail-keys",
@@ -594,8 +583,36 @@ impl Workspace {
                     .rounded_full()
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.9))
-                    .child(
-                        div()
+                    // Signed in: initials on the account colour with a green dot,
+                    // as activity-bar.tsx draws it (account.rs owns the session).
+                    .child(match super::account::signed_in_user(cx) {
+                        Some(user) => {
+                            let (color, letters) = super::account::avatar_for(&user);
+                            div()
+                                .relative()
+                                .size(px(28.))
+                                .rounded_full()
+                                .bg(color)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(black().opacity(0.8))
+                                .child(letters)
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .bottom(px(-2.))
+                                        .right(px(-2.))
+                                        .size(px(10.))
+                                        .rounded_full()
+                                        .bg(rgb(0x34d399))
+                                        .border_2()
+                                        .border_color(p.surface),
+                                )
+                        }
+                        None => div()
                             .size(px(28.))
                             .rounded_full()
                             .border_1()
@@ -604,9 +621,15 @@ impl Workspace {
                             .items_center()
                             .justify_center()
                             .child(icon("markie/user.svg", 16., p.muted)),
-                    )
+                    })
                     .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.set_rail_hover("rail-account", *hovered, cx)))
-                    .when(self.shell.rail_hover == Some("rail-account"), |el| el.child(rail_tip("Sign in", &p)))
+                    .when(self.shell.rail_hover == Some("rail-account"), |el| {
+                        let tip: SharedString = match super::account::signed_in_user(cx) {
+                            Some(u) => format!("{} (Account)", u.name.filter(|n| !n.is_empty()).unwrap_or(u.email)).into(),
+                            None => "Sign in".into(),
+                        };
+                        el.child(rail_tip(tip, &p))
+                    })
                     .on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx))),
             )
     }
@@ -717,7 +740,7 @@ impl Workspace {
         let body = match view {
             LeftView::Library => self.render_library_view(&p, cx).into_any_element(),
             LeftView::Browse => self.render_browse_view(&p, cx).into_any_element(),
-            _ => self.render_skills_view(&p).into_any_element(),
+            _ => self.render_skills_panel(),
         };
         let bg = if p.dark {
             Background::from(linear_gradient(
@@ -739,7 +762,7 @@ impl Workspace {
                 .border_color(p.border)
                 .child(header)
                 .child(body)
-                .when(view != LeftView::Browse, |el| {
+                .when(view != LeftView::Browse && super::account::signed_in_user(cx).is_none(), |el| {
                     el.child(
                         div()
                             .id("panel-sign-in")
@@ -990,6 +1013,7 @@ impl Workspace {
                     .child(format_icon(doc.format, 15., p))
                     .child(div().flex_1().min_w_0().truncate().text_size(px(12.5)).text_color(p.foreground).child(doc.name.clone()))
                     .child(format_badge(doc.format, p))
+                    .children(self.cloud.badge(&doc.path).map(|badge| div().text_size(px(10.)).text_color(p.muted).child(badge)))
                     .child(
                         div()
                             .size(px(16.))
@@ -1292,18 +1316,15 @@ impl Workspace {
             })
     }
 
-    fn render_skills_view(&self, p: &Palette) -> impl IntoElement {
-        v_flex().flex_1().min_h_0().px(px(14.)).py(px(14.)).gap(px(6.)).child(
-            div()
-                .text_size(px(12.))
-                .text_color(p.muted)
-                .child("Skills and agent files from Claude, Codex, Cursor and Gemini show here. They are not in Markie RS yet."),
-        )
-    }
-
     /// The Cloud or Vault page, in place of the document.
     pub(super) fn render_workspace_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        // Signed out, the account's own Cloud page asks to sign in; signed in,
+        // the sync library below takes over with the same session.
+        if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
+            return self.render_cloud_page();
+        }
         let p = themes::palette(cx);
+        let signed_in_cloud = self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_some();
         let (title, glyph, body) = match self.shell.view {
             LeftView::Vault => (
                 "Vault",
@@ -1353,7 +1374,7 @@ impl Workspace {
                                             .cursor_pointer()
                                             .hover(|s| s.text_color(p.foreground))
                                             .child(div().size(px(6.)).rounded_full().bg(p.yellow))
-                                            .child("Sign in")
+                                            .child(if signed_in_cloud { "Signed in" } else { "Sign in" })
                                             .on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx))),
                                     ),
                             ),
@@ -1373,7 +1394,9 @@ impl Workspace {
                             .on_click(|_, w, cx| w.dispatch_action(Box::new(Open), cx)),
                     ),
             )
-            .child(
+            .child(if signed_in_cloud {
+                self.render_cloud_library(cx)
+            } else {
                 v_flex()
                     .flex_1()
                     .items_center()
@@ -1385,8 +1408,9 @@ impl Workspace {
                     } else {
                         "Nothing in the cloud yet"
                     }))
-                    .child(div().max_w(px(420.)).text_center().text_size(px(12.)).text_color(p.muted).child(body)),
-            )
+                    .child(div().max_w(px(420.)).text_center().text_size(px(12.)).text_color(p.muted).child(body))
+                    .into_any_element()
+            })
             .into_any_element()
     }
 
@@ -1632,7 +1656,7 @@ fn type_menu_label(kind: Option<FormatKind>) -> &'static str {
 }
 
 /// The rail's instant label, to the right of the button.
-fn rail_tip(label: &'static str, p: &Palette) -> impl IntoElement {
+fn rail_tip(label: impl Into<SharedString>, p: &Palette) -> impl IntoElement {
     div().absolute().left(px(44.)).top(px(7.)).child(deferred(
         anchored().child(
             div()
@@ -1647,7 +1671,7 @@ fn rail_tip(label: &'static str, p: &Palette) -> impl IntoElement {
                 .line_height(px(11.5))
                 .text_color(p.foreground)
                 .shadow_lg()
-                .child(label),
+                .child(label.into()),
         ),
     ))
 }

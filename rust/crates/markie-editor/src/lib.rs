@@ -17,6 +17,7 @@ mod render;
 mod chrome;
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -188,6 +189,7 @@ pub fn bind_keys(cx: &mut App) {
 #[derive(Debug, Clone)]
 pub enum RichEvent {
     Changed,
+    DocumentLink(String),
 }
 
 impl EventEmitter<RichEvent> for RichView {}
@@ -232,6 +234,9 @@ pub struct RichView {
     scroll: ScrollHandle,
     store: SharedStore,
     base_dir: Option<PathBuf>,
+    cloud_media: HashMap<String, PathBuf>,
+    cloud_links: HashSet<String>,
+    restrict_local_media: bool,
     pub zoom: f32,
     pub page_width: f32,
     pub read_only: bool,
@@ -264,6 +269,9 @@ impl RichView {
             scroll: ScrollHandle::new(),
             store: Rc::new(RefCell::new(element::Store::default())),
             base_dir: None,
+            cloud_media: HashMap::new(),
+            cloud_links: HashSet::new(),
+            restrict_local_media: false,
             zoom: 1.0,
             page_width: 768.0,
             read_only: false,
@@ -304,6 +312,15 @@ impl RichView {
     /// The document as it would be saved.
     pub fn markdown(&self) -> String {
         self.editor.to_markdown()
+    }
+
+    /// Install per-document resources without modifying its Markdown.
+    pub fn set_cloud_resources(&mut self, media: HashMap<String, PathBuf>, links: HashSet<String>,
+        restrict_local: bool, cx: &mut Context<Self>) {
+        self.cloud_media = media;
+        self.cloud_links = links;
+        self.restrict_local_media = restrict_local;
+        cx.notify();
     }
 
     pub fn focus_handle(&self) -> &FocusHandle {
@@ -725,7 +742,12 @@ impl RichView {
         if ev.modifiers.platform {
             // ⌘-click opens a link.
             if let Some((_, _, l)) = self.editor.link_range(p) {
-                cx.open_url(&l.href);
+                let reference = media::reference_key(&l.href);
+                if self.cloud_links.contains(&reference) {
+                    cx.emit(RichEvent::DocumentLink(reference));
+                } else {
+                    cx.open_url(&l.href);
+                }
                 return;
             }
         }

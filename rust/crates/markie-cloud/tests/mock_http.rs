@@ -89,6 +89,17 @@ async fn a_rotated_token_replaces_the_stored_one_and_drops_the_account() {
 }
 
 #[tokio::test]
+async fn a_scoped_job_never_inherits_the_next_accounts_session() {
+    let a = MockServer::start().await;
+    let tokens = Arc::new(MemoryTokenStore::new());
+    tokens.put(&a.uri(), Some(&Session { token: "first".into(), user_id: Some("u1".into()) })).unwrap();
+    let scoped = client(&a, tokens.clone()).for_user("u1");
+    tokens.put(&a.uri(), Some(&Session { token: "second".into(), user_id: Some("u2".into()) })).unwrap();
+    assert_eq!(scoped.get("/api/docs").await.unwrap_err(), CloudError::NotSignedIn);
+    assert!(a.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn email_sign_in_takes_the_header_token_and_confirms_it() {
     let a = MockServer::start().await;
     let tokens = Arc::new(MemoryTokenStore::new());

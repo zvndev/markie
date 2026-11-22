@@ -12,9 +12,12 @@ path = "src/main.rs"
 
 [dependencies]
 markie-core.workspace = true
+markie-agent = { path = "../markie-agent" }
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
 markie-editor = { path = "../markie-editor" }
+markie-cloud = { path = "../markie-cloud" }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 anyhow.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -36,6 +39,9 @@ gpui-kit = { version = "=0.10.0", features = [
   "tree-sitter-css",
   "tree-sitter-toml",
 ] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

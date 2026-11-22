@@ -14,6 +14,7 @@ impl Workspace {
         let rich = cx.new(RichView::new);
         let sub = cx.subscribe(&rich, |this, _, ev: &RichEvent, cx| match ev {
             RichEvent::Changed => this.on_rich_edit(cx),
+            RichEvent::DocumentLink(reference) => this.follow_cloud_link(reference, cx),
         });
         (rich, sub)
     }

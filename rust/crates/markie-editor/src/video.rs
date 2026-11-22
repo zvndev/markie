@@ -15,6 +15,7 @@ pub(crate) struct VideoViewer {
     /// Where the player was last placed, so a frame moves it only when the
     /// window changed size.
     placed: (f32, f32, f32, f32),
+    hidden: bool,
 }
 
 /// The player's rectangle in a window `w` by `h` points: the iframe's
@@ -38,13 +39,25 @@ impl RichView {
         let size = window.viewport_size();
         let placed = player_bounds(f32::from(size.width), f32::from(size.height));
         match markie_web::island::VideoPlayer::new(window, island(placed), &embed) {
-            Ok(player) => self.video = Some(VideoViewer { player, placed }),
+            Ok(player) => self.video = Some(VideoViewer { player, placed, hidden: false }),
             Err(e) => {
                 eprintln!("markie-rs: video player: {e}");
                 self.show_notice("Markie couldn't play that video.", cx);
             }
         }
         cx.notify();
+    }
+
+    /// The host's `web_views_covered`, each frame: a web view paints over
+    /// everything GPUI draws, so it hides while a dialog, menu or another
+    /// page sits where it is, and while the rich pane is not shown.
+    pub fn set_web_views_covered(&mut self, covered: bool) {
+        if let Some(v) = &mut self.video {
+            if v.hidden != covered {
+                let _ = v.player.set_visible(!covered);
+                v.hidden = covered;
+            }
+        }
     }
 
     pub(crate) fn close_video(&mut self, cx: &mut Context<Self>) -> bool {

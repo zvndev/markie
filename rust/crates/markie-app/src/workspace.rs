@@ -1187,6 +1187,9 @@ impl Render for Workspace {
         self.ensure_browse_rows();
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
+        // A video card's player is a web view too: hidden under any layer.
+        let hide_video = self.web_views_covered(window, cx) || !self.rich_active();
+        self.rich.update(cx, |r, _| r.set_web_views_covered(hide_video));
         self.sync_live_preview(window, cx);
         let banner = self.render_banner(cx);
         let cloud_banner = self.render_cloud_banner(cx);

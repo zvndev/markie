@@ -37,17 +37,6 @@ impl OfficeDoc {
         matches!(self.source, Source::Rich) && self.view.read(cx).editor.is_dirty()
     }
 
-    pub fn status(&self, cx: &App) -> &'static str {
-        let editor = &self.view.read(cx).editor;
-        if !editor.can_mutate() && !editor.original_view {
-            "Read only"
-        } else if editor.is_dirty() {
-            "Edited"
-        } else {
-            "Saved"
-        }
-    }
-
     /// Focus the page on the next frame, after the window's own startup focus.
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         let handle = self.view.read(cx).focus_handle(cx);
@@ -82,6 +71,13 @@ fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>
         WordViewEvent::ZoomReset => {
             this.zoom = 1.0;
             view.update(cx, |v, _| v.set_zoom(1.0));
+            cx.notify();
+        }
+        WordViewEvent::Zoom(zoom) => {
+            // Electron's presets (0.75, 1.25) are finer than the shared
+            // setting's tenths; the Word view keeps the exact preset.
+            this.set_zoom(*zoom, cx);
+            this.zoom = *zoom;
             cx.notify();
         }
     });

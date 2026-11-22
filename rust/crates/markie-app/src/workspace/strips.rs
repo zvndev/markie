@@ -277,6 +277,25 @@ impl Workspace {
             );
         }
 
+        if !self.doc_notes.is_empty() {
+            // `.docs-warning`: status yellow on the surface, one line of notes.
+            let p = crate::themes::palette(cx);
+            strips.push(
+                div()
+                    .flex_none()
+                    .px(px(20.))
+                    .py(px(10.))
+                    .border_b_1()
+                    .border_color(p.border)
+                    .bg(p.surface)
+                    .text_size(px(12.))
+                    .line_height(relative(1.6))
+                    .text_color(p.yellow)
+                    .child(self.doc_notes.join(" "))
+                    .into_any_element(),
+            );
+        }
+
         if strips.is_empty() {
             None
         } else {

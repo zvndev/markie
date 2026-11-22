@@ -39,6 +39,8 @@ pub(super) enum Overlay {
     /// The file changed on disk under unsaved edits. `confirming` is the
     /// destructive choice waiting for its second click.
     DiskConflict { confirming: Option<super::strips::Destructive> },
+    /// "Import a text copy?" for an HTML file (`import_copy.rs`).
+    ConvertDocument { path: PathBuf },
 }
 
 impl Overlay {
@@ -122,6 +124,7 @@ impl Workspace {
             Overlay::Trash { .. } => (self.render_trash(&t, cx), false, true),
             Overlay::Move { .. } => (self.render_move(&t, cx), false, true),
             Overlay::DiskConflict { .. } => (self.render_disk_conflict(&t, cx), false, false),
+            Overlay::ConvertDocument { .. } => (self.render_convert_dialog(&t, cx), false, true),
         };
         Some(
             div()

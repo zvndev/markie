@@ -63,6 +63,7 @@ impl Workspace {
     /// Open `text` as an unsaved document called `name`.
     pub(super) fn open_untitled(&mut self, name: String, text: String, window: &mut Window, cx: &mut Context<Self>) {
         self.settle(window, cx);
+        self.doc_notes.clear();
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
         let format = kind_for_extension(&ext);
         let literal = !matches!(format, FormatKind::Markdown | FormatKind::Darkmown);

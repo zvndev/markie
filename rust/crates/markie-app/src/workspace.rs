@@ -38,6 +38,7 @@ mod share;
 mod dialog_chrome;
 mod file_ops;
 mod history_dialog;
+mod import_copy;
 mod cloud;
 mod cloud_office;
 mod cloud_resources;
@@ -128,6 +129,8 @@ pub struct Workspace {
     /// not copied back.
     split_echo: Option<String>,
     dirty: bool,
+    /// Warnings shown above a converted copy (Electron's `session.warnings`).
+    doc_notes: Vec<String>,
     words: usize,
     reading_minutes: usize,
     sections: Vec<outline::Section>,
@@ -252,6 +255,7 @@ impl Workspace {
             split_source_latest: false,
             split_echo: None,
             dirty: false,
+            doc_notes: Vec::new(),
             words: 0,
             reading_minutes: 0,
             sections: Vec::new(),
@@ -454,7 +458,11 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if self.intercept_import(path, window, cx) {
+            return;
+        }
         self.settle(window, cx);
+        self.doc_notes.clear();
         match document::open(path) {
             Ok(doc) => {
                 let large = doc.is_large();

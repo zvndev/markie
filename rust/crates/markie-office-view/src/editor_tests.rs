@@ -3,7 +3,7 @@
 use markie_office::model::{Format, ListKind, Orientation, RichDocument, TextPosition};
 use markie_office::rich_document::{OfficeDocument, create_rich_document, export_rich_document, open_rich_document};
 
-use crate::commands::{available_commands, is_available, paper_of, run_command};
+use crate::commands::{available_commands, is_available, menu_commands, paper_of, run_command};
 use crate::editor::{Common, Outcome, Tool, WordEditor, paragraph_input, picture_operation};
 
 fn word(text: &str) -> WordEditor {
@@ -59,10 +59,15 @@ fn png(width: u32, height: u32) -> Vec<u8> {
 
 #[test]
 fn an_untouched_document_saves_its_original_bytes() {
-    let original = export_rich_document(&create_rich_document(Format::Docx, "Hello").unwrap()).unwrap();
-    let editor = WordEditor::new(open_rich_document(Format::Docx, &original).unwrap());
-    assert_eq!(editor.export().unwrap(), original);
-    assert!(!editor.is_dirty());
+    for format in [Format::Docx, Format::Rtf, Format::Odt] {
+        let original = export_rich_document(&create_rich_document(format, "Hello").unwrap()).unwrap();
+        let mut editor = WordEditor::new(open_rich_document(format, &original).unwrap());
+        assert_eq!(editor.export().unwrap(), original, "{format:?}");
+        assert!(!editor.is_dirty(), "{format:?}");
+        caret(&mut editor, 0, 5);
+        assert!(editor.replace_selection("!"), "{format:?}");
+        assert_eq!(texts(&reopen(&editor)), ["Hello!"], "{format:?}");
+    }
 }
 
 #[test]
@@ -444,6 +449,28 @@ fn menu_commands_follow_the_selection_and_format() {
     let available = available_commands(&rtf);
     assert!(available.contains(&"format-bold") && available.contains(&"format-align-center"));
     assert!(!available.contains(&"insert-table") && !available.contains(&"format-heading-1") && !available.contains(&"review-comments"));
+    assert!(!available.contains(&"view-outline"));
+    assert!(menu_commands(&editor, Some(Tool::Find)).is_empty());
+    assert_eq!(menu_commands(&editor, None), available_commands(&editor));
+}
+
+#[test]
+fn word_find_replaces_literal_matches_across_runs_in_one_undo_step() {
+    use markie_office::model::RunFormat;
+
+    let mut editor = word("Hi native. hi Native.\nHi native.");
+    select(&mut editor, (0, 4), (0, 6));
+    assert!(editor.format_selection(RunFormat { bold: Some(Some(true)), ..Default::default() }));
+    let ranges = editor.find_text("native");
+    assert_eq!(ranges.len(), 2);
+    assert_eq!((ranges[0].anchor.offset, ranges[0].focus.offset), (3, 9));
+    assert_eq!(editor.replace_found_text("native", "bad\ttext", None).unwrap_err(), "Find and replace cannot insert tabs or paragraph breaks.");
+    assert_eq!(editor.replace_found_text("native", "local", None).unwrap(), 2);
+    assert_eq!(texts(&reopen(&editor)), ["Hi local. hi Native.", "Hi local."]);
+    editor.undo();
+    assert_eq!(texts(editor.rich()), ["Hi native. hi Native.", "Hi native."]);
+    assert_eq!(editor.replace_found_text("native", "again", Some(1)).unwrap(), 1);
+    assert_eq!(texts(&reopen(&editor)), ["Hi native. hi Native.", "Hi again."]);
 }
 
 #[test]

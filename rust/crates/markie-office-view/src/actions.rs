@@ -74,7 +74,7 @@ word_commands! {
     ViewLightPaper => "view-light-paper",
 }
 
-gpui_kit::actions!(markie_word, [WordCopy, WordCut, WordPaste, WordSelectAll, WordUndo, WordRedo]);
+gpui_kit::actions!(markie_word, [WordCopy, WordCut, WordPaste, WordSelectAll, WordUndo, WordRedo, WordFind]);
 
 /// The key context of the editing surface.
 pub const CONTEXT: &str = "WordView";
@@ -91,6 +91,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-a", WordSelectAll, context),
         KeyBinding::new("cmd-z", WordUndo, context),
         KeyBinding::new("cmd-shift-z", WordRedo, context),
+        KeyBinding::new("cmd-f", WordFind, context),
     ]);
 }
 

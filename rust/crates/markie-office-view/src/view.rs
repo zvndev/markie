@@ -22,9 +22,9 @@ use gpui_kit::*;
 use markie_office::model::{Block, Format, ImageType, Paragraph, TextPosition};
 use markie_office::rich_document::rich_image_bytes;
 
-use crate::actions::{self, CONTEXT, WordCopy, WordCut, WordPaste, WordRedo, WordSelectAll, WordUndo};
+use crate::actions::{self, CONTEXT, WordCopy, WordCut, WordFind, WordPaste, WordRedo, WordSelectAll, WordUndo};
 use crate::colors::{RunColor, display_run_color};
-use crate::commands::{available_commands, run_command};
+use crate::commands::{available_commands, menu_commands, run_command};
 use crate::editor::{Common, Outcome, Tool, WordEditor};
 use crate::icons;
 use markie_office::model::RunFormat;
@@ -107,6 +107,8 @@ pub(crate) struct Inputs {
     pub author: Entity<InputState>,
     pub comment_author: Entity<InputState>,
     pub comment_text: Entity<InputState>,
+    pub find: Entity<InputState>,
+    pub replace: Entity<InputState>,
 }
 
 pub(crate) struct PageColors {
@@ -129,6 +131,9 @@ pub struct WordView {
     pub paper: PaperTone,
     pub(crate) tool: Option<Tool>,
     pub(crate) inputs: Inputs,
+    pub(crate) find_index: usize,
+    pub(crate) find_receipt: Option<String>,
+    _find_subscriptions: [Subscription; 2],
     /// The toolbar's font-size field (Electron's `<input type=number>`).
     size_field: Entity<InputState>,
     _size_sub: Subscription,
@@ -201,7 +206,22 @@ impl WordView {
             author: input("Revision author"),
             comment_author: input("Comment author"),
             comment_text: input("Comment on the selected paragraph"),
+            find: input("Case-sensitive text"),
+            replace: input("Replacement text"),
         };
+        let find = cx.subscribe(&inputs.find, |this: &mut WordView, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.find_index = 0;
+                this.find_receipt = None;
+                cx.notify();
+            }
+        });
+        let replace = cx.subscribe(&inputs.replace, |this: &mut WordView, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.find_receipt = None;
+                cx.notify();
+            }
+        });
         let mode = if editor.is_docx() { ViewMode::Page } else { ViewMode::Continuous };
         let size_field = cx.new(|cx| InputState::new(window, cx).placeholder("Auto"));
         // As Electron's onChange: a valid size applies as it is typed.
@@ -225,6 +245,9 @@ impl WordView {
             paper: PaperTone::Theme,
             tool: None,
             inputs,
+            find_index: 0,
+            find_receipt: None,
+            _find_subscriptions: [find, replace],
             size_field,
             _size_sub: size_sub,
             building: RefCell::new(HashMap::new()),
@@ -1581,7 +1604,13 @@ impl Render for WordView {
             .on_action(cx.listener(Self::on_select_all))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo));
-        let editing = actions::register_commands(editing, &available, cx)
+        let editing = editing.on_action(cx.listener(|this, _: &WordFind, window, cx| {
+            if this.tool.is_none() || this.tool == Some(Tool::Find) {
+                this.open_tool(Tool::Find, window, cx);
+                cx.notify();
+            }
+        }));
+        let editing = actions::register_commands(editing, &menu_commands(&self.editor, self.tool), cx)
             .relative()
             .flex_1()
             .h_full()

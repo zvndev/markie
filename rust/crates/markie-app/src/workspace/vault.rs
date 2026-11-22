@@ -272,7 +272,13 @@ enum Pending {
 
 struct EnvRow {
     key: Entity<InputState>,
-    value: Entity<InputState>,
+    value: EnvValue,
+    _subs: [Subscription; 2],
+}
+
+enum EnvValue {
+    Single(Entity<InputState>),
+    Multi(Entity<EditorState>),
 }
 
 #[derive(Default)]
@@ -1143,23 +1149,34 @@ impl VaultPage {
             if let LineKind::Entry(e) = &line.kind {
                 let id = line.id;
                 let key = cx.new(|cx| InputState::new(window, cx).default_value(e.key.clone()));
-                let value = cx.new(|cx| InputState::new(window, cx).masked(true).default_value(e.value.clone()));
-                let subs = [
-                    cx.subscribe(&key, move |this, state, ev: &InputEvent, cx| {
+                let key_sub = cx.subscribe(&key, move |this, state, ev: &InputEvent, cx| {
                         if matches!(ev, InputEvent::Change) && !this.writing {
                             let k = state.read(cx).value().to_string();
                             this.commit_env(|doc| dotenv::update_dotenv_entry(doc, id, Some(&k), None), cx);
                         }
-                    }),
-                    cx.subscribe(&value, move |this, state, ev: &InputEvent, cx| {
+                });
+                let (value, value_sub) = if e.value.contains(['\n', '\r']) {
+                    let editor = cx.new(|cx| EditorState::new(window, cx).language("text").line_number(false).soft_wrap(true));
+                    let sub = cx.subscribe(&editor, move |this, state, ev: &InputEvent, cx| {
+                        if matches!(ev, InputEvent::Change) && !this.writing
+                            && !this.busy && this.env.revealed.contains(&id)
+                        {
+                            let value = state.read(cx).value().to_string();
+                            this.commit_env(|doc| dotenv::update_dotenv_entry(doc, id, None, Some(&value)), cx);
+                        }
+                    });
+                    (EnvValue::Multi(editor), sub)
+                } else {
+                    let input = cx.new(|cx| InputState::new(window, cx).masked(true).default_value(e.value.clone()));
+                    let sub = cx.subscribe(&input, move |this, state, ev: &InputEvent, cx| {
                         if matches!(ev, InputEvent::Change) && !this.writing {
                             let v = state.read(cx).value().to_string();
                             this.commit_env(|doc| dotenv::update_dotenv_entry(doc, id, None, Some(&v)), cx);
                         }
-                    }),
-                ];
-                self._subscriptions.extend(subs);
-                self.env.rows.insert(id, EnvRow { key, value });
+                    });
+                    (EnvValue::Single(input), sub)
+                };
+                self.env.rows.insert(id, EnvRow { key, value, _subs: [key_sub, value_sub] });
             }
         }
         self.writing = false;
@@ -1183,10 +1200,20 @@ impl VaultPage {
     }
 
     fn sync_env_masks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.writing = true;
         for (id, row) in &self.env.rows {
             let shown = self.env.revealed.contains(id);
-            row.value.update(cx, |s, cx| s.set_masked(!shown, window, cx));
+            match &row.value {
+                EnvValue::Single(input) => input.update(cx, |s, cx| s.set_masked(!shown, window, cx)),
+                EnvValue::Multi(editor) => {
+                    let visible = shown.then(|| self.env.parsed.as_ref()?.lines.iter().find_map(|line| {
+                        if line.id == *id && let LineKind::Entry(entry) = &line.kind { Some(entry.value.clone()) } else { None }
+                    })).flatten().unwrap_or_default();
+                    editor.update(cx, |state, cx| state.set_value(visible, window, cx));
+                }
+            }
         }
+        self.writing = false;
     }
 
     fn create_untitled(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1890,22 +1917,14 @@ impl VaultPage {
                     let Some(inputs) = self.env.rows.get(&id) else { continue };
                     let label = if entry.key.is_empty() { format!("row {row}") } else { entry.key.clone() };
                     let problem = key_problem(&entry.key, &duplicates);
-                    let multiline = entry.value.contains(['\r', '\n']);
-                    let value_cell = if multiline {
-                        let lines = entry.value.split(['\n']).count();
-                        div()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(theme.border)
-                            .px(px(10.))
-                            .py(px(6.))
-                            .font_family("Menlo")
-                            .text_size(px(13.))
-                            .text_color(if shown { theme.foreground } else { muted })
-                            .child(if shown { entry.value.clone() } else { format!("{MASK} {lines} lines") })
-                            .into_any_element()
-                    } else {
-                        Input::new(&inputs.value).small().disabled(busy).into_any_element()
+                    let value_cell = match &inputs.value {
+                        EnvValue::Single(input) => Input::new(input).small().disabled(busy).into_any_element(),
+                        EnvValue::Multi(editor) if shown => div().h(px(110.)).rounded_md()
+                            .border_1().border_color(theme.border)
+                            .child(Editor::new(editor).h_full()).into_any_element(),
+                        EnvValue::Multi(_) => div().rounded_md().border_1().border_color(theme.border)
+                            .px(px(10.)).py(px(6.)).font_family("Menlo").text_size(px(13.)).text_color(muted)
+                            .child(format!("{MASK} {} lines", entry.value.lines().count())).into_any_element(),
                     };
                     let copy_label = label.clone();
                     let toggle_label = label.clone();

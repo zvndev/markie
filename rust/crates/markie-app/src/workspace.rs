@@ -368,6 +368,30 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Files macOS handed over while the app runs (Finder, `open -a`). A
+    /// folder joins the Library; the first file opens.
+    pub fn open_external(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        let mut first_file = None;
+        let mut added_root = false;
+        for path in paths {
+            if path.is_dir() {
+                if let Some(reg) = &self.registry {
+                    added_root |= reg.add_root(&path).is_ok();
+                }
+            } else if first_file.is_none() {
+                first_file = Some(path);
+            }
+        }
+        if added_root {
+            self.refresh_lists();
+            self.rescan(cx);
+        }
+        if let Some(path) = first_file {
+            self.open_path(&path, window, cx);
+        }
+        cx.notify();
+    }
+
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)) {
             self.save(window, cx);

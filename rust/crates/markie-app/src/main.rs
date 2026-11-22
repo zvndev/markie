@@ -5,9 +5,11 @@
 
 mod actions;
 mod library;
+mod open_urls;
 mod themes;
 mod workspace;
 
+use futures::StreamExt as _;
 use gpui_kit::component::{Theme, TitleBar};
 use gpui_kit::*;
 
@@ -107,9 +109,15 @@ fn main() {
         .map(std::path::PathBuf::from)
         .collect();
 
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::AllAssets)
-        .run(move |cx| {
+    // macOS hands files to a running app (Finder, `open -a`) and, on a cold
+    // launch through Launch Services, often hands the first file the same way
+    // instead of in argv. The callback has no App, so it only queues.
+    let (open_tx, mut open_rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    app.on_open_urls(move |urls| {
+        let _ = open_tx.unbounded_send(urls);
+    });
+    app.run(move |cx| {
             gpui_kit::init(cx);
             bind_keys(cx);
             markie_editor::bind_keys(cx);
@@ -123,7 +131,7 @@ fn main() {
                 window_min_size: Some(size(px(640.), px(420.))),
                 ..TitleBar::window_options()
             };
-            gpui_kit::open_window(options, cx, move |window, cx| {
+            let (window_handle, workspace) = gpui_kit::open_window(options, cx, move |window, cx| {
                 Theme::sync_system_appearance(Some(window), cx);
                 window.set_window_title(markie_core::paths::APP_NAME);
                 let view = cx.new(|cx| Workspace::new(initial, window, cx));
@@ -132,5 +140,22 @@ fn main() {
                 view
             })
             .expect("failed to open the Markie RS window");
+
+            cx.spawn(async move |cx| {
+                while let Some(urls) = open_rx.next().await {
+                    let paths = open_urls::file_paths(&urls);
+                    if paths.is_empty() {
+                        continue;
+                    }
+                    let workspace = workspace.clone();
+                    let _ = window_handle.update(cx, move |_, window, cx| {
+                        // Opened while minimized: un-minimize and come to the
+                        // front, so the file never opens out of sight.
+                        open_urls::bring_to_front(window, cx);
+                        workspace.update(cx, |ws, cx| ws.open_external(paths, window, cx));
+                    });
+                }
+            })
+            .detach();
         });
 }

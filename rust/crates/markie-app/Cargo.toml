@@ -19,6 +19,8 @@ anyhow.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 trash = "5"
+futures = "0.3"
+url = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 gpui-kit = { version = "=0.10.0", features = [
   "tree-sitter-markdown",
@@ -33,3 +35,8 @@ gpui-kit = { version = "=0.10.0", features = [
   "tree-sitter-css",
   "tree-sitter-toml",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", features = ["NSResponder", "NSView", "NSWindow"] }
+raw-window-handle = "0.6"

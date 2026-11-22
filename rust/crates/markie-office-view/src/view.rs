@@ -36,7 +36,7 @@ pub enum ViewMode {
     Continuous,
 }
 
-/// White paper whatever the theme (the default), or paper in the theme's colors.
+/// Paper in the theme's colors (the default, as in Electron), or white paper whatever the theme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaperTone {
     Light,
@@ -229,7 +229,7 @@ impl WordView {
             mode,
             outline: false,
             zoom: 1.0,
-            paper: PaperTone::Light,
+            paper: PaperTone::Theme,
             tool: None,
             inputs,
             building: RefCell::new(HashMap::new()),

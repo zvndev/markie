@@ -384,6 +384,7 @@ impl Workspace {
         }
         match std::fs::rename(old, &new) {
             Ok(()) => {
+                self.follow_move(old, &new, cx);
                 self.open_path(&new, window, cx);
                 self.rescan(cx);
             }
@@ -534,6 +535,7 @@ impl Workspace {
         match moved {
             Ok(()) => {
                 self.disk.forget(from);
+                self.follow_move(from, to, cx);
                 self.open_path(to, window, cx);
                 self.rescan(cx);
             }

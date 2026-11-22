@@ -125,6 +125,29 @@ impl Workspace {
         .detach();
     }
 
+    /// What follows a file the app renamed or moved, as Electron's
+    /// `afterWorkspaceMove` does: every path-keyed registry row (recent, star,
+    /// project pin and assignment, metadata), the office recovery history and
+    /// local comments. Text version history stays keyed to the old path, as
+    /// in Electron, whose snapshots are not moved either.
+    pub(super) fn follow_move(&mut self, from: &std::path::Path, to: &std::path::Path, cx: &mut Context<Self>) {
+        if let Some(reg) = &self.registry {
+            let moved = if to.is_dir() {
+                let sep = std::path::MAIN_SEPARATOR;
+                reg.move_prefix(&format!("{}{sep}", from.display()), &format!("{}{sep}", to.display()))
+            } else {
+                reg.move_path(from, to)
+            };
+            if let Err(e) = moved {
+                eprintln!("markie-rs: registry move failed: {e:#}");
+            }
+        }
+        let _ = self.recovery.moved(from, to);
+        markie_cloud::comments::local::LocalComments::new(&paths::data_dir()).move_records(from, to);
+        self.refresh_lists();
+        self.compute_projects(cx);
+    }
+
     /// "Edit how this is organized": open `Projects.md`, writing the template
     /// only now if it does not exist.
     fn open_projects_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -340,5 +363,42 @@ mod tests {
         assert_eq!(project_rows(Some(&s), "", &shut, Some(std::path::Path::new("/a/docs/two.md"))).len(), 2);
         let found = project_rows(Some(&s), "y.md", &shut, None);
         assert_eq!(found.len(), 2, "searching opens every match");
+    }
+
+    /// The pieces `follow_move` calls, on fixtures: one rename carries the
+    /// recent, the star, the project pin, office recovery and comments.
+    #[test]
+    fn a_move_carries_every_record() {
+        use markie_cloud::comments::local::LocalComments;
+        use markie_core::office_recovery::RecoveryStore;
+        use markie_core::registry::Registry;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let (from, to) = (dir.path().join("a.docx"), dir.path().join("b.docx"));
+        let notes = (dir.path().join("n.md"), dir.path().join("m.md"));
+        std::fs::write(&from, b"x").unwrap();
+        std::fs::write(&notes.0, "hello world").unwrap();
+        let reg = Registry::in_memory().unwrap();
+        reg.track_opened(&from).unwrap();
+        reg.toggle_star(&from, "file").unwrap();
+        markie_core::projects::store::ensure_tables(reg.conn()).unwrap();
+        markie_core::projects::store::pin_set(reg.conn(), &from.to_string_lossy(), "P", None).unwrap();
+        let recovery = RecoveryStore::new(&data);
+        recovery.put(&from, "docx", b"x").unwrap();
+        let comments = LocalComments::new(&data);
+        comments.add_from_agent(&notes.0, "hello world", "world", "a note", None, None, None, "agent").unwrap();
+
+        std::fs::rename(&from, &to).unwrap();
+        std::fs::rename(&notes.0, &notes.1).unwrap();
+        reg.move_path(&from, &to).unwrap();
+        recovery.moved(&from, &to).unwrap();
+        assert_eq!(comments.move_records(&notes.0, &notes.1), 1);
+
+        assert_eq!(reg.recent(5).unwrap()[0].path, to);
+        assert!(reg.is_starred(&to).unwrap());
+        assert_eq!(markie_core::projects::store::pins_all(reg.conn()).unwrap()[0].path, to.to_string_lossy());
+        assert_eq!(recovery.list(&to).len(), 1);
+        assert!(recovery.list(&from).is_empty());
+        assert_eq!(comments.threads(&notes.1).len(), 1);
     }
 }

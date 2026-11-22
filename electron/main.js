@@ -4140,4 +4140,12 @@ app.on("open-file", (event, filePath) => {
       createWindow();
     }
   }
+  // macOS activates Markie for the open but leaves a minimized window in the
+  // Dock, so the file opened out of sight. Bring it back, as every other open
+  // path does.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
 });

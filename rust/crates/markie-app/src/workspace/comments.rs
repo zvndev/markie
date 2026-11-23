@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, TextDecoration, TextDecorationCollection, Textarea, TextareaState};
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
@@ -84,6 +84,8 @@ pub(super) struct Comments {
     composing: Option<(Pos, Pos)>,
     show_resolved: bool,
     composers: HashMap<String, Composer>,
+    /// The composer field that has focus, for `focus:border-accent`.
+    focused_composer: Option<EntityId>,
     _poll: Option<Task<()>>,
     origin: Rc<Cell<Option<Bounds<Pixels>>>>,
     error: Option<String>,
@@ -134,8 +136,19 @@ impl Workspace {
         let input = cx.new(|cx| TextareaState::new(window, cx).rows(2).submit_on_enter(true).placeholder(placeholder));
         let sub = cx.subscribe_in(&input, window, move |this, state, ev: &InputEvent, window, cx| {
             // Send follows the draft (disabled while it is empty).
-            if let InputEvent::Change = ev {
-                cx.notify();
+            match ev {
+                InputEvent::Change => cx.notify(),
+                InputEvent::Focus => {
+                    this.collab.comments.focused_composer = Some(state.entity_id());
+                    cx.notify();
+                }
+                InputEvent::Blur => {
+                    if this.collab.comments.focused_composer == Some(state.entity_id()) {
+                        this.collab.comments.focused_composer = None;
+                    }
+                    cx.notify();
+                }
+                _ => {}
             }
             if let InputEvent::PressEnter { shift: false, .. } = ev {
                 let body = state.read(cx).value().trim().to_string();
@@ -263,6 +276,7 @@ impl Workspace {
 
     /// The margin over a live rich document.
     fn render_cloud_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let focused_composer = self.collab.comments.focused_composer;
         self.live_rich_binding()?;
         let p = themes::palette(cx);
         let origin = self.collab.comments.origin.clone();
@@ -408,7 +422,7 @@ impl Workspace {
             })
             // The new-thread composer.
             .when_some(composer_top.zip(composer_input), |el, (top, input)| {
-                el.child(div().absolute().top(px(top)).right(px(6.)).w(px(260.)).child(composer_box(&input, input.read(cx).value().trim().is_empty(), true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, window, cx| {
+                el.child(div().absolute().top(px(top)).right(px(6.)).w(px(260.)).child(composer_box(&input, input.read(cx).value().trim().is_empty(), focused_composer == Some(input.entity_id()), true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get("new") {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -465,6 +479,7 @@ impl Workspace {
     }
 
     fn cloud_thread_card(&self, t: &CommentThread, readonly: bool, can_comment: bool, reply: Option<Entity<TextareaState>>, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let focused_composer = self.collab.comments.focused_composer;
         let resolved = t.status == ThreadStatus::Resolved;
         let me = self.me();
         let moderate = self.can_moderate();
@@ -535,7 +550,7 @@ impl Workspace {
             .when_some(reply.filter(|_| can_comment && !resolved), |el, input| {
                 let tid = tid2.clone();
                 let key = format!("reply-{tid}");
-                el.child(composer_box(&input, input.read(cx).value().trim().is_empty(), false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
+                el.child(composer_box(&input, input.read(cx).value().trim().is_empty(), focused_composer == Some(input.entity_id()), false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get(&key) {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -759,6 +774,7 @@ impl Workspace {
     }
 
     fn render_local_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let focused_composer = self.collab.comments.focused_composer;
         if self.live_running() {
             return None;
         }
@@ -926,7 +942,7 @@ impl Workspace {
                                             .p(px(8.))
                                             .gap(px(8.))
                                             .child(quote(&anchor.exact, &p))
-                                            .child(composer_box(&input, input.read(cx).value().trim().is_empty(), true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, window, cx| {
+                                            .child(composer_box(&input, input.read(cx).value().trim().is_empty(), focused_composer == Some(input.entity_id()), true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, window, cx| {
                                                 if let Some(c) = w.collab.comments.composers.get("local-new") {
                                                     let body = c.input.read(cx).value().trim().to_string();
                                                     if !body.is_empty() {
@@ -977,6 +993,7 @@ impl Workspace {
     }
 
     fn local_thread_card(&mut self, pt: &PlacedThread, active: bool, can_comment: bool, reply: Option<Entity<TextareaState>>, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let focused_composer = self.collab.comments.focused_composer;
         let t = &pt.thread;
         let resolved = t.status == Status::Resolved;
         let (id1, id2, id3) = (t.id.clone(), t.id.clone(), t.id.clone());
@@ -1047,7 +1064,7 @@ impl Workspace {
             .when_some(reply.filter(|_| can_comment && !resolved), |el, input| {
                 let tid = t.id.clone();
                 let key = format!("local-reply-{tid}");
-                el.child(composer_box(&input, input.read(cx).value().trim().is_empty(), false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
+                el.child(composer_box(&input, input.read(cx).value().trim().is_empty(), focused_composer == Some(input.entity_id()), false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get(&key) {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -1177,6 +1194,7 @@ fn comment_row(name: &str, time: &str, body: &str, p: &Palette) -> Div {
 fn composer_box(
     input: &Entity<TextareaState>,
     empty: bool,
+    focused: bool,
     cancel: bool,
     p: &Palette,
     on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -1196,7 +1214,23 @@ fn composer_box(
         .gap(px(6.))
         .bg(p.surface2)
         .shadow_xl()
-        .child(div().rounded(px(6.)).border_1().border_color(p.border).bg(p.background).px(px(8.)).py(px(6.)).text_size(px(12.)).text_color(p.foreground).child(Textarea::new(input)))
+        // comments.tsx's `<textarea rows={2} className="text-[12px] … border
+        // rounded-md px-2 py-1.5 resize-none focus:border-accent">`: one
+        // frame, two 18 px lines (Tailwind's inherited 1.5 line height), no
+        // growth (it scrolls), the accent border while it has focus.
+        // gpui-kit's own frame is off and XSmall leaves only its 4 px side
+        // inset, so this wrapper's padding adds up to Electron's.
+        .child(
+            div()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(if focused { p.accent } else { p.border })
+                .bg(p.background)
+                .px(px(4.))
+                .py(px(6.))
+                .text_color(p.foreground)
+                .child(Textarea::new(input).appearance(false).xsmall().text_size(px(12.)).line_height(px(18.)).h(px(36.))),
+        )
         .child(
             h_flex()
                 .justify_end()

@@ -170,10 +170,23 @@ impl RichView {
             "mono" => Some(SharedString::from(MONO)),
             id => super::style::typeface(id).map(SharedString::from),
         };
-        let mut sel = theme.selection;
-        if !self.focus.is_focused(window) {
-            sel.a *= 0.6;
-        }
+        // Chromium paints a contenteditable selection in macOS's selected-text
+        // colours, opaque under the text, and in the unemphasized ones while
+        // the window or the editor is not focused. Measured from Electron
+        // 0.9.7 with the system's default blue accent: light #b8d4fa and
+        // #bbc5d8, dark #58749a and #858fa2 on screen. GPUI lands about
+        // (+5, -1, -3) off a given sRGB value on this display path, so the
+        // values below are those less that offset (checked side by side).
+        // GPUI Kit's theme caps a selection at 30% alpha, which cannot reach
+        // the dark colour, hence a colour here rather than in the theme.
+        let dark = theme.mode.is_dark();
+        let focused = self.focus.is_focused(window) && window.is_window_active();
+        let sel: Hsla = match (dark, focused) {
+            (false, true) => rgb(0xb3d5fd).into(),
+            (false, false) => rgb(0xb6c6db).into(),
+            (true, true) => rgb(0x52759d).into(),
+            (true, false) => rgb(0x7f90a5).into(),
+        };
         // At the default 16 the template's own size shows through
         // (`appearanceVars`); a size picked for this document wins.
         let base = if (self.doc_size - 16.0).abs() < 0.01 { self.style.font_size } else { self.doc_size };
@@ -1099,32 +1112,51 @@ impl RichView {
                 None => fallback(),
             }
         };
-        let handle = div()
-            .id(SharedString::from(format!("resize-{}-{}", key.0, key.1)))
-            .absolute()
-            .bottom(px(-5.))
-            .right(px(-5.))
-            .size(px(12.))
-            .rounded(px(2.))
-            .bg(look.link)
-            .border_2()
-            .border_color(look.background)
-            .rounded(px(3.))
-            .cursor(CursorStyle::ResizeLeftRight)
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                // From the width the file holds, else the drawn width.
-                let start = width.map(|w| w as f32).unwrap_or_else(|| {
-                    this.store.borrow().atoms.get(&key).map(|b| f32::from(b.size.width) / this.zoom - 4.).unwrap_or(300.)
-                });
-                this.resize = Some((pos, f32::from(ev.position.x), start));
-                this.live_width = Some((pos, start));
-            }));
+        // ResizableNodeView's four corners (`.markie-media-handle`): 12 px
+        // squares in the link blue with a 2 px page-coloured edge and a
+        // small shadow, centred on the frame's corners. They show for the
+        // selected picture and the one under the pointer, never in a
+        // read-only document. Dragging any corner changes the width only;
+        // the picture keeps its proportions.
+        let group = SharedString::from(format!("media-{}-{}", key.0, key.1));
+        let editable = !self.read_only && kind == markie_rich::html::MediaKind::Image;
+        let handles: Vec<AnyElement> = if editable {
+            [(false, false), (false, true), (true, false), (true, true)]
+                .into_iter()
+                .map(|(bottom, right)| {
+                    let corner = div()
+                        .id(SharedString::from(format!("resize-{}-{}-{}{}", key.0, key.1, bottom as u8, right as u8)))
+                        .absolute()
+                        .size(px(12.))
+                        .rounded(px(3.))
+                        .bg(look.link)
+                        .border_2()
+                        .border_color(look.background)
+                        .shadow(vec![BoxShadow { color: hsla(0., 0., 0., 0.35), offset: point(px(0.), px(1.)), blur_radius: px(3.), spread_radius: px(0.), inset: false }])
+                        .cursor(if bottom == right { CursorStyle::ResizeUpLeftDownRight } else { CursorStyle::ResizeUpRightDownLeft })
+                        .when(!selected, |d| d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)))
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            // From the width the file holds, else the drawn width.
+                            let start = width.map(|w| w as f32).unwrap_or_else(|| {
+                                this.store.borrow().atoms.get(&key).map(|b| f32::from(b.size.width) / this.zoom - 4.).unwrap_or(300.)
+                            });
+                            this.resize = Some((pos, f32::from(ev.position.x), start, if right { 1. } else { -1. }));
+                            this.live_width = Some((pos, start));
+                        }));
+                    let corner = if bottom { corner.bottom(px(-6.)) } else { corner.top(px(-6.)) };
+                    (if right { corner.right(px(-6.)) } else { corner.left(px(-6.)) }).into_any_element()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         // The selected picture has a 2px blue outline, 2px off its edge.
         div()
             .flex()
             .child(
                 div()
+                    .group(group)
                     .relative()
                     .flex_none()
                     .max_w_full()
@@ -1135,7 +1167,7 @@ impl RichView {
                         d.child(div().absolute().top(px(-4.)).left(px(-4.)).right(px(-4.)).bottom(px(-4.)).rounded(px(10.)).border_2().border_color(look.link))
                     })
                     .child(track(self.store.clone(), key))
-                    .when(selected && kind == markie_rich::html::MediaKind::Image, |d| d.child(handle)),
+                    .children(handles),
             )
             .into_any_element()
     }

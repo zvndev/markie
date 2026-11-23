@@ -8,6 +8,7 @@
 //! and Manage sharing opens the share dialog for the cloud document.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -155,7 +156,20 @@ pub(super) fn row_entries(status: SyncStatus, signed_in: bool, classic: bool, li
 
 /// `rowMenuEntries` with `item.exists`: a file that is gone offers no backup
 /// or sync-on, and "Remove from Library" in place of "Delete file…".
+///
+/// The sync entries follow the row's own sync state (`item.state`); a copy
+/// shared with you only loses Manage sharing (`!item.shared`). `Shared` here
+/// is shorthand for a synced copy shared with you.
+#[cfg(test)]
 pub(super) fn row_entries_for(status: SyncStatus, signed_in: bool, classic: bool, links: CloudLinks, exists: bool) -> Vec<Entry> {
+    let (status, shared) = match status {
+        SyncStatus::Shared => (SyncStatus::Synced, true),
+        other => (other, false),
+    };
+    row_entries_shared(status, shared, signed_in, classic, links, exists)
+}
+
+pub(super) fn row_entries_shared(status: SyncStatus, shared: bool, signed_in: bool, classic: bool, links: CloudLinks, exists: bool) -> Vec<Entry> {
     let e = |action, label, icon, tone| Entry { action, label, icon, tone, separated: false };
     let mut entries = Vec::new();
     if links.private_link {
@@ -180,7 +194,7 @@ pub(super) fn row_entries_for(status: SyncStatus, signed_in: bool, classic: bool
         if links.cloud_only {
             sync.push(e(RowAction::Download, "Download…", ICON_DOWNLOAD, Tone::Accent));
         }
-        if in_cloud && status != SyncStatus::Shared && !links.cloud_only {
+        if in_cloud && !shared && !links.cloud_only {
             sync.push(e(RowAction::ManageSharing, "Manage sharing…", PEOPLE, Tone::Default));
         }
         if status == SyncStatus::Synced {
@@ -197,6 +211,34 @@ pub(super) fn row_entries_for(status: SyncStatus, signed_in: bool, classic: bool
         Entry { action: RowAction::Forget, label: "Remove from Library", icon: ICON_REMOVE, tone: Tone::Default, separated: true }
     });
     entries
+}
+
+/// A Cloud page row with no file on this device (sync.js lists it with
+/// `state: "cloud-only"` and no path), mine or shared with me. `rowMenuEntries`
+/// then offers Copy link, the Live Doc pair for a nightly `.wd` on a server
+/// this row is signed in to, and Download… (`cloudCopyOnly`) when signed in.
+/// No path, so no Copy path, no sharing, no Stop syncing and no delete.
+pub(super) fn cloud_only_entries(signed_in: bool, live_doc: bool) -> Vec<Entry> {
+    let e = |action, label, icon, tone| Entry { action, label, icon, tone, separated: false };
+    let mut entries = vec![e(RowAction::CopyLink, "Copy link", ICON_LINK, Tone::Default)];
+    if signed_in && live_doc {
+        entries.push(e(RowAction::CopyLiveDoc, "Copy Live Doc address", ICON_LINK, Tone::Default));
+        entries.push(e(RowAction::OpenLiveDoc, "Open Live Doc", ICON_LINK, Tone::Default));
+    }
+    if signed_in {
+        entries.push(Entry { separated: true, ..e(RowAction::Download, "Download…", ICON_DOWNLOAD, Tone::Accent) });
+    }
+    entries
+}
+
+/// A Cloud page row keyed by its cloud id: the document on its server, with
+/// no file on this device. library.tsx keys a row's menu by
+/// `item.path ?? item.cloudId`; a row with a file uses the path menu.
+#[derive(Clone)]
+pub(super) struct CloudRow {
+    pub scope: super::cloud::Scope,
+    pub id: String,
+    pub name: String,
 }
 
 const ICON_LINK: &str = r#"<path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/>"#;
@@ -254,6 +296,49 @@ impl Workspace {
 
     pub(super) fn open_row_menu(&mut self, path: PathBuf, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.shell.row_menu = if self.shell.row_menu.as_ref().is_some_and(|(p, _)| *p == path) { None } else { Some((path, at)) };
+        self.shell.cloud_row_menu = None;
+        self.shell.row_menu_focus = 0;
+        cx.notify();
+    }
+
+    /// The ⋯ menu of a Cloud page row with no file here, keyed by cloud id.
+    pub(super) fn open_cloud_row_menu(&mut self, row: CloudRow, at: Point<Pixels>, cx: &mut Context<Self>) {
+        let same = self.shell.cloud_row_menu.as_ref().is_some_and(|(r, _)| r.id == row.id && r.scope.origin() == row.scope.origin());
+        self.shell.cloud_row_menu = if same { None } else { Some((row, at)) };
+        self.shell.row_menu = None;
+        self.shell.row_menu_focus = 0;
+        cx.notify();
+    }
+
+    /// Whether a cloud-only row's menu is the open one (`menuFor.key`).
+    pub(super) fn cloud_row_menu_open(&self, origin: &str, id: &str) -> bool {
+        self.shell.cloud_row_menu.as_ref().is_some_and(|(r, _)| r.id == id && r.scope.origin() == origin)
+    }
+
+    fn cloud_row_entries(&self, row: &CloudRow) -> Vec<Entry> {
+        let signed_in = row.scope.active() && self.cloud.scope(row.scope.origin()).is_some_and(|s| s.user == row.scope.user);
+        let live_doc = markie_core::formats::classify(&row.name) == markie_core::formats::FormatKind::Darkmown && super::comments::nightly(self.registry.as_deref());
+        cloud_only_entries(signed_in, live_doc)
+    }
+
+    fn run_cloud_row_action(&mut self, row: CloudRow, action: RowAction, window: &mut Window, cx: &mut Context<Self>) {
+        self.shell.cloud_row_menu = None;
+        match action {
+            // library.tsx `copyPrivateLink`: `/d/:id` on the row's server.
+            RowAction::CopyLink => {
+                let link = markie_cloud::sharing::view::private_url(row.scope.origin(), &row.id);
+                cx.write_to_clipboard(ClipboardItem::new_string(link));
+                window.push_notification("Private link copied. It opens for you after signing in, on any device.", cx);
+            }
+            RowAction::CopyLiveDoc => self.live_doc_address_for(row.scope, row.id, false, window, cx),
+            RowAction::OpenLiveDoc => self.live_doc_address_for(row.scope, row.id, true, window, cx),
+            // `docPull`: ask where, then write the cloud copy there and bind it.
+            RowAction::Download => {
+                let dir = super::cloud::landing_dir().unwrap_or_else(|_| super::cloud_strip::downloads_dir());
+                self.save_cloud_copy_as(row.scope, row.id, row.name, dir, window, cx);
+            }
+            _ => {}
+        }
         cx.notify();
     }
 
@@ -312,22 +397,71 @@ impl Workspace {
         cx.notify();
     }
 
-    /// `FileMenu` at the ⋯ button or the right-click point.
-    pub(super) fn render_row_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The open row menu's entries and how to run one: a row with a file
+    /// (keyed by path) or a Cloud page row without one (by cloud id).
+    #[allow(clippy::type_complexity)]
+    fn open_row_menu_entries(&self) -> Option<(Vec<Entry>, Point<Pixels>, Rc<dyn Fn(&mut Self, RowAction, &mut Window, &mut Context<Self>)>)> {
+        if let Some((row, at)) = self.shell.cloud_row_menu.clone() {
+            let entries = self.cloud_row_entries(&row);
+            return Some((entries, at, Rc::new(move |this: &mut Self, action, window: &mut Window, cx: &mut Context<Self>| this.run_cloud_row_action(row.clone(), action, window, cx))));
+        }
         let (path, at) = self.shell.row_menu.clone()?;
-        let p = themes::palette(cx);
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let signed_in = self.row_signed_in(&path);
         let exists = !self.shell.recent.is_missing(&path);
-        let entries = row_entries_for(self.row_status(&path), signed_in, classic(&name), self.row_links(&path, &name), exists);
+        let shared = self.cloud.remote(&path).is_some_and(|r| r.shared);
+        let state = SyncStatus::from_badge(self.cloud.badge(&path), false);
+        let entries = row_entries_shared(state, shared, signed_in, classic(&name), self.row_links(&path, &name), exists);
+        Some((entries, at, Rc::new(move |this: &mut Self, action, window: &mut Window, cx: &mut Context<Self>| this.run_row_action(path.clone(), action, window, cx))))
+    }
+
+    /// `FileMenu` at the ⋯ button or the right-click point.
+    pub(super) fn render_row_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (entries, at, pick) = self.open_row_menu_entries()?;
+        Some(self.row_menu_panel(entries, at, pick, cx))
+    }
+
+    /// `FileMenu`'s keys while it is open: the arrows, Home and End move the
+    /// focus round the items, Return and Space run the focused one, Tab and
+    /// Escape close it. Returns whether the key was the menu's.
+    pub(super) fn row_menu_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some((entries, _, pick)) = self.open_row_menu_entries() else { return false };
+        let n = entries.len();
+        if n == 0 {
+            return false;
+        }
+        let i = self.shell.row_menu_focus.min(n - 1);
+        match key {
+            "down" => self.shell.row_menu_focus = (i + 1) % n,
+            "up" => self.shell.row_menu_focus = (i + n - 1) % n,
+            "home" => self.shell.row_menu_focus = 0,
+            "end" => self.shell.row_menu_focus = n - 1,
+            "enter" | "space" => {
+                pick(self, entries[i].action, window, cx);
+                return true;
+            }
+            "escape" | "tab" => {
+                self.shell.row_menu = None;
+                self.shell.cloud_row_menu = None;
+            }
+            _ => return false,
+        }
+        cx.notify();
+        true
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn row_menu_panel(&self, entries: Vec<Entry>, at: Point<Pixels>, pick: Rc<dyn Fn(&mut Self, RowAction, &mut Window, &mut Context<Self>)>, cx: &mut Context<Self>) -> AnyElement {
+        let p = themes::palette(cx);
         let hover = p.accent.opacity(0.85);
+        let focus = self.shell.row_menu_focus.min(entries.len().saturating_sub(1));
         let items = entries.into_iter().enumerate().map(|(i, entry)| {
             let color = match entry.tone {
                 Tone::Default => (p.foreground, p.muted),
                 Tone::Accent => (p.blue, p.blue),
                 Tone::Danger => (p.red, p.red),
             };
-            let path = path.clone();
+            let pick = pick.clone();
             let action = entry.action;
             div()
                 .when(entry.separated, |d| d.child(div().h(px(1.)).mx(px(6.)).my(px(4.)).bg(p.border)))
@@ -341,35 +475,52 @@ impl Workspace {
                         .rounded(px(6.))
                         .px(px(8.))
                         .py(px(5.))
+                        // `.markie-file-menu-item`: 12 px on `line-height: 1.25`.
                         .text_size(px(12.))
+                        .line_height(px(15.))
                         .text_color(color.0)
                         .cursor_pointer()
+                        // `:focus` and `:hover` share the fill.
+                        .when(i == focus, |d| d.bg(hover))
                         .hover(move |s| s.bg(hover))
                         .child(div().w(px(16.)).flex_none().flex().justify_center().child(svg().data(&svg_bytes(entry.icon, 14)).size(px(14.)).text_color(color.1)))
                         .child(div().min_w_0().truncate().child(entry.label))
-                        .on_click(cx.listener(move |this, _, window, cx| this.run_row_action(path.clone(), action, window, cx))),
+                        .on_click(cx.listener(move |this, _, window, cx| pick(this, action, window, cx))),
                 )
         });
-        Some(
-            deferred(
-                anchored().position(at).snap_to_window_with_margin(px(8.)).child(
-                    menu_panel(&p)
-                        .id("row-menu")
-                        .occlude()
-                        .rounded(px(10.))
-                        .p(px(4.))
-                        .min_w(px(184.))
-                        .max_w(px(260.))
-                        .children(items)
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            this.shell.row_menu = None;
-                            cx.notify();
-                        })),
-                ),
-            )
-            .with_priority(2)
-            .into_any_element(),
+        deferred(
+            // `FileMenu`: left of the anchor when it would run off the right
+            // edge (`anchor.x - width`); anchored()'s default switches sides.
+            anchored().position(at).child(
+                menu_panel(&p)
+                    // `.markie-menu-panel:focus-within`: the focused first
+                    // item puts a 1 px blue ring round the panel.
+                    .shadow(vec![
+                        BoxShadow {
+                            color: hsla(0., 0., 0., if p.dark { 0.22 } else { 0.11 }),
+                            offset: point(px(0.), px(if p.dark { 10. } else { 8. })),
+                            blur_radius: px(if p.dark { 24. } else { 22. }),
+                            spread_radius: px(0.),
+                            inset: false,
+                        },
+                        BoxShadow { color: p.blue.opacity(if p.dark { 0.45 } else { 0.40 }), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(1.), inset: false },
+                    ])
+                    .id("row-menu")
+                    .occlude()
+                    .rounded(px(10.))
+                    .p(px(4.))
+                    .min_w(px(184.))
+                    .max_w(px(260.))
+                    .children(items)
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.shell.row_menu = None;
+                        this.shell.cloud_row_menu = None;
+                        cx.notify();
+                    })),
+            ),
         )
+        .with_priority(2)
+        .into_any_element()
     }
 }
 
@@ -432,7 +583,9 @@ mod tests {
         assert_eq!(actions(SyncStatus::Unpushed, true, true)[1], RowAction::RetryBackup);
         assert_eq!(actions(SyncStatus::Behind, true, true)[1], RowAction::Pull);
         assert_eq!(actions(SyncStatus::Conflict, true, true)[1], RowAction::Review);
-        assert_eq!(actions(SyncStatus::Shared, true, true), [RowAction::CopyPath, RowAction::Delete]);
+        // A synced copy shared with you: no Manage sharing, but Stop syncing
+        // stays (`item.state === "synced" && item.path`).
+        assert_eq!(actions(SyncStatus::Shared, true, true), [RowAction::CopyPath, RowAction::SyncOff, RowAction::Delete]);
     }
 
     #[test]
@@ -459,6 +612,16 @@ mod tests {
         let only = CloudLinks { private_link: true, live_doc: false, cloud_only: true };
         let got: Vec<RowAction> = row_entries(SyncStatus::Synced, true, true, only).into_iter().map(|e| e.action).collect();
         assert_eq!(got, [RowAction::CopyLink, RowAction::CopyPath, RowAction::Download, RowAction::SyncOff, RowAction::Delete]);
+    }
+
+    #[test]
+    fn a_cloud_only_row_copies_its_link_and_downloads() {
+        let got = |signed_in, live| super::cloud_only_entries(signed_in, live).into_iter().map(|e| (e.action, e.label, e.separated)).collect::<Vec<_>>();
+        assert_eq!(got(true, false), [(RowAction::CopyLink, "Copy link", false), (RowAction::Download, "Download…", true)]);
+        // Signed out of its server: the link still copies; nothing else reaches it.
+        assert_eq!(got(false, true), [(RowAction::CopyLink, "Copy link", false)]);
+        let live: Vec<_> = got(true, true).into_iter().map(|e| e.0).collect();
+        assert_eq!(live, [RowAction::CopyLink, RowAction::CopyLiveDoc, RowAction::OpenLiveDoc, RowAction::Download]);
     }
 
     #[test]

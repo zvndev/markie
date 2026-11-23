@@ -666,6 +666,12 @@ impl Workspace {
         }
         self.settle(window, cx);
         self.doc_notes.clear();
+        // A synced file reached through a symlink (`/tmp/…` for
+        // `/private/tmp/…`, a linked folder) opens under the path its cloud
+        // binding is stored at, so the badge, the update check and live
+        // editing all find it, as Electron's sync does for the same file.
+        let bound = self.cloud.binding_key(path);
+        let path = bound.as_deref().unwrap_or(path);
         match document::open(path) {
             Ok(doc) => {
                 self.document_failure = None;
@@ -1793,14 +1799,13 @@ impl Render for Workspace {
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.panel_drag_end(cx)))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.panel_drag_end(cx)))
-            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 if ev.keystroke.key == "escape" && this.panel_drag_cancel(cx) {
                     cx.stop_propagation();
                 } else if ev.keystroke.key == "escape" && this.live_docs.preview.is_some() && !this.dialogs.open.is_open() && !this.shell.search_open {
                     this.close_live_preview(cx);
                     cx.stop_propagation();
-                } else if ev.keystroke.key == "escape" && this.shell.row_menu.take().is_some() {
-                    cx.notify();
+                } else if (this.shell.row_menu.is_some() || this.shell.cloud_row_menu.is_some()) && this.row_menu_key(ev.keystroke.key.as_str(), window, cx) {
                     cx.stop_propagation();
                 }
             }))

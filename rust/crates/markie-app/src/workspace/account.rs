@@ -1917,6 +1917,10 @@ impl Workspace {
                 .w(px(680.))
                 .centered()
                 .close_button(false)
+                // Return submits the sign-in form; it must not also confirm
+                // and close the sheet. Electron's Settings stays open on the
+                // signed-in Account tab after an email or password sign-in.
+                .on_ok(|_, _, _| false)
                 .bg(l.panel_bg)
                 .border_color(l.panel_border)
                 .rounded(px(12.))

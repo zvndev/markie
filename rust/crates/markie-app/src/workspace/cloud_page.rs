@@ -1073,31 +1073,105 @@ impl Workspace {
         let manage = share.clone().filter(|_| e.source == Source::ByMe);
         let row_id = SharedString::from(format!("cloud-row-{}", e.key));
         let clickable = open_path.is_some() || doc.is_some();
+        // library.tsx `fileRow`: the ⋯ Actions button and the right-click
+        // menu, keyed by `item.path ?? item.cloudId`. A row with a file here
+        // has the Library's path menu; one without is keyed by its cloud id.
+        // A shared-by-me row with no listing row (`SharedByMeRow`) has none.
+        #[derive(Clone)]
+        enum MenuKey {
+            Path(PathBuf),
+            Cloud(super::library_rows::CloudRow),
+        }
+        let menu_key = match (&local, &doc, &scope) {
+            (Some(path), _, _) => Some(MenuKey::Path(path.clone())),
+            (None, Some(d), Some(scope)) => Some(MenuKey::Cloud(super::library_rows::CloudRow { scope: scope.clone(), id: d.id.clone(), name: d.name.clone() })),
+            _ => None,
+        };
+        let menu_open = match &menu_key {
+            Some(MenuKey::Path(path)) => self.shell.row_menu.as_ref().is_some_and(|(m, _)| m == path),
+            Some(MenuKey::Cloud(row)) => self.cloud_row_menu_open(row.scope.origin(), &row.id),
+            None => false,
+        };
+        let open_menu = |this: &mut Self, key: &MenuKey, at: Point<Pixels>, cx: &mut Context<Self>| match key {
+            MenuKey::Path(path) => this.open_row_menu(path.clone(), at, cx),
+            MenuKey::Cloud(row) => this.open_cloud_row_menu(row.clone(), at, cx),
+        };
+        let hover = p.accent.opacity(0.4);
+        let (muted, fg) = (p.muted, p.foreground);
+        let more = menu_key.clone().map(|key| {
+            div()
+                .id(SharedString::from(format!("cloud-row-more-{}", e.key)))
+                .size(px(20.))
+                .flex_none()
+                .rounded(px(4.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(muted)
+                .when(menu_open, |d| d.bg(hover).text_color(fg))
+                .when(!menu_open, |d| d.opacity(0.).group_hover("cloud-row", |s| s.opacity(1.)))
+                .hover(move |s| s.text_color(fg).bg(hover))
+                .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Actions").build(window, cx))
+                .child("⋯")
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    let at = ev.position();
+                    open_menu(this, &key, point(at.x - px(10.), at.y + px(14.)), cx);
+                }))
+        });
+        // `CloudItemRow`: the Library row (`fileRow`, which alone fills on
+        // hover and opens on click), then the source line under it outside
+        // that fill (`-mt-1 pb-1 pl-7 pr-2`). Both sit in one `group`.
         v_flex()
-            .id(row_id)
             .group("cloud-row")
-            .rounded(px(6.))
-            .px(px(8.))
-            .py(px(6.))
-            .when(clickable, |el| el.cursor_pointer().hover(|s| s.bg(p.accent.opacity(0.4))))
             .child(
-                h_flex()
-                    .gap(px(6.))
-                    .child(format_icon(format, 13., &p))
-                    .child(div().flex_1().min_w_0().truncate().text_size(px(12.5)).text_color(p.foreground).child(entry_name.clone()))
-                    .child(format_badge(format, &p))
-                    .children(sync_icon(state, shared, &p)),
+                v_flex()
+                .id(row_id)
+                .rounded(px(6.))
+                .px(px(8.))
+                .py(px(6.))
+                .when(menu_open, |el| el.bg(hover))
+                .when(clickable && !menu_open, |el| el.hover(move |s| s.bg(hover)))
+                .when(clickable, |el| el.cursor_pointer())
+                .when_some(menu_key, |el, key| {
+                    el.on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                        this.shell.row_menu = None;
+                        this.shell.cloud_row_menu = None;
+                        open_menu(this, &key, ev.position, cx);
+                    }))
+                })
+                .child(
+                    h_flex()
+                        .gap(px(6.))
+                        .child(format_icon(format, 13., &p))
+                        .child(div().flex_1().min_w_0().truncate().text_size(px(12.5)).text_color(p.foreground).child(entry_name.clone()))
+                        .child(format_badge(format, &p))
+                        .children(sync_icon(state, shared, &p))
+                        .children(more),
+                )
+                .when(local.as_ref().is_some_and(|p| !p.exists()), |el| {
+                    el.child(div().pl(px(20.)).text_size(px(10.)).text_color(p.red).child("Missing on disk"))
+                })
+                .when_some(shared_line, |el, line| el.child(div().pl(px(20.)).truncate().text_size(px(10.)).text_color(p.muted).child(line)))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.shell.row_menu = None;
+                    this.shell.cloud_row_menu = None;
+                    if let Some(path) = open_path.clone() {
+                        this.open_path(&path, window, cx);
+                    } else if let (Some(scope), Some(doc)) = (scope.clone(), doc.clone()) {
+                        this.open_cloud_text(scope, doc.id.clone(), doc.name.clone(), window, cx);
+                    }
+                })),
             )
-            .when(local.as_ref().is_some_and(|p| !p.exists()), |el| {
-                el.child(div().pl(px(20.)).text_size(px(10.)).text_color(p.red).child("Missing on disk"))
-            })
-            .when_some(shared_line, |el, line| el.child(div().pl(px(20.)).truncate().text_size(px(10.)).text_color(p.muted).child(line)))
             .child(
                 h_flex()
                     .min_w_0()
                     .gap(px(6.))
-                    .pt(px(2.))
-                    .pl(px(20.))
+                    .mt(px(-4.))
+                    .pb(px(4.))
+                    .pl(px(28.))
+                    .pr(px(8.))
                     .text_size(px(10.))
                     .text_color(p.muted)
                     .child(source_badge(e.source, source_badge_text(e, share_list_known), &p))
@@ -1131,13 +1205,6 @@ impl Workspace {
                         )
                     }),
             )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if let Some(path) = open_path.clone() {
-                    this.open_path(&path, window, cx);
-                } else if let (Some(scope), Some(doc)) = (scope.clone(), doc.clone()) {
-                    this.open_cloud_text(scope, doc.id.clone(), doc.name.clone(), window, cx);
-                }
-            }))
             .into_any_element()
     }
 

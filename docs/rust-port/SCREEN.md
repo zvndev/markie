@@ -25,6 +25,8 @@ node rust/scripts/screen/scene/seed.mjs $S      # writes $S/seed.json (throwaway
 
 The servers are this repo's `server/` with scratch databases and console mail, so no mail leaves the Mac. The seed makes Alice (owner of "Quarterly plan.md", shared with Bob and Carol, plus one pending invite to `success@simulator.amazonses.com`) and Dana on the second server. Stop them with `servers.sh stop $S`.
 
+For the Recent and Cloud page scenes, `node rust/scripts/screen/scene/seed-home.mjs $S [a.docx]` writes made-up documents of every kind to `$S/docs` and the scene arguments to `$S/home.json` (`--local` skips the servers). On the primary server Alice owns six documents and shares one, Bob shares two with her, Carol and Frank each have a request waiting, and Erin's account is empty. Keep Alice's `SCENE_HOME` between runs, so her synced files bind once.
+
 ### 2. Markie RS: scene mode
 
 Build once with the `scene` feature. It is off by default and must never be in a shipped build.
@@ -44,6 +46,10 @@ SCENE_SERVER=http://localhost:18991 rust/scripts/screen/scene.sh <scene> <out.pn
 | `servers` | `token`, `second_origin`, `email`, `password`, optional `stop` (`confirm`, `added`, `form`) | Settings › Advanced with the second server added and signed in |
 | `vault` | `state`: `none`, `create`, `create-error`, `locked`, `locked-touch`, `locked-error`, `unlocking`, `empty`, `items`, `few`, `search`, `note`, `file`, `env`, `env-revealed`, `env-copied`, `gate`, `settings`, `settings-touch`, `restore` | The vault page on a scratch vault with synthetic items. Touch ID and the clipboard are in-memory doubles, so the Keychain and pasteboard are never touched |
 | `browse` | optional `state`: `scanning`, `rescanning`, `empty`, `truncated`; `filter` (words); `type`: `markdown`, `docx`; `starred: true`; `open` (folders to open in the tree); `select` (the folder on show); `cursor` (the highlighted row). Paths are relative to the scratch home | Browse, "Documents on this Mac", over a synthetic home folder. See below |
+| `recent` | `recents` (`[{path, hours_ago, star?}]`, seeded into the scratch registry); optional `tab: "starred"`, `view: "list"`, `filter` (words), `type: "markdown"`, `sort`: `name`, `type`; `cursor` (n, the keyboard cursor); `menu`: `type`, `sort`, `row` | The Recent page: document cards grouped by day, once every thumbnail is in. A path with no file is a "Missing on disk" card |
+| `launch` | as `recent` | What a launch with no file shows after the first one: the Recent page over the empty page. With no `recents`, the empty state |
+| `library` | `recents` | The Library panel's Recent list beside the file passed on the command line |
+| `cloud` | optional `token` (signed out without it), `recents`, `sync` (local files to turn sync on for), `snapshots` (office files to upload once), `min_docs`, `min_requests`, `second_origin` with `email` and `password` (adds and signs in to a second server first); then `requests_open: true`, `view: "list"`, `sources` (`only-me`, `by-me`, `with-me`), `menu`: `area`, `type`, `sort`, `row` | The Cloud page: signed out, empty, or signed in with documents, share requests and snapshots, once every thumbnail is in |
 
 #### Browse scenes
 

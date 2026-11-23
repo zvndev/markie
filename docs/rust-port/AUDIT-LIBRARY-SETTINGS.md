@@ -4,13 +4,13 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 91 of 91 = 100 % (90 PASS and 1 IMPROVEMENT).** Row 3.1 became an IMPROVEMENT on 2026-11-23 (branch `t3/markie-rs-browse-ux`): Browse is a page, not Electron's narrow panel. Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
+**Parity: 91 of 91 = 100 % (89 PASS and 2 IMPROVEMENT).** Row 3.1 became an IMPROVEMENT on 2026-11-23 (branch `t3/markie-rs-browse-ux`): Browse is a page, not Electron's narrow panel. Row 1.2 became one the same day (branch `t3/markie-rs-home-pages`): Recent is a page of document cards, and a launch with no file opens on it. Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
 
 | Count | Rows |
 |---|---|
 | All rows | 96 |
-| PASS | 90 |
-| IMPROVEMENT | 1 (3.1: Browse is a page with a folder tree and the folder's contents) |
+| PASS | 89 |
+| IMPROVEMENT | 2 (3.1: Browse is a page with a folder tree and the folder's contents; 1.2: Recent is a page of document cards) |
 | FAIL | 0 |
 | NEEDS-CAPTURE | 0 |
 | EXCLUDED | 4 (2.2, 2.3, 2.8 and the earlier one) |
@@ -62,7 +62,7 @@ Shared files touched, kept small, for the other auditors:
 | # | Bullet | Status | Evidence (Electron / Markie RS / test) | Notes |
 |---|---|---|---|---|
 | 1.1 | What the user can do | PASS | Roll-up | |
-| 1.2 | Library lists recent and opened files with their sync state | PASS | `library.tsx` fileRow; `library.rs` set_lists, `library_rows.rs` sync_status_icon; `states_map_from_the_cloud_badge`, `recent_files_that_are_gone_stay_listed_as_missing` | Fixed: files gone from disk were hidden. They now show "Missing on disk". |
+| 1.2 | Library lists recent and opened files with their sync state | IMPROVEMENT | `library.tsx` fileRow; `library.rs` set_lists, `library_rows.rs` sync_status_icon; `states_map_from_the_cloud_badge`, `recent_files_that_are_gone_stay_listed_as_missing`; `recent_page.rs`, `doc_grid.rs`, `doc_preview.rs`; `recent_page::tests` (9), `doc_grid::tests` (6), `doc_preview::tests` (10); scenes `recent`, `launch`, `library` in SCREEN.md, before and after in `.autoloop/runs/home-pages/` | Fixed: files gone from disk were hidden. They now show "Missing on disk". Deliberately differs (2026-11-23, `t3/markie-rs-home-pages`): Electron lists recent files only as names in a 252 px panel, so documents look alike, and a launch with no file shows an empty page. Markie RS adds a Recent page in the document area: cards that show the start of each document, grouped Today, This week and Earlier, with Starred as a filter, grid or list, and "Missing on disk" with Remove. A launch with no file opens on it (the first launch still shows the welcome document), and it is one click away on the rail. The Library panel's Recent list stays, reading the same list through the same filter, type and sort. |
 | 1.3 | Filter by type; sort by name, recency or type | PASS | `library-document-query.ts`; `library.rs` query_rows; `recent_query_matches_electrons_query_library_documents` (112 cases from Electron's code), `the_recent_tab_filters_without_ranking_or_reading_bodies` | Fixed: ranking, snippet search, label-based Type sort, recency by mtime, missing "Other". |
 | 1.4 | Create new documents (Markdown, Word, text, Darkmown, Locked vault) | PASS | `new-document-modal.tsx:16-25`; `file_ops.rs` WRITING_TYPES and DATA_TYPES, `copies_and_renames`; palette `commands_follow_electrons_list` | Same ten types, labels and descriptions. Locked vault comes from the Vault page (section 22) and the palette's "Open Vault", as in Electron. |
 | 1.5 | Drop files to import them | PASS | `library.tsx:387` onDrop, `page.tsx:1701` handleDrop; `file_ops.rs` library_drop_paths, window_drop_target; `drops_open_what_electron_opens` | Fixed: no drop handling existed. The Library notice uses Electron's wording. |

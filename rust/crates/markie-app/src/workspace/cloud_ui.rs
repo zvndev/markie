@@ -4,7 +4,6 @@
 //! and the conflict dialog, as Markie RS's now do.
 use super::Workspace;
 use gpui_kit::*;
-use markie_cloud::docs::Role;
 
 impl Workspace {
     pub(super) fn render_cloud_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -49,13 +48,5 @@ impl Workspace {
                 )
         });
         Some(div().flex().flex_col().children(strip).children(error_row).into_any_element())
-    }
-}
-
-pub(super) fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Owner => "Owner",
-        Role::Editor => "Can save versions",
-        Role::Viewer => "Can view",
     }
 }

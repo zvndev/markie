@@ -79,7 +79,7 @@ pub(crate) struct ServersUi {
     remove_busy: bool,
     row_error: Option<(String, String)>,
     /// The account `/api/me` confirmed for each added server with a session.
-    emails: HashMap<String, Option<String>>,
+    pub(super) emails: HashMap<String, Option<String>>,
     asked: HashMap<String, String>,
     _subs: Vec<Subscription>,
 }

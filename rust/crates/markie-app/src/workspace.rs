@@ -1290,6 +1290,11 @@ impl Workspace {
     }
 
     fn on_save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        // ⌘S over the office cloud dialog saves its cloud version, never the
+        // local file (document-cloud-dialog.tsx).
+        if self.office_save_shortcut(window, cx) {
+            return;
+        }
         self.save(window, cx);
     }
 
@@ -1854,6 +1859,7 @@ impl Render for Workspace {
             .children(self.render_row_menu(cx))
             .children(self.render_search(cx))
             .children(self.render_share(window, cx))
+            .children(self.render_office_cloud(window, cx))
             .children(crate::perf::marker());
         self.dialog_actions(root, cx).children(dialogs)
     }

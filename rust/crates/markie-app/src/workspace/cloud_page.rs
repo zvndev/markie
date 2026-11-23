@@ -797,7 +797,12 @@ impl Workspace {
         if self.cloud.area_busy || label.trim().is_empty() {
             return;
         }
-        let Some(scope) = (if target == AreaTarget::Page { self.cloud.selected_scope() } else { self.cloud.primary_scope() }) else { return };
+        let scope = match target {
+            AreaTarget::Page => self.cloud.selected_scope(),
+            AreaTarget::Office => self.office_scope(),
+            AreaTarget::Share | AreaTarget::Library => self.cloud.primary_scope(),
+        };
+        let Some(scope) = scope else { return };
         self.cloud.area_busy = true;
         self.cloud.area_error = None;
         let request = scope.clone();
@@ -830,6 +835,7 @@ impl Workspace {
                                 this.shell.upload_area = Some(area.id);
                                 this.shell.upload_area_open = false;
                             }
+                            AreaTarget::Office => this.office_area_created(area.id),
                         }
                         input.update(cx, |s, cx| s.set_value("", window, cx));
                     }
@@ -879,6 +885,7 @@ impl Workspace {
                                     AreaTarget::Share => "share-area-create",
                                     AreaTarget::Page => "cloud-area-create",
                                     AreaTarget::Library => "library-area-create",
+                                    AreaTarget::Office => "office-area-create",
                                 })
                                 .rounded(px(6.))
                                 .border_1()
@@ -1563,4 +1570,6 @@ pub(super) enum AreaTarget {
     Page,
     Share,
     Library,
+    /// The office cloud dialog's pickers.
+    Office,
 }

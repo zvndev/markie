@@ -949,7 +949,7 @@ impl Workspace {
             h_flex()
                 .gap(px(8.))
                 .mt(px(9.6))
-                .child(self.share_select_button("invite-role", sv::role_label(role), menu == Some(Menu::InviteRole), true, p, cx.listener(|w, _, _, cx| {
+                .child(Self::share_invite_role(sv::role_label(role), menu == Some(Menu::InviteRole), p).on_click(cx.listener(|w, _, _, cx| {
                     if let Some(s) = w.collab.share.as_mut() {
                         s.menu = if s.menu == Some(Menu::InviteRole) { None } else { Some(Menu::InviteRole) };
                     }
@@ -1220,6 +1220,37 @@ impl Workspace {
             .hover(|s| s.text_color(p.foreground).bg(super::chrome::hover_fill(p)))
             .cursor_pointer()
             .child(label)
+    }
+
+    /// The invite row's role control: a native `<select>` styled
+    /// `markie-overlay-field markie-share-select`. Chromium draws it as a
+    /// bordered field (30 pt tall, 7 pt corners) with the text 12.5 pt in
+    /// from the border and its own small chevron in full ink 4 pt from the
+    /// right, 13.5 pt after the text (measured from 0.9.7).
+    fn share_invite_role(label: &'static str, open: bool, p: &Palette) -> Stateful<Div> {
+        let (bg, border, ring) = if p.dark {
+            (mix(p.background, p.surface, 0.82), p.border, p.blue.opacity(0.52))
+        } else {
+            (p.background, mix(p.foreground, p.border, 0.14), p.blue.opacity(0.45))
+        };
+        h_flex()
+            .id("invite-role")
+            .flex_none()
+            .h(px(30.))
+            .pl(px(12.5))
+            .pr(px(4.))
+            .gap(px(13.5))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(if open { mix(p.blue, p.border, 0.72) } else { border })
+            .bg(bg)
+            .when(p.dark, |el| el.shadow(vec![BoxShadow { color: hsla(0., 0., 0., 0.08), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: true }]))
+            .when(open, |el| el.shadow(vec![BoxShadow { color: ring, offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(2.), inset: false }]))
+            .text_size(px(12.5))
+            .text_color(p.foreground)
+            .cursor_pointer()
+            .child(label)
+            .child(super::dialog_chrome::stroke_icon(super::dialog_chrome::PATH_CHEVRON_DOWN, p.foreground, 15., 1.9))
     }
 
     /// `.markie-share-role-select`: transparent until hovered, with a chevron.

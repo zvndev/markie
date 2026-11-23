@@ -769,10 +769,19 @@ pub struct SignInForm {
     /// Put the caret in the code field at the next render, once the code
     /// view is up, so the code can be typed or pasted straight away.
     focus_otp: bool,
+    /// `allowGoogle`: false drops Google, Apple and the "or" line, as the
+    /// office cloud dialog's form does.
+    allow_providers: bool,
     _subs: Vec<Subscription>,
 }
 
 impl SignInForm {
+    /// The form without Google and Apple (`allowGoogle={false}`).
+    pub fn without_providers(mut self) -> Self {
+        self.allow_providers = false;
+        self
+    }
+
     pub fn new(store: Entity<AccountStore>, reason: SignInReason, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let email = cx.new(|cx| InputState::new(window, cx).placeholder("you@work.com"));
         let password = cx.new(|cx| InputState::new(window, cx).placeholder("Password").masked(true));
@@ -804,6 +813,7 @@ impl SignInForm {
             clear: Vec::new(),
             fill_password: None,
             focus_otp: false,
+            allow_providers: true,
             _subs: subs,
         }
     }
@@ -1047,8 +1057,9 @@ impl Render for SignInForm {
         let l = look(cx);
         let (title, body) = auth_errors::reason_copy(self.reason);
         let store = self.store.read(cx);
+        let providers = self.allow_providers;
         let browser = store.browser_sign_in();
-        let allow_apple = store.sign_in.as_ref().is_some_and(|s| s.apple);
+        let allow_apple = providers && store.sign_in.as_ref().is_some_and(|s| s.apple);
         let hand_back_error = store.hand_back_error.clone();
         let busy = self.busy;
         let email = self.email(cx);
@@ -1067,9 +1078,11 @@ impl Render for SignInForm {
             View::Choose => {
                 let provider_disabled = busy || !browser;
                 col = col
-                    .child(primary_button("google", "Continue with Google", provider_disabled, l).when(!provider_disabled, |el| {
-                        el.on_click(cx.listener(|this, _, _, cx| this.start_provider(Provider::Google, cx)))
-                    }))
+                    .when(providers, |col| {
+                        col.child(primary_button("google", "Continue with Google", provider_disabled, l).when(!provider_disabled, |el| {
+                            el.on_click(cx.listener(|this, _, _, cx| this.start_provider(Provider::Google, cx)))
+                        }))
+                    })
                     .when(allow_apple, |col| {
                         col.child(primary_button("apple", "Continue with Apple", provider_disabled, l).when(!provider_disabled, |el| {
                             el.on_click(cx.listener(|this, _, _, cx| this.start_provider(Provider::Apple, cx)))
@@ -1077,7 +1090,7 @@ impl Render for SignInForm {
                     })
                     // Markie RS's own note: the line wraps inside the
                     // panel, with the switch on its own line under it.
-                    .when(!browser, |col| {
+                    .when(providers && !browser, |col| {
                         col.child(
                             v_flex()
                                 .w_full()
@@ -1088,14 +1101,16 @@ impl Render for SignInForm {
                                 })))),
                         )
                     })
-                    .child(
-                        h_flex()
-                            .gap(px(12.))
-                            .py(px(4.))
-                            .child(div().h(px(1.)).flex_1().bg(l.border))
-                            .child(muted_line("or", 11., l))
-                            .child(div().h(px(1.)).flex_1().bg(l.border)),
-                    )
+                    .when(providers, |col| {
+                        col.child(
+                            h_flex()
+                                .gap(px(12.))
+                                .py(px(4.))
+                                .child(div().h(px(1.)).flex_1().bg(l.border))
+                                .child(muted_line("or", 11., l))
+                                .child(div().h(px(1.)).flex_1().bg(l.border)),
+                        )
+                    })
                     .child(f(&self.email))
                     .child(
                         secondary_button("send-code", if busy { "Sending…" } else { "Email me a code" }, busy || email.is_empty(), l)

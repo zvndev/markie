@@ -4,7 +4,7 @@ A Capacitor 8 app that opens Markie Cloud documents on a phone, including the on
 It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contract").
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
-- Screens: Sign in (email code), Recent (search, shared and type filters), Document (markdown, text,
+- Screens: Sign in (email code), Recent (search, "Shared with you", "Shared by me" and type filters), Document (markdown, text,
   Darkmown), Word/RTF/OpenDocument, Editor (rich, source, live), Comments, Share, New document, an
   incoming file, Settings.
 - The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key

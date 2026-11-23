@@ -8,6 +8,7 @@
 //   POST /api/auth/sign-out
 //   GET  /api/me
 //   GET  /api/docs/recent?limit=&before=            {docs:[recent item]}
+//   GET  /api/docs/shared-by-me                     {docs:[{id,name,updated_at,memberCount,pendingCount}]}
 //   GET  /api/docs/:id                              {doc:{..., format, origin}}
 //   GET  /api/docs/:id/links                        {links:[{ref, target}]}
 //   GET  /api/docs/:id/assets/file?ref=             a picture the document names (Range honored)
@@ -559,6 +560,19 @@ const server = createServer(async (req, res) => {
         .slice(0, limit)
         .map((doc) => recentItem(doc, originOf(req)));
       return reply(200, { docs: items });
+    }
+
+    // Owned documents someone else can reach, as server/src/docs.ts answers:
+    // people who have it, and invites to addresses with no account yet.
+    if (req.method === "GET" && path === "/api/docs/shared-by-me") {
+      const rows = [...docs.values()]
+        .filter((doc) => doc.role === "owner" && (docShares.get(doc.id)?.length ?? 0) > 0)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map((doc) => {
+          const list = docShares.get(doc.id);
+          return { id: doc.id, name: doc.name, updated_at: doc.updatedAt, memberCount: list.filter((m) => !m.pending).length, pendingCount: list.filter((m) => m.pending).length, folder_id: null };
+        });
+      return reply(200, { docs: rows });
     }
 
     const links = /^\/api\/docs\/([^/]+)\/links$/.exec(path);

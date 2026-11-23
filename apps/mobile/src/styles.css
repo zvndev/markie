@@ -432,6 +432,26 @@ textarea:not(.m-editor-text):focus-visible {
   box-shadow: 0 1px 3px rgb(15 23 42 / 0.12), 0 0 0 0.5px rgb(15 23 42 / 0.06);
 }
 
+/* Three scopes on Recent: each tab as wide as its words, so "All" gives room to the long ones. */
+.m-segmented-fit button {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-row-shared svg {
+  flex: none;
+}
+
+.m-row-shared span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .m-segmented-full button {
   min-height: 34px;
   font-size: 14px;
@@ -511,10 +531,13 @@ textarea:not(.m-editor-text):focus-visible {
   line-clamp: 2;
 }
 
+/* A badge and a shared line that don't fit side by side take a line each:
+   "from Claude Code" beside "Shared with 2 people" was cut off at "Shared". */
 .m-row-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 3px 8px;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -528,6 +551,7 @@ textarea:not(.m-editor-text):focus-visible {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }

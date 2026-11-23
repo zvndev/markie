@@ -131,6 +131,21 @@ describe("against the mock server", () => {
     expect((await api.shareRequests()).count).toBe(after.count - 1);
   });
 
+  it("lists what this account shared with others, with how many people", async () => {
+    const transport = fetchTransport();
+    const anon = createApiClient({ origin, transport });
+    await anon.sendCode("owner@example.com");
+    const { token } = await anon.verifyCode("owner@example.com", "123456");
+    const api = createApiClient({ origin, transport, getToken: () => token });
+    expect(await api.sharedByMe()).toMatchObject([{ id: "reading-report", name: "Weekly reading report.md", memberCount: 2, pendingCount: 1 }]);
+    // Sharing another one puts it on the list; the account it was shared with is never on it.
+    await api.addShare("agent-brief", "new.reader@example.com", "viewer");
+    expect((await api.sharedByMe()).map((doc) => doc.id).sort()).toEqual(["agent-brief", "reading-report"]);
+    await api.removeShare("agent-brief", "new.reader@example.com");
+    expect((await api.sharedByMe()).map((doc) => doc.id)).toEqual(["reading-report"]);
+    await expect(anon.sharedByMe()).rejects.toMatchObject({ status: 401 });
+  });
+
   it("reads a public share with no account, and nothing else", async () => {
     // What the signed-out reader does: a client that was never given a token.
     const sent: (string | undefined)[] = [];

@@ -1,11 +1,92 @@
 // The home screen's list logic: paging, search, the shared filter, and the
 // labels each row shows. Pure, so it is tested without a device.
 import { updatedAgo } from "@/lib/relative-time";
-import { docTypeGroup, type DocTypeFilter, type RecentDoc } from "./docs";
+import { DOC_ID, docTypeGroup, formatFromName, kindFromName, privateLinkFor, type DocTypeFilter, type RecentDoc } from "./docs";
 
 export const PAGE_SIZE = 50;
 
-export type RecentScope = "all" | "shared";
+/** All, shared with this account, or owned by it and shared with someone else. */
+export type RecentScope = "all" | "shared" | "mine";
+
+/**
+ * One owned document that other people can reach, from
+ * `GET /api/docs/shared-by-me`. The server says how many, not who: the names
+ * are one tap away, in the document's share sheet.
+ */
+export interface SharedOutDoc {
+  id: string;
+  name: string;
+  updatedAt: string;
+  /** People who have it, or were sent it and haven't accepted the sender yet. */
+  memberCount: number;
+  /** Invites to addresses with no Markie account yet. */
+  pendingCount: number;
+}
+
+function count(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+/** The `{ docs: [...] }` answer, with anything malformed left out. */
+export function parseSharedByMe(value: unknown): SharedOutDoc[] {
+  const list = value && typeof value === "object" && Array.isArray((value as { docs?: unknown }).docs) ? (value as { docs: unknown[] }).docs : null;
+  if (!list) throw new Error("The server's shared list wasn't in the expected shape.");
+  const out: SharedOutDoc[] = [];
+  for (const item of list.slice(0, 500)) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.id !== "string" || !DOC_ID.test(raw.id)) continue;
+    const stamp = typeof raw.updated_at === "string" ? raw.updated_at : typeof raw.updatedAt === "string" ? raw.updatedAt : "";
+    const at = Date.parse(stamp);
+    if (Number.isNaN(at)) continue;
+    const memberCount = count(raw.memberCount);
+    const pendingCount = count(raw.pendingCount);
+    if (memberCount + pendingCount === 0) continue;
+    const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 512) : "Untitled";
+    out.push({ id: raw.id, name, updatedAt: new Date(at).toISOString(), memberCount, pendingCount });
+  }
+  return out;
+}
+
+/** Looked up by document id when a row is drawn. */
+export function sharedOutIndex(list: readonly SharedOutDoc[]): Map<string, SharedOutDoc> {
+  return new Map(list.map((doc) => [doc.id, doc]));
+}
+
+/**
+ * The "Shared by me" list as rows. It comes from the server's own list, not
+ * from the pages of Recent loaded so far, so a document shared long ago is
+ * here before anyone scrolls to it. A row already loaded is used as it is
+ * (it knows its format and whether an agent made it).
+ */
+export function sharedOutRows(list: readonly SharedOutDoc[], loaded: readonly RecentDoc[], serverOrigin: string): RecentDoc[] {
+  const known = new Map(loaded.filter((doc) => doc.store === "docs").map((doc) => [doc.id, doc]));
+  const rows = list.map((item): RecentDoc => {
+    const seen = known.get(item.id);
+    if (seen) return seen;
+    const format = formatFromName(item.name);
+    return {
+      id: item.id, store: "docs", kind: kindFromName(item.name, format), name: item.name, format,
+      createdAt: null, updatedAt: item.updatedAt, origin: { kind: "app", agent: null },
+      shared: false, role: "owner", sharedBy: null, privateLink: privateLinkFor(serverOrigin, item.id),
+    };
+  });
+  return mergeRecent([], rows);
+}
+
+/**
+ * "Shared with 3 people", "2 people invited", or, for both, the short
+ * "Shared with 3, invited 2": a row has one line for it on a small phone.
+ * Null when nobody else can reach the document.
+ */
+export function sharedOutLabel(doc: Pick<SharedOutDoc, "memberCount" | "pendingCount"> | undefined): string | null {
+  if (!doc) return null;
+  const { memberCount, pendingCount } = doc;
+  if (memberCount > 0 && pendingCount > 0) return `Shared with ${memberCount}, invited ${pendingCount}`;
+  if (memberCount > 0) return memberCount === 1 ? "Shared with 1 person" : `Shared with ${memberCount} people`;
+  if (pendingCount > 0) return pendingCount === 1 ? "1 person invited" : `${pendingCount} people invited`;
+  return null;
+}
 
 /** Rows from the document platform, folded into the list: everything it has, since it does not page. */
 export function withPlatform(docs: readonly RecentDoc[], platform: readonly RecentDoc[]): RecentDoc[] {
@@ -34,7 +115,10 @@ function fold(value: string): string {
   return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
-/** Search matches the name only: the list never holds document bodies. */
+/**
+ * Search matches the name only: the list never holds document bodies.
+ * For "mine", pass the rows from sharedOutRows: they are the scope already.
+ */
 export function filterRecent(docs: readonly RecentDoc[], query: string, scope: RecentScope, type: DocTypeFilter = "all"): RecentDoc[] {
   const words = fold(query).split(/\s+/).filter(Boolean);
   return docs.filter((doc) => {

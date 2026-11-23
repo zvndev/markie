@@ -1,17 +1,17 @@
 # Markie RS parity score
 
-The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit.
+The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison).
 
 ## Overall
 
 | Audit | Counted | Meets parity | Score |
 |---|---|---|---|
 | [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 53 | 52 | 98.1% |
-| [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 80 | 72 | 90.0% |
+| [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 80 | 76 | 95.0% |
 | [Editors, autosave, history](AUDIT-EDITORS.md) | 53 | 48 | 90.6% |
 | [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 91 | 91 | 100% |
 | [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 59 | 56 | 94.9% |
-| **Total** | **336** | **319** | **94.9%** |
+| **Total** | **336** | **323** | **96.1%** |
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -30,7 +30,7 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
 
 Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 
-## What is still open (17 rows)
+## What is still open (13 rows)
 
 | Rows | What closes them |
 |---|---|
@@ -38,7 +38,6 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Cloud 21.1.1, 21.3.1 and labels 21.1, 21.3 | One real Google or Apple sign-in into Markie RS. Server `markie-api` 8ed421211f04 is deployed. |
 | Editors 8.6 and group 8.0 | One real trackpad pinch by Kirby |
 | Editors 7.9 | The 50 MB timing, run with the speed comparison on a quiet Mac |
-| Cloud 30.1, 14.1.1, group 14.1, 21.1.4 | Share dialog, invite row and the second server's signed-in pair |
 | Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
 | Agents 23.3 | Math in HTML export draws slightly lighter than KaTeX. Kirby has not decided whether to match it. |
 

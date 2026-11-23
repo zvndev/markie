@@ -7,7 +7,7 @@
 //! window server is never asked for pixels, so the window never has to be on
 //! screen and nothing on Kirby's display moves. Then the app quits.
 //!
-//! - `MARKIE_RS_SCENE`: `doc`, `share`, `office-cloud` or `servers`.
+//! - `MARKIE_RS_SCENE`: `doc`, `share`, `office-cloud`, `servers` or `vault`.
 //! - `MARKIE_RS_SCENE_ARGS`: a JSON object for the scene (see each one below).
 //! - `MARKIE_RS_SCENE_OUT`: the PNG to write.
 //! - `MARKIE_RS_SCENE_THEME`: `light` (default) or `dark`.
@@ -208,6 +208,8 @@ impl Workspace {
                 }
                 self.scene_servers(args, step, window, cx)
             }
+            // {state, touch_id?}: the vault page, see `VaultPage::scene_step`.
+            "vault" => self.scene_vault(args, step, window, cx),
             other => {
                 eprintln!("markie-rs scene: unknown scene {other}");
                 true

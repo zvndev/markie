@@ -26,7 +26,7 @@ use markie_office::model::{Format, TextEdit};
 use markie_office::rich_document::{OfficeDocument, export_rich_document, open_rich_document, replace_rich_text};
 use markie_vault::backup::{VAULT_BACKUP_FILE_NAME, VAULT_BACKUP_MAX_CHARACTERS, parse_vault_backup, vault_backup_text};
 use markie_vault::clipboard::{CLEAR_AFTER, SecretClipboard, ThreadScheduler};
-use markie_vault::device::{Biometric, DeviceKeeper, KeychainSecretStore, PromptDeclined, TouchIdKeeper, TouchIdStatus};
+use markie_vault::device::{Biometric, DeviceKeeper, KeychainSecretStore, PromptDeclined, SecretStore, TouchIdKeeper, TouchIdStatus};
 use markie_vault::dotenv::{self, DotenvDocument, LineKind};
 use markie_vault::envelope::{VaultDocumentMetadata, limits};
 use markie_vault::passphrase::{StrengthLevel, passphrase_strength, suggest_passphrase, SUGGESTED_PASSPHRASE_WORDS};
@@ -76,7 +76,41 @@ fn biometric() -> Bio {
     NoBiometric
 }
 
-type Keeper = TouchIdKeeper<Bio, KeychainSecretStore>;
+/// What the page asks of Touch ID. One trait object, so a scene build can
+/// swap in an in-memory double and never touch the Keychain.
+pub(crate) trait PageKeeper: DeviceKeeper {
+    fn status(&self, vault_id: &str) -> TouchIdStatus;
+    fn confirm(&self, vault_id: &str, action: &str, label: &str) -> Result<(), DeviceFailure>;
+}
+
+impl<B: Biometric, S: SecretStore> PageKeeper for TouchIdKeeper<B, S> {
+    fn status(&self, vault_id: &str) -> TouchIdStatus {
+        TouchIdKeeper::<B, S>::status(self, vault_id)
+    }
+    fn confirm(&self, vault_id: &str, action: &str, label: &str) -> Result<(), DeviceFailure> {
+        TouchIdKeeper::<B, S>::confirm(self, vault_id, action, label)
+    }
+}
+
+type Keeper = dyn PageKeeper;
+
+/// Scene mode (`--features scene` and `MARKIE_RS_SCENE`): Touch ID and the
+/// clipboard are in-memory doubles, and the hidden window counts as shown.
+fn scene_mode() -> bool {
+    cfg!(feature = "scene") && std::env::var_os("MARKIE_RS_SCENE").is_some()
+}
+
+fn page_keeper() -> Arc<Keeper> {
+    if scene_mode() {
+        return Arc::new(TouchIdKeeper::new(markie_vault::device::FakeBiometric::default(), markie_vault::device::MemorySecretStore::default()));
+    }
+    Arc::new(TouchIdKeeper::new(biometric(), KeychainSecretStore::new(keychain_service())))
+}
+
+/// The window is hidden, so the vault must lock. A scene's window is never shown.
+fn window_hidden(window: &Window) -> bool {
+    !window.is_visible() && !scene_mode()
+}
 
 #[allow(dead_code)]
 fn _assert_biometric_impl(b: &Bio) -> &dyn Biometric {
@@ -340,7 +374,7 @@ fn masked_input(window: &mut Window, cx: &mut App) -> Entity<InputState> {
 impl VaultPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let repo = Arc::new(Mutex::new(VaultRepository::new(FileVaultStorage::new(vault_path()))));
-        let keeper = Arc::new(TouchIdKeeper::new(biometric(), KeychainSecretStore::new(keychain_service())));
+        let keeper = page_keeper();
         let clipboard = SecretClipboard::new(secret_pasteboard(), Arc::new(ThreadScheduler), CLEAR_AFTER);
         let passphrase = masked_input(window, cx);
         let confirmation = masked_input(window, cx);
@@ -355,7 +389,7 @@ impl VaultPage {
         let page = cx.weak_entity();
         let subscriptions = vec![
             window.observe_window_visibility(move |visibility, window, cx| {
-                if !visibility.is_visible() {
+                if !visibility.is_visible() && !scene_mode() {
                     let _ = page.update(cx, |page, cx| page.maybe_auto_lock(true, window, cx));
                 }
             }),
@@ -470,8 +504,23 @@ enum Submit {
     Gate,
 }
 
+/// A clipboard that keeps nothing: for platforms without a concealed writer,
+/// and for scenes, which must never write Kirby's pasteboard.
+#[allow(dead_code)]
+struct Nowhere;
+impl markie_vault::clipboard::Clipboard for Nowhere {
+    fn read_text(&self) -> Option<String> {
+        None
+    }
+    fn write_secret(&self, _text: &str) {}
+    fn clear(&self) {}
+}
+
 #[cfg(target_os = "macos")]
 fn secret_pasteboard() -> Box<dyn markie_vault::clipboard::Clipboard> {
+    if scene_mode() {
+        return Box::new(Nowhere);
+    }
     Box::new(markie_vault::clipboard::MacPasteboard)
 }
 
@@ -479,14 +528,6 @@ fn secret_pasteboard() -> Box<dyn markie_vault::clipboard::Clipboard> {
 /// copy goes nowhere rather than into a clipboard history.
 #[cfg(not(target_os = "macos"))]
 fn secret_pasteboard() -> Box<dyn markie_vault::clipboard::Clipboard> {
-    struct Nowhere;
-    impl markie_vault::clipboard::Clipboard for Nowhere {
-        fn read_text(&self) -> Option<String> {
-            None
-        }
-        fn write_secret(&self, _text: &str) {}
-        fn clear(&self) {}
-    }
     Box::new(Nowhere)
 }
 
@@ -535,7 +576,7 @@ impl VaultPage {
         let keeper = self.keeper.clone();
         let work = cx.background_executor().spawn(async move {
             let mut guard = repo.lock().unwrap_or_else(|p| p.into_inner());
-            job(&mut guard, &keeper)
+            job(&mut guard, &*keeper)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = work.await;
@@ -654,7 +695,7 @@ impl VaultPage {
         match listed {
             Ok(entries) => {
                 self.has_vault = Some(true);
-                if !window.is_visible() {
+                if window_hidden(window) {
                     self.lock_now("Vault locked because this page is hidden.", window, cx);
                     return;
                 }
@@ -2367,6 +2408,179 @@ impl Workspace {
 }
 
 actions!(markie_vault_page, [ToggleVault]);
+
+// ── Scenes (`--features scene`, docs/rust-port/SCREEN.md) ──
+
+/// The scratch passphrase every vault scene uses. Synthetic, never a real one.
+#[cfg(feature = "scene")]
+const SCENE_PASSPHRASE: &str = "synthetic scene passphrase only";
+
+#[cfg(feature = "scene")]
+impl VaultPage {
+    /// Synthetic items: two env files, notes and an opaque file.
+    fn scene_items(state: &str) -> Vec<(&'static str, &'static str, Vec<u8>)> {
+        let mut items = vec![
+            ("production.env", ENV_MEDIA_TYPE, b"# Payments\nSTRIPE_SECRET_KEY=sk_test_fixture_0000000000\nDATABASE_URL=postgres://app:fixture@localhost:5432/app\n# OLD_TOKEN=retired_fixture_value\nSENTRY_DSN=https://fixture@example.invalid/1\n".to_vec()),
+            ("Server notes.txt", "text/plain", b"Staging box: ssh deploy@staging.example.invalid\nRotate the API keys every quarter.\nBackup codes are in Recovery codes.txt.\n".to_vec()),
+            ("Recovery codes.txt", "text/plain", b"1. 4821-0093\n2. 7710-5521\n3. 0098-1123\n".to_vec()),
+        ];
+        if state != "few" {
+            items.extend([
+                ("staging.env", ENV_MEDIA_TYPE, b"API_URL=https://staging.example.invalid\nAPI_TOKEN=fixture_staging_token\n".to_vec()),
+                ("local.env", ENV_MEDIA_TYPE, b"PORT=3000\nDEBUG=true\n".to_vec()),
+                ("Wi-Fi.txt", "text/plain", b"Office: fixture-network / fixture-password\n".to_vec()),
+                ("signed-lease.pdf", "application/pdf", b"%PDF-1.4\n% synthetic fixture, not a real document\n".to_vec()),
+            ]);
+        }
+        items
+    }
+
+    /// One step of a vault scene. `stage` counts the steps already done.
+    /// Args: `state` (see `scene_states`), `touch_id` (bool).
+    pub fn scene_step(&mut self, args: &serde_json::Value, stage: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let state = args.get("state").and_then(serde_json::Value::as_str).unwrap_or("locked").to_string();
+        let touch = args.get("touch_id").and_then(serde_json::Value::as_bool).unwrap_or(false)
+            || matches!(state.as_str(), "locked-touch" | "settings-touch" | "gate");
+        if self.busy && *stage != 2 {
+            return false;
+        }
+        match *stage {
+            0 => {
+                if self.has_vault.is_none() {
+                    return false;
+                }
+                let fresh = matches!(state.as_str(), "none" | "create" | "create-error");
+                if !fresh {
+                    let empty = state == "empty";
+                    let mut repo = self.repo.lock().unwrap_or_else(|p| p.into_inner());
+                    repo.create(SCENE_PASSPHRASE).expect("scene vault");
+                    if !empty {
+                        for (name, media, bytes) in Self::scene_items(&state) {
+                            repo.save(None, &bytes, &VaultDocumentMetadata { name: name.into(), media_type: media.into() }).expect("scene item");
+                        }
+                    }
+                    if touch {
+                        repo.enroll_device(SCENE_PASSPHRASE, &*self.keeper as &dyn DeviceKeeper).expect("scene Touch ID");
+                    }
+                    repo.lock();
+                    drop(repo);
+                    self.has_vault = Some(true);
+                    self.notice = "Your vault is locked.".into();
+                    self.refresh_touch_id(window, cx);
+                }
+                *stage = 1;
+                false
+            }
+            1 => {
+                let typed = |this: &mut Self, input: Entity<InputState>, text: &str, window: &mut Window, cx: &mut Context<Self>| {
+                    this.writing = true;
+                    input.update(cx, |s, cx| s.set_value(text.to_string(), window, cx));
+                    this.writing = false;
+                };
+                match state.as_str() {
+                    "none" | "locked" | "locked-touch" => {}
+                    "create" => self.suggest(window, cx),
+                    "create-error" => {
+                        typed(self, self.passphrase.clone(), "correct horse battery", window, cx);
+                        typed(self, self.confirmation.clone(), "correct horse batery", window, cx);
+                        self.authenticate(window, cx);
+                    }
+                    "locked-error" => {
+                        typed(self, self.passphrase.clone(), "not the right passphrase", window, cx);
+                        self.authenticate(window, cx);
+                    }
+                    "unlocking" => {
+                        typed(self, self.passphrase.clone(), SCENE_PASSPHRASE, window, cx);
+                        // Held busy, as it is while the key is derived.
+                        self.busy = true;
+                        *stage = 9;
+                        return false;
+                    }
+                    _ => {
+                        typed(self, self.passphrase.clone(), SCENE_PASSPHRASE, window, cx);
+                        self.authenticate(window, cx);
+                    }
+                }
+                *stage = 2;
+                false
+            }
+            2 => {
+                if self.busy {
+                    return false;
+                }
+                let open = |this: &mut Self, name: &str, window: &mut Window, cx: &mut Context<Self>| {
+                    if let Some(entry) = this.entries.iter().find(|e| e.name == name).cloned() {
+                        this.read_entry(entry, window, cx);
+                    }
+                };
+                match state.as_str() {
+                    "note" => open(self, "Server notes.txt", window, cx),
+                    "env" | "env-copied" | "env-revealed" | "gate" => open(self, "production.env", window, cx),
+                    "file" => open(self, "signed-lease.pdf", window, cx),
+                    "settings" | "settings-touch" => self.settings_open = true,
+                    "restore" => {
+                        let backup = self.repo.lock().unwrap_or_else(|p| p.into_inner()).backup().expect("scene backup");
+                        self.settings_open = true;
+                        self.restore_file = Some((backup, VAULT_BACKUP_FILE_NAME.to_string()));
+                        self.notice = "Enter the passphrase for this backup.".into();
+                    }
+                    "search" => {
+                        self.writing = true;
+                        self.query.update(cx, |s, cx| s.set_value("env", window, cx));
+                        self.writing = false;
+                    }
+                    _ => {}
+                }
+                *stage = 3;
+                false
+            }
+            3 => {
+                if self.busy {
+                    return false;
+                }
+                let first_key = || self.env.parsed.as_ref().and_then(|p| p.lines.iter().find(|l| matches!(l.kind, LineKind::Entry(_))).map(|l| (l.id, match &l.kind { LineKind::Entry(e) => (e.key.clone(), e.value.clone()), _ => unreachable!() })));
+                match state.as_str() {
+                    "env-revealed" => {
+                        if let Some((id, _)) = first_key() {
+                            self.perform(Pending::Reveal(vec![id]), window, cx);
+                        }
+                    }
+                    "env-copied" => {
+                        if let Some((_, (key, value))) = first_key() {
+                            let message = format!("Copied the value of {key}.");
+                            self.perform(Pending::Copy { value: zeroize::Zeroizing::new(value), message }, window, cx);
+                        }
+                    }
+                    "gate" => {
+                        let label = self.opened.as_ref().map(|d| d.name.clone()).unwrap_or_default();
+                        self.gate = Some((format!("Touch ID is not available right now. Enter your passphrase to reveal {label}."), Pending::RevealRaw));
+                    }
+                    _ => {}
+                }
+                *stage = 4;
+                false
+            }
+            _ => true,
+        }
+    }
+}
+
+#[cfg(feature = "scene")]
+impl Workspace {
+    /// The vault page in a named state, reached through the page's own calls.
+    pub(super) fn scene_vault(&mut self, args: &serde_json::Value, step: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if *step == 0 {
+            self.open_vault(window, cx);
+            *step = 1;
+            return false;
+        }
+        let Some(page) = self.vault.clone() else { return false };
+        let mut stage = *step - 1;
+        let done = page.update(cx, |p, cx| p.scene_step(args, &mut stage, window, cx));
+        *step = stage + 1;
+        done
+    }
+}
 
 #[cfg(test)]
 mod tests {

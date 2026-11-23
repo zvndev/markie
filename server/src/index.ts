@@ -18,7 +18,7 @@ import { docView } from "./doc-view.ts";
 import { agentTokens } from "./agent-tokens.ts";
 import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
 import { mcpApi, mcpAuth } from "./mcp-server.ts";
-import { createWellKnown } from "./well-known.ts";
+import { androidLinksVerified, createWellKnown, verifiedReturnOrigin } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
 import { createWebApp, isReadViewPath, isWebAppPath } from "./web-app.ts";
 import { docsHostConfig, redirectToDocsHost } from "./docs-host.ts";
@@ -26,6 +26,7 @@ import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
 import { desktopAuthApp, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
+import { createMobileAuth, isMobileAuthPage } from "./mobile-auth.ts";
 import { withoutAppleUserEmail } from "./apple-sign-in.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { canonicalHostRedirect } from "./canonical-host.ts";
@@ -145,7 +146,9 @@ app.use("*", async (c, next) => {
   // the read views at /d/<id> and /s/<token>, which are the same shell and
   // send the same policy (webAppShell). Only those two routes may: any other
   // page gets this one, header or not.
-  const shellHere = isWebAppPath(c.req.path) || (isReadViewPath(c.req.path) && h.has("Content-Security-Policy"));
+  // The phone sign-in's two pages send a stricter one still (mobile-auth.ts
+  // MOBILE_PAGE_CSP): no script at all.
+  const shellHere = isWebAppPath(c.req.path) || ((isReadViewPath(c.req.path) || isMobileAuthPage(c.req.path)) && h.has("Content-Security-Policy"));
   if ((h.get("content-type") ?? "").includes("text/html") && !shellHere) {
     h.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   }
@@ -263,7 +266,13 @@ app.get(SERVER_INFO_PATH, (c) => {
     origin: DEPLOYMENT.origin,
     // apple appears only when it is on, so a server without Apple's keys
     // answers exactly what it did before Apple existed.
-    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured, ...(appleConfigured ? { apple: true } : {}), signup: SIGNUP },
+    // mobile says this server can hand a Google or Apple sign-in back to the
+    // phone app (mobile-auth.ts). The phone offers neither without it, so a
+    // server from before the hand-off is never sent one.
+    signIn: {
+      email: EMAIL_SIGN_IN, google: googleConfigured, ...(appleConfigured ? { apple: true } : {}), signup: SIGNUP,
+      ...(googleConfigured || appleConfigured ? { mobile: true } : {}),
+    },
   });
 });
 
@@ -336,7 +345,10 @@ app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const denied = await guardAccountAuthRequest(request);
   if (denied) return denied;
   const run = () => auth.handler(request);
-  return accountPlatform ? accountPlatform.runAuthRequest(request, run) : run();
+  const response = await (accountPlatform ? accountPlatform.runAuthRequest(request, run) : run());
+  // A phone sign-in's callback: its session is ended and its cookie is never
+  // passed on (mobile-auth.ts settle). Every other answer is left as it is.
+  return mobileAuth ? mobileAuth.settle(request, response) : response;
 });
 
 // Desktop Google and Apple sign-in must run entirely in the browser, or
@@ -468,6 +480,18 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
     desktopAuthDeepLink(token, state, AUTH_ISSUER, desktopApp)
   );
 });
+
+// The phone app's Google and Apple sign-in. Its own routes and its own link
+// back (a one-use code and never a token); mobile-auth.ts. On Markie Cloud
+// the link is an https one the operating system hands only to the real app.
+const MOBILE_RETURN_ORIGIN = verifiedReturnOrigin(DEPLOYMENT);
+const mobileAuth = googleConfigured || appleConfigured
+  ? createMobileAuth({
+      authBase: AUTH_BASE, issuer: AUTH_ISSUER, google: googleConfigured, apple: appleConfigured,
+      verifiedReturn: MOBILE_RETURN_ORIGIN ? { origin: MOBILE_RETURN_ORIGIN, android: androidLinksVerified() } : null,
+    })
+  : null;
+if (mobileAuth) app.route("/", mobileAuth.app);
 
 app.route("/api/docs", docs);
 app.route("/api/document-platform", createDocumentPlatform({

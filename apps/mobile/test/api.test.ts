@@ -39,6 +39,24 @@ describe("api client: sign in", () => {
     expect(result.user).toEqual({ id: "u1", email: "me@example.com", name: "Me" });
   });
 
+  it("signs in with a password through the server's own route, without a token", async () => {
+    const { transport, calls } = fake(() => ({ headers: { "set-auth-token": TOKEN }, json: { token: "ignored-body-token-xxxxxx", user: { id: "u1", email: "me@example.com", name: "Me" } } }));
+    const result = await createApiClient({ origin: ORIGIN, transport, getToken: () => "old_token_aaaaaaaaaaaaaaaa" }).signInPassword("me@example.com", "hunter2-hunter2");
+    expect(calls[0]).toMatchObject({ method: "POST", url: `${ORIGIN}/api/auth/sign-in/email`, body: { email: "me@example.com", password: "hunter2-hunter2" } });
+    expect(calls[0].headers?.authorization).toBeUndefined();
+    expect(result).toEqual({ token: TOKEN, user: { id: "u1", email: "me@example.com", name: "Me" } });
+  });
+
+  it("says what a refused password sign-in means, and points at the email code", async () => {
+    const client = (status: number, json: unknown) => createApiClient({ origin: ORIGIN, transport: fake(() => ({ status, json })).transport });
+    await expect(client(401, { code: "INVALID_EMAIL_OR_PASSWORD", message: "Invalid email or password" }).signInPassword("me@example.com", "wrong"))
+      .rejects.toThrow("That email and password don't match. If you never set a password, sign in with an email code.");
+    await expect(client(403, { code: "EMAIL_NOT_VERIFIED", message: "Email not verified" }).signInPassword("me@example.com", "right"))
+      .rejects.toThrow("This email hasn't been confirmed yet. Sign in with an email code to confirm it.");
+    await expect(client(429, {}).signInPassword("me@example.com", "x")).rejects.toThrow("Too many attempts. Wait a minute and try again.");
+    await expect(client(200, { user: { email: "me@example.com" } }).signInPassword("me@example.com", "x")).rejects.toMatchObject({ status: 502 });
+  });
+
   it("falls back to the body token, and refuses an answer with no usable token", async () => {
     const body = fake(() => ({ json: { token: TOKEN, user: { email: "me@example.com" } } }));
     expect((await createApiClient({ origin: ORIGIN, transport: body.transport }).verifyCode("me@example.com", "123456")).token).toBe(TOKEN);

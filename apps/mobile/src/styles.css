@@ -939,6 +939,40 @@ textarea:not(.m-editor-text):focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* Google and Apple, above the email form, where the server offers them. */
+.m-providers {
+  display: grid;
+  gap: 10px;
+}
+
+.m-button-provider {
+  gap: 10px;
+  border: 1px solid var(--m-separator);
+  background: var(--m-field-bg);
+  color: var(--foreground);
+}
+
+.m-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.m-or::before,
+.m-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--m-separator);
+}
+
+.m-signin-switch {
+  justify-self: center;
+  margin-top: -6px;
+}
+
 .m-mark {
   display: inline-block;
   overflow: hidden;

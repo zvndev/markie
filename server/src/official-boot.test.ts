@@ -67,7 +67,7 @@ test("server-info names the official Markie Cloud", async () => {
     version: "0.1.0",
     name: "Markie Cloud",
     origin: RAILWAY,
-    signIn: { email: true, google: true, signup: "open" },
+    signIn: { email: true, google: true, signup: "open", mobile: true },
   });
   assert.equal(res.headers.get("access-control-allow-origin"), "*");
   assert.equal(res.headers.get("access-control-allow-credentials"), null);

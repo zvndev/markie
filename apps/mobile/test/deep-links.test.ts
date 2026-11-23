@@ -15,6 +15,7 @@ import {
   takePendingLink,
 } from "../src/lib/deep-links";
 import { ApiError } from "../src/lib/api";
+import { AUTH_RETURN_PATH, isAuthReturnLink } from "../src/lib/provider-sign-in";
 import { publicLinkErrorCopy } from "../src/lib/public-link";
 
 const CLOUD = "https://api.markiedocs.com";
@@ -233,6 +234,26 @@ describe("the links iOS and Android hand over", () => {
     expect(manifest).not.toContain("/download");
   });
 
+  it("the way back from sign-in is a verified link of its own, on the same hosts, for one exact path", () => {
+    const filters = [...manifest.matchAll(/<intent-filter android:autoVerify="true">([\s\S]*?)<\/intent-filter>/g)].map((match) => match[1]);
+    expect(filters).toHaveLength(2);
+    const back = filters[1];
+    expect(attrs(back, "scheme")).toEqual(["https"]);
+    expect(attrs(back, "host")).toEqual(attrs(verified, "host"));
+    expect(attrs(back, "path")).toEqual([AUTH_RETURN_PATH]);
+    expect(attrs(back, "pathPrefix")).toEqual([]);
+    // The server publishes the same path for iOS, and builds its link from it.
+    expect(wellKnown).toContain(`MOBILE_RETURN_PATH = "${AUTH_RETURN_PATH}"`);
+    expect(wellKnown).toContain('{ "/": MOBILE_RETURN_PATH }');
+    expect(wellKnown).toContain(`MOBILE_LINK_HOSTS = [${attrs(verified, "host").map((host) => `"${host}"`).join(", ")}]`);
+    // The app takes it as the sign-in link, and never as a document.
+    for (const host of attrs(back, "host")) {
+      const link = `https://${host}${AUTH_RETURN_PATH}#code=abc&state=def`;
+      expect(isAuthReturnLink(link)).toBe(true);
+      expect(parseMarkieLink(link)).toBeNull();
+    }
+  });
+
   it("iOS claims the same two hosts", () => {
     const entitlements = read("../ios/App/App/App.entitlements");
     expect([...entitlements.matchAll(/<string>applinks:([^<]+)<\/string>/g)].map((match) => match[1])).toEqual(attrs(verified, "host"));
@@ -247,10 +268,13 @@ describe("the links iOS and Android hand over", () => {
     expect(wellKnown).not.toContain("/download");
   });
 
-  it("the custom scheme takes d and s only", () => {
+  it("the custom scheme takes documents, shares and the way back from sign-in, nothing else", () => {
     const scheme = /<string name="custom_url_scheme">([^<]+)<\/string>/.exec(read("../android/app/src/main/res/values/strings.xml"))?.[1];
     expect(scheme).toBe(APP_SCHEME);
     const block = manifest.split("<intent-filter").find((part) => part.includes("@string/custom_url_scheme")) ?? "";
-    expect(attrs(block, "host")).toEqual(["d", "s"]);
+    expect(attrs(block, "host")).toEqual(["d", "s", "auth"]);
+    // The sign-in link is never read as a document, whatever it carries.
+    expect(parseMarkieLink("markie-mobile://auth?code=abc&state=def")).toBeNull();
+    expect(parseMarkieLink("markie-mobile://auth/d/doc-1")).toBeNull();
   });
 });

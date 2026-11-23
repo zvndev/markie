@@ -1,5 +1,7 @@
 // The files iOS and Android fetch to let the Markie mobile app open this
 // server's /d/<id> and /s/<token> links (docs/mobile/AGENT-LINKS-CONTRACT.md).
+// They also claim one more path, MOBILE_RETURN_PATH: the way back into the
+// app after a Google or Apple sign-in (mobile-auth.ts).
 //
 // Both are JSON, with no auth and no redirect: Apple's CDN and Android's
 // verifier fetch them anonymously and refuse a redirect. canonical-host.ts only
@@ -9,6 +11,31 @@ import { Hono } from "hono";
 
 export const MOBILE_APP_ID = "com.zvn.markie.mobile";
 export const APPLE_TEAM_ID = "3VU8SG5TD9";
+
+/** The hosts the app claims natively (its entitlements and manifest). */
+export const MOBILE_LINK_HOSTS = ["api.markiedocs.com", "markiedocs.com"] as const;
+/**
+ * The way back into the app after a Google or Apple sign-in. An https link
+ * here is handed to the app by the operating system only after it has checked
+ * the files below, so no other app can receive it (mobile-auth.ts).
+ */
+export const MOBILE_RETURN_PATH = "/auth/mobile-return";
+
+/**
+ * The origin the sign-in page's "Return to Markie" button points at, or null
+ * when this server has no host the app claims. Only Markie Cloud has one.
+ * It is never the host the sign-in page itself is on: iOS keeps a link to
+ * the page's own host in the browser, and hands the app only a link to
+ * another one.
+ */
+export function verifiedReturnOrigin(d: { official: boolean; origin: string; docsOrigin: string | null }): string | null {
+  if (!d.official) return null;
+  const own = new URL(d.origin).host;
+  const hosts: readonly string[] = MOBILE_LINK_HOSTS;
+  const candidates = [...(d.docsOrigin ? [new URL(d.docsOrigin).host] : []), ...hosts];
+  const host = candidates.find((candidate) => hosts.includes(candidate) && candidate !== own);
+  return host ? `https://${host}` : null;
+}
 
 export const APPLE_APP_SITE_ASSOCIATION = {
   applinks: {
@@ -26,6 +53,7 @@ export const APPLE_APP_SITE_ASSOCIATION = {
           { "/": "/s/*/*", exclude: true },
           { "/": "/d/*" },
           { "/": "/s/*" },
+          { "/": MOBILE_RETURN_PATH },
         ],
       },
     ],
@@ -63,6 +91,11 @@ export function assetLinks(fingerprints: string[]) {
       target: { namespace: "android_app", package_name: MOBILE_APP_ID, sha256_cert_fingerprints: fingerprints },
     },
   ];
+}
+
+/** Whether Android can verify this server's links: a signing fingerprint is published. */
+export function androidLinksVerified(env: Record<string, string | undefined> = process.env): boolean {
+  return androidFingerprints(env.ANDROID_APP_CERT_SHA256, () => undefined).length > 0;
 }
 
 export function createWellKnown(env: Record<string, string | undefined> = process.env): Hono {

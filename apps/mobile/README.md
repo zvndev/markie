@@ -4,7 +4,7 @@ A Capacitor 8 app that opens Markie Cloud documents on a phone, including the on
 It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contract").
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
-- Screens: Sign in (email code), Recent (search, shared and type filters), Document (markdown, text,
+- Screens: Sign in (email code), Recent (search, "Shared with you", "Shared by me" and type filters), Document (markdown, text,
   Darkmown), Word/RTF/OpenDocument, Editor (rich, source, live), Comments, Share, New document, an
   incoming file, Settings.
 - The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key
@@ -167,7 +167,11 @@ Accepted links:
 - `markie-mobile://d/<id>` and `markie-mobile://s/<token>`
 - `/d` and `/s` links on the server the user signed in to
 
-A link that arrives before sign-in is remembered and opens after sign-in.
+With nobody signed in, a public share (`/s/<token>`) opens to read at once, through a client that holds
+no token (`src/screens/public-doc.tsx`). It offers "Sign in", and nothing that needs an account.
+A private document (`/d/<id>`) never opens signed out: the server decides who may read it, and can only
+do that for an account. Either kind is remembered for an hour and opens after sign-in.
+In the desktop browser (`npm run dev` only), `http://localhost:5174/?link=<url>` stands in for a tapped link.
 A document the user cannot read shows the server's message and a way back to Recent.
 An https link on a Markie host that the app cannot route (a raw download) opens in the default browser.
 Any other URL another app sends is ignored.
@@ -278,6 +282,10 @@ Link association:
 
 5. Set `ANDROID_APP_CERT_SHA256` on the server to the Play app signing fingerprint
    (and the upload key's, comma-separated, for testing sideloaded release builds).
+   Today it holds the upload key's only, so a build installed from Play, which Google re-signs,
+   still opens links in the browser. A debug build is signed with neither and never verifies:
+   on an emulator, turn links on by hand with
+   `adb shell pm set-app-links-user-selection --user cur --package com.zvn.markie.mobile true all`.
 6. Check that `https://api.markiedocs.com/.well-known/apple-app-site-association` and
    `/.well-known/assetlinks.json` return JSON with no redirect and no auth.
    The AASA must list, in order: exclude `/d/*/*`, exclude `/s/*/*`, include `/d/*` and `/s/*`.

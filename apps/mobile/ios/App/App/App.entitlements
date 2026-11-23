@@ -6,7 +6,8 @@
 	     Store or TestFlight with "production" in place of this value. -->
 	<key>aps-environment</key>
 	<string>development</string>
-	<!-- Universal links for /d/* and /s/*, once each host serves
+	<!-- Universal links for /d/* and /s/*, and for /auth/mobile-return, the
+	     way back from Google or Apple sign-in, once each host serves
 	     /.well-known/apple-app-site-association naming 3VU8SG5TD9.com.zvn.markie.mobile. -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>

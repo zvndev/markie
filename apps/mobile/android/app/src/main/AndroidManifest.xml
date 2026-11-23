@@ -40,7 +40,26 @@
                 <data android:pathPrefix="/s/" />
             </intent-filter>
 
-            <!-- markie-mobile://d/<id> and markie-mobile://s/<token> -->
+            <!-- The way back from Google or Apple sign-in on Markie Cloud:
+                 a verified link, so no other app can be handed it. It
+                 carries a one-use code and never a session
+                 (src/lib/provider-sign-in.ts). Its own filter, so the
+                 document filter above stays exactly /d/ and /s/. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="api.markiedocs.com" />
+                <data android:host="markiedocs.com" />
+                <data android:path="/auth/mobile-return" />
+            </intent-filter>
+
+            <!-- markie-mobile://d/<id> and markie-mobile://s/<token>, and
+                 markie-mobile://auth, the way back from Google or Apple
+                 sign-in on a self-hosted server, whose host the app cannot
+                 claim. That link carries a one-use code and never a
+                 session (src/lib/provider-sign-in.ts). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -48,6 +67,7 @@
                 <data android:scheme="@string/custom_url_scheme" />
                 <data android:host="d" />
                 <data android:host="s" />
+                <data android:host="auth" />
             </intent-filter>
 
             <!-- "Open with Markie" for a document from Gmail, Drive or Files.

@@ -191,6 +191,24 @@ export function createApiClient(options: ApiClientOptions) {
       return { token, user: parseUser(body.user) ?? { id: "", email, name: "" } };
     },
 
+    /**
+     * Email and password, for an account that has a password. The server
+     * answers a wrong password and an address with no account the same way.
+     */
+    async signInPassword(email: string, password: string): Promise<{ token: string; user: ApiUser }> {
+      let result: { response: HttpResponse; data: unknown };
+      try {
+        result = await json("POST", "/api/auth/sign-in/email", { body: { email, password }, auth: false });
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error;
+        throw new ApiError(error.status, passwordRefusal(error.status, error.code), error.code, error.serverMessage);
+      }
+      const body = (result.data && typeof result.data === "object" ? result.data : {}) as { token?: unknown; user?: unknown };
+      const token = result.response.headers["set-auth-token"] || (typeof body.token === "string" ? body.token : "");
+      if (!TOKEN_SHAPE.test(token)) throw new ApiError(502, "The server signed you in but didn't return a session. Try again.");
+      return { token, user: parseUser(body.user) ?? { id: "", email, name: "" } };
+    },
+
     async me(): Promise<ApiUser | null> {
       const { data } = await json("GET", "/api/me");
       return parseUser((data as { user?: unknown } | null)?.user);
@@ -693,6 +711,16 @@ export function platformFetch(transport: HttpTransport, origin: string): typeof 
 
 /** Whose pictures: a private document read with the session, or a public share. */
 export type AssetSource = { kind: "doc"; id: string } | { kind: "public"; token: string };
+
+/** What a refused password sign-in says. The phone's other way in is always the emailed code. */
+function passwordRefusal(status: number, code: string): string {
+  // The address was never proven, so the server lets no password in yet. A
+  // code proves it and signs in at once.
+  if (status === 403 && code === "EMAIL_NOT_VERIFIED") return "This email hasn't been confirmed yet. Sign in with an email code to confirm it.";
+  if (status === 401 || status === 403) return "That email and password don't match. If you never set a password, sign in with an email code.";
+  if (status === 400) return "Enter your email address and your password.";
+  return authErrorMessage(status, "password-signin");
+}
 
 function parseUser(value: unknown): ApiUser | null {
   if (!value || typeof value !== "object") return null;

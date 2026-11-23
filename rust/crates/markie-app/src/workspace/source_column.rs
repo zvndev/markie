@@ -39,9 +39,18 @@ const RS_WRAP_MARGIN: f32 = 10.;
 /// fonts (Geist Mono in Electron, SF Mono here).
 const MONO_ADVANCE: f32 = 0.6;
 /// Electron's Source keeps a 24 px column for its section rail left of
-/// CodeMirror (`section-rail.tsx`, `GEOMETRY.column`); Markie RS draws the
-/// rail over the editor, so the editor's pane is that much wider.
+/// CodeMirror (`section-rail.tsx`, `GEOMETRY.column`) while the rail shows;
+/// Markie RS's pane has no such column, so it counts it in when Electron's
+/// would be there (`rail_column`).
 const RAIL_COLUMN: f32 = 24.;
+/// `section-outline.ts` `railWanted`: three sections (h1 to h3 with text)
+/// and a document taller than one and a half panes.
+const RAIL_MIN_SECTIONS: usize = 3;
+const RAIL_MIN_VIEWPORTS: f32 = 1.5;
+/// CodeMirror's `.cm-scroller` padding above the first line,
+/// `padding: 1.25rem 0`, against GPUI Kit's Medium `input_py` of 8.
+const SCROLLER_PAD_TOP: f32 = 20.;
+const RS_PAD_TOP: f32 = 8.;
 /// CodeMirror's `.cm-line` padding, `0 2px 0 6px`.
 const LINE_PAD_LEFT: f32 = 6.;
 const LINE_PAD_RIGHT: f32 = 2.;
@@ -79,16 +88,18 @@ fn rs_gutter(lines: usize, font: f32) -> f32 {
 
 /// Electron's text column for Markie RS's Source pane `pane` wide, in a
 /// window `vw` wide, with the document's page width, the Source font size
-/// (14 px times the zoom) and whether the document is taller than the pane.
-pub(crate) fn electron_column(pane: f32, vw: f32, page_width: f32, lines: usize, font: f32, overflows: bool) -> Column {
+/// (14 px times the zoom), whether the document is taller than the pane and
+/// whether Electron's section rail column is there.
+pub(crate) fn electron_column(pane: f32, vw: f32, page_width: f32, lines: usize, font: f32, overflows: bool, rail: bool) -> Column {
     let gutter = electron_gutter(lines, font);
-    let scroller = pane - RAIL_COLUMN - if overflows { SCROLLBAR } else { 0. };
+    let rail = if rail { RAIL_COLUMN } else { 0. };
+    let scroller = pane - rail - if overflows { SCROLLBAR } else { 0. };
     let avail = (scroller - gutter).max(0.);
     let pad = (vw * 0.03).clamp(20., 40.);
     let column = avail.min(page_width + (vw * 0.06).clamp(40., 80.));
     let margin = (avail - column) / 2.;
     Column {
-        text_left: RAIL_COLUMN + gutter + margin + pad + LINE_PAD_LEFT,
+        text_left: rail + gutter + margin + pad + LINE_PAD_LEFT,
         text_width: (column - 2. * pad - LINE_PAD_LEFT - LINE_PAD_RIGHT).max(0.),
     }
 }
@@ -97,6 +108,15 @@ pub(crate) fn electron_column(pane: f32, vw: f32, page_width: f32, lines: usize,
 /// unwrapped, are taller than the pane.
 pub(crate) fn overflows(lines: usize, font: f32, line_height: f32, pane_height: f32) -> bool {
     lines as f32 * font * line_height + 2. * SCROLLER_PAD_Y > pane_height
+}
+
+/// Whether Electron's Source shows its section rail, and so its column:
+/// `sections` headings it would tick, and the lines, unwrapped, taller than
+/// one and a half panes.
+pub(crate) fn rail_column(sections: usize, lines: usize, font: f32, line_height: f32, pane_height: f32) -> bool {
+    sections >= RAIL_MIN_SECTIONS
+        && pane_height > 0.
+        && lines as f32 * font * line_height + 2. * SCROLLER_PAD_Y > pane_height * RAIL_MIN_VIEWPORTS
 }
 
 /// The strip in front of GPUI Kit's line numbers and the spacer after the
@@ -139,13 +159,15 @@ impl SourceColumn {
         page_width: f32,
         font: f32,
         line_height: f32,
+        sections: usize,
         cx: &mut App,
     ) -> Div {
         let (pane, pane_h, vw) = self.pane.get();
         let lines = state.read(cx).text().lines_len();
         let plain_left = self.plain_left.get().filter(|(_, f)| (f - font).abs() < 0.01).map(|(x, _)| x);
         let (strip, spacer) = if pane > 0. {
-            let col = electron_column(pane, vw, page_width, lines, font, overflows(lines, font, line_height, pane_h));
+            let rail = rail_column(sections, lines, font, line_height, pane_h);
+            let col = electron_column(pane, vw, page_width, lines, font, overflows(lines, font, line_height, pane_h), rail);
             rs_insets(col, pane, lines, font, plain_left)
         } else {
             (None, 0.)
@@ -164,6 +186,11 @@ impl SourceColumn {
                     .size_full()
                     .flex()
                     .flex_row()
+                    // CodeMirror's first line sits 20 px down; GPUI Kit's
+                    // frame pads 8. The rest is padding on the frame, so it
+                    // does not scroll away as CodeMirror's does: a scrolled
+                    // document clips 20 pt below the toolbar, not at it.
+                    .pt(px(SCROLLER_PAD_TOP - RS_PAD_TOP))
                     .child(div().flex_1().min_w_0().h_full().child(editor))
                     .child(div().flex_none().h_full().w(px(spacer)).on_scroll(move |ev: &ScrollEvent, _, cx| {
                         // The margin scrolls the document, as CodeMirror's does.
@@ -245,7 +272,7 @@ impl SourceColumn {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: GPUI's `test` attribute would shadow the standard one.
-    use super::{electron_column, electron_gutter, overflows, rs_gutter, rs_insets, RS_PAD_LEFT, RS_PAD_RIGHT, RS_STRIP_GAP, RS_WRAP_MARGIN};
+    use super::{electron_column, electron_gutter, overflows, rail_column, rs_gutter, rs_insets, RS_PAD_LEFT, RS_PAD_RIGHT, RS_STRIP_GAP, RS_WRAP_MARGIN};
 
     #[test]
     fn the_column_is_electrons_at_1280() {
@@ -253,7 +280,7 @@ mod tests {
         // gives 24 to the section rail and 6 to the scrollbar. Padding
         // clamp(20, 38.4, 40) = 38.4, column 768 + 76.8.
         let pane = 1228.;
-        let c = electron_column(pane, 1280., 768., 93, 14., true);
+        let c = electron_column(pane, 1280., 768., 93, 14., true, true);
         assert!((c.text_width - 760.).abs() < 0.01, "{c:?}");
         let gutter = electron_gutter(93, 14.);
         let margin = (pane - 24. - 6. - gutter - 844.8) / 2.;
@@ -267,7 +294,7 @@ mod tests {
     fn a_narrow_pane_keeps_only_the_padding() {
         // Split at 1280: the pane is narrower than the column.
         let pane = 560.;
-        let c = electron_column(pane, 1280., 768., 35, 14., false);
+        let c = electron_column(pane, 1280., 768., 35, 14., false, true);
         let gutter = electron_gutter(35, 14.);
         assert!((c.text_left - (24. + gutter + 38.4 + 6.)).abs() < 0.01);
         assert!((c.text_width - (pane - 24. - gutter - 76.8 - 8.)).abs() < 0.01);
@@ -276,15 +303,15 @@ mod tests {
     #[test]
     fn the_padding_and_column_follow_the_window() {
         // clamp(1.25rem, 3vw, 2.5rem) and clamp(2.5rem, 6vw, 5rem).
-        let small = electron_column(2000., 600., 768., 10, 14., false);
+        let small = electron_column(2000., 600., 768., 10, 14., false, true);
         assert!((small.text_width - (768. + 40. - 40. - 8.)).abs() < 0.01);
-        let wide = electron_column(3000., 2000., 768., 10, 14., false);
+        let wide = electron_column(3000., 2000., 768., 10, 14., false, true);
         assert!((wide.text_width - (768. + 80. - 80. - 8.)).abs() < 0.01);
     }
 
     #[test]
     fn page_width_sets_the_column() {
-        let c = electron_column(2400., 1280., 1200., 10, 14., false);
+        let c = electron_column(2400., 1280., 1200., 10, 14., false, true);
         assert!((c.text_width - 1192.).abs() < 0.01);
     }
 
@@ -292,20 +319,34 @@ mod tests {
     fn the_scrollbar_counts_only_when_the_document_overflows() {
         assert!(!overflows(10, 14., 1.4, 700.));
         assert!(overflows(93, 14., 1.4, 700.));
-        let short = electron_column(1228., 1280., 768., 10, 14., false);
-        let long = electron_column(1228., 1280., 768., 10, 14., true);
+        let short = electron_column(1228., 1280., 768., 10, 14., false, true);
+        let long = electron_column(1228., 1280., 768., 10, 14., true, true);
         assert!((short.text_left - long.text_left - 3.).abs() < 0.01);
     }
 
     #[test]
     fn rs_insets_put_the_text_on_the_column() {
         let pane = 1228.;
-        let c = electron_column(pane, 1280., 768., 35, 14., true);
+        let c = electron_column(pane, 1280., 768., 35, 14., true, true);
         let (strip, spacer) = rs_insets(c, pane, 35, 14., None);
         let strip = strip.expect("a wide pane has a strip");
         let left = RS_PAD_LEFT + rs_gutter(35, 14.) + strip + RS_STRIP_GAP;
         assert!((left - c.text_left).abs() < 0.01);
         let wrap = pane - spacer - left - RS_PAD_RIGHT - RS_WRAP_MARGIN;
         assert!((wrap - c.text_width).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_rail_column_is_there_only_while_electrons_rail_shows() {
+        // `wrap.md`-sized: one heading, eight lines. Electron draws no rail
+        // and its text starts 12 pt further left (half the 24 pt column).
+        assert!(!rail_column(1, 8, 14., 1.4, 700.));
+        assert!(!rail_column(5, 20, 14., 1.4, 700.));
+        assert!(!rail_column(2, 200, 14., 1.4, 700.));
+        assert!(rail_column(3, 200, 14., 1.4, 700.));
+        let with = electron_column(1228., 1280., 768., 8, 14., false, true);
+        let without = electron_column(1228., 1280., 768., 8, 14., false, false);
+        assert!((with.text_left - without.text_left - 12.).abs() < 0.01);
+        assert!((with.text_width - without.text_width).abs() < 0.01);
     }
 }

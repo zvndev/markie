@@ -11,7 +11,7 @@ Markie RS keeps its own session. It never reads, copies or changes the Electron 
 | Piece | Where | Matches Electron |
 |---|---|---|
 | Account sheet | `account.rs`: `AccountSheet`, opened by `Workspace::open_account` from the rail's account button, Markie RS › Sign In…, and the palette's "Sign In…" | Settings opened on its Account tab: same 680 pt panel, header, tabs and spacing |
-| Sign-in form | `SignInForm` | `sign-in.tsx`: Google, Apple (when the server offers it), email code, password, create account, address proof after sign-up, forgot password, every label and error sentence |
+| Sign-in form | `SignInForm` | `sign-in.tsx`: Google, Apple (when the server offers it), email code, password, create account, address proof after sign-up, forgot password, every label and error sentence. Polish pass (2026-11-22): Markie RS's own note, "Google and Apple sign-in in Markie RS wait for a Markie Cloud update…", wraps inside the panel with its switch on the line under it, where it ran past the edge (`.autoloop/runs/polish/rs-signin-*.png`). The code field takes the caret when the code view opens, after "Email me a code" or an address proof. Electron's `sign-in.tsx` sets no autofocus there, so this is a small polish. It was not driven live, because sending a code emails a real address. |
 | Error wording | `markie-cloud/src/auth_errors.rs` | `auth-errors.ts`, word for word |
 | Signed-in account | `AccountSection` | Settings › Account: name, email, Sign out, the sync row (shown switched off), Accepted people and Manage linked sign-ins, both read only |
 | Rail account button | `rail.rs` asks `account.rs` | Initials on the account colour with a green dot when signed in; "Sign in" otherwise |

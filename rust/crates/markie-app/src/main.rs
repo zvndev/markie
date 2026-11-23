@@ -232,6 +232,21 @@ fn main() {
             })
             .expect("failed to open the Markie RS window");
 
+            // View › Page, Continuous, Outline and the rest reach the open
+            // Word document whether or not the page has keyboard focus.
+            {
+                let workspace = workspace.clone();
+                markie_office_view::actions::route_view_commands(cx, move |id, cx| {
+                    let workspace = workspace.clone();
+                    // The action arrives while the window is lent out to its
+                    // own dispatch, so updating it here would fail; go after.
+                    cx.defer(move |cx| {
+                        let _ = window_handle.update(cx, move |_, window, cx| {
+                            workspace.update(cx, |ws, cx| ws.route_word_view_command(id, window, cx));
+                        });
+                    });
+                });
+            }
             watchdog::start(cx);
             watchdog::trace_appkit_input();
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {

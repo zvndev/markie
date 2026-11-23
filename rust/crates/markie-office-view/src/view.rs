@@ -324,6 +324,15 @@ impl WordView {
         self.edited(window, cx);
     }
 
+    /// A View menu item that reached the app without the page's focus
+    /// (`actions::route_view_commands`). Ignored while a dialog holds the
+    /// menus, as the page's own handlers are.
+    pub fn view_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.menu_suspended && actions::VIEW_COMMANDS.contains(&id) {
+            self.command(id, window, cx);
+        }
+    }
+
     pub fn set_menu_suspended(&mut self, suspended: bool, cx: &mut Context<Self>) {
         if self.menu_suspended != suspended {
             self.menu_suspended = suspended;
@@ -1382,9 +1391,14 @@ impl WordView {
                 .child(text)
                 .into_any_element()
         };
+        // `.markie-overlay-field`: 7 px corners, the page mixed 18% toward
+        // the surface (the plain page in light mode, with the border 14%
+        // toward the ink), and the ink for whatever the select shows, its
+        // placeholder option included.
+        let (field_bg, field_border) = overlay_field_colors(theme.background, theme.muted, theme.border, fg, theme.mode.is_dark());
         // Electron dims a disabled style picker, but not the font picker or
         // the size field: their classes have no disabled opacity.
-        let field = |id: &'static str, width: f32, label: String, placeholder: bool, dim: bool| {
+        let field = |id: &'static str, width: f32, label: String, _placeholder: bool, dim: bool| {
             div()
                 .id(id)
                 .w(px(width))
@@ -1395,12 +1409,12 @@ impl WordView {
                 .gap(px(4.))
                 .pl(px(6.))
                 .pr(px(4.))
-                .rounded(px(6.))
+                .rounded(px(7.))
                 .border_1()
-                .border_color(theme.border)
-                .bg(theme.background)
+                .border_color(field_border)
+                .bg(field_bg)
                 .text_size(px(11.))
-                .text_color(if placeholder { muted } else { fg })
+                .text_color(fg)
                 .when(dim, |d| d.opacity(0.35))
                 .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label))
                 .child(svg().data(icons::CHEVRON).size(px(12.)).flex_none().text_color(fg))
@@ -1549,21 +1563,35 @@ impl WordView {
         ));
         row.push((
             "primary",
-            // `markie-overlay-field text-[11px] h-7 w-[38px] text-center`.
+            // `markie-overlay-field text-[11px] h-7 w-[38px] text-center` on
+            // an `<input type="number">`: Chromium keeps room for the spin
+            // button at the right, so the number centres in what is left,
+            // with the line centred in the field.
             div()
                 .id("word-size-field")
                 .w(px(38.))
                 .h(px(28.))
                 .flex_none()
-                .rounded(px(6.))
+                .flex()
+                .items_center()
+                .rounded(px(7.))
                 .border_1()
-                .border_color(theme.border)
-                .bg(theme.background)
+                .border_color(field_border)
+                .bg(field_bg)
                 .text_size(px(11.))
                 .text_color(if size.is_some() { fg } else { muted })
                 .when(!can_format, |d| d.opacity(0.5))
                 .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(size_tip).build(window, cx))
-                .child(Input::new(&self.size_field).appearance(false).xsmall().text_center().disabled(!can_format))
+                .child(
+                    Input::new(&self.size_field)
+                        .appearance(false)
+                        .xsmall()
+                        .text_center()
+                        .text_size(px(11.))
+                        .pl(px(0.))
+                        .pr(px(NUMBER_SPIN_WIDTH))
+                        .disabled(!can_format),
+                )
                 .into_any_element(),
         ));
         row.push((
@@ -1588,7 +1616,10 @@ impl WordView {
             let weak = weak.clone();
             row.push((
                 "colour",
-                button("word-colour", None, Some(h_flex().gap(px(2.)).child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("A")).child(div().text_size(px(10.)).child("▾")).into_any_element()), "Text colour", false, can_format, in_menu("colour"))
+                // A `<label>` with `px-1 gap-0.5`: the 13 px "A" and a
+                // 14 px wide select showing ▾ at its left.
+                button("word-colour", None, Some(h_flex().gap(px(2.)).child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("A")).child(div().w(px(14.)).flex_none().text_size(px(10.)).child("▾")).into_any_element()), "Text colour", false, can_format, in_menu("colour"))
+                    .px(px(4.))
                     .when(can_format, |d| {
                         d.on_click(move |event, window, cx| {
                             let weak = weak.clone();
@@ -1962,6 +1993,23 @@ impl EntityInputHandler for WordView {
 }
 
 /// A size Electron's field accepts: 1 to 400 points in half-point steps.
+/// The room Chromium keeps for an `<input type="number">`'s spin button on
+/// macOS, measured on Electron 0.9.7's size field (the number's centre sits
+/// 7.75 pt left of the field's).
+const NUMBER_SPIN_WIDTH: f32 = 15.5;
+
+/// `.markie-overlay-field`'s fill and border: in dark mode the page mixed
+/// 18% toward the surface on the theme border; in light mode the page on
+/// the border mixed 14% toward the ink.
+pub(crate) fn overlay_field_colors(background: Hsla, surface: Hsla, border: Hsla, ink: Hsla, dark: bool) -> (Hsla, Hsla) {
+    let mix = |a: Hsla, b: Hsla, share: f32| -> Hsla {
+        let (a, b) = (a.to_rgb(), b.to_rgb());
+        let at = |x: f32, y: f32| x * (1. - share) + y * share;
+        Rgba { r: at(a.r, b.r), g: at(a.g, b.g), b: at(a.b, b.b), a: at(a.a, b.a) }.into()
+    };
+    if dark { (mix(background, surface, 0.18), border) } else { (background, mix(border, ink, 0.14)) }
+}
+
 pub(crate) fn parse_size(text: &str) -> Option<f64> {
     let value: f64 = text.trim().parse().ok()?;
     (value.is_finite() && (1.0..=400.0).contains(&value) && (value * 2.0).fract() == 0.0).then_some(value)
@@ -1987,6 +2035,23 @@ mod size_field_tests {
         assert_eq!(parse_size(""), None);
         assert_eq!(parse_size("abc"), None);
         assert_eq!(parse_size("NaN"), None);
+    }
+
+    #[test]
+    fn fields_take_electrons_overlay_field_colours() {
+        use gpui_kit::{Hsla, rgb};
+        let page: Hsla = rgb(0x0a0a0a).into();
+        let surface: Hsla = rgb(0x18181b).into();
+        let border: Hsla = rgb(0x27272a).into();
+        let ink: Hsla = rgb(0xfafafa).into();
+        // color-mix(in srgb, var(--background) 82%, var(--surface))
+        let (bg, edge) = super::overlay_field_colors(page, surface, border, ink, true);
+        let bg = bg.to_rgb();
+        assert!((bg.r * 255. - (10. * 0.82 + 24. * 0.18)).abs() < 0.6, "{bg:?}");
+        assert_eq!(edge, border);
+        let (bg, edge) = super::overlay_field_colors(page, surface, border, ink, false);
+        assert_eq!(bg, page);
+        assert!((edge.to_rgb().r * 255. - (39. * 0.86 + 250. * 0.14)).abs() < 0.6);
     }
 
     #[test]

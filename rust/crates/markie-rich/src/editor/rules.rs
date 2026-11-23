@@ -10,9 +10,11 @@
 //! * on Enter too, with `"\n"` as the typed text, so `#` then Enter makes a
 //!   heading and ```` ``` ```` then Enter makes a code block.
 //!
-//! Each rule is its own undo step, after the keystroke that triggered it, and
-//! Backspace straight after a rule takes it back (TipTap's `undoInputRule`),
-//! leaving the characters as typed.
+//! Each rule is its own undo step, and that step holds the keystroke that
+//! triggered it: TipTap's rule replaces the typed text in the same
+//! transaction, so Undo after `# ` leaves `#`. Backspace straight after a
+//! rule takes it back (TipTap's `undoInputRule`), leaving the characters as
+//! typed, the keystroke's included.
 //!
 //! The regular expressions are TipTap's, matched by hand (the crate has no
 //! regex engine). Each matcher names the expression it implements.
@@ -328,6 +330,7 @@ impl Editor {
     /// rule starts a new group; typing straight after it joins that group.
     fn rule_step(&mut self, blocks: std::ops::Range<usize>, f: impl FnOnce(&mut Editor)) {
         self.break_undo();
+        self.rule_typed = None;
         let v = self.version;
         self.transact(blocks, EditKind::Replacing, f);
         if self.version != v {
@@ -336,12 +339,20 @@ impl Editor {
     }
 
     /// Backspace straight after a rule: undo the rule, keep the typing.
+    /// A typed rule's step holds the keystroke too (`insert_text`), so the
+    /// keystroke's text goes back in after it, as `undoInputRule` inserts
+    /// the rule's `text` with the marks at its start.
     pub(crate) fn undo_input_rule(&mut self) -> bool {
         if self.rule_undo.take() != Some(self.sel_version) || self.has_selection() {
             return false;
         }
+        let typed = self.rule_typed.take();
         if self.undo() {
             self.redo.pop();
+            if let Some(text) = typed {
+                let at = self.head;
+                self.transact(at.block..at.block + 1, EditKind::Typing, |ed| ed.insert_at(at, &text, None));
+            }
             return true;
         }
         false

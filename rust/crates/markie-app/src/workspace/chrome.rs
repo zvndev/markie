@@ -459,10 +459,9 @@ impl Workspace {
     /// CSV and plain text open in the main viewer, with every export and
     /// Copy all.
     pub(super) fn document_mode(&self) -> bool {
-        self.doc.as_ref().is_some_and(|d| match d.kind {
-            DocKind::Office(_) | DocKind::Engine => true,
-            DocKind::Text { .. } => !d.large && d.format == FormatKind::Darkmown,
-            _ => false,
+        self.doc.as_ref().is_some_and(|d| {
+            let office = matches!(d.kind, DocKind::Office(_) | DocKind::Engine);
+            document_mode_for(office, matches!(d.kind, DocKind::Text { .. }), d.format, d.large)
         })
     }
 
@@ -861,9 +860,29 @@ fn markdown_to_plain(text: &str) -> String {
     cleaned
 }
 
+/// `documentMode` for a document opened from disk: an Office document (or
+/// one the engine refused), or a `.wd` small enough for the document
+/// workspace. In it the title bar shows "Save file" before Export
+/// (`toolbar.tsx`: `(documentMode || projectMode) && onSave`).
+pub(super) fn document_mode_for(office: bool, text: bool, format: FormatKind, large: bool) -> bool {
+    office || (text && !large && format == FormatKind::Darkmown)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ColorMode, export_html, markdown_to_plain};
+    use super::{ColorMode, document_mode_for, export_html, markdown_to_plain};
+    use markie_core::formats::FormatKind;
+
+    #[test]
+    fn save_file_shows_where_electrons_document_mode_does() {
+        assert!(document_mode_for(true, false, FormatKind::Docx, false));
+        assert!(document_mode_for(true, false, FormatKind::Rtf, false));
+        assert!(document_mode_for(false, true, FormatKind::Darkmown, false));
+        assert!(!document_mode_for(false, true, FormatKind::Darkmown, true));
+        assert!(!document_mode_for(false, true, FormatKind::Markdown, false));
+        assert!(!document_mode_for(false, true, FormatKind::Text, false));
+        assert!(!document_mode_for(false, false, FormatKind::Html, false));
+    }
 
     #[test]
     fn exports_html_and_plain_text() {

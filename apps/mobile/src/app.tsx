@@ -42,6 +42,13 @@ type Route =
   | { key: string; kind: "edit"; draft: EditorDraft }
   | { key: string; kind: "file"; file: IncomingFile };
 
+/**
+ * What a signed-out person can have open besides the sign-in screen: one
+ * document, read with no session. Nothing sets it yet, so signed out still
+ * means the sign-in screen. The public-link work fills this in.
+ */
+type SignedOutRoute = { kind: "public"; target: Extract<LinkTarget, { kind: "public" }> };
+
 const ROOT: Route = { key: "recent", kind: "recent" };
 const SERVER_SIGN_OUT_TIMEOUT_MS = 3_000;
 let routeSeq = 0;
@@ -75,6 +82,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const sessionRef = useRef<StoredSession | null | undefined>(undefined);
   sessionRef.current = session;
   const [routes, setRoutes] = useState<Route[]>([ROOT]);
+  const [signedOutRoute] = useState<SignedOutRoute | null>(null);
   const [hasPending, setHasPending] = useState(false);
   const [signInNotice, setSignInNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -200,6 +208,13 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     openTarget(target, { replaceStack: true });
   }, [openTarget, receiveFile, showToast]);
 
+  // A tapped push notification carries a Markie link. This is the one place
+  // it enters the app, and it takes the same road as a link from outside, so
+  // sign-in, the pending link and the server pin all apply to it. Nothing
+  // calls it yet: the push work subscribes here and nowhere else.
+  const openPushLink = useCallback((link: string) => handleIncomingUrl(link), [handleIncomingUrl]);
+  void openPushLink;
+
   const sessionKnown = session !== undefined;
   useEffect(() => {
     if (!native || !sessionKnown) return;
@@ -312,6 +327,9 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   if (session === undefined) return <div className="m-boot" aria-busy="true" />;
 
   if (!session || !api) {
+    // Signed out with a document open: the public-link work draws it here.
+    // Until then this is always null and the sign-in screen is all there is.
+    void signedOutRoute;
     return (
       <>
         <SignInScreen

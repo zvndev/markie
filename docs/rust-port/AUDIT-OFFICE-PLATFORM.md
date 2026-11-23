@@ -1,7 +1,7 @@
 # Markie RS Office and platform parity audit
 
-macOS score: **88.52% (54 PASS ÷ 61 eligible)**, after the native print work and the capture pass on 2026-11-22. 105 rows: 54 PASS, 2 FAIL,
-39 EXCLUDED, 5 EXCLUDED-PLATFORM, 2 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
+macOS score: **88.52% (54 PASS ÷ 61 eligible)**, after the native print work, both capture passes and the editor fixes pass on 2026-11-22. 105 rows: 54 PASS, 4 FAIL,
+39 EXCLUDED, 5 EXCLUDED-PLATFORM, 0 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
 All 93 inventory bullets are represented. Both exclusion classes stay out of the denominator.
 
 Baseline: Rust `3b6f6c0`, Electron source `ae62cfa7e73f`, installed reference
@@ -63,7 +63,7 @@ can match an IPC operation without implementing the Electron transport.
 | 17.309b | Unchanged bytes and edited reopen | PASS | Electron `src/lib/office/rich-document.ts`; App `workspace/office.rs:147`; Word `an_untouched_document_saves_its_original_bytes`; Office `returns_the_byte_identical_original_when_untouched_or_reverted` | Save untouched is a no-op on disk; exported bytes equal the input for DOCX, RTF and ODT, and all three reopen with the edit. |
 | 17.310 | Native port placement | PASS | Electron `src/lib/office/` and `src/components/documents/word-document-editor.tsx:579`; Rust `markie-office` and `markie-office-view` Cargo manifests | Architecture row. The editor and codecs are native. |
 | 17.311 | Original codecs and provenance | PASS | Electron `docs/decisions/2026-10-14-original-document-engine.md`; Office `Cargo.toml` and `src/lib.rs` | No third-party Office engine in the port. |
-| 17.312 | Native Word page layout appearance | NEEDS-CAPTURE | Electron `src/components/documents/word-document-editor.tsx:579`; Word `view.rs:662,835` | Capture pass, light only, `sample.docx` from `sample_docx`: Page, Continuous and Outline match Electron in page size, margins, type, the picture, lists, table and the page-break rule (`sbs-word-page-light.png`, `grid-word-views.png`). Two things left: dark was not captured, and the Outline list entry is drawn larger and less indented in Markie RS than Electron's. Note: a Word document opened at the zoom left by an earlier Markdown session until this pass made Markdown zoom per document. |
+| 17.312 | Native Word page layout appearance | FAIL | Electron `src/components/documents/word-document-editor.tsx:579`, `document-workspace.css` `.docs-word-outline`; Word `view.rs` `render_outline`, `break_marker`, `paragraph_with_break` | Editor fixes pass, 2026-11-22, `sample.docx` from `sample_docx`, 1280x820, scratch profiles, light and dark (`.autoloop/runs/editor-fixes/sbs-word-outline-light.png`, `sbs-word-outline-dark.png`, `sbs-word-dark.png`, `sbs-word-continuous-dark.png`). Fixed: the Outline is Electron's `.docs-word-outline` now, 165 pt on the surface colour, padding 18 by 10, a bold 10 pt muted label, 11 pt entries with 6 by 9 padding at one indent for every level, line height 1.5 (Tailwind preflight); it was 180 pt, 14 pt entries indented by level. Label and entries land on the same pixels as Electron's in both themes. Dark Page and Continuous were captured for the first time and match in colours, page size, margins, type, the picture, lists and table. Blockers, in both themes and missed by the earlier light pass: the page-break rule sits 26.5 pt higher in Markie RS (Electron draws an empty line before a break that opens a paragraph, `word-paragraph.tsx` puts the marker inside the run span), the list after the picture sits about 3.5 pt higher, Continuous paper runs about 64 pt further past the last paragraph, and Electron's `Saved` and `49 words · DOCX` status strip under the page has no counterpart. Note: a Word document opened at the zoom left by an earlier Markdown session until the capture pass made Markdown zoom per document. |
 
 ## 20. OS integration
 
@@ -109,7 +109,7 @@ can match an IPC operation without implementing the Electron transport.
 | 22.387a | RustCrypto, LocalAuthentication and separate Keychain | NEEDS-KIRBY | Electron `electron/vault-touch-id.js`, `src/lib/vault/envelope.ts`; Vault `Cargo.toml`, `device.rs`; App `the_vault_lives_in_markie_rs_own_places` | Crypto proven separately. Verify the actual consent sheet and Keychain lifecycle with a scratch vault. |
 | 22.387b | IndexedDB migration | EXCLUDED | Electron `src/lib/vault/storage.ts:44`; Migrate `the_migrated_vault_opens_with_the_fixture_passphrase` | Same switchover rule as 22.385. |
 | 22.A | Window hiding and idle lock | PASS | Electron `src/components/documents/vault-panel.tsx:328,610`; App `hidden_window_triggers_the_same_lock_as_idle_without_reentering` | Native visibility invokes the bounded checkpoint. The live minimize/restore and platform visibility definitions remain to be checked. |
-| 22.B | Locked and unlocked vault appearance | NEEDS-CAPTURE | Electron `src/components/documents/vault-panel.tsx:719`, `vault-env-editor.tsx`; App `workspace/vault.rs:1404,1671,1947` | Capture both themes and states, including the env page. |
+| 22.B | Locked and unlocked vault appearance | FAIL | Electron `src/components/documents/vault-panel.tsx:719`, `vault-env-editor.tsx`; App `workspace/vault.rs:1404,1671,1947` | Capture pass 2 (2026-11-22, `.autoloop/runs/capture-pass-2/`), light, scratch vault created by passphrase in both. The locked page now matches (`sbs-vault0-light.png`, `sbs-vault-typed-light.png`: card, label, fields, strength meter "Strong · about 71 bits", buttons). Fixed in `vault.rs` and `chrome.rs`: the title bar shows "Protected documents" with no rename or copy, as document-workspace.tsx; the header has `leading-tight` and `text-sm` lines; the card is `bg-surface`; the label has its tracking; Create, Suggest a passphrase and Restore from backup… are plain text buttons with `px-3 py-2` as Electron 0.9.7 paints them (its filled and underlined classes do not reach the screen), not a filled button and blue links. Fields are still about 4 pt shorter. Unlocked page (`sbs-vault-open-light.png`): same structure and wording, but Markie RS draws bordered Settings and Lock vault, a filled "Use Touch ID…", a link-styled "Not now", bordered list actions and a grey list column, where Electron paints plain text buttons on the page background. Fix: `plain_button` for those actions and the page background for the list column. Not reached: dark, lock and unlock, backup and the env page (macOS crash alerts for another app covered the middle of the screen). Touch ID was not touched. |
 
 ## 25. Hidden terminal
 
@@ -169,8 +169,8 @@ Word and vault views in both themes at 1280 × 820 points. Installed Electron
 0.9.7 opened the scratch Office Library automatically. Close inputs sent
 only to the scratch PID did not dismiss it, and accessibility exposed no
 web area to confirm panel state, so those reference captures were removed.
-There is no valid paired geometry or styling verdict for 17.312, 20.346a
-and 22.B yet. To repeat them:
+There is no valid paired geometry or styling verdict for 20.346a and 22.B
+yet. 17.312 was captured in both themes by the editor fixes pass (row above). To repeat them:
 
 1. Make a private scratch directory with separate `rs-home`, `rs-data`,
    `electron-home`, `electron-data` and fixture directories. Generate a Word

@@ -12,7 +12,7 @@ Parity score: **52 / 53 = 98.1%**. That is PASS over all 67 rows less the 14 exc
 |---|---|
 | PASS | 52 |
 | FAIL | 1 |
-| NEEDS-CAPTURE | 0 (and 3 visual checks on PASS rows, V3 to V5) |
+| NEEDS-CAPTURE | 0 |
 | EXCLUDED | 0 |
 | EXCLUDED-NIGHTLY | 13 |
 | EXCLUDED-PLATFORM | 1 |
@@ -48,7 +48,7 @@ Follow-up on 2026-11-22, branch `t3/markie-rs-native-print` (no web views, Kirby
 | 15.9 | Check `.wd` files | PASS | mcp-diff: check_wd good and broken identical | |
 | 15.10 | Read the guide | PASS | mcp-diff: guide tool and `markie://guide` resource identical | |
 | 15.11 | Cloud status | PASS | `tests/cloud.rs`; INTEGRATION-CLOUD.md live run (`agent-status.json`) | |
-| 15.12 | Cloud sync, with consent | PASS | `sync_keeps_attribution_on_creation_only_and_reports_private_link`; `permissions` test; commit 4bcd416 | Was FAIL: RS asked with a third "Always Allow" button and a warning sheet. Now an informational NSAlert sheet with Put in Cloud, Don't Allow and the "Always allow agents to put files in Markie Cloud" checkbox, which counts only with Put in Cloud, as Electron's `checkboxChecked`. The home refusal now says "can go to Markie Cloud" as `agent-cloud.js` does. The sheet itself is in NEEDS-CAPTURE V3. |
+| 15.12 | Cloud sync, with consent | PASS | `sync_keeps_attribution_on_creation_only_and_reports_private_link`; `permissions` test; commit 4bcd416 | Was FAIL: RS asked with a third "Always Allow" button and a warning sheet. Now an informational NSAlert sheet with Put in Cloud, Don't Allow and the "Always allow agents to put files in Markie Cloud" checkbox, which counts only with Put in Cloud, as Electron's `checkboxChecked`. The home refusal now says "can go to Markie Cloud" as `agent-cloud.js` does. Capture pass 2 (V3): the sheet matches Electron's `dialog.showMessageBox` word for word and in layout (`sbs-v3-sheet-light.png`), and Don't Allow returns the same refusal from both bridges. |
 | 15.13 | Public links, with consent every time | PASS | `public_link_reads_do_not_create_and_live_docs_refuse_creation`; commit 4bcd416 | Was FAIL: the sheet's detail dropped ", without a Markie account. You can revoke the link later." Fixed. |
 | 15.14 | Comments | PASS | `comments::tests::a_stable_build_saves_nothing`; bridge test rejects with the super-nightly sentence | 0.9.7 stable refuses with Electron's exact sentence; the nightly path is EXCLUDED-NIGHTLY below. |
 | 15.14n | Comments that save (nightly half) | EXCLUDED-NIGHTLY | `localCommentsEnabled()` = `nightlyEnabledInMain()` in `electron/main.js` | Ported anyway behind `MARKIE_RS_NIGHTLY=1`. |
@@ -71,7 +71,7 @@ Follow-up on 2026-11-22, branch `t3/markie-rs-native-print` (no web views, Kirby
 
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 16.1 | SKILL.md and agent instruction files grouped by Claude, Codex, Cursor, Gemini, Universal | PASS | `tests/skills_golden.rs` `rows_match_electrons_skills_view` (24 rows, Electron's own grouping code); commit 7654097 | Was FAIL. RS used the skills folders, not the tool roots, to name a skill's tool; preferred README.md as a folder's entry; labelled a non-skill SKILL.md without its folder; dropped non-Markdown agent files; used home-relative paths for the cache and kind rules. The panel had no star, no Show in Finder, a dialog instead of the inline "Move … to the Trash?", "Full paths" instead of `~/`, absolute paths, a Rescan button, other empty and loading text, and no update when the index changed. All now as `skills-view.tsx`. Look in NEEDS-CAPTURE V4. |
+| 16.1 | SKILL.md and agent instruction files grouped by Claude, Codex, Cursor, Gemini, Universal | PASS | `tests/skills_golden.rs` `rows_match_electrons_skills_view` (24 rows, Electron's own grouping code); commit 7654097 | Was FAIL. RS used the skills folders, not the tool roots, to name a skill's tool; preferred README.md as a folder's entry; labelled a non-skill SKILL.md without its folder; dropped non-Markdown agent files; used home-relative paths for the cache and kind rules. The panel had no star, no Show in Finder, a dialog instead of the inline "Move … to the Trash?", "Full paths" instead of `~/`, absolute paths, a Rescan button, other empty and loading text, and no update when the index changed. All now as `skills-view.tsx`. Capture pass 2 (V4): the panel lists the golden tree by tool (`rs-skills-fixed-dark.png`). |
 | 16.2 | Descriptions from front matter | PASS | `frontmatter::tests::matches_electrons_parse_frontmatter` (38 cases from `skill-frontmatter.js`) | Was FAIL: RS's own reader differed on comments, escapes, empty keys, unindented block bodies and anchors. Now a line-for-line port. |
 | 16.3 | Move an installed skill to the Trash | PASS | `trash_guard_only_allows_direct_real_install_directories`; commit 7654097 | Electron's guard words and the inline confirm. Host Trash not exercised in a test. |
 | 16.4 | Files: `skills-view`, `skills-panel`, `agent-files`, `skill-trash`, `skill-frontmatter`, `mdindex` skill roots | PASS | `markie-agent/src/{skills,frontmatter}.rs`, `workspace/skills.rs` | |
@@ -178,8 +178,8 @@ Screen locked. When unlocked, launch both apps per SCREEN.md, with `env -u CLAUD
 - MCP comparison: `mcp-diff.mjs`, Electron's server against the RS bootstrap on one scratch HOME, 23 of 23 identical.
 - Goldens rerun from the reference source: export and Darkmown unchanged.
 - PDFs: 8 fixture PDFs per app, page counts equal, pixel measurements in `.autoloop/runs/audit-agents-web/pdf/`.
-- Follow-up (`t3/markie-rs-native-print`): `cargo test --workspace` 1,080 passed, 0 failed, 5 ignored.
-- Shell fixes (`t3/markie-rs-shell-fixes`): `cargo test --workspace` 1,090 passed, 0 failed, 5 ignored, 68 suites. New tests: markie-app `doc_toolbar::tests::*` (word count, save status, `wrap`, `setSourceStyle`), `watchdog::tests::*`, `themes::tests::each_tone_paints_its_own_editor_background`; markie-web `island::tests::an_island_is_only_moved_when_its_place_changes`. New tests: markie-export `line_baselines_match_chromium`, `word_pagination_matches_electron`, `code_colours_match_highlight_js`; `layout_rules_measured_from_chromium` rewritten for the box model.
+- Follow-up (`t3/markie-rs-native-print`): `cargo test --workspace` 1,080 passed, 0 failed, 5 ignored. New tests: markie-export `line_baselines_match_chromium`, `word_pagination_matches_electron`, `code_colours_match_highlight_js`; `layout_rules_measured_from_chromium` rewritten for the box model.
+- Shell fixes (`t3/markie-rs-shell-fixes`): `cargo test --workspace` 1,090 passed, 0 failed, 5 ignored, 68 suites. New tests: markie-app `doc_toolbar::tests::*` (word count, save status, `wrap`, `setSourceStyle`), `watchdog::tests::*`, `themes::tests::each_tone_paints_its_own_editor_background`; markie-web `island::tests::an_island_is_only_moved_when_its_place_changes`.
 
 ## Capture pass, 2026-11-22
 
@@ -187,11 +187,20 @@ Electron 0.9.7 against this branch at 1280x820, evidence in `.autoloop/runs/capt
 
 - V1 (18.13): see the row. Untrusted preview matches; trusted not reached; the Darkmown toolbar and status bar are missing in Markie RS. Closed by the shell fixes below.
 - V2 (15.1, 15.15): the Agents dialog matches in wording, order, widths and the tool list (`sbs-agents-dark.png`, `crop-agents-*.png`). One difference was fixed in `agents.rs`: section labels now use `.markie-overlay-section` (10 px spaced caps, muted). The fix was not recaptured, and Remote agents signed out was not reached. Recaptured in the shell fixes below.
-- V3 (15.12): not run.
-- V4 (16.1): the golden tree written into the scratch data folder did not show in the Skills panel ("No agent files found"), so nothing to compare yet.
+- V3 (15.12): see the pass 2 section below.
+- V4 (16.1): see the pass 2 section below.
 - V5 (23.2): ⌘P on `everything.md` opens the native print sheet with a three page preview (`rs-print-sheet.png`).
 
 The score is unchanged: V2 to V5 sit on PASS rows, and 18.13 stays NEEDS-CAPTURE.
+
+## Capture pass 2, 2026-11-22
+
+Branch `t3/markie-rs-capture-pass-2`, evidence in `.autoloop/runs/capture-pass-2/`.
+
+- V3 (15.12): both apps signed in to a local server (see AUDIT-CLOUD.md's pass 2 section), and the repo's `mcp/agent-client.mjs` sent `cloud_sync` for a scratch file through each app's own bridge. Both raise the same native sheet: "An agent wants to put "agent-note.md" in Markie Cloud", the path, "It stays private: only you can open it until you share it.", the "Always allow agents to put files in Markie Cloud" checkbox, Don't Allow and Put in Cloud (`sbs-v3-sheet-light.png`). Don't Allow returned `The user declined to put this file in Markie Cloud.` from both (`v3-e.json`, `v3-rs.json` in the scratch logs).
+- V4 (16.1): why pass 1 saw "No agent files found": the scratch tree sat under `/tmp/`, and Electron's cache filter (`skills.rs` `CACHE`, from skills-view.tsx) skips any path containing `/tmp/`, as it should. That is not a Markie RS bug. Two real bugs were found on the way and fixed: the palette's "Skills & agent files…" never built the panel, so it stayed on "Looking for agent files…" (`palette.rs`); and in a scratch run the panel matched tool roots against `$HOME` while the device index walks the scratch data folder, so the two never met (`workspace.rs` `device_scan_options`, `skills.rs`, test `a_scratch_index_and_its_tool_roots_share_one_home`). With the tree in a scratch folder outside `/tmp` the panel lists it by tool (`rs-skills-fixed-dark.png`). Electron's Skills view was not opened, per SCREEN.md rule 7; its grouping is pinned by `rows_match_electrons_skills_view`.
+
+The score is unchanged: V3 and V4 sit on PASS rows.
 
 ## Shell fixes, 2026-11-22
 
@@ -201,4 +210,5 @@ Branch `t3/markie-rs-shell-fixes`, Electron 0.9.7 against the release bundle at 
 - V1 (18.13): PASS, see the row. All four states captured, toolbar, footer and title bar matched.
 - V2 (15.1, 15.15): recaptured dark, top, scrolled and Remote agents signed out (`sbs-agents-dark.png`, `sbs-agents-dark-scrolled.png`, `sbs-remote-dark.png`). Fixed to match Electron: the panel is centred with 20 px padding that scrolls with the title, on `.markie-overlay-panel` colours, border and shadow; Electron's block margins; `CLAUDE.md`, `AGENTS.md`, `~/.claude/skills` and `~/.codex` in monospace; 18 px tool rows; a compact accent Remote agents… button and small accent Copy buttons. Left as is: GPUI has no backdrop blur, the checkbox is GPUI Kit's, and Remote agents replaces the dialog's content instead of stacking a second panel over it.
 
-Score: 52 of 53 PASS. 18.13 moves to PASS; V3 to V5 remain visual checks on PASS rows.
+Score: 52 of 53 PASS. 18.13 moves to PASS. With V2 recaptured here, V3 and V4 checked in pass 2 and V5 in pass 1, no visual check is outstanding.
+

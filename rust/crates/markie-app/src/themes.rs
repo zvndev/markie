@@ -5,6 +5,7 @@
 
 use std::rc::Rc;
 
+use gpui_kit::component::highlighter::HighlightTheme;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode, ThemeSet};
 use gpui_kit::*;
 use markie_core::theme::{ThemePreset, ThemeStore, Tone, Typography};
@@ -166,7 +167,18 @@ pub fn apply_store(store: ThemeStore, window: Option<&mut Window>, cx: &mut App)
     let Ok(set) = serde_json::from_value::<ThemeSet>(set) else { return };
     let mut light: Option<Rc<ThemeConfig>> = None;
     let mut dark: Option<Rc<ThemeConfig>> = None;
-    for cfg in set.themes {
+    for mut cfg in set.themes {
+        // GPUI Kit swaps its syntax theme only when a config carries one, so
+        // without this the editor kept the first mode's (dark at a dark
+        // launch: a `#0a0a0a` Source page in light). Each mode gets GPUI
+        // Kit's default for that mode, on the page colour, as Electron's
+        // `.cm-editor` and `.cm-gutters` take `var(--background)`.
+        let tokens = if cfg.mode.is_dark() { &t.dark } else { &t.light };
+        let base = if cfg.mode.is_dark() { HighlightTheme::default_dark() } else { HighlightTheme::default_light() };
+        let mut style = base.style.clone();
+        style.editor_background = Some(hex(&tokens.background));
+        style.editor_gutter_background = Some(hex(&tokens.background));
+        cfg.highlight = Some(style);
         if cfg.mode.is_dark() {
             dark = Some(Rc::new(cfg));
         } else {

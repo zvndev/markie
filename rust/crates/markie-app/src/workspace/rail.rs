@@ -1682,7 +1682,8 @@ impl Workspace {
                             )
                             .child(
                                 v_flex()
-                                    .child(div().text_size(px(17.)).font_weight(FontWeight::SEMIBOLD).child(title))
+                                    // `leading-tight` title over a `leading-none` status line.
+                                    .child(div().text_size(px(17.)).line_height(px(21.25)).font_weight(FontWeight::SEMIBOLD).child(title))
                                     .child(if signed_in_cloud {
                                         // Signed in, the header says so and is not a button (library.tsx).
                                         h_flex()
@@ -1690,6 +1691,7 @@ impl Workspace {
                                             .mt(px(2.))
                                             .gap(px(6.))
                                             .text_size(px(11.))
+                                            .line_height(px(11.))
                                             .text_color(p.muted)
                                             .child(div().size(px(6.)).rounded_full().bg(p.green))
                                             .child("Connected")
@@ -1699,6 +1701,7 @@ impl Workspace {
                                             .mt(px(2.))
                                             .gap(px(6.))
                                             .text_size(px(11.))
+                                            .line_height(px(11.))
                                             .text_color(p.muted)
                                             .cursor_pointer()
                                             .hover(|s| s.text_color(p.foreground))

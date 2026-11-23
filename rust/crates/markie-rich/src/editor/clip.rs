@@ -181,7 +181,7 @@ impl Editor {
     pub(super) fn insert_plain(&mut self, text: &str) {
         let (from, to) = self.range();
         let text = text.to_string();
-        self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
+        self.transact(from.block..to.block + 1, EditKind::Replacing, |ed| {
             let at = if from != to { ed.delete_range_inner(from, to) } else { from };
             let mut u = ed.units(at.block, at.leaf);
             let off = at.offset.min(u.len());
@@ -198,8 +198,7 @@ impl Editor {
     /// Inline content at the caret, keeping its marks.
     pub fn insert_inlines(&mut self, inlines: Vec<Inline>) {
         let (from, to) = self.range();
-        self.break_undo();
-        self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
+        self.transact(from.block..to.block + 1, EditKind::Replacing, |ed| {
             let at = if from != to { ed.delete_range_inner(from, to) } else { from };
             ed.refresh_now();
             let at = ed.clamp(Pos { offset: at.offset, ..ed.head });
@@ -224,8 +223,7 @@ impl Editor {
             return;
         }
         let (from, to) = self.range();
-        self.break_undo();
-        self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
+        self.transact(from.block..to.block + 1, EditKind::Replacing, |ed| {
             let at = if from != to { ed.delete_range_inner(from, to) } else { from };
             ed.refresh_now();
             let at = ed.clamp(Pos { offset: at.offset, ..ed.head });
@@ -291,8 +289,7 @@ impl Editor {
     /// the HTML kept as its source.
     fn insert_source_blocks(&mut self, blocks: Vec<Block>) {
         let (from, to) = self.range();
-        self.break_undo();
-        self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
+        self.transact(from.block..to.block + 1, EditKind::Replacing, |ed| {
             let at = if from != to { ed.delete_range_inner(from, to) } else { from };
             ed.refresh_now();
             let at = ed.clamp(Pos { offset: at.offset, ..ed.head });

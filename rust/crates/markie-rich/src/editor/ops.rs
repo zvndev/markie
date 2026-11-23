@@ -105,12 +105,8 @@ impl Editor {
         }
         let (from, to) = self.range();
         let blocks = from.block..to.block + 1;
-        let kind = if from == to { EditKind::Typing } else { EditKind::Other };
-        if s.chars().any(char::is_whitespace) {
-            self.break_undo();
-        }
         let typing = self.typing.clone();
-        self.transact(blocks, kind, |ed| {
+        self.transact(blocks, EditKind::Typing, |ed| {
             let mut at = from;
             if from != to {
                 at = ed.delete_range_inner(from, to);
@@ -200,7 +196,7 @@ impl Editor {
     fn delete_dir(&mut self, forward: bool, word: bool) {
         let (from, to) = self.range();
         if from != to {
-            self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
+            self.transact(from.block..to.block + 1, EditKind::Deleting, |ed| {
                 ed.delete_range_inner(from, to);
             });
             return;
@@ -212,7 +208,7 @@ impl Editor {
             // A picture is selected before it is deleted; here it is.
             let (a, b) = if forward { (p, Pos { offset: 1, ..p }) } else { (Pos { offset: 0, ..p }, p) };
             if a != b {
-                self.transact(p.block..p.block + 1, EditKind::Other, |ed| {
+                self.transact(p.block..p.block + 1, EditKind::Deleting, |ed| {
                     ed.delete_range_inner(a, b);
                 });
             }
@@ -251,13 +247,13 @@ impl Editor {
         // First block of a list item: lift the item out of its list.
         if leaf.path.len() >= 3 && *leaf.path.last().unwrap() == 0 {
             if let Some(super::Frame::Item { .. }) = leaf.frames.last() {
-                self.transact(p.block..p.block + 1, EditKind::Other, |ed| ed.lift_item_at(p.block, &leaf.path));
+                self.transact(p.block..p.block + 1, EditKind::Deleting, |ed| ed.lift_item_at(p.block, &leaf.path));
                 return;
             }
         }
         // First block of a quote: lift it out.
         if leaf.path.len() >= 2 && *leaf.path.last().unwrap() == 0 && matches!(leaf.frames.last(), Some(super::Frame::Quote)) {
-            self.transact(p.block..p.block + 1, EditKind::Other, |ed| ed.unwrap_quote_at(p.block, &leaf.path));
+            self.transact(p.block..p.block + 1, EditKind::Deleting, |ed| ed.unwrap_quote_at(p.block, &leaf.path));
             return;
         }
         // A heading or code block at the very start of the document turns
@@ -280,7 +276,7 @@ impl Editor {
         if leaf.in_cell() || pleaf.in_cell() || pkind == LeafKind::Source || leaf.kind == LeafKind::Source {
             // Cells and source blocks do not merge; step into the previous one.
             if self.leaf_len(p.block, p.leaf) == 0 && !leaf.in_cell() && leaf.kind != LeafKind::Source {
-                self.transact(prev.block..p.block + 1, EditKind::Other, |ed| {
+                self.transact(prev.block..p.block + 1, EditKind::Deleting, |ed| {
                     ed.remove_leaf(p.block, &leaf.path);
                     ed.put_caret(prev.block, pleaf.path.clone(), prev.offset);
                 });
@@ -315,7 +311,7 @@ impl Editor {
         let a_path = self.caret_path(a);
         let b_path = self.caret_path(b);
         let at = a_units.len();
-        self.transact(a.block..b.block + 1, EditKind::Other, |ed| {
+        self.transact(a.block..b.block + 1, EditKind::Deleting, |ed| {
             let mut merged = a_units.clone();
             if a_kind.is_plain() {
                 // Atoms (math, breaks) as their text.
@@ -500,17 +496,18 @@ impl Editor {
 
     pub fn enter(&mut self) {
         let (from, to) = self.range();
-        self.break_undo();
         if from == to && self.run_input_rules("\n") {
             return;
         }
         if let Some(atom) = self.selected_atom() {
             // Enter on a selected picture: a new line after it.
             let at = Pos { offset: 1, ..atom };
-            self.transact(at.block..at.block + 1, EditKind::Other, |ed| ed.split_at(at));
+            self.transact(at.block..at.block + 1, EditKind::Replacing, |ed| ed.split_at(at));
             return;
         }
-        self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
+        // splitBlock does not close the history: Enter joins the typing
+        // before it, as in TipTap.
+        self.transact(from.block..to.block + 1, EditKind::Replacing, |ed| {
             let at = if from != to { ed.delete_range_inner(from, to) } else { from };
             ed.refresh_now();
             let at = ed.clamp_after_delete(at);
@@ -709,7 +706,7 @@ impl Editor {
             return;
         }
         let (from, to) = self.range();
-        self.transact(from.block..to.block + 1, EditKind::Other, |ed| {
+        self.transact(from.block..to.block + 1, EditKind::Replacing, |ed| {
             if from != to {
                 ed.delete_range_inner(from, to);
             }

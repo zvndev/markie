@@ -659,7 +659,9 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(p.background.opacity(0.58))
+                // `.markie-scrim` is 58% under a blur; without a backdrop blur
+                // the app's dialogs use 72% (dialog_chrome `scrim`).
+                .bg(p.background.opacity(0.72))
                 .occlude()
                 .on_mouse_down(MouseButton::Left, cx.listener(|w, _, _, cx| w.close_share(cx)))
                 .on_key_down(cx.listener(|w, ev: &KeyDownEvent, _, cx| {
@@ -748,9 +750,12 @@ impl Workspace {
                 el.child(
                     v_flex()
                         .mt(px(8.))
+                        // `inline-block max-w-full`: the button is as wide as its words.
+                        .items_start()
                         .child(
                             h_flex()
                                 .id("share-upload-area")
+                                .max_w_full()
                                 .h(px(32.))
                                 .gap(px(7.2))
                                 .pl(px(10.4))
@@ -764,7 +769,7 @@ impl Workspace {
                                 .when(syncing, |el| el.opacity(0.4))
                                 .when(!syncing, |el| el.cursor_pointer())
                                 .child(div().flex_none().text_color(p.muted.opacity(0.82)).child("Upload destination"))
-                                .child(div().flex_1().min_w_0().truncate().text_color(p.foreground.opacity(0.85)).child(area_label))
+                                .child(div().min_w_0().truncate().text_color(p.foreground.opacity(0.85)).child(area_label))
                                 .child("⌄")
                                 .on_click(cx.listener(move |w, _, window, cx| {
                                     if let Some(s) = w.collab.share.as_mut()
@@ -1028,7 +1033,7 @@ impl Workspace {
                         v_flex()
                             .min_w_0()
                             .flex_1()
-                            .child(div().ml(px(-8.)).child(self.share_select_button("general-access", if public { "Anyone with the link" } else { "Restricted" }, menu == Some(Menu::General), !link_busy && loaded, p, cx.listener(|w, _, _, cx| {
+                            .child(h_flex().ml(px(-8.)).child(self.share_select_button("general-access", if public { "Anyone with the link" } else { "Restricted" }, menu == Some(Menu::General), !link_busy && loaded, p, cx.listener(|w, _, _, cx| {
                                 if let Some(s) = w.collab.share.as_mut() {
                                     s.menu = if s.menu == Some(Menu::General) { None } else { Some(Menu::General) };
                                 }
@@ -1381,7 +1386,8 @@ impl Workspace {
                         .mb(px(6.))
                         .gap(px(6.))
                         .child(div().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Requests"))
-                        .child(div().rounded_full().border_1().border_color(p.border).px(px(6.)).text_size(px(10.)).text_color(p.foreground).child(st.count.to_string())),
+                        // `.markie-cloud-chip-count`: the whole pill at 70%.
+                        .child(div().rounded_full().border_1().border_color(p.border).px(px(6.)).text_size(px(10.)).text_color(p.foreground).opacity(0.7).child(st.count.to_string())),
                 )
                 .child(div().mb(px(8.)).text_size(px(10.5)).text_color(p.muted).child(sv::REQUESTS_INTRO))
                 .children(st.requests.iter().enumerate().map(|(i, r)| {
@@ -1397,7 +1403,16 @@ impl Workspace {
                                 .min_w_0()
                                 .flex_1()
                                 .text_size(px(11.5))
-                                .child(h_flex().gap(px(4.)).child(div().font_weight(FontWeight::MEDIUM).child(who.clone())).child("wants to share").child(div().font_weight(FontWeight::MEDIUM).child(r.name.clone())))
+                                .child({
+                                    // One line of text, the two names medium, as the `<strong>` and
+                                    // `<span>` inside a single truncating div.
+                                    let line = format!("{who} wants to share {}", r.name);
+                                    let medium = HighlightStyle { font_weight: Some(FontWeight::MEDIUM), ..Default::default() };
+                                    let name_at = line.len() - r.name.len();
+                                    div().truncate().text_color(p.foreground).child(
+                                        StyledText::new(line.clone()).with_highlights([(0..who.len(), medium), (name_at..line.len(), medium)]),
+                                    )
+                                })
                                 .child(div().truncate().text_size(px(10.5)).text_color(p.muted).child(r.sender.email.clone())),
                         )
                         .child(

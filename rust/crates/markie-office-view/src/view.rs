@@ -122,6 +122,12 @@ pub(crate) struct PageColors {
     pub rgb: [u8; 3],
 }
 
+/// `.docs-word-outline`'s width.
+const OUTLINE_WIDTH: f32 = 165.;
+/// The outline's buttons take `font: inherit`, so their line height is
+/// Tailwind preflight's `line-height: 1.5` on `html`, as is the label's.
+const OUTLINE_LINE_HEIGHT: f32 = 1.5;
+
 pub struct WordView {
     pub editor: WordEditor,
     pub(crate) focus: FocusHandle,
@@ -915,36 +921,55 @@ impl WordView {
         }
     }
 
+    /// Electron's `.docs-word-outline` (`document-workspace.css`): 165 px
+    /// on the surface colour, padding 18 by 10, a 10 px muted label with
+    /// 10 below it, then one 11 px button per heading at full width with
+    /// the workspace buttons' 6 by 9 padding, 1 px transparent border and
+    /// 6 px corners. Every level sits at the same indent, and no headings
+    /// shows only the label.
     fn render_outline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let headings: Vec<(String, String, usize)> = self
+        let headings: Vec<(String, String)> = self
             .editor
             .rich()
             .paragraphs
             .iter()
             .filter(|p| layout::is_heading(p))
-            .map(|p| (p.id.clone(), if p.text.is_empty() { "Empty heading".into() } else { p.text.clone() }, layout::heading_level(p)))
+            .map(|p| (p.id.clone(), if p.text.is_empty() { "Empty heading".into() } else { p.text.clone() }))
             .collect();
         v_flex()
             .id("word-outline")
-            .w(px(180.))
+            .w(px(OUTLINE_WIDTH))
             .h_full()
             .flex_none()
             .overflow_y_scroll()
             .border_r_1()
             .border_color(theme.border)
-            .bg(theme.sidebar)
-            .p_3()
-            .gap_1()
-            .child(div().text_xs().text_color(theme.muted_foreground).child("Outline"))
-            .when(headings.is_empty(), |d| d.child(div().text_xs().text_color(theme.muted_foreground).child("No headings.")))
-            .children(headings.into_iter().enumerate().map(|(i, (id, label, level))| {
+            .bg(theme.muted)
+            .px(px(10.))
+            .py(px(18.))
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .line_height(px(10. * OUTLINE_LINE_HEIGHT))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme.muted_foreground)
+                    .mb(px(10.))
+                    .child("Outline"),
+            )
+            .children(headings.into_iter().enumerate().map(|(i, (id, label))| {
                 div()
                     .id(("outline", i))
-                    .pl(px(level.saturating_sub(1) as f32 * 10.))
-                    .text_sm()
-                    .rounded_sm()
-                    .px_1()
+                    .w_full()
+                    .px(px(9.))
+                    .py(px(6.))
+                    .border_1()
+                    .border_color(transparent_black())
+                    .rounded(px(6.))
+                    .text_size(px(11.))
+                    .line_height(px(11. * OUTLINE_LINE_HEIGHT))
+                    .text_color(theme.foreground)
+                    .cursor_pointer()
                     .hover(|d| d.bg(theme.accent))
                     .child(label)
                     .on_click(cx.listener(move |this, _, window, cx| {

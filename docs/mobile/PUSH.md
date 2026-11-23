@@ -57,8 +57,7 @@ platform is independent. Some of the `APNS_` values without the rest, or a key t
 read, leaves that platform off with one warning in the log that names the variable and never its
 value.
 
-When either platform is on, the server logs one line at its first use: `push: on for iOS and
-Android`.
+When either platform is on, the server logs one line at boot: `push: on for iOS and Android`.
 
 ### Where the Apple values come from
 

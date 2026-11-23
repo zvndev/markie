@@ -9,6 +9,7 @@ import { shares, takeInviteAllowance } from "./shares.ts";
 import { people } from "./share-people.ts";
 import { comments } from "./comments.ts";
 import { devices } from "./devices.ts";
+import { pushSender } from "./push.ts";
 import { themes } from "./themes.ts";
 import { assetsApi, sweepOrphans } from "./assets.ts";
 import { docLinksApi } from "./doc-links.ts";
@@ -589,6 +590,10 @@ if (process.env.MARKIE_NO_LISTEN !== "1") {
   if (sweeps.length === 0) console.log("ENABLE_CRONS is off: the orphaned-asset sweep will not run here");
   // An uncaught exception or unhandled rejection is sent before the process
   // exits with code 1, as Node would have.
+  // Push notifications (push.ts): reads its settings now, so a deploy that
+  // set the keys sees "push: on for ..." in the boot log, and one that set
+  // them wrongly sees why. Silent, and no network, when none are set.
+  pushSender();
   const lf = littleFriend();
   lf?.captureProcessErrors();
   console.log(lf ? "little friend: on" : "little friend: off (LF_SERVER_KEY is not set)");

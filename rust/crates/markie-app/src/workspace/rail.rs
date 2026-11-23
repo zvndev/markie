@@ -125,9 +125,13 @@ pub(super) struct Shell {
     pub previews: super::doc_preview::PreviewCache,
     /// Recent and Starred have been read once: an empty list is really empty.
     pub lists_loaded: bool,
-    /// The saved cloud thumbnails have been read from disk (once).
+    /// The saved cloud thumbnails have been read from disk for this session.
     pub cloud_previews_loaded: bool,
-    pub cloud_previews_loading: bool,
+    /// Whose cloud thumbnails are held (`doc_preview::cloud_session`): not
+    /// asked yet, nobody (signed out), or the signed-in accounts.
+    pub cloud_preview_session: Option<Option<String>>,
+    /// Bumped when that changes, so a fetch begun for the last account lands nowhere.
+    pub cloud_preview_epoch: u64,
     /// A page opened or closed: the next frame moves the keyboard to it.
     pub page_focus_owed: bool,
     /// library.tsx `uploadArea`: where Sync to cloud from a row puts a new
@@ -212,7 +216,8 @@ impl Shell {
             previews: Default::default(),
             lists_loaded: false,
             cloud_previews_loaded: false,
-            cloud_previews_loading: false,
+            cloud_preview_session: None,
+            cloud_preview_epoch: 0,
             page_focus_owed: false,
             upload_area: None,
             upload_area_open: false,

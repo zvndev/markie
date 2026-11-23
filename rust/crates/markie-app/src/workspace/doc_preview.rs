@@ -7,7 +7,9 @@
 //!   and belong on a background thread.
 //! - [`PreviewCache`] holds them by key and stamp (a file's path with its
 //!   modified time and size; a cloud document's id with its version), says
-//!   which are still owed, and can save and load the cloud ones.
+//!   which are still owed, and can save and load the cloud ones. Those
+//!   follow the media cache's rule: they belong to the signed-in accounts,
+//!   and a sign-out or another account removes them (`bind_cloud_file`).
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
@@ -499,24 +501,131 @@ impl PreviewCache {
         self.map.len()
     }
 
-    /// The entries whose key starts with `prefix`, as JSON, for a file.
-    pub fn save(&self, prefix: &str) -> String {
-        let saved: HashMap<&str, Saved> = self
+    // ---- cloud previews: whose they are, and what may be kept
+
+    /// The cloud previews as the file's text, owned by `session`. Only ones
+    /// with something to draw are written: a document that could not be read
+    /// leaves nothing behind.
+    pub fn save_cloud(&self, session: &str) -> String {
+        let entries: HashMap<String, Saved> = self
             .map
             .iter()
-            .filter(|(key, _)| key.starts_with(prefix))
-            .map(|(key, (stamp, preview))| (key.as_str(), Saved { stamp: stamp.clone(), preview: preview.as_deref().cloned() }))
+            .filter(|(key, _)| key.starts_with(CLOUD_PREFIX))
+            .filter_map(|(key, (stamp, preview))| Some((key.clone(), Saved { stamp: stamp.clone(), preview: Some(preview.as_deref()?.clone()) })))
             .collect();
-        serde_json::to_string(&saved).unwrap_or_else(|_| "{}".into())
+        serde_json::to_string(&CloudFile { session: Some(session.to_string()), entries }).unwrap_or_else(|_| "{}".into())
     }
 
-    /// Take saved entries in. Ones already here win: they are newer.
-    pub fn load(&mut self, json: &str) {
-        let saved: HashMap<String, Saved> = serde_json::from_str(json).unwrap_or_default();
-        for (key, entry) in saved {
-            self.map.entry(key).or_insert((entry.stamp, entry.preview.map(Arc::new)));
+    /// Take a file's previews in, when the file belongs to `session`. Anyone
+    /// else's file, or one that cannot be read, gives nothing.
+    pub fn load_cloud(&mut self, json: &str, session: &str) -> bool {
+        let Ok(file) = serde_json::from_str::<CloudFile>(json) else { return false };
+        if file.session.as_deref() != Some(session) {
+            return false;
         }
+        for (key, entry) in file.entries {
+            if key.starts_with(CLOUD_PREFIX) {
+                self.map.entry(key).or_insert((entry.stamp, entry.preview.map(Arc::new)));
+            }
+        }
+        true
     }
+
+    /// Forget every cloud preview, and any being fetched: the account changed.
+    pub fn clear_cloud(&mut self) {
+        self.map.retain(|key, _| !key.starts_with(CLOUD_PREFIX));
+        self.pending.retain(|key| !key.starts_with(CLOUD_PREFIX));
+    }
+
+    /// Keep, of one account on one server (`scope`, from [`cloud_scope`]),
+    /// only the documents in `ids`: one that left the list loses its preview.
+    /// Says whether anything went.
+    pub fn retain_cloud(&mut self, scope: &str, ids: &HashSet<&str>) -> bool {
+        let prefix = format!("{CLOUD_PREFIX}{scope}:");
+        let before = self.map.len();
+        self.map.retain(|key, _| key.strip_prefix(&prefix).is_none_or(|id| ids.contains(id)));
+        self.map.len() != before
+    }
+}
+
+const CLOUD_PREFIX: &str = "cloud:";
+
+/// The stored cloud previews: whose they are, then each one.
+#[derive(Default, Serialize, Deserialize)]
+struct CloudFile {
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    entries: HashMap<String, Saved>,
+}
+
+/// One account on one server, as the keys name it.
+pub fn cloud_scope(account: &str, origin: &str) -> String {
+    let json = serde_json::to_vec(&(account, origin)).unwrap_or_default();
+    markie_core::clock::sha256_hex(&json)[..24].to_string()
+}
+
+/// A cloud document's cache key: account, server and document, so the same
+/// id on two servers, or for two accounts, is never one entry.
+pub fn cloud_key(account: &str, origin: &str, id: &str) -> String {
+    format!("{CLOUD_PREFIX}{}:{id}", cloud_scope(account, origin))
+}
+
+/// Who owns the stored previews: every signed-in account and server, in any
+/// order. None when nobody is signed in. The media cache's rule
+/// (`AssetCache::bind_sessions`).
+pub fn cloud_session(scopes: &[(String, String)]) -> Option<String> {
+    let mut scopes = scopes.to_vec();
+    scopes.sort_unstable();
+    scopes.dedup();
+    if scopes.is_empty() {
+        return None;
+    }
+    Some(markie_core::clock::sha256_hex(&serde_json::to_vec(&scopes).unwrap_or_default()))
+}
+
+/// Hand the stored previews to `session`. The same session gets the file's
+/// text back. Another session, or none (signed out), removes the file and
+/// gets nothing, so one account's previews never reach the next.
+pub fn bind_cloud_file(path: &Path, session: Option<&str>) -> std::io::Result<String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        // Unreadable is not ours to keep either.
+        Err(_) => String::new(),
+    };
+    let owner = serde_json::from_str::<CloudFile>(&text).ok().and_then(|f| f.session);
+    if session.is_some() && owner.as_deref() == session {
+        return Ok(text);
+    }
+    std::fs::remove_file(path)?;
+    Ok(String::new())
+}
+
+/// Write a file only its owner can read (0600), whole or not at all: the
+/// bytes go to a private temporary file beside it, which then takes its name.
+pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let temp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&temp);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let result = (|| {
+        let mut file = options.open(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Build the previews of files, in order. Blocking: run it on a background
@@ -527,7 +636,8 @@ pub fn build_files(wants: Vec<(Want, PathBuf, FormatKind)>) -> Vec<(Want, Option
 
 #[cfg(test)]
 mod tests {
-    use super::{Block, Lookup, PreviewCache, Want, from_bytes, from_text, read_file};
+    use super::{Block, Lookup, PreviewCache, Want, bind_cloud_file, cloud_key, cloud_scope, cloud_session, from_bytes, from_text, read_file, write_private};
+    use std::collections::HashSet;
     use markie_core::formats::FormatKind;
 
     #[test]
@@ -630,19 +740,146 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
+    fn roadmap() -> Option<super::Preview> {
+        Some(from_text(FormatKind::Markdown, "# Roadmap"))
+    }
+
+    fn session(scopes: &[(&str, &str)]) -> String {
+        cloud_session(&scopes.iter().map(|(a, o)| (a.to_string(), o.to_string())).collect::<Vec<_>>()).unwrap()
+    }
+
     #[test]
-    fn cloud_previews_survive_a_restart_and_file_ones_are_not_saved() {
+    fn the_same_account_keeps_its_cloud_previews_across_a_relaunch_and_file_ones_are_never_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("cloud-previews.json");
+        let alice = session(&[("alice", "https://a.example")]);
+        let want = Want { key: cloud_key("alice", "https://a.example", "doc"), stamp: "v3".into() };
         let mut cache = PreviewCache::default();
-        let cloud = Want { key: "cloud:http://localhost:1:abc".into(), stamp: "v3".into() };
-        cache.put(cloud.clone(), Some(from_text(FormatKind::Markdown, "# Roadmap")));
-        cache.put(Want { key: "/local.md".into(), stamp: "1:1".into() }, Some(from_text(FormatKind::Markdown, "# Local")));
-        let json = cache.save("cloud:");
-        assert!(!json.contains("local.md"));
+        cache.put(want.clone(), roadmap());
+        cache.put(Want { key: "/local.md".into(), stamp: "1:1".into() }, roadmap());
+        write_private(&file, cache.save_cloud(&alice).as_bytes()).unwrap();
+        assert!(!std::fs::read_to_string(&file).unwrap().contains("local.md"));
+        // Relaunch: the same session reads its file back.
+        let kept = bind_cloud_file(&file, Some(&alice)).unwrap();
         let mut next = PreviewCache::default();
-        next.load(&json);
+        assert!(next.load_cloud(&kept, &alice));
         assert_eq!(next.len(), 1);
-        assert!(matches!(next.lookup(&cloud), Lookup::Ready(p) if p.blocks == [Block::Title("Roadmap".into())]));
-        next.load("not json");
+        assert!(matches!(next.lookup(&want), Lookup::Ready(p) if p.blocks == [Block::Title("Roadmap".into())]));
+        assert!(file.exists());
+        assert!(!next.load_cloud("not json", &alice));
         assert_eq!(next.len(), 1);
+    }
+
+    #[test]
+    fn a_different_session_or_a_sign_out_removes_the_stored_previews() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("cloud-previews.json");
+        let origin = "https://a.example";
+        let (alice, bob) = (session(&[("alice", origin)]), session(&[("bob", origin)]));
+        let want = Want { key: cloud_key("alice", origin, "doc"), stamp: "v1".into() };
+        let mut cache = PreviewCache::default();
+        cache.put(want.clone(), roadmap());
+        cache.put(Want { key: "/local.md".into(), stamp: "1:1".into() }, roadmap());
+        let saved = cache.save_cloud(&alice);
+        write_private(&file, saved.as_bytes()).unwrap();
+        // Another account signs in: the file goes and it starts empty.
+        assert_eq!(bind_cloud_file(&file, Some(&bob)).unwrap(), "");
+        assert!(!file.exists(), "another account starts with no file");
+        // Even handed Alice's text, Bob's cache takes none of it.
+        let mut bobs = PreviewCache::default();
+        assert!(!bobs.load_cloud(&saved, &bob));
+        assert_eq!(bobs.len(), 0);
+        // Another server for the same person is another session too.
+        write_private(&file, saved.as_bytes()).unwrap();
+        assert_eq!(bind_cloud_file(&file, Some(&session(&[("alice", "https://b.example")]))).unwrap(), "");
+        assert!(!file.exists());
+        // Signing out removes it from disk and from memory, and forgets fetches under way.
+        write_private(&file, saved.as_bytes()).unwrap();
+        assert_eq!(bind_cloud_file(&file, None).unwrap(), "");
+        assert!(!file.exists(), "signing out removes the file");
+        let pending = Want { key: cloud_key("alice", origin, "other"), stamp: "v1".into() };
+        assert_eq!(cache.claim([pending.clone()]).len(), 1);
+        cache.clear_cloud();
+        assert_eq!(cache.lookup(&want), Lookup::Owed);
+        assert!(!cache.busy());
+        assert_eq!(cache.len(), 1, "previews of files on this Mac stay");
+        // A file with no owner on it, or a broken one, is nobody's to keep.
+        std::fs::write(&file, "{\"entries\":{}}").unwrap();
+        assert_eq!(bind_cloud_file(&file, Some(&alice)).unwrap(), "");
+        std::fs::write(&file, "not json").unwrap();
+        assert_eq!(bind_cloud_file(&file, Some(&alice)).unwrap(), "");
+        assert!(!file.exists());
+        assert_eq!(bind_cloud_file(&file, None).unwrap(), "", "nothing to remove is fine");
+    }
+
+    #[test]
+    fn the_session_is_every_signed_in_account_in_any_order() {
+        let both = session(&[("alice", "https://a.example"), ("alice", "https://b.example")]);
+        assert_eq!(both, session(&[("alice", "https://b.example"), ("alice", "https://a.example"), ("alice", "https://a.example")]));
+        assert_ne!(both, session(&[("alice", "https://a.example")]));
+        assert_eq!(cloud_session(&[]), None, "signed out is no session");
+    }
+
+    #[test]
+    fn previews_are_scoped_by_account_server_and_document() {
+        let key = cloud_key("alice", "https://a.example", "doc");
+        assert_ne!(key, cloud_key("alice", "https://b.example", "doc"), "the same id on two servers");
+        assert_ne!(key, cloud_key("bob", "https://a.example", "doc"), "the same document for two accounts");
+        assert_ne!(key, cloud_key("alice", "https://a.example", "doc2"));
+        assert_eq!(key, cloud_key("alice", "https://a.example", "doc"));
+        assert!(!key.contains("alice") && !key.contains("a.example"), "the key does not spell out who or where");
+        // One written for a server is not found under the other.
+        let mut cache = PreviewCache::default();
+        cache.put(Want { key, stamp: "v1".into() }, roadmap());
+        assert_eq!(cache.lookup(&Want { key: cloud_key("alice", "https://b.example", "doc"), stamp: "v1".into() }), Lookup::Owed);
+    }
+
+    #[test]
+    fn a_document_this_account_can_no_longer_read_loses_its_stored_preview() {
+        let (a, b) = ("https://a.example", "https://b.example");
+        let all = session(&[("alice", a), ("alice", b)]);
+        let want = |origin: &str, id: &str, stamp: &str| Want { key: cloud_key("alice", origin, id), stamp: stamp.into() };
+        let mut cache = PreviewCache::default();
+        for (origin, id) in [(a, "kept"), (a, "refused"), (a, "unlisted"), (b, "unlisted")] {
+            cache.put(want(origin, id, "v1"), roadmap());
+        }
+        // The server refuses it (403 or 404): the fetch lands with nothing.
+        cache.put(want(a, "refused", "v2"), None);
+        assert_eq!(cache.lookup(&want(a, "refused", "v2")), Lookup::Nothing);
+        assert_eq!(cache.lookup(&want(a, "refused", "v1")), Lookup::Owed, "the old picture is gone, not shown");
+        // It left the list on server A; server B's list is not A's business.
+        assert!(cache.retain_cloud(&cloud_scope("alice", a), &HashSet::from(["kept", "refused"])));
+        assert!(!cache.retain_cloud(&cloud_scope("alice", a), &HashSet::from(["kept", "refused"])), "nothing more to drop");
+        assert_eq!(cache.lookup(&want(a, "unlisted", "v1")), Lookup::Owed);
+        assert!(matches!(cache.lookup(&want(b, "unlisted", "v1")), Lookup::Ready(_)));
+        // Neither is in what gets written.
+        let saved = cache.save_cloud(&all);
+        let mut next = PreviewCache::default();
+        assert!(next.load_cloud(&saved, &all));
+        assert_eq!(next.len(), 2);
+        assert!(matches!(next.lookup(&want(a, "kept", "v1")), Lookup::Ready(_)));
+        assert_eq!(next.lookup(&want(a, "refused", "v2")), Lookup::Owed);
+        assert_eq!(next.lookup(&want(a, "unlisted", "v1")), Lookup::Owed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_file_is_private_and_replaced_whole() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("cloud-previews.json");
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        write_private(&file, b"one").unwrap();
+        assert_eq!(mode(&file), 0o600);
+        // A file left readable by others is replaced by a private one.
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&file, b"two").unwrap();
+        assert_eq!(mode(&file), 0o600);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "two");
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["cloud-previews.json"], "no temporary file is left behind");
+        // A write that cannot finish leaves the old file as it was.
+        assert!(write_private(&dir.path().join("missing").join("x.json"), b"three").is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "two");
     }
 }

@@ -19,11 +19,10 @@ impl Workspace {
         let epoch = self.cloud.resource_epoch;
         let account = AccountStore::global(cx);
         let excluded = account.as_ref().and_then(|account| account.read(cx).cache_excluded_origin()).map(str::to_owned);
-        let scopes = self.cloud.scopes().into_iter()
-            .filter(|scope| Some(scope.origin()) != excluded.as_deref() && !self.cloud.media_signing_out.contains(scope.origin()))
-            .map(|scope| (scope.user.clone(), scope.origin().to_string()))
-            .collect();
+        let scopes = self.cache_scopes(cx);
         let cache = AssetCache::bind_sessions(&paths::data_dir().join(CACHE_DIRECTORY), scopes).ok().flatten();
+        // The cloud thumbnails belong to the same accounts as the media.
+        self.bind_cloud_previews(cx);
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else {
             return;
         };

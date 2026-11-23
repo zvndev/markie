@@ -522,9 +522,15 @@ pub(super) fn snapshot_card_meta(row: &SnapshotMeta, now: chrono::DateTime<chron
     meta.split_once(" · ").map_or(meta.clone(), |(_, rest)| rest.to_string())
 }
 
-/// The cache key of a cloud document's thumbnail.
-pub(super) fn cloud_want(origin: &str, id: &str, stamp: &str) -> Want {
-    Want { key: format!("cloud:{origin}:{id}"), stamp: stamp.to_string() }
+/// The cache key of a cloud document's thumbnail: account, server and
+/// document, at one version.
+pub(super) fn cloud_want(account: &str, origin: &str, id: &str, stamp: &str) -> Want {
+    Want { key: doc_preview::cloud_key(account, origin, id), stamp: stamp.to_string() }
+}
+
+/// Where the cloud thumbnails are kept between launches.
+fn cloud_previews_file() -> PathBuf {
+    markie_core::paths::data_dir().join("cloud-previews.json")
 }
 
 /// Cloud documents whose words can be drawn: the text family the sync carries.
@@ -645,50 +651,96 @@ impl Workspace {
         }
     }
 
+    /// The accounts whose media and thumbnails may be kept: every signed-in
+    /// server but one being signed out of.
+    pub(super) fn cache_scopes(&self, cx: &App) -> Vec<(String, String)> {
+        let excluded = super::account::AccountStore::global(cx).and_then(|account| account.read(cx).cache_excluded_origin().map(str::to_owned));
+        self.cloud
+            .scopes()
+            .into_iter()
+            .filter(|scope| Some(scope.origin()) != excluded.as_deref() && !self.cloud.media_signing_out.contains(scope.origin()))
+            .map(|scope| (scope.user.clone(), scope.origin().to_string()))
+            .collect()
+    }
+
+    /// Whose cloud thumbnails are stored, the media cache's rule: the same
+    /// accounts keep them across launches; a sign-out, another account or
+    /// another server removes them from disk and from memory at once, and
+    /// drops any fetch still under way.
+    pub(super) fn bind_cloud_previews(&mut self, cx: &mut Context<Self>) {
+        let session = doc_preview::cloud_session(&self.cache_scopes(cx));
+        if self.shell.cloud_preview_session.as_ref() == Some(&session) {
+            return;
+        }
+        self.shell.cloud_preview_session = Some(session.clone());
+        self.shell.cloud_preview_epoch = self.shell.cloud_preview_epoch.wrapping_add(1);
+        self.shell.previews.clear_cloud();
+        // On this thread, so nothing of the last account's outlives the change.
+        let kept = doc_preview::bind_cloud_file(&cloud_previews_file(), session.as_deref()).unwrap_or_default();
+        if let Some(session) = &session {
+            self.shell.previews.load_cloud(&kept, session);
+        }
+        self.shell.cloud_previews_loaded = true;
+        cx.notify();
+    }
+
+    /// Write the cloud thumbnails for the accounts they belong to: private,
+    /// and whole or not at all.
+    fn save_cloud_previews(&self) {
+        if let Some(Some(session)) = &self.shell.cloud_preview_session {
+            let _ = doc_preview::write_private(&cloud_previews_file(), self.shell.previews.save_cloud(session).as_bytes());
+        }
+    }
+
     /// Ask for the thumbnails the Cloud page still lacks: each document's
-    /// text is fetched once per version, in the background, and kept on disk.
+    /// text is fetched once per version, in the background, and kept on disk
+    /// for this account. A document that left the list, or that the server
+    /// no longer lets this account read, loses its stored thumbnail.
     pub(super) fn sync_cloud_previews(&mut self, cx: &mut Context<Self>) {
+        self.bind_cloud_previews(cx);
         let Some(scope) = self.cloud.selected_scope() else { return };
-        let file = markie_core::paths::data_dir().join("cloud-previews.json");
-        if !self.shell.cloud_previews_loaded {
-            if !std::mem::replace(&mut self.shell.cloud_previews_loading, true) {
-                cx.spawn(async move |this, cx| {
-                    let saved = cx.background_spawn(async move { std::fs::read_to_string(file).unwrap_or_default() }).await;
-                    let _ = this.update(cx, |this, cx| {
-                        this.shell.previews.load(&saved);
-                        this.shell.cloud_previews_loaded = true;
-                        cx.notify();
-                    });
-                })
-                .detach();
-            }
+        let (account, origin) = (scope.user.clone(), scope.origin().to_string());
+        // A server being signed out of keeps nothing.
+        if !self.cache_scopes(cx).iter().any(|(user, server)| *user == account && *server == origin) {
             return;
         }
         let Some(listing) = self.cloud.listing(&scope) else { return };
-        let origin = scope.origin().to_string();
         let mut wants: Vec<(Want, String, FormatKind)> = Vec::new();
         let mut listed: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for doc in listing.docs.iter().flatten() {
             listed.insert(doc.id.as_str());
             let format = format_of(&doc.name);
             if previewable(format) {
-                wants.push((cloud_want(&origin, &doc.id, &format!("v{}", doc.version)), doc.id.clone(), format));
+                wants.push((cloud_want(&account, &origin, &doc.id, &format!("v{}", doc.version)), doc.id.clone(), format));
             }
         }
         for share in listing.shared_by_me.iter().flatten().filter(|s| !listed.contains(s.id.as_str())) {
             let format = format_of(&share.name);
             if previewable(format) {
-                wants.push((cloud_want(&origin, &share.id, share.updated_at.as_deref().unwrap_or_default()), share.id.clone(), format));
+                wants.push((cloud_want(&account, &origin, &share.id, share.updated_at.as_deref().unwrap_or_default()), share.id.clone(), format));
             }
+        }
+        // Once both lists are in, what is in neither is no longer this account's to keep.
+        let mut pruned = false;
+        if let (Some(_), Some(shares)) = (&listing.docs, &listing.shared_by_me) {
+            let mut ids = listed.clone();
+            ids.extend(shares.iter().map(|s| s.id.as_str()));
+            pruned = self.shell.previews.retain_cloud(&doc_preview::cloud_scope(&account, &origin), &ids);
         }
         let owed = self.shell.previews.claim(wants.iter().map(|(want, ..)| want.clone()));
         if owed.is_empty() {
+            if pruned {
+                self.save_cloud_previews();
+            }
             return;
         }
         let jobs: Vec<_> = wants.into_iter().filter(|(want, ..)| owed.contains(want)).collect();
+        let epoch = self.shell.cloud_preview_epoch;
         cx.spawn(async move |this, cx| {
             for (want, id, format) in jobs {
                 let client = scope.client.clone();
+                // Refused (403), gone (404) or unreachable: nothing to draw, and
+                // nothing stays stored for it.
                 let text = super::cloud::network(async move { markie_cloud::docs::DocsClient::new(&client).get(&id).await.ok().map(|doc| doc.content) }).await.ok().flatten();
                 let preview = cx
                     .background_spawn(async move {
@@ -701,18 +753,23 @@ impl Workspace {
                     })
                     .await;
                 let landed = this.update(cx, |this, cx| {
+                    // The account changed while this was fetched: it is nobody's now.
+                    if this.shell.cloud_preview_epoch != epoch {
+                        return false;
+                    }
                     this.shell.previews.put(want, preview);
                     cx.notify();
+                    true
                 });
-                if landed.is_err() {
+                if !matches!(landed, Ok(true)) {
                     return;
                 }
             }
-            let Ok(saved) = this.update(cx, |this, _| this.shell.previews.save("cloud:")) else { return };
-            cx.background_spawn(async move {
-                let _ = std::fs::write(file, saved);
-            })
-            .await;
+            let _ = this.update(cx, |this, _| {
+                if this.shell.cloud_preview_epoch == epoch {
+                    this.save_cloud_previews();
+                }
+            });
         })
         .detach();
     }
@@ -1179,7 +1236,7 @@ impl Workspace {
                 }
                 let cloud_id = e.doc.as_ref().map(|d| (d.id.clone(), format!("v{}", d.version))).or_else(|| e.share.as_ref().map(|s| (s.id.clone(), s.updated_at.clone().unwrap_or_default())));
                 card.thumb = match cloud_id {
-                    Some((id, stamp)) if previewable(format) => match self.shell.previews.lookup(&cloud_want(origin, &id, &stamp)) {
+                    Some((id, stamp)) if previewable(format) => match self.shell.previews.lookup(&cloud_want(&scope.user, origin, &id, &stamp)) {
                         Lookup::Ready(preview) => Thumb::Page(preview),
                         Lookup::Nothing => Thumb::Tile,
                         Lookup::Owed => Thumb::Loading,
@@ -1467,11 +1524,13 @@ mod tests {
     }
 
     #[test]
-    fn a_cloud_thumbnail_is_kept_per_server_document_and_version() {
-        let a = cloud_want("http://localhost:1", "abc", "v3");
-        assert_eq!(a.key, "cloud:http://localhost:1:abc");
+    fn a_cloud_thumbnail_is_kept_per_account_server_document_and_version() {
+        let a = cloud_want("alice", "http://localhost:1", "abc", "v3");
+        assert!(a.key.starts_with("cloud:") && a.key.ends_with(":abc"));
         assert_eq!(a.stamp, "v3");
-        assert_ne!(a.key, cloud_want("http://localhost:2", "abc", "v3").key);
+        assert_ne!(a.key, cloud_want("alice", "http://localhost:2", "abc", "v3").key, "another server");
+        assert_ne!(a.key, cloud_want("bob", "http://localhost:1", "abc", "v3").key, "another account");
+        assert_eq!(a.key, cloud_want("alice", "http://localhost:1", "abc", "v4").key, "a new version replaces the old");
     }
 
     #[test]

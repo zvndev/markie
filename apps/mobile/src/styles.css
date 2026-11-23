@@ -951,6 +951,58 @@ textarea:not(.m-editor-text):focus-visible {
   color: var(--m-brand);
 }
 
+.m-callout-link {
+  display: block;
+  min-height: 32px;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--m-tint);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* ── A public share, read signed out ───────────────────────────────────── */
+
+.m-guest {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.m-guest-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The bar below owns the bottom safe area. */
+.m-guest-screen .m-screen-body:not(.is-fill) {
+  padding-bottom: 24px;
+}
+
+.m-guest-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px calc(var(--m-gutter) + var(--sar)) calc(10px + var(--sab)) calc(var(--m-gutter) + var(--sal));
+  border-top: 0.5px solid var(--m-separator);
+  background: var(--background);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.m-guest-bar .m-button {
+  flex: none;
+}
+
 .m-advanced {
   margin-top: 10px;
   border-top: 0.5px solid var(--m-separator);

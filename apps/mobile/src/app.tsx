@@ -10,10 +10,14 @@ import {
   hasPendingLink,
   isMarkieWebLink,
   parseMarkieLink,
+  peekPendingLink,
   rememberPendingLink,
   resolveForSession,
+  signedOutDestination,
   takePendingLink,
   type LinkTarget,
+  type PinnedPublicTarget,
+  type PublicTarget,
 } from "./lib/deep-links";
 import { IncomingFileError, isIncomingFileUrl, readIncomingFile, type IncomingFile } from "./lib/incoming-file";
 import { createSessionStore, type SecureKeyValue, type StoredSession } from "./lib/session";
@@ -24,6 +28,7 @@ import { Navigator, type StackEntry } from "./components/navigator";
 import { SignInScreen } from "./screens/sign-in";
 import { clearRecentCache, RecentScreen } from "./screens/recent";
 import { DocumentScreen } from "./screens/document";
+import { PublicDocScreen } from "./screens/public-doc";
 import { SettingsScreen } from "./screens/settings";
 import { EditorScreen, type EditorDraft } from "./screens/editor";
 import { NewDocChooser, NewDocScreen } from "./screens/new-doc";
@@ -44,10 +49,10 @@ type Route =
 
 /**
  * What a signed-out person can have open besides the sign-in screen: one
- * document, read with no session. Nothing sets it yet, so signed out still
- * means the sign-in screen. The public-link work fills this in.
+ * public share, read with no session. A private document is never one of
+ * these; it waits for sign-in (signedOutDestination).
  */
-type SignedOutRoute = { kind: "public"; target: Extract<LinkTarget, { kind: "public" }> };
+type SignedOutRoute = { kind: "public"; target: PinnedPublicTarget };
 
 const ROOT: Route = { key: "recent", kind: "recent" };
 const SERVER_SIGN_OUT_TIMEOUT_MS = 3_000;
@@ -82,11 +87,19 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const sessionRef = useRef<StoredSession | null | undefined>(undefined);
   sessionRef.current = session;
   const [routes, setRoutes] = useState<Route[]>([ROOT]);
-  const [signedOutRoute] = useState<SignedOutRoute | null>(null);
+  const [signedOutRoute, setSignedOutRoute] = useState<SignedOutRoute | null>(null);
+  const signedOutRouteRef = useRef<SignedOutRoute | null>(null);
+  signedOutRouteRef.current = signedOutRoute;
+  // The waiting link, when it is a public share, so the sign-in screen can
+  // offer the way back to it. Pinned to a server only when it is opened: a
+  // markie-mobile:// link follows the server chosen under Advanced.
+  const [waitingPublic, setWaitingPublic] = useState<PublicTarget | null>(null);
   const [hasPending, setHasPending] = useState(false);
   const [signInNotice, setSignInNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [preferredOrigin, setPreferredOrigin] = useState(() => loadPreferredOrigin());
+  const preferredOriginRef = useRef(preferredOrigin);
+  preferredOriginRef.current = preferredOrigin;
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => loadThemeMode());
   const [systemDark, setSystemDark] = useState(() => systemPrefersDark());
   const [refreshKey, setRefreshKey] = useState(0);
@@ -123,7 +136,12 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       if (!live) return;
       setSession(stored);
       const storage = pendingStorage();
-      if (!stored && storage) setHasPending(hasPendingLink(storage));
+      if (stored || !storage) return;
+      setHasPending(hasPendingLink(storage));
+      // A relaunch in the middle of signing in lands on the sign-in screen,
+      // with the way back to a public share it was reading.
+      const waiting = peekPendingLink(storage);
+      setWaitingPublic(waiting?.kind === "public" ? waiting : null);
     });
     return () => { live = false; };
   }, [sessionStore]);
@@ -163,6 +181,25 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     });
   }, [showToast]);
 
+  // The reader for a signed-out person: a client that holds no token at all,
+  // so a public share is fetched exactly as a browser would fetch it.
+  const guestOrigin = signedOutRoute?.target.origin ?? null;
+  const guestApi = useMemo(() => (guestOrigin ? createApiClient({ origin: guestOrigin, transport }) : null), [guestOrigin, transport]);
+
+  /**
+   * A link with nobody signed in. Either kind is remembered, so it opens
+   * after sign-in. A public share also opens now, to read; a private
+   * document shows the sign-in screen, which says a document is waiting.
+   */
+  const openSignedOut = useCallback((target: LinkTarget) => {
+    const storage = pendingStorage();
+    if (storage) rememberPendingLink(target, storage);
+    setHasPending(true);
+    const destination = signedOutDestination(target, preferredOriginRef.current);
+    setWaitingPublic(target.kind === "public" ? target : null);
+    setSignedOutRoute(destination ? { kind: "public", target: destination } : null);
+  }, []);
+
   // A file from Mail, AirDrop or Files. Before sign-in it waits in memory
   // (never on disk) and opens once the person signs in.
   const pendingFile = useRef<IncomingFile | null>(null);
@@ -199,14 +236,9 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       showToast("That link isn't a Markie document link.");
       return;
     }
-    if (!sessionRef.current) {
-      const storage = pendingStorage();
-      if (storage) rememberPendingLink(target, storage);
-      setHasPending(true);
-      return;
-    }
+    if (!sessionRef.current) { openSignedOut(target); return; }
     openTarget(target, { replaceStack: true });
-  }, [openTarget, receiveFile, showToast]);
+  }, [openSignedOut, openTarget, receiveFile, showToast]);
 
   // A tapped push notification carries a Markie link. This is the one place
   // it enters the app, and it takes the same road as a link from outside, so
@@ -224,6 +256,15 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     void CapApp.addListener("appUrlOpen", (event) => handleIncomingUrl(event.url)).then((h) => { if (removed) void h.remove(); else handles.push(h); });
     void CapApp.addListener("resume", () => setRefreshKey((value) => value + 1)).then((h) => { if (removed) void h.remove(); else handles.push(h); });
     return () => { removed = true; for (const h of handles) void h.remove(); };
+  }, [native, sessionKnown, handleIncomingUrl]);
+
+  // Development only, in a desktop browser, where no other app can send a
+  // link: http://localhost:5174/?link=markie-mobile://s/<token> stands in
+  // for a tap. The shipped build has no such door.
+  useEffect(() => {
+    if (!import.meta.env.DEV || native || !sessionKnown) return;
+    const link = new URLSearchParams(window.location.search).get("link");
+    if (link) handleIncomingUrl(link);
   }, [native, sessionKnown, handleIncomingUrl]);
 
   const pop = useCallback(() => setRoutes((stack) => (stack.length > 1 ? stack.slice(0, -1) : stack)), []);
@@ -259,6 +300,8 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       const top = routesRef.current[routesRef.current.length - 1];
       if (chooserRef.current) { setChooser(false); return; }
       if (top.kind === "edit" && backGuard.current) { backGuard.current(); return; }
+      // Signed out and reading a public share: back is the sign-in screen.
+      if (!sessionRef.current && signedOutRouteRef.current) { setSignedOutRoute(null); return; }
       if (routesRef.current.length > 1 && sessionRef.current) pop();
       else void CapApp.minimizeApp().catch(() => undefined);
     }).then((h) => { if (removed) void h.remove(); else handle = h; });
@@ -273,6 +316,8 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     sessionRef.current = null;
     setSession(null);
     setRoutes([ROOT]);
+    setSignedOutRoute(null);
+    setWaitingPublic(null);
     setChooser(false);
     setSignInNotice(notice);
   }, [native, sessionStore]);
@@ -310,6 +355,8 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     setSession(next);
     setSignInNotice(null);
     setRoutes([ROOT]);
+    setSignedOutRoute(null);
+    setWaitingPublic(null);
     const storage = pendingStorage();
     const pending = storage ? takePendingLink(storage) : null;
     setHasPending(false);
@@ -327,15 +374,28 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   if (session === undefined) return <div className="m-boot" aria-busy="true" />;
 
   if (!session || !api) {
-    // Signed out with a document open: the public-link work draws it here.
-    // Until then this is always null and the sign-in screen is all there is.
-    void signedOutRoute;
+    if (signedOutRoute && guestApi) {
+      return (
+        <>
+          <PublicDocScreen
+            key={`${signedOutRoute.target.origin}|${signedOutRoute.target.token}`}
+            api={guestApi}
+            target={signedOutRoute.target}
+            tone={tone}
+            onSignIn={() => setSignedOutRoute(null)}
+            onOpen={openSignedOut}
+          />
+          {toast ? <div className="m-toast" role="status">{toast}</div> : null}
+        </>
+      );
+    }
     return (
       <>
         <SignInScreen
           transport={transport}
           initialOrigin={preferredOrigin}
           pendingLink={hasPending}
+          onReadPending={hasPending && waitingPublic ? () => openSignedOut(waitingPublic) : undefined}
           notice={signInNotice}
           onSignedIn={signedIn}
           onOriginChange={(origin) => { setPreferredOrigin(origin); savePreferredOrigin(origin); }}

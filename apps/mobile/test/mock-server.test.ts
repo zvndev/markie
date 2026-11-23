@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApiClient } from "../src/lib/api";
 import { fetchTransport } from "../src/lib/http";
-import { parseMarkieLink, resolveForSession } from "../src/lib/deep-links";
+import { parseMarkieLink, resolveForSession, signedOutDestination } from "../src/lib/deep-links";
 
 let child: ChildProcess;
 let origin = "";
@@ -129,6 +129,23 @@ describe("against the mock server", () => {
 
     await api.declineRequest(after.requests[0].docId);
     expect((await api.shareRequests()).count).toBe(after.count - 1);
+  });
+
+  it("reads a public share with no account, and nothing else", async () => {
+    // What the signed-out reader does: a client that was never given a token.
+    const sent: (string | undefined)[] = [];
+    const inner = fetchTransport();
+    const transport: typeof inner = async (request) => { sent.push(request.headers?.authorization); return inner(request); };
+    const target = signedOutDestination(parseMarkieLink("markie-mobile://s/pub_launch_brief_demo_token")!, origin)!;
+    const guest = createApiClient({ origin: target.origin, transport });
+    const doc = await guest.publicDoc(target.token);
+    expect(doc).toMatchObject({ name: "Launch brief.md", format: "markdown", role: null, publicToken: target.token });
+    expect(doc.content).toContain("# Launch brief");
+    await expect(guest.publicDoc("pub_no_such_share_token_x")).rejects.toMatchObject({ status: 404 });
+    // The same document by its private id stays behind sign-in.
+    await expect(guest.doc("agent-brief")).rejects.toMatchObject({ status: 401 });
+    await expect(guest.recent()).rejects.toMatchObject({ status: 401 });
+    expect(sent.every((header) => header === undefined)).toBe(true);
   });
 
   it("routes a scheme deep link to a document on the signed-in server", () => {

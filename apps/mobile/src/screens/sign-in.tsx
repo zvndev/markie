@@ -12,6 +12,8 @@ interface SignInProps {
   initialOrigin: string;
   /** A tapped link is waiting: say so, so signing in has a reason. */
   pendingLink: boolean;
+  /** The waiting link is a public share: the way back to reading it with no account. */
+  onReadPending?: () => void;
   /** Why the last session ended, when it ended on its own. */
   notice: string | null;
   onSignedIn: (result: { origin: string; token: string; user: ApiUser }) => Promise<void>;
@@ -20,7 +22,7 @@ interface SignInProps {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function SignInScreen({ transport, initialOrigin, pendingLink, notice, onSignedIn, onOriginChange }: SignInProps) {
+export function SignInScreen({ transport, initialOrigin, pendingLink, onReadPending, notice, onSignedIn, onOriginChange }: SignInProps) {
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -100,7 +102,13 @@ export function SignInScreen({ transport, initialOrigin, pendingLink, notice, on
         </div>
 
         {pendingLink && step === "email" ? (
-          <div className="m-callout" role="status"><MailIcon size={18} /><span>Sign in and the document you opened shows up right after.</span></div>
+          <div className="m-callout" role="status">
+            <MailIcon size={18} />
+            <span>
+              Sign in and the document you opened shows up right after.
+              {onReadPending ? <button type="button" className="m-callout-link" onClick={onReadPending} disabled={busy}>Read it without signing in</button> : null}
+            </span>
+          </div>
         ) : null}
         {notice ? <div className="m-callout" role="status"><AlertIcon size={18} /><span>{notice}</span></div> : null}
 

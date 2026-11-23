@@ -1,5 +1,6 @@
-# Screenshots Settings, signs out, screenshots Sign in, then opens a link
-# while signed out (it waits for sign-in). A fresh launch,
+# Screenshots Settings, signs out, screenshots Sign in, then opens two links
+# while signed out: a private document (it waits for sign-in) and a public
+# share (it opens to read, with no account). A fresh launch,
 # because after a document screen is popped, Android's WebView can hand Maestro
 # a stale accessibility tree until the next touch.
 # Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/settings.yaml
@@ -31,3 +32,24 @@ appId: com.zvn.markie.mobile
     optional: true
 - waitForAnimationToEnd
 - takeScreenshot: ${OUT}/${NAME}-8-link-before-sign-in
+# A public share needs no account: it opens to read, and offers sign-in.
+- openLink: "markie-mobile://s/pub_launch_brief_demo_token"
+- tapOn:
+    text: "Open"
+    optional: true
+- extendedWaitUntil:
+    visible: "Sign in to edit, comment or share."
+    timeout: 10000
+- assertVisible: "Public link"
+- assertNotVisible: "Edit"
+- assertNotVisible: "Comments"
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-12-public-link-signed-out
+# Sign in from the reader: the share waits, and the way back to it is offered.
+- tapOn:
+    text: "Sign in"
+    index: 1
+- extendedWaitUntil:
+    visible: "Sign in to Markie"
+    timeout: 10000
+- assertVisible: "Read it without signing in"

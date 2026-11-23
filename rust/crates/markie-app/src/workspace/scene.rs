@@ -208,11 +208,142 @@ impl Workspace {
                 }
                 self.scene_servers(args, step, window, cx)
             }
+            // {recents}: the Library panel's Recent list over the open file.
+            "library" => {
+                if *step == 0 {
+                    self.scene_seed_recents(args, cx);
+                    if !(self.shell.panel_open && self.shell.view == super::rail::LeftView::Library) {
+                        self.select_view(super::rail::LeftView::Library, cx);
+                    }
+                    *step = 1;
+                    return false;
+                }
+                self.shell.recent.total() >= args.get("recents").and_then(Value::as_array).map_or(0, Vec::len)
+            }
+            // {recents, …}: what a launch with no file shows, after the first
+            // one: the Recent page. See `scene_recent` for the other args.
+            "launch" | "recent" => {
+                if *step == 0 {
+                    self.scene_seed_recents(args, cx);
+                }
+                self.scene_recent(args, step, spec.name == "launch", window, cx)
+            }
+            // {token?, recents?, sync?: [paths], snapshots?: [paths], min_docs?,
+            //  second_origin?, email?, password?}: the Cloud page. `sync` turns
+            // sync on for local files first; `second_origin` adds and signs in
+            // to a second server through Settings, then closes Settings.
+            "cloud" => {
+                if wants_session && user.is_none() {
+                    return false;
+                }
+                self.scene_cloud(args, step, window, cx)
+            }
             // {state, touch_id?}: the vault page, see `VaultPage::scene_step`.
             "vault" => self.scene_vault(args, step, window, cx),
             other => {
                 eprintln!("markie-rs scene: unknown scene {other}");
                 true
+            }
+        }
+    }
+
+    /// `recents: [{path, hours_ago, star?}]` into the scratch registry, as if
+    /// each had been opened then. A path with no file is a missing row.
+    fn scene_seed_recents(&mut self, args: &Value, cx: &mut Context<Self>) {
+        let Some(reg) = self.registry.clone() else { return };
+        let now = markie_core::clock::now_ms();
+        for row in args.get("recents").and_then(Value::as_array).into_iter().flatten() {
+            let path = PathBuf::from(arg(row, "path"));
+            let hours = row.get("hours_ago").and_then(Value::as_f64).unwrap_or(0.);
+            let _ = reg.track_opened_at(&path, &markie_core::clock::iso(now - (hours * 3_600_000.) as i64));
+            if row.get("star").and_then(Value::as_bool).unwrap_or(false) {
+                let _ = reg.set_star(&path, "file");
+            }
+        }
+        self.refresh_lists(cx);
+    }
+
+    fn scene_cloud(&mut self, args: &Value, step: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use super::rail::LeftView;
+        let paths = |key: &str| -> Vec<PathBuf> { args.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(PathBuf::from)).collect()).unwrap_or_default() };
+        // 0..=9: the second server, through the Servers setting's own steps.
+        if *step < 10 {
+            if args.get("second_origin").is_none() {
+                *step = 10;
+            } else if self.scene_servers(args, step, window, cx) {
+                self.close_dialog(window, cx);
+                *step = 10;
+            }
+            return false;
+        }
+        match *step {
+            10 => {
+                self.scene_seed_recents(args, cx);
+                for path in paths("sync") {
+                    self.cloud_text(path, super::cloud::TextAction::Enable, None, cx);
+                }
+                *step = 11;
+                false
+            }
+            11 => {
+                if !paths("sync").iter().all(|p| self.cloud.badge(p) == Some("Synced")) {
+                    return false;
+                }
+                let Some(scope) = self.cloud.selected_scope() else {
+                    *step = 13;
+                    return false;
+                };
+                let files: Vec<(String, Vec<u8>)> = paths("snapshots")
+                    .iter()
+                    .filter_map(|p| Some((p.file_name()?.to_string_lossy().into_owned(), std::fs::read(p).ok()?)))
+                    .collect();
+                *step = 12;
+                cx.spawn(async move |this, cx| {
+                    let _ = super::cloud::network(async move {
+                        let platform = markie_cloud::platform::PlatformClient(&scope.client);
+                        for (name, bytes) in &files {
+                            let _ = platform.upload(name, bytes, None, None).await;
+                        }
+                    })
+                    .await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.scene_cloud_uploaded = true;
+                        cx.notify();
+                    });
+                })
+                .detach();
+                false
+            }
+            12 => {
+                if self.scene_cloud_uploaded {
+                    *step = 13;
+                }
+                false
+            }
+            13 => {
+                if !(self.shell.panel_open && self.shell.view == LeftView::Cloud) {
+                    self.select_view(LeftView::Cloud, cx);
+                }
+                self.refresh_cloud(false, cx);
+                *step = 14;
+                false
+            }
+            _ => {
+                let Some(scope) = self.cloud.selected_scope() else { return true };
+                if self.cloud.checking {
+                    return false;
+                }
+                let want = args.get("min_docs").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let ready = self.cloud.listing(&scope).is_some_and(|l| {
+                    l.docs.as_ref().is_some_and(|d| d.len() >= want) && (l.shared_by_me.is_some() || l.shared_by_me_error)
+                });
+                if !ready {
+                    // A listing taken before the sync finished: ask again.
+                    self.refresh_cloud(false, cx);
+                    return false;
+                }
+                let requests = args.get("min_requests").and_then(Value::as_u64).unwrap_or(0) as usize;
+                self.collab.people.as_ref().is_some_and(|p| p.requests.len() >= requests)
             }
         }
     }

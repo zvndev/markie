@@ -3,6 +3,10 @@
 //! into fixtures/welcome.md), every later one an empty page. Never the last
 //! document: "There is no demo document: a launch without a file opens an
 //! empty page, never made-up content."
+//!
+//! Markie RS shows the Recent page (`recent_page.rs`) over that empty page,
+//! so a launch starts from the documents you had open. Closing the page
+//! leaves the same empty page Electron shows.
 
 use gpui_kit::*;
 use markie_core::drafts::Drafts;
@@ -48,6 +52,10 @@ impl Workspace {
             if let Some(reg) = &self.registry {
                 let _ = reg.set_setting(SEEN_KEY, &markie_core::clock::iso(markie_core::clock::now_ms()));
             }
+        } else {
+            // Every later launch with no file lands on the Recent page, over
+            // the empty page: pick a document up, or start a new one.
+            self.show_recent_page(cx);
         }
         cx.notify();
     }

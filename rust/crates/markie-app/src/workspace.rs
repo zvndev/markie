@@ -38,10 +38,7 @@ mod collab;
 mod comments;
 mod share;
 mod dialog_chrome;
-// Used by the Recent and Cloud pages, which come next.
-#[allow(dead_code)]
 pub(crate) mod doc_grid;
-#[allow(dead_code)]
 pub(crate) mod doc_preview;
 mod doc_toolbar;
 mod edit_menu;
@@ -70,13 +67,13 @@ mod palette;
 mod panels;
 mod projects;
 mod rail;
+mod recent_page;
 mod rich;
 mod text_view;
 mod theme_sync;
 mod doc_theme;
 mod welcome;
 mod untitled;
-#[allow(dead_code)]
 pub(crate) mod ui;
 mod settings;
 mod shortcuts;
@@ -230,6 +227,9 @@ pub struct Workspace {
     menu_key: Option<(PathBuf, bool)>,
     /// When the device index last began a walk.
     last_scan_at: Option<std::time::Instant>,
+    /// Scene mode: the Cloud scene's snapshot uploads have finished.
+    #[cfg(feature = "scene")]
+    scene_cloud_uploaded: bool,
 }
 
 impl Workspace {
@@ -388,6 +388,8 @@ impl Workspace {
             own_theme: None,
             _doc_theme: None,
             last_scan_at: None,
+            #[cfg(feature = "scene")]
+            scene_cloud_uploaded: false,
         };
         this.start_disk_poll(cx);
         let focus = this.watch_rich_focus(window, cx);
@@ -406,6 +408,7 @@ impl Workspace {
         this.refresh_lists(cx);
         this.restore_browse_open();
         this.restore_panel_width(window);
+        this.restore_home_pages();
         this.build_search_pool();
 
         let mut first_file = None;
@@ -487,6 +490,7 @@ impl Workspace {
                     this.library.set_rows(Vec::new(), Default::default(), starred.clone());
                     let (recent, missing) = recent;
                     this.shell.recent.set_rows(recent, missing, starred);
+                    this.shell.lists_loaded = true;
                     this.shell.invalidate_browse();
                     cx.notify();
                 }
@@ -756,9 +760,7 @@ impl Workspace {
                 }
                 self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind, untitled: false });
                 self.load_appearance();
-                if self.shell.view == rail::LeftView::Cloud {
-                    self.shell.panel_open = false;
-                }
+                self.leave_page_for_document();
                 self.dirty = false;
                 self.autosave.cancel();
                 self.disk_conflict = None;
@@ -1697,6 +1699,7 @@ impl Render for Workspace {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         self.ensure_browse_rows();
+        self.sync_home_pages(window, cx);
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
         // A video card's player is a web view too: hidden under any layer.
@@ -1837,7 +1840,7 @@ impl Render for Workspace {
                     .children(self.render_side_panel(cx))
                     .map(|el| {
                         if self.workspace_page_open() {
-                            el.child(div().flex_1().min_w_0().h_full().child(self.render_workspace_page(cx)))
+                            el.child(div().flex_1().min_w_0().h_full().child(self.render_workspace_page(window, cx)))
                         } else {
                             el.child(
                                 v_flex()

@@ -526,6 +526,9 @@ impl Workspace {
                 self.dirty = false;
                 self.autosave.cancel();
                 window.set_window_title(paths::APP_NAME);
+                // Nothing is open any more: back to the documents.
+                self.show_recent_page(cx);
+                self.refresh_lists(cx);
                 self.rescan(cx);
             }
             Err(e) => window.push_notification(format!("Markie could not move it to the Trash: {e}"), cx),

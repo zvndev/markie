@@ -201,6 +201,11 @@ impl Library {
         }
     }
 
+    /// When a row was last opened, in ms; 0 when it never was here.
+    pub fn opened_ms(&self, path: &std::path::Path) -> f64 {
+        self.opened_at.get(path).copied().filter(|t| t.is_finite() && *t > 0.).unwrap_or(0.)
+    }
+
     /// The row's file is gone from disk.
     pub fn is_missing(&self, path: &std::path::Path) -> bool {
         self.missing.contains(path)

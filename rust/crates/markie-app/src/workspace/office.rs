@@ -103,6 +103,7 @@ impl Workspace {
         };
         self.invalidate_import();
         self.settle(window, cx);
+        self.leave_page_for_document();
         self.document_failure = None;
         let (view, subscription) = view_for(WordEditor::new(document), window, cx);
         let office = OfficeDoc { view, source: Source::Rich, _subscription: subscription };

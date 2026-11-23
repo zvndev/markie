@@ -49,6 +49,8 @@ const BROWSE_OPEN_KEY: &str = "browse_open_v1";
 /// What the left edge shows (`src/lib/left-rail.ts`, plus the Vault page).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LeftView {
+    /// The Recent page: every recent document as a grid, in the document area.
+    Recent,
     Library,
     Browse,
     Cloud,
@@ -63,6 +65,7 @@ pub(super) enum LeftView {
 impl LeftView {
     fn title(self) -> &'static str {
         match self {
+            LeftView::Recent => "RECENT",
             LeftView::Library => "LIBRARY",
             LeftView::Browse => "BROWSE",
             LeftView::Cloud => "CLOUD",
@@ -77,9 +80,9 @@ impl LeftView {
         matches!(self, LeftView::Library | LeftView::Browse | LeftView::Skills)
     }
 
-    /// Cloud and the Vault take the document area over instead of a panel.
+    /// Recent, Cloud and the Vault take the document area over instead of a panel.
     fn takes_workspace(self) -> bool {
-        matches!(self, LeftView::Cloud | LeftView::Vault | LeftView::LiveDocs)
+        matches!(self, LeftView::Recent | LeftView::Cloud | LeftView::Vault | LeftView::LiveDocs)
     }
 }
 
@@ -123,14 +126,26 @@ pub(super) struct Shell {
     pub panel_drag: Option<(f32, f32)>,
     resizer_hover: bool,
     lib_tab: LibTab,
+    /// The Recent page's grid, and the Cloud page's (`doc_grid.rs`).
+    pub recent_grid: super::doc_grid::DocGridState,
+    pub cloud_grid: super::doc_grid::DocGridState,
+    /// Card thumbnails, built off the main thread (`doc_preview.rs`).
+    pub previews: super::doc_preview::PreviewCache,
+    /// Recent and Starred have been read once: an empty list is really empty.
+    pub lists_loaded: bool,
+    /// The saved cloud thumbnails have been read from disk (once).
+    pub cloud_previews_loaded: bool,
+    pub cloud_previews_loading: bool,
+    /// A page opened or closed: the next frame moves the keyboard to it.
+    pub page_focus_owed: bool,
     /// library.tsx `uploadArea`: where Sync to cloud from a row puts a new
     /// cloud document. None is the default cloud.
     pub upload_area: Option<String>,
     pub upload_area_open: bool,
-    filter_menu: Option<FilterMenu>,
+    pub filter_menu: Option<FilterMenu>,
     filter_closed: Option<(FilterMenu, Instant)>,
     pub recent: Library,
-    recent_filter: Entity<InputState>,
+    pub recent_filter: Entity<InputState>,
     browse_filter: Entity<InputState>,
     /// Folders the person opened and closed by hand (`OpenedByHand`); until
     /// they touch one, the tree opens to its first branching level.
@@ -214,6 +229,13 @@ impl Shell {
             panel_drag: None,
             resizer_hover: false,
             lib_tab: LibTab::Recent,
+            recent_grid: super::doc_grid::DocGridState::new(Default::default(), cx),
+            cloud_grid: super::doc_grid::DocGridState::new(Default::default(), cx),
+            previews: Default::default(),
+            lists_loaded: false,
+            cloud_previews_loaded: false,
+            cloud_previews_loading: false,
+            page_focus_owed: false,
             upload_area: None,
             upload_area_open: false,
             filter_menu: None,
@@ -274,6 +296,11 @@ impl Workspace {
             s.panel_open = !closing;
         }
         s.filter_menu = None;
+        // Starred is the Recent page's filter: the Library panel lists Recent.
+        if !(s.view == LeftView::Recent && s.panel_open) && s.recent.tab != LibraryTab::Recent {
+            s.recent.set_tab(LibraryTab::Recent);
+        }
+        s.page_focus_owed = true;
         if self.shell.view == LeftView::Cloud && self.shell.panel_open {
             self.refresh_cloud(false, cx);
         }
@@ -356,7 +383,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn toggle_filter_menu(&mut self, menu: FilterMenu, cx: &mut Context<Self>) {
+    pub(super) fn toggle_filter_menu(&mut self, menu: FilterMenu, cx: &mut Context<Self>) {
         if let Some((closed, at)) = self.shell.filter_closed.take() {
             if closed == menu && at.elapsed().as_millis() < 250 {
                 return;
@@ -366,14 +393,14 @@ impl Workspace {
         cx.notify();
     }
 
-    fn close_filter_menu(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn close_filter_menu(&mut self, cx: &mut Context<Self>) {
         if let Some(menu) = self.shell.filter_menu.take() {
             self.shell.filter_closed = Some((menu, Instant::now()));
             cx.notify();
         }
     }
 
-    fn clear_recent_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn clear_recent_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shell.recent.clear_query();
         self.shell.recent_filter.update(cx, |s, cx| s.set_value("", window, cx));
         cx.notify();
@@ -689,6 +716,16 @@ impl Workspace {
                 |this, w, cx| this.open_search(w, cx),
             ))
             .child(rule())
+            .child(self.rail_button(
+                "rail-recent",
+                "markie/recent.svg",
+                "Recent documents",
+                active(LeftView::Recent),
+                false,
+                &p,
+                cx,
+                |this, _, cx| this.select_view(LeftView::Recent, cx),
+            ))
             .child(self.rail_button(
                 "rail-library",
                 "markie/library.svg",
@@ -1636,7 +1673,10 @@ impl Workspace {
     }
 
     /// The Cloud or Vault page, in place of the document.
-    pub(super) fn render_workspace_page(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_workspace_page(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.shell.view == LeftView::Recent {
+            return self.render_recent_page(window, cx);
+        }
         // Signed out, the account's own Cloud page asks to sign in; signed in,
         // the sync library below takes over with the same session.
         if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
@@ -1979,7 +2019,7 @@ const SEARCH_TYPES: &[(&str, &str, &[FormatKind])] = &[
 ];
 
 /// The type menu's order (`TYPES` in library-document-filters.tsx).
-const TYPE_MENU: &[FormatKind] = &[
+pub(super) const TYPE_MENU: &[FormatKind] = &[
     FormatKind::Markdown,
     FormatKind::Text,
     FormatKind::Docx,
@@ -1995,7 +2035,7 @@ const TYPE_MENU: &[FormatKind] = &[
     FormatKind::Unsupported,
 ];
 
-fn type_menu_label(kind: Option<FormatKind>) -> &'static str {
+pub(super) fn type_menu_label(kind: Option<FormatKind>) -> &'static str {
     match kind {
         None => "All types",
         Some(FormatKind::Markdown) => "Markdown",

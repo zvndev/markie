@@ -342,7 +342,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn run_row_action(&mut self, path: PathBuf, action: RowAction, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn run_row_action(&mut self, path: PathBuf, action: RowAction, window: &mut Window, cx: &mut Context<Self>) {
         self.shell.row_menu = None;
         match action {
             RowAction::CopyLink => match self.cloud.private_link(&path) {

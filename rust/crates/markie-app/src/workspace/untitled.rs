@@ -79,6 +79,7 @@ impl Workspace {
     fn open_untitled_with_baseline(&mut self, name: String, text: String, clean: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.invalidate_import();
         self.settle(window, cx);
+        self.leave_page_for_document();
         self.document_failure = None;
         self.doc_notes.clear();
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();

@@ -2,8 +2,13 @@
 // an interactive document behind the trust choice. The link goes to the share
 // sheet; links inside the document open in the app when they are Markie
 // documents and in the browser when they are anything else.
-import { useCallback, useEffect, useRef, useState } from "react";
+//
+// A Markdown document takes comments right here, with or without a live room:
+// open threads are highlighted on the words they quote, and a selection
+// becomes a new thread (components/comments-sheet.tsx ReadingCommentsSheet).
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
+import { quoteOf, type Quote } from "@/lib/quote-anchor";
 import { ApiError, documentErrorCopy, type ApiClient, type AssetSource } from "../lib/api";
 import { classifyDocumentLink, type LinkTarget } from "../lib/deep-links";
 import { canEditDoc, markFormat, originLabel, type CloudDoc } from "../lib/docs";
@@ -12,10 +17,12 @@ import { serverLabel } from "../lib/server-origin";
 import { displayName, timeLabel } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
-import { MarkdownView } from "../components/markdown-view";
+import { MarkdownView, showThreadMark, type MarkdownComments, type ThreadQuote } from "../components/markdown-view";
+import { ACCESS_LOST_BODY, ACCESS_LOST_TITLE, ReadingCommentsSheet, useThreads, type ReadingDraft } from "../components/comments-sheet";
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
 import { ShareSheet } from "../components/share-sheet";
+import { COMMENTS_OFFLINE_NOTE, OfflineNote, useOffline } from "../components/offline-note";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
 import type { ShareMember } from "../lib/api";
@@ -35,8 +42,8 @@ interface DocumentProps {
   onOpen: (target: LinkTarget) => void;
   /** Opens the editor on the version shown. */
   onEdit: (doc: CloudDoc) => void;
-  /** Opens the live document with its comments showing. */
-  onComments: (doc: CloudDoc) => void;
+  /** Opened the live document for its comments, before the reading screen had its own. Unused now. */
+  onComments?: (doc: CloudDoc) => void;
   /** Who is signed in, for the share sheet. */
   me: { email: string; name: string };
   onUnauthorized: () => void;
@@ -49,7 +56,7 @@ type State =
   | { status: "ready"; doc: CloudDoc }
   | { status: "error"; error: unknown };
 
-export function DocumentScreen({ api, target, initialName, sharedBy = null, backLabel, tone, onBack, onRecent, onOpen, onEdit, onComments, me, onUnauthorized, reloadKey = 0 }: DocumentProps) {
+export function DocumentScreen({ api, target, initialName, sharedBy = null, backLabel, tone, onBack, onRecent, onOpen, onEdit, me, onUnauthorized, reloadKey = 0 }: DocumentProps) {
   const [sharing, setSharing] = useState(false);
   // Who else is on it: null until known, and for a public share, which has no members to ask about.
   const [members, setMembers] = useState<ShareMember[] | null>(null);
@@ -58,6 +65,8 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   const [related, setRelated] = useState<Map<string, string>>(new Map());
   const [notice, setNotice] = useState<string | null>(null);
   const run = useRef(0);
+  // This account was on the document and no longer is: found out by a comment the server refused.
+  const [lost, setLost] = useState(false);
   const docKey = target.kind === "doc" ? `d:${target.id}` : `s:${target.token}`;
 
   const load = useCallback(async () => {
@@ -66,6 +75,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       const doc = target.kind === "doc" ? await api.doc(target.id) : await api.publicDoc(target.token);
       if (current !== run.current) return;
       setState({ status: "ready", doc });
+      setLost(false);
       if (target.kind === "doc") void api.docLinks(target.id).then((links) => { if (current === run.current) setRelated(links); });
       if (target.kind === "doc") void api.shares(target.id).then((list) => { if (current === run.current) setMembers(list); }, () => undefined);
       // Asked for a Live Doc too: an older or self-hosted server may have given
@@ -108,18 +118,88 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
 
   const shared = !!members && members.length > 0;
   const owner = doc?.role === "owner";
-  // Comments live on the live document, as on the desktop: a Markdown file someone else is on.
-  const commentable = !!doc && !doc.publicToken && shared && liveKind(doc.name, doc.format) === "rich";
-  const actions = doc ? (
+
+  // ── Comments ──────────────────────────────────────────────────────────
+  // The desktop shows comments on a Markdown document it edits live, so those
+  // are the documents that take them here: not text, Darkmown or a public
+  // link, and not one too large for the desktop to open live. Word, RTF and
+  // OpenDocument files have their own screen and no comments at all.
+  const docId = target.kind === "doc" ? target.id : "";
+  const takesComments = !!doc && target.kind === "doc" && !doc.publicToken && doc.format === "markdown"
+    && liveKind(doc.name, doc.format) === "rich" && doc.content.length <= LIVE_MAX_CHARS;
+  const { threads, error: threadsError, refresh: refreshThreads, forbidden } = useThreads(api, docId, takesComments && !lost, onUnauthorized);
+  // On the owner's own unshared document nobody else would ever see a
+  // comment, and the desktop opens no room to show one. Threads already
+  // there are still shown.
+  const commentable = takesComments && (!owner || shared || (threads?.length ?? 0) > 0);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentDraft, setCommentDraft] = useState<ReadingDraft | null>(null);
+  const [focusThread, setFocusThread] = useState<string | null>(null);
+  // The words selected in the document right now, ready to comment on.
+  const [picked, setPicked] = useState<Quote | null>(null);
+  const [placedThreads, setPlacedThreads] = useState<ReadonlySet<string>>(() => new Set());
+  const articleHost = useRef<HTMLDivElement>(null);
+  const openThreads = threads?.filter((thread) => thread.status === "open").length ?? 0;
+
+  const threadQuotes = useMemo<ThreadQuote[]>(() => (threads ?? []).flatMap((thread) => {
+    const quote = quoteOf(thread.anchor);
+    return quote ? [{ id: thread.id, quote, highlight: thread.status === "open" }] : [];
+  }), [threads]);
+  const onPlaced = useCallback((ids: ReadonlySet<string>) => {
+    setPlacedThreads((current) => (current.size === ids.size && [...ids].every((id) => current.has(id)) ? current : ids));
+  }, []);
+  const onThread = useCallback((id: string) => {
+    setCommentDraft(null);
+    setFocusThread(id);
+    setCommentsOpen(true);
+  }, []);
+  const markdownComments = useMemo<MarkdownComments | undefined>(
+    () => (commentable ? { threads: threadQuotes, onPlaced, onThread, onSelect: setPicked } : undefined),
+    [commentable, threadQuotes, onPlaced, onThread],
+  );
+  // A press on the Comment button can clear the selection before the tap is
+  // over (iOS does), so the words are held from the press until the tap lands.
+  const [held, setHeld] = useState<Quote | null>(null);
+  useEffect(() => {
+    if (!held) return;
+    const timer = setTimeout(() => setHeld(null), 1500);
+    return () => clearTimeout(timer);
+  }, [held]);
+  const startComment = () => {
+    const quote = held ?? picked;
+    if (!quote) return;
+    setCommentDraft({ quote });
+    setFocusThread(null);
+    setCommentsOpen(true);
+    setPicked(null);
+    setHeld(null);
+    window.getSelection()?.removeAllRanges();
+  };
+  const closeComments = () => {
+    setCommentsOpen(false);
+    setCommentDraft(null);
+    setFocusThread(null);
+  };
+  // The list was refused while reading: the document is no longer shared here.
+  useEffect(() => { if (forbidden) setLost(true); }, [forbidden]);
+  // Access is gone, so the copy kept on this phone goes too: asking for the
+  // document once more lets the store hear the server's refusal and drop it.
+  useEffect(() => { if (lost && target.kind === "doc") void api.doc(target.id).catch(() => undefined); }, [lost, api, target]);
+  // Comments are not kept on the phone. With no connection the document
+  // still reads from the store; the sheet says comments need a connection,
+  // and nothing is offered that could only fail.
+  const offlineNow = useOffline(api)?.offline ?? false;
+  const actions = doc && !lost ? (
     <>
       {canEditDoc(doc) ? (
         <button type="button" className="m-nav-icon" aria-label="Edit" onClick={() => onEdit(doc)}>
           <PencilIcon size={22} />
         </button>
       ) : null}
-      {commentable ? (
-        <button type="button" className="m-nav-icon" aria-label="Comments" onClick={() => onComments(doc)}>
+      {commentable && !lost ? (
+        <button type="button" className="m-nav-icon m-nav-badged" aria-label={openThreads ? `Comments, ${openThreads} open` : "Comments"} onClick={() => { setCommentDraft(null); setFocusThread(null); setCommentsOpen(true); }}>
           <CommentIcon size={22} />
+          {openThreads ? <span className="m-nav-badge" aria-hidden="true">{openThreads}</span> : null}
         </button>
       ) : null}
       {doc.publicToken ? (
@@ -145,21 +225,62 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       title={title}
       back={{ label: backLabel, onBack }}
       actions={actions}
-      onRefresh={doc && !isWd ? load : undefined}
+      onRefresh={doc && !isWd && !lost ? async () => { await Promise.all([load(), takesComments ? refreshThreads() : null]); } : undefined}
       fill={isWd}
       className="m-document"
     >
       {state.status === "loading" ? <DocSkeleton /> : null}
       {state.status === "error" ? <DocError error={state.error} server={serverLabel(api.origin)} onRetry={() => { setState({ status: "loading" }); void load(); }} onRecent={onRecent} onSignIn={onUnauthorized} /> : null}
-      {doc ? (
+      {doc && lost ? (
+        // The text is taken off the screen with the access: it is not this reader's to see any more.
+        <div className="m-empty" role="alert" data-access-lost>
+          <AlertIcon size={30} />
+          <h2>{ACCESS_LOST_TITLE}</h2>
+          <p>{ACCESS_LOST_BODY}</p>
+          <button type="button" className="m-button m-button-secondary" onClick={onRecent}>Back to Recent</button>
+        </div>
+      ) : null}
+      {doc && !lost ? (
         <>
           <DocMeta doc={doc} members={members} publicUrl={publicUrl} />
-          {doc.format === "markdown" ? <MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /> : null}
+          <OfflineNote api={api} doc={doc} onChanged={() => void load()} onGone={onRecent} onUnauthorized={onUnauthorized} />
+          {doc.format === "markdown" ? <div ref={articleHost}><MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
           {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>
       ) : null}
       {notice ? <div className="m-toast" role="status">{notice}</div> : null}
+      {commentable && !lost && !offlineNow && (picked || held) && !commentsOpen ? (
+        <button type="button" className="m-select-comment" onPointerDown={(event) => { event.preventDefault(); setHeld(picked); }} onClick={startComment}>
+          <CommentIcon size={18} />Comment
+        </button>
+      ) : null}
+      {commentsOpen && doc && target.kind === "doc" ? (
+        <ReadingCommentsSheet
+          api={api}
+          docId={target.id}
+          threads={threads}
+          error={offlineNow && threadsError ? COMMENTS_OFFLINE_NOTE : threadsError}
+          refresh={refreshThreads}
+          placed={placedThreads}
+          meEmail={me.email}
+          canResolve={doc.role === "owner" || doc.role === "editor"}
+          canModerate={owner}
+          canComment
+          draft={commentDraft}
+          onDraftDone={() => setCommentDraft(null)}
+          onJump={(id) => {
+            closeComments();
+            // After the sheet is gone, so the scroll is seen.
+            requestAnimationFrame(() => showThreadMark(articleHost.current, id));
+          }}
+          focusThreadId={focusThread}
+          onAccessLost={() => setLost(true)}
+          lost={lost}
+          onClose={closeComments}
+          onUnauthorized={onUnauthorized}
+        />
+      ) : null}
       {sharing && doc && target.kind === "doc" ? (
         <ShareSheet
           title={doc.name}

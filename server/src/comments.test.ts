@@ -343,6 +343,42 @@ test("losing viewer access takes the right to comment with it", async () => {
   );
 });
 
+// The phone's reading screen has no live room to point into, so its anchor is
+// the quoted words (src/lib/quote-anchor.ts). Every client depends on getting
+// back exactly what was stored: the server must stay out of the anchor.
+test("a quote anchor from a viewer comes back exactly as it was sent", async () => {
+  const f = await fixture();
+  const anchor = {
+    kind: "quote",
+    exact: "The budget is tight \u2014 \"for now\" \ud83d\ude00",
+    prefix: "Hosting doubled. ",
+    suffix: " because of it.",
+    approxIndex: 86,
+    from: { tname: "default", assoc: -1 },
+    to: { tname: "default", assoc: -1 },
+  };
+  const created = await call<{ id: string }>("POST", `/api/docs/${f.docId}/threads`, f.viewer, {
+    anchor,
+    body: "Is this still true?",
+  });
+  assert.equal(created.status, 200);
+  for (const seat of [f.owner, f.editor, f.viewer]) {
+    const list = await call<{ threads: Array<{ id: string; anchor: unknown }> }>(
+      "GET",
+      `/api/docs/${f.docId}/threads`,
+      seat
+    );
+    assert.deepEqual(list.data!.threads.find((t) => t.id === created.data!.id)!.anchor, anchor);
+  }
+  // The longest quote a client sends (1000 characters, with its context) is
+  // far inside the JSON body limit.
+  const long = { ...anchor, exact: "word ".repeat(200).trim(), prefix: "p".repeat(48), suffix: "s".repeat(48) };
+  const big = await call<{ id: string }>("POST", `/api/docs/${f.docId}/threads`, f.viewer, { anchor: long, body: "Long one" });
+  assert.equal(big.status, 200);
+  const back = await call<{ threads: Array<{ id: string; anchor: unknown }> }>("GET", `/api/docs/${f.docId}/threads`, f.owner);
+  assert.deepEqual(back.data!.threads.find((t) => t.id === big.data!.id)!.anchor, long);
+});
+
 test("a thread needs an anchor and a non-empty body", async () => {
   const f = await fixture();
   for (const body of [

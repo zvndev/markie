@@ -13,8 +13,63 @@ It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contrac
   `Cache-Control: no-store`, the server answers API calls with it, and iOS's URLSession cache has no
   capacity (`ios/App/App/MarkieBridgeViewController.swift`). Capacitor's plugin logging is off, so it
   never reaches a device log either. Signing out clears it at once; the server is told afterwards.
+- Documents the person opens are kept on the phone so they open with no network. What is kept, where,
+  what protects it and what wipes it is under "What is kept on the phone" below. The token is never
+  kept with them.
 - The iOS Keychain outlives an uninstall. On the first launch after an install the app clears what an
   earlier install left there (`ios/App/App/AppDelegate.swift`), so a reinstall starts signed out.
+
+## What is kept on the phone
+
+Through 0.3.0 the app kept nothing: every document was read from the network and held in memory. That
+changed on purpose, so that an opened document still opens on a plane and an edit made there is not
+lost. This section is the whole of it.
+
+What is stored (`src/lib/offline-store.ts`, behind `src/lib/offline-api.ts`):
+
+- Every Markdown, text and Darkmown document this account opens: its text as the server gave it,
+  where its relative links point, and the pictures it shows that the author's Markie synced.
+- A public share the person opens while signed in, the same way.
+- The last Recent list (names, dates, roles; no document text).
+- Edits the server has not taken: the text, and the version it started from.
+- Not stored: the session token (it stays in the Keychain or Keystore), Word, RTF and OpenDocument
+  files, comments, who a document is shared with, and anything about another account.
+
+Where, and what protects it:
+
+- IndexedDB in the app's own web view, database `markie-offline-v1`. Never `localStorage`, never a
+  shared or external folder.
+- iOS: WebKit keeps it under `Library/WebKit` in the app's container. The container is sandboxed from
+  other apps and encrypted by iOS Data Protection with a key tied to the device passcode (the default
+  class, readable after the first unlock following a restart). `AppDelegate.swift` marks that folder
+  as excluded from backup on every launch, so the copies go to neither iCloud nor a Finder backup.
+- Android: the app's private data directory, readable by this app's user only and encrypted by the
+  device's file-based encryption. The manifest already turns backup off (`allowBackup="false"`) and
+  excludes everything from cloud backup and device-to-device transfer (`data_extraction_rules.xml`).
+- A device with no passcode, or one that is rooted or jailbroken, has none of the encryption above.
+  That is the same protection the system gives any app's files, and no more.
+
+What wipes it:
+
+- Signing out: documents, pictures, the list and unsent edits all go, before the server is told and
+  whether or not there is a network. If an edit has not been sent, Settings says so first and the
+  button reads "Sign out and delete".
+- A different account signing in, on the same server or another.
+- A launch that finds no session, which covers a reinstall on iOS (the container is deleted with the
+  app, and the Keychain session is cleared on first launch).
+- A document the server says this account can no longer read (403 or 404 when it is opened again) is
+  removed on the spot.
+- One exception, on purpose: when the server ends the session on its own (a 401), everything goes
+  except edits that were never sent. Those are held for the same account's next sign-in, because
+  dropping them would destroy the only copy. The sign-in screen says how many are held. Anyone else
+  signing in wipes them.
+
+How much: at most 200 documents and 64 MB (text and pictures together). A document over 8 MB or a
+picture over 4 MB is read from the network each time. When the cap is reached the least recently
+opened documents go first. A document with an unsent edit is never evicted.
+
+Offline, the screens say so: Recent shows the last list with a small arrow on the documents that
+open, a document says it is the copy kept on the phone, and neither says "failed".
 
 ## How the renderer is shared
 
@@ -76,7 +131,8 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./android/gradlew -p android assembleDebu
 ## Test
 
 ```sh
-npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, mock server, CSP, push
+npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, mock server, CSP, push,
+                            # and the phone's store: the wipe, the cap, the edit queue, the conflict choices
 npm run typecheck
 ```
 
@@ -129,9 +185,22 @@ The phone edits with the desktop's own editors, reached through the `@` alias li
   (`COMMON` in `src/components/format-rail.tsx`): headings, bold, italic, lists, tasks, quotes, code,
   tables, rules and links, plus undo and redo. Source has the plain text and the Markdown shortcuts.
 - Solo: a document nobody else is on saves through `PUT /api/docs/:id` with the version it started
-  from, the same route and hash (SHA-256 of the text) the desktop's sync uses. If another device saved
-  first, the server answers 409 and the editor offers "Save as a copy" or "Discard mine". Nothing is
-  merged over.
+  from, the same route and hash (SHA-256 of the text) the desktop's sync uses.
+- Offline: a save the server never received is kept on the phone as an unsent edit ("unpushed", the
+  desktop's own word in `electron/sync.js`) with the version it started from. It goes out when the
+  connection is back, also after the app was closed, and always with that same version: a queued save
+  can never overwrite a newer cloud copy, the server refuses it and it becomes a conflict. A new
+  document made offline is created the same way. A live document closed while offline is kept the same
+  way instead of being dropped.
+- Conflicts: when both copies changed, the conflict sheet (`src/components/conflict-sheet.tsx`, the
+  desktop's `conflict-dialog.tsx` as a sheet) reads the cloud copy and states the cost in lines with
+  the desktop's `@/lib/line-diff`. "Keep both" is first and focused: it saves the person's version as
+  a second document named like the desktop's ("Plan (my version).md", then "(my version 2)"), and only
+  then puts the cloud copy in the original. "Keep mine" reads the cloud version again and saves on top
+  of it. "Take the cloud copy" drops their version, and is refused while the edit is unpushed. Nothing
+  is ever merged.
+- An edit the server refuses outright (access removed, document deleted, storage full) stays on the
+  phone, with "Save as a new document" and "Delete my edit".
 - Live: the desktop's rule decides (`src/lib/live.ts`). Once anyone else is on a Markdown or plain-text
   document (`GET /api/docs/:id/shares` is not empty) and it is under 1 MB, the editor joins the
   desktop's room for it over `/collab/<id>`: Markdown through the rich view, text through
@@ -146,11 +215,21 @@ The phone edits with the desktop's own editors, reached through the `@` alias li
   - never over a version written from outside the room, which shows as a conflict instead
 
   A session whose pass never comes drops to editing alone. Source is read-only while live, exactly as on
-  the desktop.
-- Comments live on a live Markdown document, as on the desktop: select text, tap the comment button
-  above the keyboard. The comment sheet lists threads with the words they are on (anchored in the room
-  through `@/lib/comment-anchors`), and replies, resolves, reopens and deletes through
-  `/api/docs/:id/threads`. Viewers read and comment; owners and editors resolve.
+  the desktop. When the server closes the room because the person's access was removed (close code
+  4403), the editor says access changed and goes read-only. It does not say "offline".
+- Comments work on the reading screen of any Markdown document that is shared, with no live room
+  needed. Open threads are highlighted on their words, and the Comments button counts them. Select
+  words and tap Comment to start a thread. Its anchor is the quoted words with a little text on each
+  side (`@/lib/quote-anchor`), and the desktop finds those words in its own editor
+  (`@/lib/comment-anchors`). A thread whose words can't be found is listed as "Not placed", never hidden.
+- In a live Markdown document comments are anchored in the room, as on the desktop: select text, tap the
+  comment button above the keyboard. Those anchors carry their words too, so the reading screen places them.
+- Either sheet replies, resolves, reopens and deletes through `/api/docs/:id/threads`. Viewers read and
+  comment; owners and editors resolve. Someone whose share was removed is told "You no longer have
+  access" on their next comment action, and the document comes off the screen.
+- Text, Darkmown, Word, RTF and OpenDocument files have no comments, here or on the desktop.
+- Comments are not kept on the phone. Offline, the document still opens from the phone's store and the
+  comment sheet says comments need a connection. Nothing about comments is queued.
 - Share (people icon on a document): send the link, invite by email, change a role (sharing again with
   the new role, as the desktop does), remove someone, through `/api/docs/:id/shares`. The owner also sees
   General access: a document is private until they tap "Make public", which creates the public link
@@ -163,7 +242,7 @@ The phone edits with the desktop's own editors, reached through the `@` alias li
   Recent, drawn by the desktop's Word editor, and edited and saved as a new version of their own bytes
   through the desktop's `DocumentCloudClient`, sent over the app's own transport.
 - Version history is not on the phone: the desktop's history panel is local (`electron/history.js`).
-- Drafts live in memory only, like everything else the app reads.
+- Text being typed lives in memory until Save. Leaving the editor without saving drops it, as before.
 - The mock server has no live rooms and no document platform. Use a local real server for those.
 
 ## Files from other apps
@@ -189,7 +268,8 @@ Try it on a simulator: copy a file into the app's data container under `Document
 - Markie document links open in the app. Other web links open in the device's default browser, not an
   in-app browser sheet (DESIGN.md: "Ordinary HTTP(S) links use the device's default browser").
 - A picture the author's Markie synced (`![](shots/a.png)`) is fetched from the document's asset route
-  with the session token, never cached, and shown as a `blob:` URL. A public share's pictures come from
+  with the session token, kept in the phone's store with its document (never in an HTTP cache), and
+  shown as a `blob:` URL. A public share's pictures come from
   the share's own asset route. Video and audio beside the document are not fetched on a phone.
 
 ## Push notifications
@@ -245,7 +325,8 @@ Store setup:
 9. Create the App Store Connect record and the Play Console app. See `docs/mobile/STORE-SETUP.md`.
 10. Privacy: the app collects an email address for sign-in and stores a session token on the device.
     If the person turns notifications on, the server also keeps the phone's push token until they
-    sign out or turn them off. It has no analytics and no tracking.
+    sign out or turn them off. It also keeps the documents the person opens on the device, for
+    reading offline, until they sign out. It has no analytics and no tracking.
 11. Screenshots for the listings can start from `screenshots/`, retaken on the required device sizes.
 12. Upload to TestFlight and an internal Play track first. Test sign-in, a universal link,
     an app link and a Darkmown document on real phones before any public release.

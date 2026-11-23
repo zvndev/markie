@@ -2211,6 +2211,65 @@ textarea:not(.m-editor-text):focus-visible {
   margin: 8px 0 12px;
 }
 
+/* A thread whose words can't be found: it says so, and quotes them if it kept them. */
+.m-comment-unplaced {
+  display: block;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.m-comment-quote.is-gone q {
+  display: block;
+}
+
+.m-comment-lost-note {
+  display: block;
+  font-style: normal;
+}
+
+.m-thread.is-shown {
+  box-shadow: 0 0 0 2px var(--status-yellow);
+}
+
+/* Commented words in the document being read. */
+.m-markdown mark.m-comment-mark {
+  padding: 0;
+  border-bottom: 2px solid var(--status-yellow);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--status-yellow) 24%, transparent);
+  color: inherit;
+  transition: background-color 300ms ease;
+}
+
+.m-markdown mark.m-comment-mark.is-shown {
+  background: color-mix(in srgb, var(--status-yellow) 60%, transparent);
+}
+
+/* Offered while words are selected in the document. It sits at the bottom,
+   clear of the system's own selection menu beside the words. */
+.m-select-comment {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + var(--sab));
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--m-brand-strong);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 650;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.28);
+  transform: translateX(-50%);
+}
+
 .m-chip {
   flex: none;
   min-height: 30px;
@@ -2747,4 +2806,137 @@ textarea:not(.m-editor-text):focus-visible {
   margin-left: auto;
   padding: 0 4px;
   font-weight: 500;
+}
+
+/* ── Kept on this phone ────────────────────────────────────────────────── */
+
+/* A row that opens with no connection: a small arrow, as quiet as the time
+   beside it. */
+.m-offline-mark {
+  display: inline-flex;
+  align-self: flex-start;
+  flex: none;
+  margin-top: 5px;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* A row that needs the person: an edit not sent, or a choice to make. */
+.m-offline-badge {
+  align-self: flex-start;
+  flex: none;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.m-offline-badge.is-conflict,
+.m-offline-badge.is-refused {
+  background: color-mix(in srgb, var(--status-yellow) 18%, transparent);
+  color: var(--foreground);
+}
+
+.m-offline-line {
+  margin: 10px var(--m-gutter) 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.m-offline-note {
+  margin: 10px var(--m-gutter) 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--muted) 10%, var(--surface));
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.m-offline-note.is-attention {
+  background: color-mix(in srgb, var(--status-yellow) 14%, var(--surface));
+  color: var(--foreground);
+}
+
+.m-offline-note p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.m-offline-note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.m-offline-note-message {
+  margin-top: 8px !important;
+  color: var(--muted);
+}
+
+.m-confirm-warning {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--status-red) 10%, transparent);
+  color: var(--foreground);
+  font-size: 14px !important;
+}
+
+/* ── Both copies changed ───────────────────────────────────────────────── */
+
+.m-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 0 14px;
+}
+
+.m-conflict p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.m-conflict-summary {
+  color: var(--foreground);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.m-conflict-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.m-conflict-error {
+  color: var(--status-red);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.m-conflict-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.m-conflict-hint {
+  margin: -2px 4px 6px !important;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.m-conflict-take:not(:disabled) {
+  color: var(--status-red);
 }

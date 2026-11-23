@@ -26,6 +26,8 @@ import {
 } from "../lib/recent";
 import { Screen } from "../components/screen";
 import { AlertIcon, ChevronRight, ClearIcon, GearIcon, PeopleIcon, PlusIcon, SearchIcon, SparkleIcon } from "../components/icons";
+import { OfflineListNote, OfflineRowMark, useOffline } from "../components/offline-note";
+import type { OfflineMark } from "../lib/offline-api";
 
 interface RecentProps {
   api: ApiClient;
@@ -64,6 +66,8 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
   // How many shares wait for this account to accept their sender. A server
   // from before requests answers 404, which is simply none.
   const [requestCount, setRequestCount] = useState(0);
+  // Which documents are kept on this phone, and whether this list is.
+  const offline = useOffline(api);
   // The documents this account owns that someone else can reach, with how
   // many people. A server from before the route answers 404, which is none.
   const [sharedOut, setSharedOut] = useState<SharedOutDoc[]>(warm?.sharedOut ?? []);
@@ -100,7 +104,10 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
     }
   }, [api, handleError]);
 
-  useEffect(() => { void load(); }, [load, refreshKey]);
+  // Also when this phone made or changed a document behind the list: a
+  // queued edit that went out, a second document from "Keep both".
+  const changes = offline?.changes ?? 0;
+  useEffect(() => { void load(); }, [load, refreshKey, changes]);
 
   const loadMore = useCallback(async () => {
     if (!cursor || loadingMore || state.status !== "ready") return;
@@ -205,6 +212,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
           <ChevronRight size={18} />
         </button>
       ) : null}
+      <OfflineListNote offline={offline} />
       {state.status === "loading" && docs.length === 0 ? <ListSkeleton /> : null}
       {state.status === "error" && docs.length === 0 ? (
         <div className="m-empty" role="alert">
@@ -233,7 +241,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
         <section key={section.title} className="m-list-section" aria-label={section.title}>
           <h2 className="m-list-heading">{section.title}</h2>
           <ul className="m-list">
-            {section.docs.map((doc) => <DocRow key={`${doc.store}:${doc.id}`} doc={doc} sharedOut={doc.store === "docs" ? sharedOutById.get(doc.id) : undefined} now={now} onOpen={onOpen} />)}
+            {section.docs.map((doc) => <DocRow key={`${doc.store}:${doc.id}`} doc={doc} sharedOut={doc.store === "docs" ? sharedOutById.get(doc.id) : undefined} now={now} onOpen={onOpen} mark={doc.store === "docs" ? offline?.marks.get(doc.id) : undefined} />)}
           </ul>
         </section>
       ))}
@@ -242,7 +250,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
   );
 }
 
-function DocRow({ doc, sharedOut, now, onOpen }: { doc: RecentDoc; sharedOut?: SharedOutDoc; now: number; onOpen: (doc: RecentDoc) => void }) {
+function DocRow({ doc, sharedOut, now, onOpen, mark }: { doc: RecentDoc; sharedOut?: SharedOutDoc; now: number; onOpen: (doc: RecentDoc) => void; mark?: OfflineMark }) {
   const badge = agentBadge(doc);
   // Shared with this account, or owned and shared with others: never both.
   const shared = sharedLabel(doc) ?? sharedOutLabel(sharedOut);
@@ -258,6 +266,7 @@ function DocRow({ doc, sharedOut, now, onOpen }: { doc: RecentDoc; sharedOut?: S
             {!badge && !shared ? <span className="m-row-kind">{kindLabel(doc)}</span> : null}
           </span>
         </span>
+        <OfflineRowMark mark={mark} />
         <span className="m-row-time">{timeLabel(doc.updatedAt, now)}</span>
         <ChevronRight size={16} className="m-row-chevron" />
       </button>

@@ -22,6 +22,7 @@ import { ACCESS_LOST_BODY, ACCESS_LOST_TITLE, ReadingCommentsSheet, useThreads, 
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
 import { ShareSheet } from "../components/share-sheet";
+import { COMMENTS_OFFLINE_NOTE, OfflineNote, useOffline } from "../components/offline-note";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
 import type { ShareMember } from "../lib/api";
@@ -181,6 +182,13 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   };
   // The list was refused while reading: the document is no longer shared here.
   useEffect(() => { if (forbidden) setLost(true); }, [forbidden]);
+  // Access is gone, so the copy kept on this phone goes too: asking for the
+  // document once more lets the store hear the server's refusal and drop it.
+  useEffect(() => { if (lost && target.kind === "doc") void api.doc(target.id).catch(() => undefined); }, [lost, api, target]);
+  // Comments are not kept on the phone. With no connection the document
+  // still reads from the store; the sheet says comments need a connection,
+  // and nothing is offered that could only fail.
+  const offlineNow = useOffline(api)?.offline ?? false;
   const actions = doc && !lost ? (
     <>
       {canEditDoc(doc) ? (
@@ -235,13 +243,14 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       {doc && !lost ? (
         <>
           <DocMeta doc={doc} members={members} publicUrl={publicUrl} />
+          <OfflineNote api={api} doc={doc} onChanged={() => void load()} onGone={onRecent} onUnauthorized={onUnauthorized} />
           {doc.format === "markdown" ? <div ref={articleHost}><MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
           {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>
       ) : null}
       {notice ? <div className="m-toast" role="status">{notice}</div> : null}
-      {commentable && !lost && (picked || held) && !commentsOpen ? (
+      {commentable && !lost && !offlineNow && (picked || held) && !commentsOpen ? (
         <button type="button" className="m-select-comment" onPointerDown={(event) => { event.preventDefault(); setHeld(picked); }} onClick={startComment}>
           <CommentIcon size={18} />Comment
         </button>
@@ -251,7 +260,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           api={api}
           docId={target.id}
           threads={threads}
-          error={threadsError}
+          error={offlineNow && threadsError ? COMMENTS_OFFLINE_NOTE : threadsError}
           refresh={refreshThreads}
           placed={placedThreads}
           meEmail={me.email}

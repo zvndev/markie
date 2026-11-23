@@ -9,7 +9,26 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         Self.forgetSessionFromAnEarlierInstall()
         Self.clearOldInboxFiles()
+        Self.keepOfflineDocumentsOutOfBackups()
         return true
+    }
+
+    /// Documents the person opened are kept for reading with no network, in
+    /// the web view's IndexedDB (src/lib/offline-store.ts), which WebKit
+    /// stores under Library/WebKit in this app's container. iOS backs up
+    /// Library by default, so the folder is marked as excluded: the copies
+    /// stay on this device and never go to iCloud or a Finder backup. The
+    /// flag covers everything inside the folder. It is set on every launch,
+    /// before the web view exists, because a folder that is deleted and made
+    /// again loses it.
+    private static func keepOfflineDocumentsOutOfBackups() {
+        let files = FileManager.default
+        guard let library = files.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        var webData = library.appendingPathComponent("WebKit", isDirectory: true)
+        try? files.createDirectory(at: webData, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? webData.setResourceValues(values)
     }
 
     /// iOS copies every file opened in Markie (a Mail attachment, an AirDrop,

@@ -17,6 +17,9 @@
 // With no network a save is kept on the phone and sent later with the
 // version it started from (src/lib/offline-api.ts). When the cloud copy moved
 // on meanwhile, the conflict sheet asks what to keep.
+//
+// A file on this phone (a "local" draft) is edited alone and saved back to
+// the same file, through `local` and nothing else. No request is made for it.
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from "react";
 import type { Editor } from "@tiptap/react";
 import { RichView, type FlushRich, type LiveSession } from "@/components/rich-view";
@@ -42,11 +45,14 @@ import { CommentsSheet, useThreads, type CommentDraft } from "../components/comm
 import { Sheet } from "../components/sheet";
 import { ConflictSheet } from "../components/conflict-sheet";
 import { offlineOf, type SaveResult } from "../lib/offline-api";
+import { LocalConflictSheet } from "../components/local-conflict-sheet";
+import { isChangedUnderneath, type LocalEditing } from "../lib/local-editing";
 
-/** What the editor opens: a version of a cloud document, or text that isn't in the cloud yet. */
+/** What the editor opens: a version of a cloud document, text that isn't in the cloud yet, or a file on this phone. */
 export type EditorDraft =
   | { kind: "cloud"; id: string; name: string; format: DocFormat; content: string; version: number; role?: string | null; openComments?: boolean }
-  | { kind: "new"; name: string; format: DocFormat; content: string };
+  | { kind: "new"; name: string; format: DocFormat; content: string }
+  | { kind: "local"; name: string; format: DocFormat; content: string };
 
 export interface EditorUser {
   id: string;
@@ -65,6 +71,8 @@ interface EditorProps {
   onUnauthorized: () => void;
   /** Android's back button asks the editor first, so unsaved text isn't dropped. */
   backGuard: MutableRefObject<(() => void) | null>;
+  /** For a "local" draft: how its file is saved in place. It closes the editor itself once saved. */
+  local?: LocalEditing;
 }
 
 type SaveState =
@@ -102,7 +110,7 @@ export const UNSENT_NOTE = "This is your version. It is kept on this phone and h
 // text back as the stored version.
 const LIVE_SAVE_DELAY_MS = 3_000;
 
-export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized, backGuard }: EditorProps) {
+export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized, backGuard, local }: EditorProps) {
   const [value, setValue] = useState(draft.content);
   const [save, setSave] = useState<SaveState>({ status: "idle" });
   const [view, setView] = useState<"rich" | "source">("rich");
@@ -382,10 +390,11 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     if (save.status === "saving") return;
     // After a refused save the text is kept on the phone as a conflict, so
     // leaving loses nothing: the document screen offers the same choice.
-    if (save.status === "conflict") { onCancel(true); return; }
+    // A file on this phone has no such copy: its text is only in this editor.
+    if (save.status === "conflict" && draft.kind !== "local") { onCancel(true); return; }
     if (dirty && !window.confirm(isNew ? "Discard this document? It hasn't been saved." : "Discard your changes? They haven't been saved.")) return;
     onCancel();
-  }, [isLive, done, dirty, isNew, onCancel, save.status]);
+  }, [isLive, done, dirty, isNew, onCancel, save.status, draft.kind]);
 
   useEffect(() => {
     backGuard.current = cancel;
@@ -404,6 +413,25 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const write = useCallback(async (asCopy: boolean) => {
     const text = flushRef.current?.() ?? value;
     setSave({ status: "saving" });
+    if (draft.kind === "local") {
+      // Saved back to the same file on this phone, and nowhere else. A file
+      // that changed underneath is never written over: the sheet asks. On
+      // any failure the text stays here, in the editor.
+      try {
+        if (!local) throw new Error("This file can't be saved here.");
+        await local.save(text);
+        haptics.success();
+      } catch (error) {
+        if (isChangedUnderneath(error)) {
+          setConflictText(text);
+          setConflictOpen(true);
+          setSave({ status: "conflict" });
+          return;
+        }
+        setSave({ status: "error", message: error instanceof Error && error.message ? error.message : "Couldn't save. Your text is still here." });
+      }
+      return;
+    }
     try {
       if (draft.kind === "cloud" && !asCopy) {
         // version.current: a live session this screen wrote before it dropped
@@ -430,7 +458,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
       }
       setSave({ status: "error", message: error instanceof Error ? error.message : "Couldn't save. Try again." });
     }
-  }, [api, offline, draft, onSaved, onUnauthorized, value]);
+  }, [api, offline, draft, local, onSaved, onUnauthorized, value]);
 
   const formatSource = useCallback((action: MarkdownAction) => {
     const el = box.current;
@@ -501,8 +529,8 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           <div className="m-editor-banner" role="alert">
             <AlertIcon size={18} />
             <div>
-              <strong>Both copies of this document changed.</strong>
-              <p>Someone saved it while you were editing. Your text is still here, and nothing was saved over theirs.</p>
+              <strong>{draft.kind === "local" ? "This file changed while you were editing." : "Both copies of this document changed."}</strong>
+              <p>{draft.kind === "local" ? "Another app saved it. Your text is still here, and nothing was written over the file." : "Someone saved it while you were editing. Your text is still here, and nothing was saved over theirs."}</p>
               <div className="m-editor-banner-actions">
                 <button type="button" className="m-button m-button-small m-button-primary" onClick={() => { setConflictText(flushRef.current?.() ?? value); setConflictOpen(true); }}>Choose what to keep</button>
               </div>
@@ -654,6 +682,9 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           onResolved={() => onSaved({ id: draft.id, name: draft.name, created: false })}
           onUnauthorized={onUnauthorized}
         />
+      ) : null}
+      {conflictOpen && conflictText !== null && draft.kind === "local" && local ? (
+        <LocalConflictSheet local={local} name={draft.name} mine={conflictText} onClose={() => setConflictOpen(false)} />
       ) : null}
       {linkSheet ? <LinkSheet initial={linkSheet} onApply={applyLink} onClose={() => setLinkSheet(null)} /> : null}
     </Screen>

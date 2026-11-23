@@ -2974,3 +2974,77 @@ textarea:not(.m-editor-text):focus-visible {
 .m-conflict-take:not(:disabled) {
   color: var(--status-red);
 }
+
+/* ── Files on this phone ─────────────────────────────────────────────────── */
+
+.m-local-actions {
+  display: flex;
+  gap: 10px;
+  margin: 10px var(--m-gutter) 4px;
+}
+
+.m-local-actions .m-button {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-local-folder-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 29px;
+  height: 35px;
+  color: var(--m-tint);
+}
+
+.m-local-folder-mark.is-lost {
+  color: var(--status-red);
+}
+
+.m-local-lost {
+  align-items: flex-start;
+}
+
+.m-local-lost-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.m-local-lost-actions {
+  display: flex;
+  gap: 18px;
+}
+
+.m-local-lost-actions .m-link-button {
+  min-height: 36px;
+  padding: 0;
+}
+
+.m-local-footnote {
+  margin-top: 22px;
+  margin-bottom: 28px;
+}
+
+.m-local-list {
+  margin-top: 8px;
+}
+
+.m-local-cloud {
+  margin: 0 var(--m-gutter);
+}
+
+.m-local-cloud .m-link-button {
+  min-height: 36px;
+  padding: 0;
+  font-size: 13.5px;
+}
+
+.m-signin-local {
+  align-self: center;
+  margin-top: 6px;
+}
+
+.m-chooser-open-second {
+  margin-top: 8px;
+}

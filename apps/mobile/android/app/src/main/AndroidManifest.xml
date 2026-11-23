@@ -71,8 +71,12 @@
             </intent-filter>
 
             <!-- "Open with Markie" for a document from Gmail, Drive or Files.
-                 The page reads the content:// URI through the web view
-                 (src/lib/incoming-file.ts) and offers to save it to the cloud. -->
+                 When the sending app lends writing too, the file is edited
+                 where it is (LocalFilesPlugin.adopt). Otherwise the page reads
+                 the content:// URI through the web view as a copy
+                 (src/lib/incoming-file.ts). The app asks for no storage
+                 permission: every file comes through the system's picker or
+                 an app that chose to hand it over. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

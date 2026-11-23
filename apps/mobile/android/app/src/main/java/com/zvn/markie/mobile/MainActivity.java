@@ -8,6 +8,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Files on this device, opened and saved in place. Registered before
+        // the bridge starts, which is when it reads the list of plugins.
+        registerPlugin(LocalFilesPlugin.class);
         // Before super.onCreate, which builds the bridge with the plugins known so far.
         registerPlugin(PushAvailabilityPlugin.class);
         // The app's own plugin: a document printed to a PDF file (MarkiePdfPlugin).

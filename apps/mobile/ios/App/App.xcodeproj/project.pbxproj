@@ -17,6 +17,8 @@
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		7A1E00012F00000100C0FFEE /* MarkieBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E00022F00000100C0FFEE /* MarkieBridgeViewController.swift */; };
+		7A1E00A42F00000100C0FFEE /* LocalFilesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E00A52F00000100C0FFEE /* LocalFilesStore.swift */; };
+		7A1E00A62F00000100C0FFEE /* MarkieLocalFilesPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E00A72F00000100C0FFEE /* MarkieLocalFilesPlugin.swift */; };
 		7A1E00052F00000100C0FFEE /* MarkiePdfPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E00042F00000100C0FFEE /* MarkiePdfPlugin.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,6 +35,8 @@
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		7A1E00022F00000100C0FFEE /* MarkieBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkieBridgeViewController.swift; sourceTree = "<group>"; };
+		7A1E00A52F00000100C0FFEE /* LocalFilesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFilesStore.swift; sourceTree = "<group>"; };
+		7A1E00A72F00000100C0FFEE /* MarkieLocalFilesPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkieLocalFilesPlugin.swift; sourceTree = "<group>"; };
 		7A1E00042F00000100C0FFEE /* MarkiePdfPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkiePdfPlugin.swift; sourceTree = "<group>"; };
 		7A1E00032F00000100C0FFEE /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -71,6 +75,8 @@
 			children = (
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				7A1E00022F00000100C0FFEE /* MarkieBridgeViewController.swift */,
+				7A1E00A52F00000100C0FFEE /* LocalFilesStore.swift */,
+				7A1E00A72F00000100C0FFEE /* MarkieLocalFilesPlugin.swift */,
 				7A1E00042F00000100C0FFEE /* MarkiePdfPlugin.swift */,
 				7A1E00032F00000100C0FFEE /* App.entitlements */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
@@ -170,6 +176,8 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				7A1E00012F00000100C0FFEE /* MarkieBridgeViewController.swift in Sources */,
+				7A1E00A42F00000100C0FFEE /* LocalFilesStore.swift in Sources */,
+				7A1E00A62F00000100C0FFEE /* MarkieLocalFilesPlugin.swift in Sources */,
 				7A1E00052F00000100C0FFEE /* MarkiePdfPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

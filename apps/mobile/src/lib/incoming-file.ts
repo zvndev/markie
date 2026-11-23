@@ -4,6 +4,10 @@
 // content:// URI. Capacitor's web view serves both to the page
 // (Capacitor.convertFileSrc), so no plugin reads the file.
 //
+// This is the copy path. A file the other app lets Markie change is opened
+// where it is instead and saved back there (local-files.ts); app.tsx
+// receiveFile tries that first and falls back to this.
+//
 // What comes in is text Markie can show and keep in Markie Cloud. Text files
 // arrive as they are. Word, RTF, ODT and HTML are turned into a new text copy,
 // the way the desktop imports them; the original file is never changed.
@@ -34,6 +38,12 @@ export function isIncomingFileUrl(url: string): boolean {
   return /^(file|content):\/\//i.test(String(url ?? "").trim());
 }
 
+/** A name with nothing in it that could be a path or a control character. */
+function cleanFileName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[\u0000-\u001f\u007f/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
 /** The file's own name, from the last part of its URL. */
 export function nameFromFileUrl(url: string): string {
   let last = "";
@@ -44,8 +54,7 @@ export function nameFromFileUrl(url: string): string {
   } catch {
     last = "";
   }
-  // eslint-disable-next-line no-control-regex
-  const cleaned = last.replace(/[\u0000-\u001f\u007f/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  const cleaned = cleanFileName(last);
   // Android's content:// URIs often end in a number, not a name.
   return cleaned && /[^\d]/.test(cleaned) ? cleaned : "Shared file";
 }
@@ -88,15 +97,19 @@ export async function decodeIncomingFile(name: string, bytes: Uint8Array): Promi
   return { name: keptName, format: formatFromName(keptName), content: text, convertedFrom: null };
 }
 
-/** Fetches an incoming file through the web view and decodes it. */
-export async function readIncomingFile(url: string, fetchBytes: (url: string) => Promise<Uint8Array>): Promise<IncomingFile> {
+/**
+ * Fetches an incoming file through the web view and decodes it. `knownName`
+ * is the file's real name when the device could tell (Android's content://
+ * URIs rarely end in one).
+ */
+export async function readIncomingFile(url: string, fetchBytes: (url: string) => Promise<Uint8Array>, knownName?: string | null): Promise<IncomingFile> {
   let bytes: Uint8Array;
   try {
     bytes = await fetchBytes(url);
   } catch {
     throw new IncomingFileError("Markie couldn't read that file. Try sharing it again.");
   }
-  return decodeIncomingFile(nameFromFileUrl(url), bytes);
+  return decodeIncomingFile(cleanFileName(knownName ?? "") || nameFromFileUrl(url), bytes);
 }
 
 function paragraphMarkdown(paragraph: DocxParagraph): string {

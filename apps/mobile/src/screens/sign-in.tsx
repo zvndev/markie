@@ -25,6 +25,8 @@ interface SignInProps {
   notice: string | null;
   onSignedIn: (result: { origin: string; token: string; user: ApiUser }) => Promise<void>;
   onOriginChange: (origin: string) => void;
+  /** Files on this phone, with no account. Not set where there are none (a desktop browser). */
+  onLocalFiles?: () => void;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -48,7 +50,7 @@ function AppleMark() {
   );
 }
 
-export function SignInScreen({ transport, secure, initialOrigin, pendingLink, onReadPending, notice, onSignedIn, onOriginChange }: SignInProps) {
+export function SignInScreen({ transport, secure, initialOrigin, pendingLink, onReadPending, notice, onSignedIn, onOriginChange, onLocalFiles }: SignInProps) {
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -324,6 +326,9 @@ export function SignInScreen({ transport, secure, initialOrigin, pendingLink, on
             </div>
           </form>
         )}
+        {onLocalFiles && step === "email" ? (
+          <button type="button" className="m-link-button m-signin-local" onClick={onLocalFiles} disabled={busy}>Open a file from this phone</button>
+        ) : null}
       </div>
     </section>
   );

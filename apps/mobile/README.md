@@ -1,12 +1,13 @@
 # Markie for iOS and Android
 
 A Capacitor 8 app that opens Markie Cloud documents on a phone, including the ones agents make.
+It also opens, edits and saves the person's own files on the phone, with no account ("Files on this phone").
 It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contract").
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
 - Screens: Sign in (email code, password, Google and Apple), Recent (search, "Shared with you", "Shared by me" and type filters), Document (markdown, text,
   Darkmown), Word/RTF/OpenDocument, Editor (rich, source, live), Comments, Share (with export as a file,
-  HTML or PDF), New document, an incoming file, Settings.
+  HTML or PDF), New document, an incoming file, On this phone (files and folders, signed in or not), Settings.
 - The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key
   (`@aparajita/capacitor-secure-storage`, wrapped by `src/lib/secure-store.ts`). It is never written to
   `localStorage`, Preferences or a cookie jar, and no response is kept in an HTTP cache: requests send
@@ -132,7 +133,8 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./android/gradlew -p android assembleDebu
 
 ```sh
 npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, export, mock server, CSP, push,
-                            # and the phone's store: the wipe, the cap, the edit queue, the conflict choices
+                            # the phone's store: the wipe, the cap, the edit queue, the conflict choices,
+                            # and local files with the native plugin faked (test/local-files.test.ts)
 npm run typecheck
 ```
 
@@ -335,6 +337,61 @@ The phone edits with the desktop's own editors, reached through the `@` alias li
 - Text being typed lives in memory until Save. Leaving the editor without saving drops it, as before.
 - The mock server has no live rooms and no document platform. Use a local real server for those.
 
+## Files on this phone
+
+Local mode works with nobody signed in. From the sign-in screen ("Open a file from this phone") or the
+New document chooser, a person opens a file or adds a folder from the device, reads it, edits it and
+saves it back to the same file. Nothing about a local file is sent anywhere. Signed in, "Save a copy
+to Markie Cloud" is a button they tap on purpose. Local files are never put in the phone's store of
+cloud documents, and signing out does not touch them or the list of what was granted.
+
+The pieces:
+
+- `src/lib/local-files.ts`: what a file is and what may be written back. `src/lib/local-editing.ts`
+  and `src/components/local-conflict-sheet.tsx`: the editor's save and the "this file changed" sheet.
+  `src/screens/local*.tsx`: On this phone, a folder, a file, and how they stack (`local.tsx`).
+- The native plugin `MarkieLocalFiles`: `ios/App/App/LocalFilesStore.swift` with
+  `MarkieLocalFilesPlugin.swift`, and `android/.../LocalFilesPlugin.java`. It is local to this app,
+  registered in `MarkieBridgeViewController.swift` and `MainActivity.java`, not an npm package.
+- The page never names a path or a URI. It names a grant by id and, in a folder, an entry inside it.
+
+What a grant is:
+
+- iOS: a security-scoped bookmark of the URL the document picker (or "Open in Markie") handed over,
+  kept in `Application Support/LocalFiles/grants.json` (excluded from backup). A folder's bookmark
+  covers everything in it. Access is opened for one operation and always closed again.
+- Android: a persisted Storage Access Framework permission (`takePersistableUriPermission`) on the
+  document or tree URI, with its name in the app's private preferences. The app asks for no storage
+  permission.
+- Single files are remembered as recents, 50 at most, oldest out first. Folders are never evicted.
+- A grant the system took back (data cleared, folder deleted, provider removed) is still listed, as
+  "Markie can't reach this folder any more", with "Choose it again" and "Remove".
+
+How a save stays safe:
+
+- Only text is saved in place, in the encoding (UTF-8 with or without a mark, UTF-16) and line
+  endings the file came in. A file that is not valid text is refused, never repaired. Word, RTF,
+  OpenDocument and HTML open as a converted copy and are never written back over the original.
+- Every save carries the SHA-256 of the bytes it started from. The native side reads the file again
+  inside the write and compares. If another app or iCloud changed it, nothing is written and the
+  sheet asks: Keep both (a second file beside it, in a folder), Keep mine, or Take the file's
+  version. Nothing is merged.
+- iOS: every read and write goes through `NSFileCoordinator`. The new bytes are written whole to a
+  scratch file and swapped in with `replaceItemAt`, so the original is never cut short or half
+  written. What is on disk is read back and compared before the save counts.
+- Android: the new bytes are whole in memory before the file is opened, and it is opened `"rwt"`,
+  which truncates (plain `"w"` leaves the end of the old text behind when the new text is shorter).
+  The result is read back and compared. The Storage Access Framework has no atomic replace, so a
+  phone that dies mid-write can leave a short file; the text is still on screen until the save is
+  confirmed.
+- A path inside a folder is checked on iOS to still be inside it after links are followed, and on
+  Android the system refuses a document that is not under the granted tree.
+- A failed save says so and leaves the text in the editor.
+
+Not built: pictures beside a local Markdown file are not shown, a new file can't be started in a
+folder from the app, and there is no iCloud Drive folder of Markie's own (the plan's
+`NSUbiquitousContainers`), which needs an iCloud container on the App ID.
+
 ## Files from other apps
 
 iOS lists Markie under "Open in" and the share sheet for Markdown, Darkmown, text, CSV, JSON, YAML, XML,
@@ -342,13 +399,19 @@ HTML, Word (.docx), RTF and ODT (`CFBundleDocumentTypes` in `ios/App/App/Info.pl
 ranks as the Mac app). Android takes the same kinds through an `ACTION_VIEW` filter. "Open a file from
 your phone" on the New document screen does the same through the system file picker.
 
-- iOS copies the file into the app's `Documents/Inbox` and opens a `file://` URL; Android sends a
-  `content://` URI. The page reads either through `Capacitor.convertFileSrc`, so no plugin is involved
-  (`src/lib/incoming-file.ts`). Copies older than a day are removed at launch (`AppDelegate.swift`).
+- In place where the system allows it. iOS: "Open in Markie" from Files hands over the file itself
+  (`LSSupportsOpeningDocumentsInPlace`); `SceneDelegate.swift` keeps a bookmark for it before the
+  page sees the URL. Android: when the sending app lends write access, the file is edited where it
+  is, for good if the permission can be kept and until the app closes otherwise. Such a file opens as
+  a local file (above) and saves back to itself.
+- Otherwise a copy, as before. iOS copies the file into the app's `Documents/Inbox` (Mail, AirDrop)
+  and opens a `file://` URL; Android sends a read-only `content://` URI. The page reads either
+  through `Capacitor.convertFileSrc` (`src/lib/incoming-file.ts`). Copies older than a day are
+  removed at launch (`AppDelegate.swift`).
 - Text arrives as it is. Word becomes Markdown; RTF, ODT and HTML become plain text with the desktop's
   importers. The original file is never changed.
-- The file shows first, with Save (to Markie Cloud) and Edit. A file that arrives signed out waits in
-  memory and opens after sign-in.
+- A copy shows first, with Save (to Markie Cloud) and Edit. Signed out, a copy opens to read at once
+  and waits in memory to be saved after sign-in.
 
 Try it on a simulator: copy a file into the app's data container under `Documents/Inbox`, then
 `xcrun simctl openurl booted "file://<container>/Documents/Inbox/<name>"`.

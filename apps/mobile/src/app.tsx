@@ -17,6 +17,8 @@ import {
 } from "./lib/deep-links";
 import { IncomingFileError, isIncomingFileUrl, readIncomingFile, type IncomingFile } from "./lib/incoming-file";
 import { createSessionStore, type SecureKeyValue, type StoredSession } from "./lib/session";
+import { createOfflineStore, platformOfflineBackend, type OfflineSession } from "./lib/offline-store";
+import { createOfflineApi, offlineOf } from "./lib/offline-api";
 import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
 import { loadThemeMode, paintTone, resolveTone, saveThemeMode, systemPrefersDark, type ThemeMode } from "./lib/theme-mode";
 import { openExternal, setSystemBars } from "./lib/native";
@@ -70,6 +72,10 @@ function pendingStorage(): Storage | null {
 
 export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const sessionStore = useMemo(() => createSessionStore(secure), [secure]);
+  // Opened documents kept for reading with no network (lib/offline-store.ts).
+  // It belongs to one account, and is wiped whenever that account leaves.
+  const offlineStore = useMemo(() => createOfflineStore(platformOfflineBackend()), []);
+  const [offlineSession, setOfflineSession] = useState<OfflineSession | null>(null);
   // undefined while the Keychain is read at launch.
   const [session, setSession] = useState<StoredSession | null | undefined>(undefined);
   const sessionRef = useRef<StoredSession | null | undefined>(undefined);
@@ -111,14 +117,17 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   // Session: read once at launch.
   useEffect(() => {
     let live = true;
-    void sessionStore.load().then((stored) => {
+    void sessionStore.load().then(async (stored) => {
+      // No session at launch wipes the store; another account's is wiped too.
+      const kept = await offlineStore.start(stored ? { origin: stored.origin, userId: stored.userId, email: stored.email } : null).catch(() => null);
       if (!live) return;
+      setOfflineSession(kept);
       setSession(stored);
       const storage = pendingStorage();
       if (!stored && storage) setHasPending(hasPendingLink(storage));
     });
     return () => { live = false; };
-  }, [sessionStore]);
+  }, [sessionStore, offlineStore]);
 
   const persistRotatedToken = useCallback((token: string) => {
     const current = sessionRef.current;
@@ -134,14 +143,16 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const apiIdentity = session ? `${session.origin}|${session.userId}|${session.email}` : null;
   const api = useMemo(() => {
     if (!apiIdentity || !sessionRef.current) return null;
-    return createApiClient({
+    const client = createApiClient({
       origin: sessionRef.current.origin,
       transport,
       getToken: () => sessionRef.current?.token ?? null,
       onTokenRotated: persistRotatedToken,
     });
-  }, [apiIdentity, transport, persistRotatedToken]);
-
+    // The same client, with the phone's store behind it for when the
+    // network isn't there. Without a store it is the plain client.
+    return offlineSession ? createOfflineApi(client, offlineSession) : client;
+  }, [apiIdentity, transport, persistRotatedToken, offlineSession]);
   const openTarget = useCallback((target: LinkTarget, { replaceStack = false, name, sharedBy = null }: { replaceStack?: boolean; name?: string; sharedBy?: string | null } = {}) => {
     const current = sessionRef.current;
     if (!current) return;
@@ -221,6 +232,24 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       ? { ...route, reloadKey: (route.reloadKey ?? 0) + 1 }
       : route), []);
 
+  // Edits that waited for a connection go out when one is back. When that
+  // changed anything (sent, or found to be a conflict), every open document
+  // and the list read again, so no screen goes on showing "not sent".
+  useEffect(() => {
+    const handle = api ? offlineOf(api) : null;
+    if (!handle) return;
+    const send = () => {
+      void handle.drain().then((result) => {
+        if (!result.sent && !result.conflicts && !result.refused) return;
+        setRefreshKey((value) => value + 1);
+        setRoutes((stack) => reloadDoc(stack, null));
+      }).catch(() => undefined);
+    };
+    send();
+    window.addEventListener("online", send);
+    return () => window.removeEventListener("online", send);
+  }, [api, reloadDoc]);
+
   const editorSaved = useCallback(({ id, name, created }: { id: string; name: string; created: boolean }) => {
     setRefreshKey((value) => value + 1);
     setRoutes((stack) => {
@@ -250,7 +279,13 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     return () => { removed = true; void handle?.remove(); };
   }, [native, pop]);
 
-  const endSession = useCallback(async (notice: string | null) => {
+  const endSession = useCallback(async (notice: string | null, { hold = false }: { hold?: boolean } = {}) => {
+    // Everything kept on the phone goes with the session, before anything
+    // else and before the server hears of it. A session the server ended
+    // keeps only edits that were never sent, for the same account.
+    setOfflineSession(null);
+    const held = hold ? await offlineStore.hold().catch(() => offlineStore.wipe().then(() => 0, () => 0)) : await offlineStore.wipe().then(() => 0, () => 0);
+    if (held > 0 && notice) notice = `${notice} ${held === 1 ? "One unsent edit is" : `${held} unsent edits are`} kept on this phone for this account.`;
     await sessionStore.clear().catch(() => undefined);
     if (native) await CapacitorCookies.clearAllCookies().catch(() => undefined);
     clearRecentCache();
@@ -260,7 +295,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     setRoutes([ROOT]);
     setChooser(false);
     setSignInNotice(notice);
-  }, [native, sessionStore]);
+  }, [native, sessionStore, offlineStore]);
 
   // Any 401: the session is gone. Keep the open document so it reopens after sign-in.
   const onUnauthorized = useCallback(() => {
@@ -270,7 +305,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       if (storage) rememberPendingLink(top.target, storage);
       setHasPending(true);
     }
-    void endSession("Your session ended. Sign in again to continue.");
+    void endSession("Your session ended. Sign in again to continue.", { hold: true });
   }, [endSession]);
 
   const signOut = useCallback(async () => {
@@ -290,6 +325,8 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const signedIn = useCallback(async ({ origin, token, user }: { origin: string; token: string; user: ApiUser }) => {
     const next: StoredSession = { origin, token, email: user.email, name: user.name, userId: user.id };
     await sessionStore.save(next);
+    // Another account's documents are wiped here, before this one sees a screen.
+    setOfflineSession(await offlineStore.start({ origin, userId: user.id, email: user.email }).catch(() => null));
     savePreferredOrigin(origin);
     sessionRef.current = next;
     setSession(next);
@@ -302,7 +339,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     pendingFile.current = null;
     if (file) openFile(file);
     else if (pending) openTarget(pending, { replaceStack: true });
-  }, [openFile, openTarget, sessionStore]);
+  }, [openFile, openTarget, sessionStore, offlineStore]);
 
   const setThemeMode = useCallback((mode: ThemeMode) => {
     saveThemeMode(mode);
@@ -356,7 +393,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     if (route.kind === "settings") {
       return {
         key: route.key,
-        node: <SettingsScreen session={session} themeMode={themeMode} onThemeMode={setThemeMode} onSignOut={signOut} onBack={pop} />,
+        node: <SettingsScreen session={session} api={api} themeMode={themeMode} onThemeMode={setThemeMode} onSignOut={signOut} onBack={pop} />,
       };
     }
     if (route.kind === "new") {

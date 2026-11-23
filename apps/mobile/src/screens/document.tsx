@@ -16,6 +16,7 @@ import { MarkdownView } from "../components/markdown-view";
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
 import { ShareSheet } from "../components/share-sheet";
+import { OfflineNote } from "../components/offline-note";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
 import type { ShareMember } from "../lib/api";
@@ -154,6 +155,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       {doc ? (
         <>
           <DocMeta doc={doc} members={members} publicUrl={publicUrl} />
+          <OfflineNote api={api} doc={doc} onChanged={() => void load()} onGone={onRecent} onUnauthorized={onUnauthorized} />
           {doc.format === "markdown" ? <MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /> : null}
           {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}

@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import type { StoredSession } from "../lib/session";
+import type { ApiClient } from "../lib/api";
+import { useOffline } from "../components/offline-note";
 import { isMarkieCloud, serverLabel } from "../lib/server-origin";
 import { haptics } from "../lib/native";
 import type { ThemeMode } from "../lib/theme-mode";
@@ -10,6 +12,8 @@ import { Screen } from "../components/screen";
 
 interface SettingsProps {
   session: StoredSession;
+  /** For what is kept on this phone, and what signing out would delete. */
+  api: ApiClient;
   themeMode: ThemeMode;
   onThemeMode: (mode: ThemeMode) => void;
   onSignOut: () => Promise<void>;
@@ -22,10 +26,12 @@ const MODES: { value: ThemeMode; label: string }[] = [
   { value: "dark", label: "Dark" },
 ];
 
-export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onBack }: SettingsProps) {
+export function SettingsScreen({ session, api, themeMode, onThemeMode, onSignOut, onBack }: SettingsProps) {
   const [version, setVersion] = useState<string>(__MARKIE_MOBILE_VERSION__);
   const [confirming, setConfirming] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const offline = useOffline(api);
+  const unsent = offline?.unsent ?? 0;
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -75,6 +81,25 @@ export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onB
         </div>
       </div>
 
+      {offline ? (
+        <>
+          <h2 className="m-group-heading">On this phone</h2>
+          <div className="m-group">
+            <div className="m-group-row">
+              <span className="m-group-label">Kept for offline</span>
+              <span className="m-group-value" data-offline-kept>{offline.kept === 1 ? "1 document" : `${offline.kept} documents`}</span>
+            </div>
+            {unsent > 0 ? (
+              <div className="m-group-row">
+                <span className="m-group-label">Not sent yet</span>
+                <span className="m-group-value" data-offline-unsent>{unsent === 1 ? "1 edit" : `${unsent} edits`}</span>
+              </div>
+            ) : null}
+          </div>
+          <p className="m-group-footer">Documents you open are kept on this phone so they open with no connection. Signing out removes them.</p>
+        </>
+      ) : null}
+
       <h2 className="m-group-heading">About</h2>
       <div className="m-group">
         <div className="m-group-row">
@@ -87,6 +112,11 @@ export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onB
         {confirming ? (
           <div className="m-confirm">
             <p>Sign out of {session.email}? Your documents stay {isMarkieCloud(session.origin) ? "in Markie Cloud" : `on ${serverLabel(session.origin)}`}.</p>
+            {unsent > 0 ? (
+              <p className="m-confirm-warning" role="alert" data-unsent-warning>
+                {unsent === 1 ? "One edit on this phone has not been sent." : `${unsent} edits on this phone have not been sent.`} Signing out deletes {unsent === 1 ? "it" : "them"}. To keep {unsent === 1 ? "it" : "them"}, go back online first and let {unsent === 1 ? "it" : "them"} send.
+              </p>
+            ) : null}
             <div className="m-confirm-actions">
               <button type="button" className="m-button m-button-secondary" disabled={signingOut} onClick={() => setConfirming(false)}>Cancel</button>
               <button
@@ -95,7 +125,7 @@ export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onB
                 disabled={signingOut}
                 onClick={async () => { setSigningOut(true); await onSignOut(); }}
               >
-                {signingOut ? "Signing out" : "Sign out"}
+                {signingOut ? "Signing out" : unsent > 0 ? "Sign out and delete" : "Sign out"}
               </button>
             </div>
           </div>

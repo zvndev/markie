@@ -13,6 +13,10 @@
 // (src/lib/live-snapshot.ts): from a ready room only, by the room's one
 // writer, never over a stored copy the room cannot carry, and never over a
 // version written from outside the room.
+//
+// With no network a save is kept on the phone and sent later with the
+// version it started from (src/lib/offline-api.ts). When the cloud copy moved
+// on meanwhile, the conflict sheet asks what to keep.
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from "react";
 import type { Editor } from "@tiptap/react";
 import { RichView, type FlushRich, type LiveSession } from "@/components/rich-view";
@@ -36,6 +40,8 @@ import { Presence, type LiveStatus } from "../components/presence";
 import { RichToolbar, ToolButton } from "../components/rich-toolbar";
 import { CommentsSheet, useThreads, type CommentDraft } from "../components/comments-sheet";
 import { Sheet } from "../components/sheet";
+import { ConflictSheet } from "../components/conflict-sheet";
+import { offlineOf, type SaveResult } from "../lib/offline-api";
 
 /** What the editor opens: a version of a cloud document, or text that isn't in the cloud yet. */
 export type EditorDraft =
@@ -86,6 +92,12 @@ export const COMMENTS_UNAVAILABLE_NOTE = "Comments can't load right now.";
 /** What a viewer reads on a document no editor has opened live yet. */
 export const EMPTY_ROOM_NOTE = "This is the saved copy. Nobody who can edit has opened it live yet, and comments start once someone does.";
 
+/** What a removed person reads. The room is closed to them and nothing typed after this is kept. */
+export const ACCESS_CHANGED_NOTE = "Your access to this document changed. It is read-only now. Copy anything you still need.";
+
+/** On an edit this phone still holds: the editor opened on it, not on the cloud copy. */
+export const UNSENT_NOTE = "This is your version. It is kept on this phone and has not been sent yet.";
+
 // How long a live document waits after the last change before writing its
 // text back as the stored version.
 const LIVE_SAVE_DELAY_MS = 3_000;
@@ -97,6 +109,11 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const box = useRef<HTMLTextAreaElement>(null);
   const keyboard = useKeyboardInset();
   const isNew = draft.kind === "new";
+  const offline = offlineOf(api);
+  // An edit of this document that the server has not taken (unsent, or in
+  // conflict). The draft is that edit, so it is edited alone: joining a room
+  // would show the room's text instead and leave this one behind.
+  const [heldEdit] = useState(() => (draft.kind === "cloud" ? offline?.pending(draft.id) ?? null : null));
   // What the server says this account may do, read from /access as the
   // screen opens. The list's role is only the fallback while that answer is
   // on its way or if it never comes.
@@ -113,11 +130,11 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const picturesReady = useEditorPictures(loadPicture, draft.content);
 
   // Who else is on it decides solo or live, exactly as on the desktop.
-  const [session, setSession] = useState<Session>(() => (draft.kind === "cloud" && kind ? { mode: "checking" } : { mode: "solo" }));
+  const [session, setSession] = useState<Session>(() => (draft.kind === "cloud" && kind && !heldEdit ? { mode: "checking" } : { mode: "solo" }));
   useEffect(() => {
     if (draft.kind !== "cloud") return;
     let live = true;
-    if (!kind) {
+    if (!kind || heldEdit) {
       void api.access(draft.id).then((access) => { if (live && access) setAccessRole(access.role); }, () => {});
       return () => { live = false; };
     }
@@ -177,6 +194,23 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
     setStatus(next);
   }, []);
   const onFlushReady = useCallback((flush: FlushRich | null) => { flushRef.current = flush; }, []);
+
+  // The server closes the room with 4403 when this person may no longer be
+  // in it (their share was removed). The shared editors stop and lock
+  // themselves, but report it as "disconnected", which here would read as
+  // being offline with edits waiting. It is neither: say access changed.
+  const [revoked, setRevoked] = useState(false);
+  const liveProvider = isLive ? (kind === "text" ? textSession?.provider : liveSession?.provider) ?? null : null;
+  useEffect(() => {
+    if (!liveProvider) return;
+    const provider = liveProvider as unknown as {
+      on(event: "connection-close", handler: (event: CloseEvent | null) => void): void;
+      off(event: "connection-close", handler: (event: CloseEvent | null) => void): void;
+    };
+    const onClose = (event: CloseEvent | null) => { if (event?.code === 4403) setRevoked(true); };
+    provider.on("connection-close", onClose);
+    return () => provider.off("connection-close", onClose);
+  }, [liveProvider]);
 
   // The stored version the live text is written over, and what it last said.
   const version = useRef(draft.kind === "cloud" ? draft.version : 0);
@@ -268,17 +302,43 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   }, [wait, liveSave, value, writeLive]);
 
   const [closing, setClosing] = useState(false);
+  // The text the conflict sheet compares and rescues: the editor's, as it
+  // stood when the server refused the save.
+  const [conflictText, setConflictText] = useState<string | null>(null);
+  const [conflictOpen, setConflictOpen] = useState(false);
   const done = useCallback(async () => {
     if (closing) return;
     setClosing(true);
     if (liveTimer.current) { clearTimeout(liveTimer.current); liveTimer.current = null; }
     const text = flushRef.current?.() ?? valueRef.current;
+    // Access was removed: the room is closed to this person and the server
+    // takes nothing more from them. The screen underneath says so.
+    if (revoked) { onCancel(true); return; }
     // Offline: what was typed since the connection dropped is only on this
-    // phone, and closing drops it.
-    if (!readOnly && isLive && !room.connected && text !== stored.current
-      && !window.confirm("You're offline, so your latest edits haven't reached the live session. Close anyway and lose them?")) {
-      setClosing(false);
-      return;
+    // phone. It is kept here as an unsent edit, with the version it started
+    // from, unless the room's text can't stand in for the stored copy.
+    if (!readOnly && isLive && !room.connected && text !== stored.current && draft.kind === "cloud") {
+      if (offline && !refusal && base !== "diverged") {
+        try {
+          await offline.save({ id: draft.id, name: draft.name, content: text, baseVersion: version.current });
+          haptics.success();
+          onSaved({ id: draft.id, name: draft.name, created: false });
+          return;
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 401) { onUnauthorized(); return; }
+          if (error instanceof ApiError && error.status === 409 && error.code === "conflict") {
+            setConflictText(text);
+            setConflictOpen(true);
+            setSave({ status: "conflict" });
+            setClosing(false);
+            return;
+          }
+        }
+      }
+      if (!window.confirm("You're offline, so your latest edits haven't reached the live session. Close anyway and lose them?")) {
+        setClosing(false);
+        return;
+      }
     }
     // Only the room's writer writes the stored copy, and never over what the
     // room cannot carry; everyone else's edits are in the room already.
@@ -293,7 +353,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
       return;
     }
     onCancel(true);
-  }, [closing, readOnly, isLive, room.connected, wait, draft, writeLive, onSaved, onCancel]);
+  }, [closing, revoked, readOnly, isLive, room.connected, wait, draft, offline, refusal, base, writeLive, onSaved, onCancel, onUnauthorized]);
 
   // ── Comments (live markdown only, as on the desktop) ────────────────────
   const commentable = isLive && kind === "rich" && draft.kind === "cloud";
@@ -320,6 +380,9 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const cancel = useCallback(() => {
     if (isLive) { void done(); return; }
     if (save.status === "saving") return;
+    // After a refused save the text is kept on the phone as a conflict, so
+    // leaving loses nothing: the document screen offers the same choice.
+    if (save.status === "conflict") { onCancel(true); return; }
     if (dirty && !window.confirm(isNew ? "Discard this document? It hasn't been saved." : "Discard your changes? They haven't been saved.")) return;
     onCancel();
   }, [isLive, done, dirty, isNew, onCancel, save.status]);
@@ -345,21 +408,29 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
       if (draft.kind === "cloud" && !asCopy) {
         // version.current: a live session this screen wrote before it dropped
         // to solo has moved the stored version on.
-        const saved = await api.saveDoc({ id: draft.id, name: draft.name, content: text, baseVersion: version.current });
+        // With no network the edit is kept on the phone and the answer says
+        // so; the document screen then shows it as not sent yet.
+        const input = { id: draft.id, name: draft.name, content: text, baseVersion: version.current };
+        const saved: SaveResult = offline ? await offline.save(input) : await api.saveDoc(input);
         haptics.success();
         onSaved({ id: saved.id, name: draft.name, created: false });
         return;
       }
       const name = asCopy ? copyName(draft.name) : draft.name;
-      const created = await api.createDoc({ name, content: text });
+      const created: SaveResult = offline ? await offline.create({ name, content: text }) : await api.createDoc({ name, content: text });
       haptics.success();
       onSaved({ id: created.id, name, created: true });
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) { onUnauthorized(); return; }
-      if (error instanceof ApiError && error.status === 409 && error.code === "conflict") { setSave({ status: "conflict" }); return; }
+      if (error instanceof ApiError && error.status === 409 && error.code === "conflict") {
+        setConflictText(text);
+        setConflictOpen(true);
+        setSave({ status: "conflict" });
+        return;
+      }
       setSave({ status: "error", message: error instanceof Error ? error.message : "Couldn't save. Try again." });
     }
-  }, [api, draft, onSaved, onUnauthorized, value]);
+  }, [api, offline, draft, onSaved, onUnauthorized, value]);
 
   const formatSource = useCallback((action: MarkdownAction) => {
     const el = box.current;
@@ -402,6 +473,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
   const richShown = markdown && view === "rich";
   const liveText = isLive && kind === "text" && collab;
 
+  const locked = readOnly || revoked;
   const leading = isLive || readOnly
     ? <button type="button" className="m-nav-text m-nav-text-strong" onClick={() => void done()} disabled={closing}>{closing ? "Saving" : "Done"}</button>
     : <button type="button" className="m-nav-text" onClick={cancel} disabled={saving}>Cancel</button>;
@@ -429,16 +501,20 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           <div className="m-editor-banner" role="alert">
             <AlertIcon size={18} />
             <div>
-              <strong>Someone saved this document while you were editing.</strong>
-              <p>Your text is still here. Keep it as a separate copy, or throw it away and read the newer version.</p>
+              <strong>Both copies of this document changed.</strong>
+              <p>Someone saved it while you were editing. Your text is still here, and nothing was saved over theirs.</p>
               <div className="m-editor-banner-actions">
-                <button type="button" className="m-button m-button-small m-button-primary" onClick={() => void write(true)}>Save as a copy</button>
-                <button type="button" className="m-button m-button-small m-button-secondary" onClick={() => onCancel(true)}>Discard mine</button>
+                <button type="button" className="m-button m-button-small m-button-primary" onClick={() => { setConflictText(flushRef.current?.() ?? value); setConflictOpen(true); }}>Choose what to keep</button>
               </div>
             </div>
           </div>
         ) : null}
         {save.status === "error" ? <p className="m-editor-error" role="alert">{save.message}</p> : null}
+        {heldEdit && save.status !== "conflict" ? (
+          <p className="m-editor-note" role="note" data-unsent-edit={heldEdit}>
+            {heldEdit === "conflict" ? "This is your version. The cloud copy changed too, so saving asks what to keep." : UNSENT_NOTE}
+          </p>
+        ) : null}
         {liveSave === "conflict" ? (
           <div className="m-editor-banner" role="alert" data-live-conflict>
             <AlertIcon size={18} />
@@ -458,7 +534,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
             {draft.kind === "cloud" && draft.openComments ? `${COMMENTS_UNAVAILABLE_NOTE} ` : ""}The live session couldn't start, so you're editing your copy alone. Save when you're done.
           </p>
         ) : null}
-        {isLive ? <LiveLine status={status} save={liveSave} readOnly={readOnly} wait={wait} /> : null}
+        {isLive ? <LiveLine status={status} save={liveSave} readOnly={readOnly} wait={wait} revoked={revoked} /> : null}
         {markdown ? (
           <div className="m-segmented m-editor-views" role="tablist" aria-label="Editor view">
             {(["rich", "source"] as const).map((mode) => (
@@ -525,12 +601,12 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
               spellCheck={prose}
               autoCorrect={prose ? "on" : "off"}
               autoCapitalize={prose ? "sentences" : "none"}
-              readOnly={saving || readOnly || isLive}
+              readOnly={saving || locked || isLive}
             />
           </>
         )}
 
-        {richShown && editor && session.mode !== "checking" && (!readOnly || commentable) ? (
+        {richShown && editor && session.mode !== "checking" && !revoked && (!readOnly || commentable) ? (
           <RichToolbar editor={editor} locked={readOnly} onLink={openLink} onComment={commentable ? startComment : undefined} />
         ) : null}
         {markdown && view === "source" && !isLive && !readOnly && session.mode !== "checking" ? (
@@ -566,13 +642,39 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
           onUnauthorized={onUnauthorized}
         />
       ) : null}
+      {conflictOpen && conflictText !== null && draft.kind === "cloud" ? (
+        <ConflictSheet
+          api={api}
+          id={draft.id}
+          name={draft.name}
+          mine={conflictText}
+          onClose={() => setConflictOpen(false)}
+          // Whatever was chosen, the document underneath holds something new
+          // and the list may have a second document: both read again.
+          onResolved={() => onSaved({ id: draft.id, name: draft.name, created: false })}
+          onUnauthorized={onUnauthorized}
+        />
+      ) : null}
       {linkSheet ? <LinkSheet initial={linkSheet} onApply={applyLink} onClose={() => setLinkSheet(null)} /> : null}
     </Screen>
   );
 }
 
-function LiveLine({ status, save, readOnly, wait }: { status: LiveStatus; save: "saved" | "pending" | "saving" | "error" | "conflict"; readOnly: boolean; wait: LiveSnapshotWait | null }) {
-  const text = status === "empty"
+interface LiveLineInput {
+  status: LiveStatus;
+  save: "saved" | "pending" | "saving" | "error" | "conflict";
+  readOnly: boolean;
+  wait: LiveSnapshotWait | null;
+  /** The server closed the room on this person: their access was removed. */
+  revoked?: boolean;
+}
+
+/** The one line under a live document's title: where its text stands. */
+export function liveLineText({ status, save, readOnly, wait, revoked = false }: LiveLineInput): string {
+  // First: a removed person is not "offline with edits waiting". Nothing of
+  // theirs is waiting, and nothing will go out.
+  if (revoked) return ACCESS_CHANGED_NOTE;
+  return status === "empty"
     ? "Nobody has opened this live yet, so there is nothing to show here. Read it on the document screen."
     : status === "unavailable"
       ? "The live session isn't available right now. Close and reopen to try again."
@@ -597,7 +699,10 @@ function LiveLine({ status, save, readOnly, wait }: { status: LiveStatus; save: 
               : save === "saved"
                 ? "Live. Everyone's changes are saved."
                 : "Live. Saving…";
-  return <p className={`m-live-line is-${status}`} role="status">{text}</p>;
+}
+
+function LiveLine(props: LiveLineInput) {
+  return <p className={`m-live-line is-${props.revoked ? "unavailable" : props.status}`} role="status" data-access-changed={props.revoked ? "" : undefined}>{liveLineText(props)}</p>;
 }
 
 function LinkSheet({ initial, onApply, onClose }: { initial: { href: string; text: string }; onApply: (href: string, text: string) => void; onClose: () => void }) {

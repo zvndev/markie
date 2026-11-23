@@ -61,10 +61,53 @@ pub static FONTS: LazyLock<Fonts> = LazyLock::new(|| {
         }
     }
     // The embedded faces: math, New Computer Modern for \text, DejaVu Sans Mono.
-    fonts.extend(typst_assets::fonts().flat_map(|data| Font::iter(Bytes::new(data))));
+    fonts.extend(typst_assets::fonts().flat_map(|data| Font::iter(Bytes::new(tex_sub_drop(data)))));
     let book = FontBook::from_fonts(&fonts);
     Fonts { book: LazyHash::new(book), fonts }
 });
+
+/// KaTeX drops a subscript under a big operator or a group by TeX's
+/// `sub_drop`, 0.05em of the script size; New Computer Modern Math's MATH
+/// table asks for 0.2em, which hangs `\int_0^1` 1.8pt lower than Electron's
+/// and pushes every later line down. This sets `SubscriptBaselineDropMin` in
+/// the PDF's copy of a math font to TeX's value. Other fonts pass unchanged.
+pub fn tex_sub_drop(data: &'static [u8]) -> Vec<u8> {
+    let mut out = data.to_vec();
+    let be16 = |b: &[u8], at: usize| b.get(at..at + 2).map(|s| u16::from_be_bytes([s[0], s[1]]) as usize);
+    let be32 = |b: &[u8], at: usize| b.get(at..at + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize);
+    let Some(tables) = be16(data, 4) else { return out };
+    for i in 0..tables {
+        let rec = 12 + i * 16;
+        if data.get(rec..rec + 4) != Some(b"MATH".as_slice()) {
+            continue;
+        }
+        let (Some(math), Some(upm_head)) = (be32(data, rec + 8), head_upm(data, tables)) else { return out };
+        // MATH header: version (4 bytes), then the MathConstants offset.
+        let Some(constants) = be16(data, math + 4).map(|o| math + o) else { return out };
+        // Four 16-bit fields, then MathValueRecords of 4 bytes each:
+        // MathLeading, AxisHeight, AccentBaseHeight, FlattenedAccentBaseHeight,
+        // SubscriptShiftDown, SubscriptTopMax, SubscriptBaselineDropMin.
+        let at = constants + 8 + 6 * 4;
+        let value = (upm_head as f64 * 0.05 * 0.7).round() as i16;
+        if let Some(slot) = out.get_mut(at..at + 2) {
+            slot.copy_from_slice(&value.to_be_bytes());
+        }
+        return out;
+    }
+    out
+}
+
+/// The font's units per em, from its `head` table.
+fn head_upm(data: &[u8], tables: usize) -> Option<usize> {
+    for i in 0..tables {
+        let rec = 12 + i * 16;
+        if data.get(rec..rec + 4) == Some(b"head".as_slice()) {
+            let off = u32::from_be_bytes(data.get(rec + 8..rec + 12)?.try_into().ok()?) as usize;
+            return data.get(off + 18..off + 20).map(|s| u16::from_be_bytes([s[0], s[1]]) as usize);
+        }
+    }
+    None
+}
 
 static LIBRARY: LazyLock<LazyHash<Library>> = LazyLock::new(|| LazyHash::new(Library::default()));
 

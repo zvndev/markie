@@ -26,3 +26,4 @@ imagesize = "0.13"
 
 [dev-dependencies]
 tempfile.workspace = true
+unicode-normalization = "0.1"

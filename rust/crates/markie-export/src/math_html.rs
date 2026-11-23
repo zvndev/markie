@@ -16,7 +16,24 @@ fn is_math(e: &Element, kind: &str) -> bool {
     e.tag == "code" && e.has_class("language-math") && e.has_class(kind)
 }
 
+/// TeX that KaTeX refuses but markie-math would draw: a bare `$` is a
+/// math-shift character, which KaTeX cannot use inside math.
+pub(crate) fn katex_rejects(tex: &str) -> Option<String> {
+    let mut escaped = false;
+    for (i, c) in tex.char_indices() {
+        match c {
+            '\\' => escaped = !escaped,
+            '$' if !escaped => return Some(format!("KaTeX parse error: Can't use function '$' in math mode at position {}", tex[..i].chars().count() + 1)),
+            _ => escaped = false,
+        }
+    }
+    None
+}
+
 fn svg_markup(tex: &str, display: bool, color: [u8; 4]) -> Result<String, String> {
+    if let Some(message) = katex_rejects(tex) {
+        return Err(message);
+    }
     let style = markie_math::MathStyle { color, font_size_pt: MATH_FONT_PT };
     let rendered = markie_math::render_cached(tex, display, &style);
     match rendered.as_ref() {

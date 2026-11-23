@@ -4,6 +4,7 @@
 #   act.sh <pid> keys '<AppleScript keystroke args>'   e.g. 'keystroke "n" using command down'
 #   act.sh <pid> type '<text>'
 #   act.sh <pid> click <x> <y>        points from the window's top-left corner
+#   act.sh <pid> press <x> <y> <ms>   move there, wait, press, hold <ms>, release
 #   act.sh <pid> minimize
 #   act.sh <pid> resize <w> <h>       window size in points, top-left kept
 #   act.sh <pid> scroll <x> <y> <dy> <count> <gap-ms>
@@ -35,10 +36,11 @@ case "$verb" in
   keys) guard; se "$1" ;;
   type) guard; se "keystroke $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1")" ;;
   click) guard; read -r wx wy < <(bounds); cliclick "c:$((wx + $1)),$((wy + $2))" ;;
+  press) guard; read -r wx wy < <(bounds); x=$((wx + $1)); y=$((wy + $2)); cliclick "m:$x,$y" "w:150" "dd:$x,$y" "w:$3" "du:$x,$y" ;;
   minimize) guard; se "set value of attribute \"AXMinimized\" of window 1 of (first process whose unix id is $pid) to true" ;;
   scroll)
     tool="$here/../../target/bench-tools/postscroll"
-    [[ -x "$tool" ]] || swiftc -O -target arm64-apple-macos13 "$here/../bench/postscroll.swift" -o "$tool" 2>/dev/null
+    [[ -x "$tool" ]] || { mkdir -p "$(dirname "$tool")"; swiftc -O -target arm64-apple-macos13 "$here/../bench/postscroll.swift" -o "$tool"; }
     guard; read -r wx wy < <(bounds); cliclick "m:$((wx + $1)),$((wy + $2))"; "$tool" "$pid" "$3" "$4" "$5" ;;
   resize) guard; se "set size of window 1 of (first process whose unix id is $pid) to {$1, $2}" ;;
   *) echo "act: unknown verb $verb" >&2; exit 64 ;;

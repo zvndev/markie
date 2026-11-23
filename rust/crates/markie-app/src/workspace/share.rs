@@ -59,6 +59,8 @@ pub(super) struct ShareSheet {
     contacts: Vec<ShareContact>,
     pending: Vec<String>,
     query: Entity<InputState>,
+    /// Whether the field shows its placeholder (only with no chips).
+    placeholder_on: bool,
     role: Role,
     menu: Option<Menu>,
     highlight: usize,
@@ -132,6 +134,7 @@ impl Workspace {
             contacts: Vec::new(),
             pending: Vec::new(),
             query: query.clone(),
+            placeholder_on: true,
             role: Role::Viewer,
             menu: None,
             highlight: 0,
@@ -311,6 +314,7 @@ impl Workspace {
             contacts: Vec::new(),
             pending: Vec::new(),
             query: query.clone(),
+            placeholder_on: true,
             role: Role::Viewer,
             menu: None,
             highlight: 0,
@@ -907,6 +911,14 @@ impl Workspace {
         // ring while the field has the caret (in the active window, as
         // Chromium only shows focus there).
         let field_focus = window.is_window_active() && query.read(cx).focus_handle(cx).is_focused(window);
+        // `placeholder={pending.length ? "" : "Add people by email"}`.
+        if let Some(s) = self.collab.share.as_mut()
+            && s.placeholder_on != pending.is_empty()
+        {
+            s.placeholder_on = pending.is_empty();
+            let text = if pending.is_empty() { "Add people by email" } else { "" };
+            query.update(cx, |q, cx| q.set_placeholder(text, window, cx));
+        }
 
         let field = div()
             .id("share-field")
@@ -1293,10 +1305,12 @@ impl Workspace {
         h_flex()
             .id("invite-role")
             .flex_none()
+            // As wide as "Viewer", the longer option (76.75 pt in 0.9.7).
+            .w(px(76.75))
+            .justify_between()
             .h(px(30.))
             .pl(px(12.5))
             .pr(px(4.))
-            .gap(px(13.5))
             .rounded(px(7.))
             .border_1()
             .border_color(if open { mix(p.blue, p.border, 0.72) } else { border })

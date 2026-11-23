@@ -86,7 +86,13 @@ pub fn start(spec: Spec, handle: AnyWindowHandle, workspace: Entity<Workspace>, 
         loop {
             timer(150).await;
             let done = cx
-                .update_window(handle, |_, window, cx| workspace.update(cx, |ws, cx| ws.scene_step(&spec, &mut step, window, cx)))
+                .update_window(handle, |_, window, cx| {
+                    let done = workspace.update(cx, |ws, cx| ws.scene_step(&spec, &mut step, window, cx));
+                    // A hidden window gets no frames of its own: draw here so
+                    // images and other loads a frame starts can finish.
+                    window.draw(cx).clear(cx);
+                    done
+                })
                 .unwrap_or(true);
             if done {
                 break;
@@ -97,7 +103,10 @@ pub fn start(spec: Spec, handle: AnyWindowHandle, workspace: Entity<Workspace>, 
             }
         }
         // Settle: text inputs, images and async answers.
-        timer(spec.args.get("settle").and_then(Value::as_u64).unwrap_or(700)).await;
+        for _ in 0..4 {
+            timer(spec.args.get("settle").and_then(Value::as_u64).unwrap_or(700) / 4).await;
+            let _ = cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx));
+        }
         let image = cx.update_window(handle, |_, window, cx| {
             window.refresh();
             let clear = window.draw(cx);

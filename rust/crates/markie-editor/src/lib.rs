@@ -320,9 +320,10 @@ pub struct RichView {
     heights: Vec<Option<Pixels>>,
     heights_width: Pixels,
     scroll_to_top: Option<(usize, usize)>,
-    /// A picture being resized: its leaf, the x the drag started at and the
-    /// width it started from; `live` is the width while dragging.
-    pub(crate) resize: Option<(Pos, f32, f32)>,
+    /// A picture being resized: its leaf, the x the drag started at, the
+    /// width it started from and which way the corner grows it (+1 for a
+    /// right corner, -1 for a left one); `live` is the width while dragging.
+    pub(crate) resize: Option<(Pos, f32, f32, f32)>,
     pub(crate) live_width: Option<(Pos, f32)>,
     emitted: u64,
     /// A link under a plain click, followed on release (behaviour.rs).
@@ -1124,8 +1125,8 @@ impl RichView {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((start, x0, w0)) = self.resize {
-            let w = (w0 + (f32::from(ev.position.x) - x0) / self.zoom).max(48.);
+        if let Some((start, x0, w0, sign)) = self.resize {
+            let w = (w0 + sign * (f32::from(ev.position.x) - x0) / self.zoom).max(48.);
             self.live_width = Some((start, w));
             cx.notify();
             return;

@@ -468,9 +468,16 @@ impl RichView {
 
         // Paragraph style.
         let style_label = BLOCK_STYLES.iter().find(|(_, s)| Some(*s) == t.style).map(|(l, _)| *l).unwrap_or("Normal text");
+        // formatting-toolbar.tsx: a view-only document's paragraph style is
+        // `disabled={!canEdit}` (35%), reads "Normal text" and opens nothing.
+        let style_label = if can_edit { style_label } else { "Normal text" };
         let w = weak.clone();
         let current = t.style;
-        let style_menu = div().id("rich-style").child(self.select(style_label.into(), if compact { 112. } else { 140. }, cx)).popup_menu_anchored(move |menu, _, _| {
+        let style_select = self.select(style_label.into(), if compact { 112. } else { 140. }, cx);
+        let style_menu = if !can_edit {
+            div().id("rich-style").opacity(0.35).child(style_select.cursor_default()).into_any_element()
+        } else {
+            div().id("rich-style").child(style_select).popup_menu_anchored(move |menu, _, _| {
             let mut menu = menu;
             for (label, style) in BLOCK_STYLES {
                 let w = w.clone();
@@ -479,7 +486,8 @@ impl RichView {
                 }));
             }
             menu
-        });
+        }).into_any_element()
+        };
 
         // Font: the selection's when there is one, else the document's.
         let font_label = if selecting {
@@ -601,7 +609,7 @@ impl RichView {
                 menu
             });
 
-        let mut style_menu = Some(style_menu.into_any_element());
+        let mut style_menu = Some(style_menu);
         let mut font_menu = Some(font_menu.into_any_element());
         let mut size_field = Some(size_field.into_any_element());
         let mut colour_menu = Some(colour_menu.into_any_element());
@@ -1069,7 +1077,10 @@ impl RichView {
         let started = std::time::Instant::now();
         self.source_mode = false;
         let outside = std::mem::take(&mut self.toolbar_outside);
-        let toolbar = (!self.read_only && !outside).then(|| self.render_toolbar(window, cx));
+        // A view-only share keeps the toolbar, its editing controls greyed
+        // (rich-view.tsx draws MarkdownToolbar with `readOnly`); zoom,
+        // print, history and the theme font still work.
+        let toolbar = (!outside).then(|| self.render_toolbar(window, cx));
         let prompt = self.render_prompt(cx);
         let doc = self.render_document(window, cx);
         let find = self.render_find(cx);

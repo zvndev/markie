@@ -448,6 +448,8 @@ pub(super) fn landing_base() -> PathBuf {
     }
 }
 
+const LIVE_DOC_MISSING: &str = "This document has no Live Doc address on its server yet.";
+
 pub(super) fn landing_dir() -> std::io::Result<PathBuf> {
     landing_dir_at(landing_base())
 }
@@ -1052,11 +1054,16 @@ impl Workspace {
     /// (server/src/live-docs.ts), asked of the document's own server with
     /// the account it is bound to (library.tsx `copyLiveDoc`, `openLiveDoc`).
     pub(super) fn live_doc_address(&mut self, path: &Path, open: bool, window: &mut Window, cx: &mut Context<Self>) {
-        const MISSING: &str = "This document has no Live Doc address on its server yet.";
         let Some((scope, id)) = self.cloud.binding_key(path).and_then(|key| self.cloud.bound_scope(&key)) else {
-            window.push_notification(MISSING, cx);
+            window.push_notification(LIVE_DOC_MISSING, cx);
             return;
         };
+        self.live_doc_address_for(scope, id, open, window, cx);
+    }
+
+    /// The same for a document known by its cloud id on `scope`'s server.
+    pub(super) fn live_doc_address_for(&mut self, scope: Scope, id: String, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        const MISSING: &str = LIVE_DOC_MISSING;
         cx.spawn_in(window, async move |_, cx| {
             let address = network(async move { markie_cloud::sharing::SharesClient::new(&scope.client).live_doc_address(&id).await.ok() })
                 .await

@@ -149,6 +149,10 @@ pub(super) struct Shell {
     pub stars: HashSet<PathBuf>,
     /// The Library row whose ⋯ menu is open, and where.
     pub row_menu: Option<(PathBuf, Point<Pixels>)>,
+    /// A Cloud page row with no file here whose ⋯ menu is open, and where.
+    pub cloud_row_menu: Option<(super::library_rows::CloudRow, Point<Pixels>)>,
+    /// The focused item of the open row menu (`FileMenu` focuses the first).
+    pub row_menu_focus: usize,
     pub search_open: bool,
     pub search: Library,
     search_input: Entity<InputState>,
@@ -227,6 +231,8 @@ impl Shell {
             browse_full_path: false,
             stars: HashSet::new(),
             row_menu: None,
+            cloud_row_menu: None,
+            row_menu_focus: 0,
             search_open: false,
             search,
             search_input,
@@ -1256,7 +1262,7 @@ impl Workspace {
                             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 let at = ev.position();
-                                this.open_row_menu(menu_path.clone(), point(at.x - px(10.), at.y + px(12.)), cx);
+                                this.open_row_menu(menu_path.clone(), point(at.x - px(10.), at.y + px(14.)), cx);
                             })),
                     ),
             )

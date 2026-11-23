@@ -91,8 +91,6 @@ enum Stage {
     Claiming,
     /// The room is the document.
     Ready,
-    /// A viewer in an empty room: the synced copy stays on screen.
-    ShowFile,
 }
 
 struct Live {
@@ -640,9 +638,7 @@ impl Workspace {
                 }
                 if readonly {
                     // A viewer is not an author: the synced copy stays on screen.
-                    live.stage = Stage::ShowFile;
-                    self.apply_lock(cx);
-                    return;
+                    return self.live_empty(cx);
                 }
                 let r = self.rich.read(cx);
                 if r.editor.doc.nodes().is_empty() || r.markdown().trim().is_empty() {
@@ -662,9 +658,7 @@ impl Workspace {
                     return self.live_ready(false, cx);
                 }
                 if readonly {
-                    live.stage = Stage::ShowFile;
-                    self.apply_lock(cx);
-                    return;
+                    return self.live_empty(cx);
                 }
                 let local = self.editor.read(cx).value().to_string();
                 if !local.is_empty() {
@@ -731,6 +725,18 @@ impl Workspace {
         self.live_presence(cx);
         self.live_selection(cx);
         self.cloud_comments_open(cx);
+        cx.notify();
+    }
+
+    /// A viewer in a room no editor has written yet (page.tsx's "empty"):
+    /// the synced copy is the document, so the session ends without a note
+    /// and the title bar shows no Live until the next document opens. The
+    /// role still locks the pane and the banner still says whose it is.
+    fn live_empty(&mut self, cx: &mut Context<Self>) {
+        debug(|| "viewer in an empty room: the synced copy stays".into());
+        self.collab.live_unavailable = true;
+        self.stop_live(cx);
+        self.apply_lock(cx);
         cx.notify();
     }
 
@@ -985,8 +991,13 @@ impl Workspace {
                 bar().child(
                     h_flex()
                         .gap(px(8.))
-                        .when(kind == BannerKind::ViewOnly, |el| el.child(div().text_size(px(12.)).child("👁")))
-                        .child(div().min_w_0().truncate().text_size(px(11.)).text_color(p.muted).child(message))
+                        // `text-[12px] leading-none` 👁: Chromium draws it about 11 pt wide;
+                        // GPUI's colour emoji comes out a third larger at the same
+                        // size, so 9 px draws Electron's glyph and keeps the text where
+                        // Electron puts it.
+                        .when(kind == BannerKind::ViewOnly, |el| el.child(div().text_size(px(9.)).line_height(px(12.)).child("👁")))
+                        // 11 px on the page's 1.5 line height, as the strip's text and button inherit it.
+                        .child(div().min_w_0().truncate().text_size(px(11.)).line_height(px(16.5)).text_color(p.muted).child(message))
                         .when(kind == BannerKind::ViewOnly, |el| {
                             el.child(
                                 no_drag(div().id("make-copy"))
@@ -998,6 +1009,7 @@ impl Workspace {
                                     .px(px(8.))
                                     .py(px(2.))
                                     .text_size(px(11.))
+                                    .line_height(px(16.5))
                                     .text_color(p.muted)
                                     .hover(|s| s.text_color(p.foreground))
                                     .cursor_pointer()

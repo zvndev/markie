@@ -79,7 +79,7 @@ This key is separate from the Sign in with Apple key (`APPLE_PRIVATE_KEY`).
 2. In the project, press the Android icon to add an app. The package name is
    `com.zvn.markie.mobile`.
 3. Download `google-services.json`. Put it at `apps/mobile/android/app/google-services.json`. It
-   is not a secret, but it is not in the repo: the Android build works with or without it.
+   is not a secret. Commit it or keep it local: the Android build works with or without it.
 4. Open **Project settings**, then **Service accounts**. Press **Generate new private key**. The
    downloaded JSON file is `FCM_SERVICE_ACCOUNT`.
 5. Still in **Project settings**, open **Cloud Messaging** and check that **Firebase Cloud

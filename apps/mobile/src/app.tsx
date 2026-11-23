@@ -24,6 +24,7 @@ import { createSessionStore, type SecureKeyValue, type StoredSession } from "./l
 import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
 import { loadThemeMode, paintTone, resolveTone, saveThemeMode, systemPrefersDark, type ThemeMode } from "./lib/theme-mode";
 import { openExternal, setSystemBars } from "./lib/native";
+import { pushController } from "./lib/push";
 import { Navigator, type StackEntry } from "./components/navigator";
 import { SignInScreen } from "./screens/sign-in";
 import { clearRecentCache, RecentScreen } from "./screens/recent";
@@ -82,6 +83,7 @@ function pendingStorage(): Storage | null {
 
 export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const sessionStore = useMemo(() => createSessionStore(secure), [secure]);
+  const push = useMemo(() => pushController(), []);
   // undefined while the Keychain is read at launch.
   const [session, setSession] = useState<StoredSession | null | undefined>(undefined);
   const sessionRef = useRef<StoredSession | null | undefined>(undefined);
@@ -160,13 +162,18 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const apiIdentity = session ? `${session.origin}|${session.userId}|${session.email}` : null;
   const api = useMemo(() => {
     if (!apiIdentity || !sessionRef.current) return null;
-    return createApiClient({
+    // push.watch: the same client, asking about notifications once, after a
+    // first comment or share goes through (src/lib/push.ts).
+    return push.watch(createApiClient({
       origin: sessionRef.current.origin,
       transport,
       getToken: () => sessionRef.current?.token ?? null,
       onTokenRotated: persistRotatedToken,
-    });
-  }, [apiIdentity, transport, persistRotatedToken]);
+    }));
+  }, [apiIdentity, transport, persistRotatedToken, push]);
+  // Push: this phone is filed under whoever is signed in, and under nobody
+  // once they are not.
+  useEffect(() => { push.setApi(api); }, [push, api]);
 
   const openTarget = useCallback((target: LinkTarget, { replaceStack = false, name, sharedBy = null }: { replaceStack?: boolean; name?: string; sharedBy?: string | null } = {}) => {
     const current = sessionRef.current;
@@ -242,12 +249,15 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
 
   // A tapped push notification carries a Markie link. This is the one place
   // it enters the app, and it takes the same road as a link from outside, so
-  // sign-in, the pending link and the server pin all apply to it. Nothing
-  // calls it yet: the push work subscribes here and nowhere else.
+  // sign-in, the pending link and the server pin all apply to it. The push
+  // listener (src/lib/push.ts) subscribes here and nowhere else.
   const openPushLink = useCallback((link: string) => handleIncomingUrl(link), [handleIncomingUrl]);
-  void openPushLink;
 
   const sessionKnown = session !== undefined;
+  useEffect(() => {
+    if (!native || !sessionKnown) return;
+    return push.start(openPushLink);
+  }, [native, sessionKnown, push, openPushLink]);
   useEffect(() => {
     if (!native || !sessionKnown) return;
     let removed = false;
@@ -344,8 +354,10 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     await endSession(null);
     if (!ending) return;
     const courtesy = createApiClient({ origin: ending.origin, transport, getToken: () => ending.token });
+    // Push: take this phone off the server while the ending session can still ask.
+    await push.signOut(courtesy);
     void courtesy.signOut({ timeoutMs: SERVER_SIGN_OUT_TIMEOUT_MS }).catch(() => undefined);
-  }, [endSession, transport]);
+  }, [endSession, transport, push]);
 
   const signedIn = useCallback(async ({ origin, token, user }: { origin: string; token: string; user: ApiUser }) => {
     const next: StoredSession = { origin, token, email: user.email, name: user.name, userId: user.id };
@@ -434,7 +446,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     if (route.kind === "settings") {
       return {
         key: route.key,
-        node: <SettingsScreen session={session} themeMode={themeMode} onThemeMode={setThemeMode} onSignOut={signOut} onBack={pop} />,
+        node: <SettingsScreen session={session} themeMode={themeMode} onThemeMode={setThemeMode} push={push} onSignOut={signOut} onBack={pop} />,
       };
     }
     if (route.kind === "new") {

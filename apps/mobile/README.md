@@ -76,7 +76,7 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./android/gradlew -p android assembleDebu
 ## Test
 
 ```sh
-npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, mock server, CSP
+npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, mock server, CSP, push
 npm run typecheck
 ```
 
@@ -192,6 +192,21 @@ Try it on a simulator: copy a file into the app's data container under `Document
   with the session token, never cached, and shown as a `blob:` URL. A public share's pictures come from
   the share's own asset route. Video and audio beside the document are not fetched on a phone.
 
+## Push notifications
+
+The app is told when somebody comments on a document: `src/lib/push.ts` on the phone,
+`server/src/devices.ts` and `server/src/push.ts` on the server. What is sent, the server's
+settings, and where each secret comes from are in `docs/mobile/PUSH.md`.
+
+- Permission is asked once, after a first comment, reply or share, never at launch. Settings has
+  the switch after that.
+- A tapped notification's link goes through the same entry point as any other link (`openPushLink`
+  in `src/app.tsx`), and carries the thread as `?thread=<id>`.
+- Push is off until the server has its keys. The Android app builds and runs with no
+  `android/app/google-services.json`, and never calls Firebase without it
+  (`PushAvailabilityPlugin.java`).
+- In a desktop browser every push call does nothing.
+
 ## Ship checklist (owner)
 
 Each step needs a person with the account. Current status, and what is still left, is in
@@ -200,7 +215,8 @@ Each step needs a person with the account. Current status, and what is still lef
 Signing and identity:
 
 1. In the Apple Developer account for team `3VU8SG5TD9`, register the App ID `com.zvn.markie.mobile`
-   with the Associated Domains capability.
+   with the Associated Domains and Push Notifications capabilities. The build carries the
+   `aps-environment` entitlement, so signing fails without the second one.
 2. In Xcode, open `ios/App/App.xcodeproj`, choose the team, and let Xcode manage signing.
    Set the version and build number.
 3. Create an Android upload keystore and keep it out of the repo. Configure release signing
@@ -228,7 +244,8 @@ Store setup:
 
 9. Create the App Store Connect record and the Play Console app. See `docs/mobile/STORE-SETUP.md`.
 10. Privacy: the app collects an email address for sign-in and stores a session token on the device.
-    It has no analytics and no tracking.
+    If the person turns notifications on, the server also keeps the phone's push token until they
+    sign out or turn them off. It has no analytics and no tracking.
 11. Screenshots for the listings can start from `screenshots/`, retaken on the required device sizes.
 12. Upload to TestFlight and an internal Play track first. Test sign-in, a universal link,
     an app link and a Darkmown document on real phones before any public release.

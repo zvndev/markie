@@ -6,12 +6,15 @@ import type { StoredSession } from "../lib/session";
 import { isMarkieCloud, serverLabel } from "../lib/server-origin";
 import { haptics } from "../lib/native";
 import type { ThemeMode } from "../lib/theme-mode";
+import type { PushController, PushState } from "../lib/push";
 import { Screen } from "../components/screen";
 
 interface SettingsProps {
   session: StoredSession;
   themeMode: ThemeMode;
   onThemeMode: (mode: ThemeMode) => void;
+  /** Push notifications. Absent, or unavailable on this build, shows no rows. */
+  push?: PushController;
   onSignOut: () => Promise<void>;
   onBack: () => void;
 }
@@ -22,10 +25,43 @@ const MODES: { value: ThemeMode; label: string }[] = [
   { value: "dark", label: "Dark" },
 ];
 
-export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onBack }: SettingsProps) {
+/** The sentence under the Notifications rows: what is on, or why it cannot be. */
+export function pushFooter(state: PushState): string {
+  if (state.permission === "denied") return "Notifications are off for Markie in your phone's settings. Turn them on there, then here.";
+  if (!state.enabled) return "Markie can tell you when someone comments on a document you own or took part in.";
+  if (state.delivers === false) return "This server doesn't send notifications yet.";
+  return state.showNames
+    ? "A notification says who commented and on which document. It never includes the comment."
+    : "A notification says who commented. It never includes the comment or the document's name.";
+}
+
+export function SettingsScreen({ session, themeMode, onThemeMode, push, onSignOut, onBack }: SettingsProps) {
   const [version, setVersion] = useState<string>(__MARKIE_MOBILE_VERSION__);
   const [confirming, setConfirming] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [pushState, setPushState] = useState<PushState | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    if (!push) return;
+    let live = true;
+    void push.state().then((state) => { if (live) setPushState(state); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [push]);
+
+  const changePush = async (change: (controller: PushController) => Promise<PushState>) => {
+    if (!push || pushBusy) return;
+    haptics.selection();
+    setPushBusy(true);
+    try {
+      setPushState(await change(push));
+    } catch {
+      // The rows keep what they showed.
+    } finally {
+      setPushBusy(false);
+    }
+  };
+  const pushOn = !!pushState && pushState.enabled && pushState.permission === "granted";
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -74,6 +110,41 @@ export function SettingsScreen({ session, themeMode, onThemeMode, onSignOut, onB
           ))}
         </div>
       </div>
+
+      {pushState?.available ? (
+        <>
+          <h2 className="m-group-heading">Notifications</h2>
+          <div className="m-group">
+            <div className="m-group-row">
+              <span className="m-group-label" id="m-push-comments">Comments and replies</span>
+              <button
+                type="button"
+                role="switch"
+                className="m-switch"
+                aria-checked={pushOn}
+                aria-labelledby="m-push-comments"
+                disabled={pushBusy}
+                onClick={() => void changePush((controller) => (pushOn ? controller.disable() : controller.enable()))}
+              />
+            </div>
+            {pushOn ? (
+              <div className="m-group-row">
+                <span className="m-group-label" id="m-push-names">Show document names</span>
+                <button
+                  type="button"
+                  role="switch"
+                  className="m-switch"
+                  aria-checked={pushState.showNames}
+                  aria-labelledby="m-push-names"
+                  disabled={pushBusy}
+                  onClick={() => void changePush((controller) => controller.setShowNames(!pushState.showNames))}
+                />
+              </div>
+            ) : null}
+          </div>
+          <p className="m-group-footer">{pushFooter(pushState)}</p>
+        </>
+      ) : null}
 
       <h2 className="m-group-heading">About</h2>
       <div className="m-group">

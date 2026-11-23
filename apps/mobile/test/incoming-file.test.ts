@@ -21,6 +21,15 @@ describe("incoming file URLs", () => {
   });
 });
 
+describe("a file whose URL doesn't hold its name", () => {
+  it("takes the name the device reports, with nothing path-like left in it", async () => {
+    const fetched = async () => bytes("# Plan\n");
+    expect(await readIncomingFile("content://media/external/file/1234", fetched, "Trip plan.md")).toMatchObject({ name: "Trip plan.md", format: "markdown" });
+    expect((await readIncomingFile("content://media/external/file/1234", fetched, "../../etc/notes.md")).name).toBe(".. .. etc notes.md");
+    expect((await readIncomingFile("content://media/external/file/1234", fetched, null)).name).toBe("Shared file.txt");
+  });
+});
+
 describe("decoding what arrives", () => {
   it("keeps text files as they are", async () => {
     expect(await decodeIncomingFile("Plan.md", bytes("# Plan\n"))).toEqual({ name: "Plan.md", format: "markdown", content: "# Plan\n", convertedFrom: null });

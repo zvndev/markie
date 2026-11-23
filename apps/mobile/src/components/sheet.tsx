@@ -16,9 +16,11 @@ interface SheetProps {
   /** Fills most of the screen rather than fitting its content. */
   tall?: boolean;
   className?: string;
+  /** The word on the button that closes it. "Done" unless closing leaves something undecided. */
+  closeLabel?: string;
 }
 
-export function Sheet({ title, onClose, children, accessory, tall = false, className = "" }: SheetProps) {
+export function Sheet({ title, onClose, children, accessory, tall = false, className = "", closeLabel = "Done" }: SheetProps) {
   const keyboard = useKeyboardInset();
   const titleId = useId();
   const layer = useContext(StackItemContext);
@@ -54,7 +56,7 @@ export function Sheet({ title, onClose, children, accessory, tall = false, class
         <header className="m-sheet-head">
           <h2 id={titleId}>{title}</h2>
           {accessory}
-          <button type="button" className="m-nav-text m-nav-text-strong" onClick={onClose}>Done</button>
+          <button type="button" className="m-nav-text m-nav-text-strong" onClick={onClose}>{closeLabel}</button>
         </header>
         <div className="m-sheet-body">{children}</div>
       </section>

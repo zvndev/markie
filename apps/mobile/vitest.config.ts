@@ -9,6 +9,10 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("../../src", import.meta.url)) },
     dedupe: ["react", "react-dom"],
   },
+  // The shared renderer lives at the repo root, and some of it is imported as
+  // raw text (the pinned Darkmown interpreter), which Vite serves only from
+  // folders it is allowed to read.
+  server: { fs: { allow: [fileURLToPath(new URL("../..", import.meta.url))] } },
   test: {
     environment: "node",
     include: ["test/**/*.test.ts"],

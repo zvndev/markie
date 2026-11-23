@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The FileProvider Capacitor's share plugin and web view expect to find.
-     The app shares links only and has no file inputs, so nothing is written
-     here today. If that changes, it is one folder in the app's own cache,
-     never external storage or the whole cache. -->
+     One folder in the app's own cache, never external storage or the whole
+     cache. A document exported for the share sheet is written there
+     (src/lib/native.ts SHARE_FOLDER), and removed when the share is done and
+     at the next launch. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="shared" path="shared/" />
 </paths>

@@ -26,6 +26,8 @@ class MarkieBridgeViewController: CAPBridgeViewController {
         URLCache.shared.removeAllCachedResponses()
         URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0, directory: nil)
         super.capacitorDidLoad()
+        // The app's own plugin: a document printed to a PDF file (MarkiePdfPlugin.swift).
+        bridge?.registerPluginInstance(MarkiePdfPlugin())
         guard let handler = (bridge as? CapacitorBridge)?.webViewDelegationHandler else { return }
         let controller = handler.contentController
         controller.removeScriptMessageHandler(forName: "bridge")

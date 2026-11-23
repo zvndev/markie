@@ -7,7 +7,7 @@ import { DocumentFormatMark } from "@/components/document-format-mark";
 import { ApiError, documentErrorCopy, type ApiClient, type AssetSource } from "../lib/api";
 import { classifyDocumentLink, type LinkTarget } from "../lib/deep-links";
 import { canEditDoc, markFormat, originLabel, type CloudDoc } from "../lib/docs";
-import { openExternal, openSystemUrl, shareLink } from "../lib/native";
+import { openExternal, openSystemUrl } from "../lib/native";
 import { serverLabel } from "../lib/server-origin";
 import { displayName, timeLabel } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
@@ -15,7 +15,8 @@ import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
-import { ShareSheet } from "../components/share-sheet";
+import { ExportSheet, ShareSheet } from "../components/share-sheet";
+import { docExportSource } from "../lib/export";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
 import type { ShareMember } from "../lib/api";
@@ -123,7 +124,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
         </button>
       ) : null}
       {doc.publicToken ? (
-        <button type="button" className="m-nav-icon" aria-label="Share link" onClick={() => void shareLink(displayName(doc.name), doc.privateLink)}>
+        <button type="button" className="m-nav-icon" aria-label="Share" onClick={() => setSharing(true)}>
           <ShareIcon size={23} />
         </button>
       ) : (
@@ -171,6 +172,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           owner={owner ? null : sharedBy}
           me={me}
           link={doc.privateLink}
+          exportSource={docExportSource(doc, loadAsset)}
           onClose={() => setSharing(false)}
           onUnauthorized={onUnauthorized}
           onChanged={() => {
@@ -179,6 +181,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           }}
         />
       ) : null}
+      {sharing && doc && target.kind !== "doc" ? <ExportSheet title={doc.name} link={doc.privateLink} source={docExportSource(doc, loadAsset)} onClose={() => setSharing(false)} /> : null}
     </Screen>
   );
 }

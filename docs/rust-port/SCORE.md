@@ -1,6 +1,6 @@
 # Markie RS parity score
 
-The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX).
+The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move).
 
 ## Overall
 
@@ -23,6 +23,7 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
   - dark text on highlights in dark mode;
   - a code block's language label while the cursor is in it;
   - the title-bar palette button opens a template menu, where Electron opens Settings;
+  - Browse as a page: "Documents on this Mac" with a folder tree, the chosen folder's contents, a breadcrumb, counts, the last check, and matches shown with their folder (library 3.1). Numbers are unchanged: the row was PASS;
   - the vault's calmer layout, Touch ID first unlock, icon row actions and copy countdown (office 22.374, 22.375, 22.376, 22.378). Numbers are unchanged: these rows were PASS.
 - **Excluded:** the database layout (library 2.2, 2.3, 2.8) and the crash report file format (office 27.427, 27.431).
 - **Nightly-only features are out of the stable score** (EXCLUDED-NIGHTLY), as each audit already applied. Local comments (cloud 12.2, 12.2.1) were rescored on that rule.

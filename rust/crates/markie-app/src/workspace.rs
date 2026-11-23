@@ -21,7 +21,7 @@ use markie_core::document::{self, Content};
 use markie_core::drafts::{Draft, Drafts};
 use markie_core::history::{History, Version, Writer};
 use markie_core::formats::{FormatKind, TextEncoding};
-use markie_core::index::{ScanOptions, scan};
+use markie_core::index::ScanOptions;
 use markie_core::registry::Registry;
 use markie_core::{outline, paths, stats};
 
@@ -600,12 +600,30 @@ impl Workspace {
             .unwrap_or_default();
         let opts = device_scan_options(roots);
         let db_path = self.registry.is_some().then(|| paths::data_dir().join("registry.db"));
+        // Browse shows the walk moving: how many documents it has found so far.
+        let found = self.shell.browse.found.clone();
+        found.store(0, std::sync::atomic::Ordering::Relaxed);
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+                let scanning = this.update(cx, |this, cx| {
+                    if this.library.scanning && this.browse_page_open() {
+                        cx.notify();
+                    }
+                    this.library.scanning
+                });
+                if !scanning.unwrap_or(false) {
+                    break;
+                }
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             // Scan, save and prepare off the main thread: saving serializes
             // every row, and the search keys lowercase every name and path.
             let prepared = cx
                 .background_spawn(async move {
-                    let snapshot = scan(&opts);
+                    let snapshot = markie_core::index::scan_counting(&opts, Some(&found));
                     if let Some(reg) = db_path.and_then(|p| Registry::open(&p).ok()) {
                         let _ = reg.save_snapshot(&snapshot);
                     }
@@ -749,7 +767,8 @@ impl Workspace {
                 }
                 self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind, untitled: false });
                 self.load_appearance();
-                if self.shell.view == rail::LeftView::Cloud {
+                // A page covers the document: opening one from it leaves the page.
+                if matches!(self.shell.view, rail::LeftView::Cloud | rail::LeftView::Browse) {
                     self.shell.panel_open = false;
                 }
                 self.dirty = false;

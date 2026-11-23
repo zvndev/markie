@@ -31,7 +31,7 @@ use markie_vault::{DeviceFailure, FileVaultStorage, StorageErrorCode, VaultEntry
 
 use super::Workspace;
 
-mod ui;
+pub(super) mod ui;
 use ui::{CopyFeedback, Escape, EscapeState, Shortcut, escape_target, shows_search};
 
 pub const IDLE_LOCK: Duration = Duration::from_secs(5 * 60);

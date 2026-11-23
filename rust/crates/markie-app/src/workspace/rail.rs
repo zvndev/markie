@@ -7,7 +7,6 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::time::Instant;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -24,6 +23,9 @@ use crate::actions::*;
 use crate::icons;
 use crate::library::{Library, LibraryTab, SortOrder};
 use crate::themes::{self, Palette, mix};
+
+mod browse;
+mod browse_page;
 
 pub(super) const RAIL_WIDTH: f32 = 52.;
 const PANEL_DEFAULT_WIDTH: f32 = 252.;
@@ -74,12 +76,12 @@ impl LeftView {
     }
 
     fn has_panel(self) -> bool {
-        matches!(self, LeftView::Library | LeftView::Browse | LeftView::Skills)
+        matches!(self, LeftView::Library | LeftView::Skills)
     }
 
-    /// Cloud and the Vault take the document area over instead of a panel.
+    /// Browse, Cloud and the Vault take the document area over instead of a panel.
     fn takes_workspace(self) -> bool {
-        matches!(self, LeftView::Cloud | LeftView::Vault | LeftView::LiveDocs)
+        matches!(self, LeftView::Browse | LeftView::Cloud | LeftView::Vault | LeftView::LiveDocs)
     }
 }
 
@@ -94,16 +96,6 @@ pub(super) enum FilterMenu {
     RecentType,
     RecentSort,
     BrowseType,
-}
-
-/// One row of Browse's folder tree, flattened for the list: a folder, a
-/// file under an open folder, or a capped folder's "Show N more". `depth`
-/// draws the hairlines Electron's nested `ml-[6px] border-l pl-[5px]` draws.
-#[derive(Clone)]
-pub(super) enum BrowseRow {
-    Folder { dir: PathBuf, label: SharedString, count: usize, open: bool, depth: usize },
-    File { hit: usize, depth: usize },
-    More { dir: PathBuf, hidden: usize, depth: usize },
 }
 
 /// Everything the chrome keeps between frames.
@@ -131,20 +123,8 @@ pub(super) struct Shell {
     filter_closed: Option<(FilterMenu, Instant)>,
     pub recent: Library,
     recent_filter: Entity<InputState>,
-    browse_filter: Entity<InputState>,
-    /// Folders the person opened and closed by hand (`OpenedByHand`); until
-    /// they touch one, the tree opens to its first branching level.
-    browse_open: HashSet<PathBuf>,
-    browse_closed: HashSet<PathBuf>,
-    browse_touched: bool,
-    /// What is open in the rows as drawn, ancestors included.
-    browse_open_now: HashSet<PathBuf>,
-    /// A filter holds the tree open to its matches.
-    browse_forced: bool,
-    /// Folders whose 200-row cap was lifted, for this list only.
-    browse_revealed: HashSet<PathBuf>,
-    browse_rows: Option<Rc<Vec<BrowseRow>>>,
-    browse_full_path: bool,
+    /// Browse: the page of documents on this Mac.
+    pub browse: browse::BrowseState,
     /// Starred files and folders (Browse's ☆).
     pub stars: HashSet<PathBuf>,
     /// The Library row whose ⋯ menu is open, and where.
@@ -167,7 +147,7 @@ impl Shell {
         cx: &mut Context<Workspace>,
     ) -> (Self, Vec<Subscription>) {
         let recent_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by name or folder"));
-        let browse_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search name, path, or text…"));
+        let browse_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Find a document by name, folder or text"));
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search every document by name or what it says…"));
         let subs = vec![
@@ -181,9 +161,7 @@ impl Shell {
             cx.subscribe(&browse_filter, |this, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     let text = state.read(cx).value().to_string();
-                    this.library.set_text(&text);
-                    this.shell.browse_rows = None;
-                    cx.notify();
+                    this.browse_text_changed(&text, cx);
                 }
             }),
             cx.subscribe(&search_input, |this, state, event: &InputEvent, cx| {
@@ -220,15 +198,7 @@ impl Shell {
             filter_closed: None,
             recent,
             recent_filter,
-            browse_filter,
-            browse_open: HashSet::new(),
-            browse_closed: HashSet::new(),
-            browse_touched: false,
-            browse_open_now: HashSet::new(),
-            browse_forced: false,
-            browse_revealed: HashSet::new(),
-            browse_rows: None,
-            browse_full_path: false,
+            browse: browse::BrowseState::new(browse_filter),
             stars: HashSet::new(),
             row_menu: None,
             cloud_row_menu: None,
@@ -243,7 +213,7 @@ impl Shell {
 
     /// The index changed: Browse groups again on the next frame.
     pub(super) fn invalidate_browse(&mut self) {
-        self.browse_rows = None;
+        self.browse.view = None;
     }
 
     /// The formatting rail is the chosen view (the editor reads this).
@@ -379,55 +349,6 @@ impl Workspace {
         cx.notify();
     }
 
-    fn clear_browse_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.library.set_only_format(None);
-        self.shell.browse_filter.update(cx, |s, cx| s.set_value("", window, cx));
-        self.shell.browse_rows = None;
-        cx.notify();
-    }
-
-    /// A chevron click (browse-view.tsx `toggle`). While a filter holds the
-    /// tree open it does nothing; otherwise what is open now becomes the
-    /// remembered set, so a folder opened for a remembered child stays open.
-    fn toggle_folder(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
-        if self.shell.browse_forced {
-            return;
-        }
-        let mut open = self.shell.browse_open_now.clone();
-        let mut closed = self.shell.browse_closed.clone();
-        if open.remove(&dir) {
-            closed.insert(dir);
-        } else {
-            closed.remove(&dir);
-            open.insert(dir);
-        }
-        self.shell.browse_open = open;
-        self.shell.browse_closed = closed;
-        self.shell.browse_touched = true;
-        self.persist_browse_open();
-        self.shell.browse_rows = None;
-        cx.notify();
-    }
-
-    fn persist_browse_open(&self) {
-        let Some(reg) = &self.registry else { return };
-        let list = |set: &HashSet<PathBuf>| set.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>();
-        let value = serde_json::json!({ "open": list(&self.shell.browse_open), "closed": list(&self.shell.browse_closed) });
-        let _ = reg.set_setting(BROWSE_OPEN_KEY, &value.to_string());
-    }
-
-    /// The folders opened by hand in an earlier session.
-    pub(super) fn restore_browse_open(&mut self) {
-        let Some(raw) = self.registry.as_ref().and_then(|r| r.setting(BROWSE_OPEN_KEY).ok().flatten()) else { return };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
-        let set = |key: &str| -> HashSet<PathBuf> {
-            value.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|p| p.as_str().map(PathBuf::from)).collect()).unwrap_or_default()
-        };
-        self.shell.browse_open = set("open");
-        self.shell.browse_closed = set("closed");
-        self.shell.browse_touched = true;
-    }
-
     /// The width saved by an earlier session.
     pub(super) fn restore_panel_width(&mut self, window: &Window) {
         let raw = self.registry.as_ref().and_then(|r| r.setting(PANEL_WIDTH_KEY).ok().flatten());
@@ -496,77 +417,6 @@ impl Workspace {
                 cx.notify();
             }))
             .child(div().absolute().top_0().bottom_0().left(px(3.)).w(px(1.)).bg(line))
-    }
-
-    fn reveal_folder(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
-        self.shell.browse_revealed.insert(dir);
-        self.shell.browse_rows = None;
-        cx.notify();
-    }
-
-    /// Build Browse's tree and flatten what is open. Runs only after the
-    /// index, the filter, the sort or an open folder changed, never per frame.
-    pub(super) fn ensure_browse_rows(&mut self) {
-        use super::folder_tree::{self as tree, FileEntry, FolderNode};
-        if self.shell.browse_rows.is_some() || !(self.shell.panel_open && self.shell.view == LeftView::Browse) {
-            return;
-        }
-        let entries: Vec<FileEntry> = self
-            .library
-            .hits()
-            .iter()
-            .enumerate()
-            .map(|(i, hit)| {
-                let doc = self.library.doc(hit);
-                FileEntry { hit: i, name: doc.name.clone(), dir: doc.dir.clone(), mtime_ms: doc.mtime_ms }
-            })
-            .collect();
-        let mut nodes = tree::build_folder_tree(entries);
-        if self.library.sort == SortOrder::Recent {
-            tree::sort_by_updated(&mut nodes);
-        }
-        let filtering = !self.library.text().trim().is_empty() || self.library.only_format().is_some();
-        let forced = (filtering && tree::count_nodes(&nodes) <= 200).then(|| tree::paths_to_files(&nodes));
-        let open = if self.shell.browse_touched {
-            tree::open_with_ancestors(&self.shell.browse_open, &self.shell.browse_closed, &nodes)
-        } else {
-            tree::initial_open_set(&nodes)
-        };
-        let home = markie_core::paths::home_dir();
-        let mut rows = Vec::new();
-        fn walk(node: &FolderNode, label: Option<String>, depth: usize, open: &HashSet<PathBuf>, forced: Option<&HashSet<PathBuf>>, revealed: &HashSet<PathBuf>, rows: &mut Vec<BrowseRow>) {
-            let is_open = forced.map_or_else(|| open.contains(&node.path), |f| f.contains(&node.path));
-            rows.push(BrowseRow::Folder {
-                dir: node.path.clone(),
-                label: label.unwrap_or_else(|| node.label.clone()).into(),
-                count: node.total,
-                open: is_open,
-                depth,
-            });
-            if !is_open {
-                return;
-            }
-            let capped = !revealed.contains(&node.path) && node.files.len() + node.children.len() > tree::ROW_CAP;
-            let files = if capped { &node.files[..node.files.len().min(tree::ROW_CAP)] } else { &node.files[..] };
-            let room = if capped { tree::ROW_CAP.saturating_sub(node.files.len()) } else { node.children.len() };
-            let children = &node.children[..node.children.len().min(room)];
-            rows.extend(files.iter().map(|f| BrowseRow::File { hit: f.hit, depth: depth + 1 }));
-            for c in children {
-                walk(c, None, depth + 1, open, forced, revealed, rows);
-            }
-            let hidden = node.files.len() + node.children.len() - files.len() - children.len();
-            if hidden > 0 {
-                rows.push(BrowseRow::More { dir: node.path.clone(), hidden, depth: depth + 1 });
-            }
-        }
-        for node in &nodes {
-            // The root prints as a path; every level below is located by its parent.
-            let label = compact_home(&node.path, &home, self.shell.browse_full_path);
-            walk(node, Some(label), 0, &open, forced.as_ref(), &self.shell.browse_revealed, &mut rows);
-        }
-        self.shell.browse_forced = forced.is_some();
-        self.shell.browse_open_now = open;
-        self.shell.browse_rows = Some(Rc::new(rows));
     }
 
     /// Browse's ☆ on a file or folder row.
@@ -707,7 +557,10 @@ impl Workspace {
                 false,
                 &p,
                 cx,
-                |this, _, cx| this.select_view(LeftView::Browse, cx),
+                |this, window, cx| {
+                    this.select_view(LeftView::Browse, cx);
+                    this.browse_focus_filter(window, cx);
+                },
             ))
             .child(self.rail_button(
                 "rail-cloud",
@@ -965,7 +818,6 @@ impl Workspace {
                     this.drop_on_library(paths.paths().to_vec(), window, cx);
                 }))
                 .into_any_element(),
-            LeftView::Browse => self.render_browse_view(&p, cx).into_any_element(),
             _ => self.render_skills_panel(),
         };
         let bg = if p.dark {
@@ -990,7 +842,7 @@ impl Workspace {
                 .child(header)
                 .child(body)
                 .child(self.render_resizer(&p, cx))
-                .when(view != LeftView::Browse && super::account::signed_in_user(cx).is_none(), |el| {
+                .when(super::account::signed_in_user(cx).is_none(), |el| {
                     el.child(
                         div()
                             .id("panel-sign-in")
@@ -1320,8 +1172,8 @@ impl Workspace {
                 v.extend(TYPE_MENU.iter().map(|k| {
                     (SharedString::from(type_menu_label(Some(*k))), current == Some(*k), FilterChoice::Type(Some(*k)))
                 }));
-                let top = if menu == FilterMenu::RecentType { 188. } else { 82. };
-                (v, top, 8.)
+                // Browse hangs the menu under its own button, in the page's toolbar.
+                if menu == FilterMenu::RecentType { (v, 188., 8.) } else { (v, 36., 0.) }
             }
             FilterMenu::RecentSort => {
                 let current = self.shell.recent.sort;
@@ -1351,7 +1203,7 @@ impl Workspace {
                     match (menu, choice) {
                         (FilterMenu::BrowseType, FilterChoice::Type(k)) => {
                             this.library.set_only_format(k);
-                            this.shell.browse_rows = None;
+                            this.shell.invalidate_browse();
                         }
                         (_, FilterChoice::Type(k)) => this.shell.recent.set_only_format(k),
                         (_, FilterChoice::Sort(s)) => this.shell.recent.set_sort(s),
@@ -1375,270 +1227,13 @@ impl Workspace {
         ))
     }
 
-    fn render_browse_view(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *p;
-        let lib = &self.library;
-        let rows = self.shell.browse_rows.clone().unwrap_or_default();
-        let type_label = type_menu_label(lib.only_format());
-        let filtered = lib.only_format().is_some() || !lib.text().is_empty();
-        let sort_seg = segmented(&p).children([(SortOrder::Name, "Name"), (SortOrder::Recent, "Updated")].map(|(order, label)| {
-            let on = lib.sort == order || (order == SortOrder::Name && lib.sort == SortOrder::Default);
-            div()
-                .id(SharedString::from(format!("bsort-{label}")))
-                .h(px(28.))
-                .px(px(10.4))
-                .flex()
-                .items_center()
-                .rounded(px(7.))
-                .text_size(px(11.5))
-                .text_color(if on { p.foreground } else { p.muted })
-                .when(on, |el| el.bg(segment_on(&p)))
-                .hover(|s| s.text_color(p.foreground))
-                .child(label)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.library.set_sort(order);
-                    this.shell.browse_rows = None;
-                    cx.notify();
-                }))
-        }));
-        let controls = v_flex()
-            .flex_none()
-            .gap(px(8.))
-            .px(px(8.))
-            .py(px(8.))
-            .border_b_1()
-            .border_color(p.border)
-            .child(filter_field(&self.shell.browse_filter, 12., &p))
-            .child(
-                h_flex()
-                    .gap(px(6.))
-                    .text_size(px(11.))
-                    .child(div().pl(px(2.)).text_color(p.muted).child("Type"))
-                    .child(self.select_button(FilterMenu::BrowseType, type_label, &p, cx))
-                    .when(filtered, |el| {
-                        el.child(
-                            div()
-                                .id("browse-clear")
-                                .h(px(32.))
-                                .px(px(8.))
-                                .flex()
-                                .items_center()
-                                .rounded(px(6.))
-                                .text_color(p.muted)
-                                .hover(|s| s.bg(p.accent.opacity(0.4)).text_color(p.foreground))
-                                .child("Clear")
-                                .on_click(cx.listener(|this, _, window, cx| this.clear_browse_filters(window, cx))),
-                        )
-                    }),
-            )
-            .child(
-                h_flex()
-                    .gap(px(4.))
-                    .text_size(px(11.))
-                    .child(div().pl(px(2.)).text_color(p.muted).child("Sort"))
-                    .child(sort_seg)
-                    .child(div().flex_1())
-                    .child({
-                        let starred = lib.tab == LibraryTab::Starred;
-                        div()
-                            .id("browse-starred")
-                            .px(px(6.))
-                            .py(px(2.))
-                            .rounded(px(4.))
-                            .when(starred, |el| el.bg(p.accent).text_color(p.yellow))
-                            .when(!starred, |el| el.text_color(p.muted).hover(|s| s.text_color(p.foreground)))
-                            .child("★")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.library.set_tab(if starred { LibraryTab::All } else { LibraryTab::Starred });
-                                this.shell.browse_rows = None;
-                                cx.notify();
-                            }))
-                    })
-                    .child({
-                        let full = self.shell.browse_full_path;
-                        div()
-                            .id("browse-fullpath")
-                            .px(px(6.))
-                            .py(px(2.))
-                            .rounded(px(4.))
-                            .when(full, |el| el.bg(p.accent).text_color(p.foreground))
-                            .when(!full, |el| el.text_color(p.muted).hover(|s| s.text_color(p.foreground)))
-                            .child("~/")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.shell.browse_full_path = !full;
-                                this.shell.browse_rows = None;
-                                cx.notify();
-                            }))
-                    })
-                    .child(
-                        div()
-                            .id("browse-rescan")
-                            .px(px(6.))
-                            .py(px(2.))
-                            .rounded(px(4.))
-                            .text_color(p.muted)
-                            .hover(|s| s.text_color(p.foreground))
-                            .child(if lib.scanning { "…" } else { "⟳" })
-                            .on_click(|_, w, cx| w.dispatch_action(Box::new(Rescan), cx)),
-                    ),
-            );
-        let body: AnyElement = if lib.scanning && lib.total() == 0 {
-            div().p(px(16.)).text_size(px(12.)).text_color(p.muted).child("Scanning your documents…").into_any_element()
-        } else if rows.is_empty() {
-            div()
-                .p(px(16.))
-                .text_size(px(12.))
-                .text_color(p.muted)
-                .child(if filtered { "No documents found for this filter." } else { "No documents found." })
-                .into_any_element()
-        } else {
-            let current = self.doc.as_ref().map(|d| d.path.clone());
-            let count = rows.len();
-            uniform_list(
-                "browse-rows",
-                count,
-                cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                    let p = themes::palette(cx);
-                    let now = chrono::Local::now();
-                    range
-                        .map(|ix| {
-                            // One 12 px step per level, its hairline at 6 px:
-                            // Electron's ml-[6px] border-l pl-[5px].
-                            let guides = |depth: usize| {
-                                h_flex().h_full().flex_none().children((0..depth).map(|_| {
-                                    div().w(px(12.)).h_full().flex_none().child(div().ml(px(6.)).h_full().border_l_1().border_color(p.border))
-                                }))
-                            };
-                            let star = |id: SharedString, on: bool| {
-                                div()
-                                    .id(id)
-                                    .flex_none()
-                                    .px(px(4.))
-                                    .text_size(px(12.))
-                                    .when(on, |d| d.text_color(p.yellow))
-                                    .when(!on, |d| d.text_color(p.muted).hover(|s| s.text_color(p.foreground)))
-                                    .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(if on { "Unstar" } else { "Star" }).build(window, cx))
-                                    .child(if on { "★" } else { "☆" })
-                            };
-                            match &rows[ix] {
-                                BrowseRow::Folder { dir, label, count, open, depth } => {
-                                    let toggle = dir.clone();
-                                    let starred = this.shell.stars.contains(dir);
-                                    let star_path = dir.clone();
-                                    h_flex()
-                                        .id(("bfolder", ix))
-                                        .w_full()
-                                        .h(px(26.))
-                                        .pl(px(4.))
-                                        .text_size(px(12.))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(p.accent.opacity(0.3)))
-                                        .child(guides(*depth))
-                                        .child(
-                                            h_flex()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .gap(px(4.))
-                                                .pl(px(4.))
-                                                .pr(px(8.))
-                                                .child(div().w(px(12.)).flex_none().text_color(p.muted).child(if *open { "▾" } else { "▸" }))
-                                                .child(div().flex_1().min_w_0().truncate().text_color(p.fg(0.9)).child(label.clone()))
-                                                .child(div().flex_none().text_size(px(9.)).text_color(p.muted).child(count.to_string()))
-                                                .child(star(SharedString::from(format!("bstar-d-{ix}")), starred).on_click(cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.toggle_browse_star(star_path.clone(), "folder", window, cx);
-                                                }))),
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_folder(toggle.clone(), cx)))
-                                        .into_any_element()
-                                }
-                                BrowseRow::File { hit, depth } => {
-                                    let hit = this.library.hits()[*hit].clone();
-                                    let doc = this.library.doc(&hit);
-                                    let path = doc.path.clone();
-                                    let star_path = doc.path.clone();
-                                    let starred = this.shell.stars.contains(&doc.path);
-                                    let active = current.as_ref() == Some(&doc.path);
-                                    h_flex()
-                                        .id(("bfile", ix))
-                                        .w_full()
-                                        .h(px(26.))
-                                        .pl(px(4.))
-                                        .text_size(px(12.))
-                                        .cursor_pointer()
-                                        .when(active, |el| el.bg(p.accent.opacity(0.4)))
-                                        .hover(|s| s.bg(p.accent.opacity(0.3)))
-                                        .child(guides(*depth))
-                                        .child(
-                                            h_flex()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .gap(px(4.))
-                                                .pl(px(4.))
-                                                .pr(px(8.))
-                                                .child(div().w(px(12.)).flex_none())
-                                                .child(div().flex_1().min_w_0().truncate().child(doc.name.clone()))
-                                                .child(div().flex_none().text_size(px(10.)).text_color(p.muted).child(updated_ago(doc.mtime_ms, now)))
-                                                .child(star(SharedString::from(format!("bstar-f-{ix}")), starred).on_click(cx.listener(move |this, _, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.toggle_browse_star(star_path.clone(), "file", window, cx);
-                                                }))),
-                                        )
-                                        .on_click(cx.listener(move |this, _, window, cx| this.open_path(&path, window, cx)))
-                                        .into_any_element()
-                                }
-                                BrowseRow::More { dir, hidden, depth } => {
-                                    let dir = dir.clone();
-                                    h_flex()
-                                        .id(("bmore", ix))
-                                        .w_full()
-                                        .h(px(26.))
-                                        .pl(px(4.))
-                                        .text_size(px(11.))
-                                        .text_color(p.muted)
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(p.accent.opacity(0.3)).text_color(p.foreground))
-                                        .child(guides(*depth))
-                                        .child(h_flex().pl(px(4.)).gap(px(4.)).child(div().w(px(12.))).child(format!("Show {} more", group_thousands(*hidden))))
-                                        .on_click(cx.listener(move |this, _, _, cx| this.reveal_folder(dir.clone(), cx)))
-                                        .into_any_element()
-                                }
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .flex_1()
-            .into_any_element()
-        };
-        v_flex()
-            .flex_1()
-            .min_h_0()
-            .px(px(6.))
-            .py(px(8.))
-            .child(controls)
-            .when(lib.truncated, |el| {
-                el.child(
-                    div()
-                        .px(px(12.))
-                        .py(px(6.))
-                        .border_b_1()
-                        .border_color(p.border)
-                        .text_size(px(11.))
-                        .text_color(p.yellow)
-                        .child("Index is incomplete: the scan stopped at its limit."),
-                )
-            })
-            .child(div().flex_1().min_h_0().flex().flex_col().child(body))
-            .when(self.shell.filter_menu == Some(FilterMenu::BrowseType), |el| {
-                el.child(self.render_filter_menu(FilterMenu::BrowseType, &p, cx))
-            })
-    }
-
     /// The Cloud or Vault page, in place of the document.
     pub(super) fn render_workspace_page(&self, cx: &mut Context<Self>) -> AnyElement {
         // Signed out, the account's own Cloud page asks to sign in; signed in,
         // the sync library below takes over with the same session.
+        if self.shell.view == LeftView::Browse {
+            return self.render_browse_page(cx);
+        }
         if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
             return self.render_cloud_page();
         }

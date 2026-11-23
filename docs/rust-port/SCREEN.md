@@ -42,6 +42,7 @@ SCENE_SERVER=http://localhost:18991 rust/scripts/screen/scene.sh <scene> <out.pn
 | `share` | `token`, `doc_id`, `file_name`, optional `pending` (addresses), `query`, `role: "editor"`, `menu` | Share dialog for a cloud document, loaded |
 | `office-cloud` | `token`, optional `upload: true` | The open office file's cloud dialog, before or after Create a cloud copy |
 | `servers` | `token`, `second_origin`, `email`, `password`, optional `stop` (`confirm`, `added`, `form`) | Settings › Advanced with the second server added and signed in |
+| `vault` | `state`: `none`, `create`, `create-error`, `locked`, `locked-touch`, `locked-error`, `unlocking`, `empty`, `items`, `few`, `search`, `note`, `file`, `env`, `env-revealed`, `env-copied`, `gate`, `settings`, `settings-touch`, `restore` | The vault page on a scratch vault with synthetic items. Touch ID and the clipboard are in-memory doubles, so the Keychain and pasteboard are never touched |
 
 ### 3. Electron: headless renderer
 

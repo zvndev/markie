@@ -22,7 +22,8 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
   - no TipTap rewrites of text the user did not touch on save (editors 8.13);
   - dark text on highlights in dark mode;
   - a code block's language label while the cursor is in it;
-  - the title-bar palette button opens a template menu, where Electron opens Settings.
+  - the title-bar palette button opens a template menu, where Electron opens Settings;
+  - the vault's calmer layout, Touch ID first unlock, icon row actions and copy countdown (office 22.374, 22.375, 22.376, 22.378). Numbers are unchanged: these rows were PASS.
 - **Excluded:** the database layout (library 2.2, 2.3, 2.8) and the crash report file format (office 27.427, 27.431).
 - **Nightly-only features are out of the stable score** (EXCLUDED-NIGHTLY), as each audit already applied. Local comments (cloud 12.2, 12.2.1) were rescored on that rule.
 - **No web views** in Markie RS: printing and export stay on the native engine.

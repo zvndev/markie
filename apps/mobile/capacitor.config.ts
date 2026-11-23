@@ -26,6 +26,8 @@ const config: CapacitorConfig = {
     CapacitorHttp: { enabled: false },
     CapacitorCookies: { enabled: false },
     SystemBars: { insetsHandling: "css", initialViewportFitValueHint: "cover" },
+    // A comment that arrives while Markie is open still shows as a banner.
+    PushNotifications: { presentationOptions: ["alert", "sound"] },
   },
 };
 

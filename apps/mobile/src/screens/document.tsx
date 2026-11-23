@@ -154,6 +154,16 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
     setFocusThread(id);
     setCommentsOpen(true);
   }, []);
+  // A tapped notification names its thread (?thread=<id>, lib/push.ts): the
+  // sheet opens on it, once, when the threads have loaded. An id that is not
+  // one of this document's threads (deleted since, or made up) opens nothing.
+  const linkedThread = target.kind === "doc" ? target.thread ?? null : null;
+  const linkedShown = useRef<string | null>(null);
+  useEffect(() => {
+    if (!linkedThread || !threads || lost || linkedShown.current === linkedThread) return;
+    linkedShown.current = linkedThread;
+    if (threads.some((thread) => thread.id === linkedThread)) onThread(linkedThread);
+  }, [linkedThread, threads, lost, onThread]);
   const markdownComments = useMemo<MarkdownComments | undefined>(
     () => (commentable ? { threads: threadQuotes, onPlaced, onThread, onSelect: setPicked } : undefined),
     [commentable, threadQuotes, onPlaced, onThread],

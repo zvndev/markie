@@ -219,6 +219,17 @@ export function createApiClient(options: ApiClientOptions) {
       await json("POST", "/api/auth/sign-out", { body: {}, timeoutMs });
     },
 
+    /** Files this phone for push notifications, or refreshes it (server/src/devices.ts). */
+    async registerDevice(device: { platform: "ios" | "android"; token: string; showNames: boolean }): Promise<{ delivers: boolean }> {
+      const { data } = await json("POST", "/api/me/devices", { body: device, timeoutMs: 15_000 });
+      return { delivers: (data as { delivers?: unknown } | null)?.delivers === true };
+    },
+
+    /** Takes this phone off the server's list. */
+    async removeDevice(token: string, { timeoutMs = 15_000 }: { timeoutMs?: number } = {}): Promise<void> {
+      await json("DELETE", `/api/me/devices/${encodeURIComponent(token)}`, { timeoutMs });
+    },
+
     async recent({ limit = 50, before }: { limit?: number; before?: string | null } = {}): Promise<RecentDoc[]> {
       const params = new URLSearchParams({ limit: String(Math.min(100, Math.max(1, Math.floor(limit)))) });
       if (before) params.set("before", before);

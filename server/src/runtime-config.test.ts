@@ -52,3 +52,25 @@ test("releaseCommit: KAMAL_VERSION, then GIT_SHA, and nothing when neither is se
   assert.equal(releaseCommit({ KAMAL_VERSION: "<script>", GIT_SHA: "" }), undefined);
   assert.equal(releaseCommit({ KAMAL_VERSION: "x".repeat(65) }), undefined);
 });
+
+test("pushSettings: nothing set is both platforms off, with nothing to report", async () => {
+  const { pushSettings } = await import("./runtime-config.ts");
+  assert.deepEqual(pushSettings({}), { apns: null, fcm: null, incomplete: [] });
+});
+
+test("pushSettings: APNs needs all four values, and says which are missing", async () => {
+  const { pushSettings } = await import("./runtime-config.ts");
+  const half = pushSettings({ APNS_KEY: "k", APNS_TEAM_ID: "T" });
+  assert.equal(half.apns, null);
+  assert.deepEqual(half.incomplete, ["APNS_KEY_ID", "APNS_BUNDLE_ID"]);
+  const full = pushSettings({ APNS_KEY: "a\\nb", APNS_KEY_ID: "K", APNS_TEAM_ID: "T", APNS_BUNDLE_ID: "com.example.app" });
+  assert.deepEqual(full.apns, { key: "a\nb", keyId: "K", teamId: "T", bundleId: "com.example.app", environment: "production" });
+  assert.equal(pushSettings({ APNS_KEY: "k", APNS_KEY_ID: "K", APNS_TEAM_ID: "T", APNS_BUNDLE_ID: "b", APNS_ENV: "Development" }).apns?.environment, "development");
+});
+
+test("pushSettings: the Firebase service account is read as JSON or as base64", async () => {
+  const { pushSettings } = await import("./runtime-config.ts");
+  const json = JSON.stringify({ project_id: "p" });
+  assert.equal(pushSettings({ FCM_SERVICE_ACCOUNT: json }).fcm?.serviceAccount, json);
+  assert.equal(pushSettings({ FCM_SERVICE_ACCOUNT: Buffer.from(json).toString("base64") }).fcm?.serviceAccount, json);
+});

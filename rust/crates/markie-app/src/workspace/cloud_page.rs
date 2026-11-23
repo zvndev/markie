@@ -855,7 +855,7 @@ impl Workspace {
         let body = if checking {
             div().pt(px(20.)).child(doc_grid::skeleton(width, doc_grid::columns(width), &p))
         } else {
-            ui::empty_state("markie/cloud.svg", "Sign in to see your cloud documents", "Documents you sync, and documents people share with you, show up here.", &p).child(
+            ui::empty_state("markie/cloud.svg", "Sign in to see synced and shared files", "Documents you sync, and documents people share with you, show up here.", &p).child(
                 div().mt(px(16.)).child(
                     ui::button("cloud-sign-in", "Sign in", None, Tone::Primary, false, &p).on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx))),
                 ),
@@ -883,7 +883,7 @@ impl Workspace {
             div()
                 .relative()
                 .flex_none()
-                .w(px(140.))
+                .w(px(128.))
                 .child(ui::select(id, label, menu == Some(which), &p).w_full().on_click(cx.listener(move |this, _, window, cx| {
                     this.cloud.menu = if this.cloud.menu == Some(which) { None } else { Some(which) };
                     if this.cloud.menu == Some(Menu::Area) {
@@ -914,7 +914,7 @@ impl Workspace {
             );
         }
         ui::toolbar(&p)
-            .child(div().flex_1().min_w(px(180.)).max_w(px(300.)).child(filter_field(&self.cloud_search, 13., &p)))
+            .child(div().flex_1().min_w(px(216.)).max_w(px(300.)).child(filter_field(&self.cloud_search, 13., &p)))
             // With nothing in the cloud there is nothing to tell apart.
             .when(!files.booting && (!files.matched.is_empty() || q.searching()), |el| el.child(scopes))
             .child(dropdown(Menu::Type, "cloud-type", type_label.to_string(), cx))

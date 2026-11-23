@@ -1570,3 +1570,14 @@ impl Workspace {
     }
 }
 
+#[cfg(test)]
+mod request_strip_tests {
+    use super::requests_line;
+
+    #[test]
+    fn the_strip_says_how_many_requests_are_waiting() {
+        assert_eq!(requests_line(1), "1 share request is waiting");
+        assert_eq!(requests_line(2), "2 share requests are waiting");
+        assert_eq!(requests_line(12), "12 share requests are waiting");
+    }
+}

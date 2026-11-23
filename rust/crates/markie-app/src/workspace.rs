@@ -473,7 +473,11 @@ impl Workspace {
     /// Recent and Starred, from the registry. Their rows need a stat per
     /// file, done off the main thread: on the launch path it cost 68 ms.
     fn refresh_lists(&mut self, cx: &mut Context<Self>) {
-        let Some(reg) = &self.registry else { return };
+        let Some(reg) = &self.registry else {
+            // No registry, no lists: the Recent page shows its empty state.
+            self.shell.lists_loaded = true;
+            return;
+        };
         let rows = reg.recent(200).unwrap_or_default();
         self.shell.recent.set_opened_at(rows.iter().map(|r| (r.path.clone(), r.last_opened_at.clone())));
         let recent: Vec<PathBuf> = rows.into_iter().map(|r| r.path).collect();

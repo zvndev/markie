@@ -112,6 +112,10 @@ impl Workspace {
     /// What gets focus when the window opens: the rich editor when View
     /// mode shows one, else the workspace.
     pub fn startup_focus(&self, cx: &App) -> FocusHandle {
+        // A launch that lands on the Recent page puts the keyboard on its cards.
+        if self.shell.panel_open && self.shell.view == super::rail::LeftView::Recent {
+            return self.shell.recent_grid.focus.clone();
+        }
         if self.rich_active() { self.rich.read(cx).focus_handle().clone() } else { self.focus_handle.clone() }
     }
 

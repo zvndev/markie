@@ -420,7 +420,8 @@ fn more_button<V: 'static>(card_id: &SharedString, group: &SharedString, menu_op
         .text_color(p.muted)
         .cursor_pointer()
         .when(menu_open, |d| d.bg(hover).text_color(fg))
-        .when(!menu_open && !at_cursor, |d| d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)))
+        // Always there, quiet until the pointer or the cursor is on the card.
+        .when(!menu_open && !at_cursor, |d| d.opacity(0.55).group_hover(group.clone(), |s| s.opacity(1.)))
         .hover(move |s| s.text_color(fg).bg(hover))
         .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Actions").build(window, cx))
         .child("⋯")

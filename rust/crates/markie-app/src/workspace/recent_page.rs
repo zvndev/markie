@@ -198,10 +198,21 @@ impl Workspace {
     /// opened, and ask for the thumbnails the open page still lacks.
     pub(super) fn sync_home_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let open = self.shell.panel_open;
-        if std::mem::take(&mut self.shell.page_focus_owed) && open {
+        if std::mem::take(&mut self.shell.page_focus_owed) {
+            let on_a_grid = self.shell.recent_grid.focus.is_focused(window) || self.shell.cloud_grid.focus.is_focused(window);
             match self.shell.view {
-                LeftView::Recent => self.shell.recent_grid.focus.focus(window, cx),
-                LeftView::Cloud => self.shell.cloud_grid.focus.focus(window, cx),
+                LeftView::Recent if open => self.shell.recent_grid.focus.focus(window, cx),
+                LeftView::Cloud if open => self.shell.cloud_grid.focus.focus(window, cx),
+                // The page the keyboard was on has closed: back to the document.
+                _ if on_a_grid && !self.workspace_page_open() => {
+                    if self.rich_active() {
+                        self.focus_rich(window, cx);
+                    } else if self.mode == super::Mode::Source {
+                        self.focus_editor(window, cx);
+                    } else {
+                        self.focus_handle.focus(window, cx);
+                    }
+                }
                 _ => {}
             }
         }
@@ -369,7 +380,8 @@ impl Workspace {
             .size_full()
             .bg(p.background)
             .child(header)
-            .child(self.render_recent_toolbar(&p, cx))
+            // With no documents at all there is nothing to filter, as on Browse.
+            .when(!(self.shell.lists_loaded && total == 0 && !starred && !recent.query_active()), |el| el.child(self.render_recent_toolbar(&p, cx)))
             .child(
                 div()
                     .id("recent-page-scroll")
@@ -635,8 +647,46 @@ mod tests {
         assert_eq!(sync_mark(SyncStatus::Shared).unwrap().icon, "markie/sync-shared.svg");
     }
 
+    /// The page draws `shell.recent`, the Library panel's own list: what it
+    /// filters, sorts and marks missing is what the panel shows.
     #[test]
-    fn the_page_is_as_wide_as_the_window_allows_up_to_its_limit() {
+    fn the_page_filters_sorts_and_keeps_missing_files_through_the_shared_list() {
+        use crate::library::Library;
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "x").unwrap();
+            path
+        };
+        let (plan, notes, table) = (file("Plan.md"), file("notes.md"), file("Table.csv"));
+        let gone = dir.path().join("Gone.md");
+        let mut lib = Library::default();
+        lib.set_tab(LibraryTab::Recent);
+        lib.set_opened_at([(plan.clone(), "2026-11-23T10:00:00Z".to_string()), (notes.clone(), "2026-11-20T10:00:00Z".to_string())]);
+        lib.set_lists(vec![plan.clone(), gone.clone(), notes.clone(), table.clone()], vec![notes.clone()]);
+        let names = |lib: &Library| lib.hits().iter().map(|h| lib.doc(h).name.clone()).collect::<Vec<_>>();
+        // Newest first as the registry gave them, the missing file still listed.
+        assert_eq!(names(&lib), ["Plan.md", "Gone.md", "notes.md", "Table.csv"]);
+        assert!(lib.is_missing(&gone) && !lib.is_missing(&plan));
+        assert!(lib.opened_ms(&plan) > lib.opened_ms(&notes));
+        assert_eq!(lib.opened_ms(&table), 0., "never opened here");
+        lib.set_sort(SortOrder::Name);
+        assert_eq!(names(&lib), ["Gone.md", "notes.md", "Plan.md", "Table.csv"]);
+        lib.set_only_format(Some(markie_core::formats::FormatKind::Markdown));
+        assert_eq!(names(&lib), ["Gone.md", "notes.md", "Plan.md"]);
+        lib.set_text("no");
+        assert_eq!(names(&lib), ["notes.md"]);
+        assert_eq!(count_line(lib.hits().len(), lib.total()), "1 of 4 documents");
+        // Starred is the page's filter on the same list.
+        lib.clear_query();
+        lib.set_tab(LibraryTab::Starred);
+        assert_eq!(names(&lib), ["notes.md"]);
+        lib.set_tab(LibraryTab::Recent);
+        assert_eq!(lib.total(), 4);
+    }
+
+    #[test]
+    fn the_page_is_as_wide_as_the_window_allows() {
         assert_eq!(page_width(1280.), 1280. - 52. - 40.);
         assert_eq!(page_width(2400.), 2400. - 52. - 40.);
         assert_eq!(page_width(100.), 188.);

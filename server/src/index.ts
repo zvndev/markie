@@ -11,6 +11,7 @@ import { comments } from "./comments.ts";
 import { devices } from "./devices.ts";
 import { pushSender } from "./push.ts";
 import { themes } from "./themes.ts";
+import { withRetryAfter } from "./retry-after.ts";
 import { assetsApi, sweepOrphans } from "./assets.ts";
 import { docLinksApi } from "./doc-links.ts";
 import { publicShare } from "./public.ts";
@@ -348,7 +349,8 @@ app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const response = await (accountPlatform ? accountPlatform.runAuthRequest(request, run) : run());
   // A phone sign-in's callback: its session is ended and its cookie is never
   // passed on (mobile-auth.ts settle). Every other answer is left as it is.
-  return mobileAuth ? mobileAuth.settle(request, response) : response;
+  // A sign-in that was rate limited says how long to wait (retry-after.ts).
+  return withRetryAfter(mobileAuth ? await mobileAuth.settle(request, response) : response);
 });
 
 // Desktop Google and Apple sign-in must run entirely in the browser, or

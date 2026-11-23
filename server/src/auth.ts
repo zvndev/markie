@@ -67,6 +67,11 @@ async function endOtherSessionsAfterPasswordChange(
   }
 }
 
+// How long a session lives, and how often using it pushes that out. These are
+// better-auth 1.x's defaults, stated here so they are ours (mobile plan 8.5).
+export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 7;
+export const SESSION_UPDATE_AGE_SECONDS = 60 * 60 * 24;
+
 export const auth = betterAuth({
   database: authDatabase,
   hooks: {
@@ -116,6 +121,14 @@ export const auth = betterAuth({
     ipAddress: {
       ipAddressHeaders: [clientIpHeader()],
     },
+  },
+  // Pinned to better-auth's own defaults on purpose (7 days, renewed once a
+  // day while the session is used), which is what every session has had so
+  // far. Written out so an upgraded default can't shorten it and sign people
+  // out, or lengthen it unnoticed. The phone keeps its token on this clock.
+  session: {
+    expiresIn: SESSION_EXPIRES_IN_SECONDS,
+    updateAge: SESSION_UPDATE_AGE_SECONDS,
   },
   rateLimit: {
     enabled: true, // better-auth defaults to prod-only; turn it on everywhere

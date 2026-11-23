@@ -2,6 +2,14 @@
 // src/lib/comment-anchors.ts, behind the live-session chunk, so this module
 // can be imported at launch without pulling yjs along.
 import { getAuthToken, getServerURL } from "@/lib/auth-client";
+import type { Quote } from "@/lib/quote-anchor";
+
+/**
+ * Where a thread sits. `from` and `to` are Yjs relative positions. A thread
+ * made outside a live room has `kind: "quote"`: its words are the anchor and
+ * its positions only a placeholder (src/lib/quote-anchor.ts).
+ */
+export type CommentAnchor = { from: unknown; to: unknown; kind?: "quote" } & Partial<Quote>;
 
 export interface ThreadComment {
   id: string;
@@ -16,7 +24,7 @@ export interface ThreadComment {
 export interface CommentThread {
   id: string;
   doc_id: string;
-  anchor: { from: unknown; to: unknown };
+  anchor: CommentAnchor;
   status: "open" | "resolved";
   created_by: string;
   created_at: string;

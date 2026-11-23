@@ -172,7 +172,8 @@ describe("CommentLayer", () => {
     expect(bubbles[1].style.top).toBe("134px");
   });
 
-  it("drops a thread whose anchored text was deleted", async () => {
+  it("lists a thread whose anchored text was deleted as not placed, and still lets you reply", async () => {
+    const user = userEvent.setup();
     list.mockResolvedValue([
       thread({ id: "t1", anchor: { from: 4, to: 9 } }),
       thread({ id: "t2", anchor: { from: 40, to: 49 } }),
@@ -185,6 +186,61 @@ describe("CommentLayer", () => {
     await waitFor(() =>
       expect(document.querySelectorAll("[data-comment-thread]")).toHaveLength(1)
     );
+    // No bubble for t1, but it is not gone: it sits under "not placed".
+    expect(document.querySelector('[data-comment-thread="t1"]')).toBeNull();
+    await user.click(screen.getByRole("button", { name: /1 not placed/ }));
+    const panel = document.querySelector<HTMLElement>('[data-comment-panel="t1"]')!;
+    expect(within(panel).getByText("Tighten this paragraph.")).toBeInTheDocument();
+    expect(within(panel).getByText("The commented text is no longer in the document.")).toBeInTheDocument();
+
+    await user.type(within(panel).getByPlaceholderText("Reply…"), "Still true?{Enter}");
+    await waitFor(() => expect(reply).toHaveBeenCalledWith("doc-1", "t1", "Still true?"));
+  });
+
+  it("quotes the words an unplaced quote thread was left on", async () => {
+    const user = userEvent.setup();
+    list.mockResolvedValue([
+      thread({
+        id: "t1",
+        anchor: {
+          kind: "quote",
+          exact: "the beta ships Friday",
+          prefix: "We said ",
+          suffix: ".",
+          approxIndex: 12,
+          from: { tname: "default", assoc: -1 },
+          to: { tname: "default", assoc: -1 },
+        },
+      }),
+    ]);
+    anchorToAbsolute.mockReturnValue(null);
+    renderLayer();
+    await user.click(await screen.findByRole("button", { name: /1 not placed/ }));
+    const panel = document.querySelector<HTMLElement>('[data-comment-panel="t1"]')!;
+    expect(within(panel).getByText("“the beta ships Friday”")).toBeInTheDocument();
+    expect(within(panel).getByText("These words are no longer in the document.")).toBeInTheDocument();
+  });
+
+  it("puts a quote thread's bubble where the runtime places its words", async () => {
+    const quote = {
+      kind: "quote" as const,
+      exact: "brave",
+      prefix: "Hello ",
+      suffix: " new",
+      approxIndex: 5,
+      from: { tname: "default", assoc: -1 },
+      to: { tname: "default", assoc: -1 },
+    };
+    list.mockResolvedValue([thread({ id: "t1", anchor: quote })]);
+    anchorToAbsolute.mockReturnValue({ from: 7, to: 12 });
+    const { setTextSelection } = renderLayer();
+    const user = userEvent.setup();
+    const el = await bubble("t1");
+    expect(el.style.top).toBe("107px");
+    expect(anchorToAbsolute).toHaveBeenCalledWith(expect.anything(), expect.anything(), quote);
+    await user.click(el);
+    expect(setTextSelection).toHaveBeenCalledWith({ from: 7, to: 12 });
+    expect(screen.queryByRole("button", { name: /not placed/ })).toBeNull();
   });
 
   it("opens a thread, jumps the editor to it, and closes again", async () => {

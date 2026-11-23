@@ -147,10 +147,17 @@ The phone edits with the desktop's own editors, reached through the `@` alias li
 
   A session whose pass never comes drops to editing alone. Source is read-only while live, exactly as on
   the desktop.
-- Comments live on a live Markdown document, as on the desktop: select text, tap the comment button
-  above the keyboard. The comment sheet lists threads with the words they are on (anchored in the room
-  through `@/lib/comment-anchors`), and replies, resolves, reopens and deletes through
-  `/api/docs/:id/threads`. Viewers read and comment; owners and editors resolve.
+- Comments work on the reading screen of any Markdown document that is shared, with no live room
+  needed. Open threads are highlighted on their words, and the Comments button counts them. Select
+  words and tap Comment to start a thread. Its anchor is the quoted words with a little text on each
+  side (`@/lib/quote-anchor`), and the desktop finds those words in its own editor
+  (`@/lib/comment-anchors`). A thread whose words can't be found is listed as "Not placed", never hidden.
+- In a live Markdown document comments are anchored in the room, as on the desktop: select text, tap the
+  comment button above the keyboard. Those anchors carry their words too, so the reading screen places them.
+- Either sheet replies, resolves, reopens and deletes through `/api/docs/:id/threads`. Viewers read and
+  comment; owners and editors resolve. Someone whose share was removed is told "You no longer have
+  access" on their next comment action, and the document comes off the screen.
+- Text, Darkmown, Word, RTF and OpenDocument files have no comments, here or on the desktop.
 - Share (people icon on a document): send the link, invite by email, change a role (sharing again with
   the new role, as the desktop does), remove someone, through `/api/docs/:id/shares`. The owner also sees
   General access: a document is private until they tap "Make public", which creates the public link

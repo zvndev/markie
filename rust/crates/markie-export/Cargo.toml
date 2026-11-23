@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 markie-math = { path = "../markie-math" }
+# KaTeX ported to Rust: the same HTML rehype-katex writes, for HTML export (MATH.md).
+katex-rs = "0.3.0"
 markie-office = { path = "../markie-office" }
 pulldown-cmark.workspace = true
 serde.workspace = true

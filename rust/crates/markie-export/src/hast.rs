@@ -15,7 +15,7 @@ use html5ever::{LocalName, QualName, local_name, namespace_url, ns};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
 /// Which namespace an element came from. Foreign content keeps its own
-/// attribute casing (`viewBox`) and is written with self-closing tags.
+/// attribute casing (`viewBox`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Space {
     Html,
@@ -150,9 +150,10 @@ fn convert(handle: &Handle) -> Option<Node> {
                 .iter()
                 .map(|a| {
                     let local = a.name.local.to_string();
+                    // html5ever gives a foreign element's `xmlns` an empty prefix.
                     let name = match a.name.prefix.as_ref() {
-                        Some(prefix) => format!("{prefix}:{local}"),
-                        None => local,
+                        Some(prefix) if !prefix.is_empty() => format!("{prefix}:{local}"),
+                        _ => local,
                     };
                     (name, a.value.to_string())
                 })
@@ -237,11 +238,8 @@ fn write_element(e: &Element, out: &mut String) {
         escape_attr_into(value, out);
         out.push('"');
     }
-    let foreign = e.space != Space::Html;
-    if foreign && e.children.is_empty() {
-        out.push_str("/>");
-        return;
-    }
+    // hast-util-to-html's default (`closeEmptyElements: false`) writes an
+    // empty SVG or MathML element with an end tag, as `<path d=""></path>`.
     out.push('>');
     if e.space == Space::Html && is_void(&e.tag) {
         return;

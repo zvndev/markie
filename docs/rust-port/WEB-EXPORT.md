@@ -58,8 +58,9 @@ Shell files changed, each minimally: `chrome.rs` (its `export()` calls `export_d
 
 | Item | Status | Notes | Tests |
 |---|---|---|---|
-| Markdown to export HTML | Matches | remark, GFM, strict math, rehype-raw, media, embeds, highlight, sanitize, contain-styles in Electron's order. Dollars pair by remark's strict rule, ported as a source pre-pass. | `render_golden` (all fixtures equal after normalising math and token spans) |
-| Math | Differs by design | markie-math SVG (the editor's renderer, MATH.md) in KaTeX's wrappers, instead of KaTeX HTML and its 240 KB font CSS. Bad TeX shows red, as KaTeX does. | `math_is_svg_from_markie_math`, `bad_math_is_red_text_not_a_failure` |
+| Markdown to export HTML | Matches | remark, GFM, strict math, rehype-raw, media, embeds, highlight, KaTeX, sanitize, contain-styles as Electron runs them. Dollars pair by remark's strict rule, ported as a source pre-pass. | `render_golden` (all fixtures equal after normalising token spans) |
+| Math in HTML export | Matches | KaTeX's own HTML from katex-rs (a Rust port of KaTeX), through Electron's sanitizer, with Electron's `KATEX_CSS` (KaTeX's stylesheet and 12 fonts as data: URIs) first in the page. Headless Chromium draws both apps' pages pixel for pixel the same, light and dark (`.autoloop/runs/katex-look/`). katex-rs ports KaTeX 0.18.5 and Electron runs 0.19.1: three markup differences that move no pixel, `\stackrel` laid out as 0.18 did (its top line about 0.13 em lower), no `\mapsfrom` or `\reflectbox`, and some error tooltips worded as 0.18 did. Bad TeX shows red with KaTeX's message. | `math_matches_electron_katex`, `export_page_matches_electron`, `math_is_katex_html`, `math_errors_are_written_as_rehype_katex_does` |
+| Math in PDF | Differs by design | markie-math SVG through Typst, which cannot read HTML. Positions match Chromium (23.1). Bad TeX shows red. | `bad_math_is_red_text_not_a_failure` |
 | Code highlighting | Matches on the corpus | syntect scopes mapped to highlight.js classes with highlight.js's per-language choices and cross-token modes (parameters, arrow functions, class references, keys). Every character of 13 blocks in 11 languages gets Electron's colour. Other languages can still differ. | `code_colours_match_highlight_js`, `code_blocks_get_the_hljs_class` |
 | Export HTML file | Matches | `buildPDFHTML` light page, CSS and fit script extracted verbatim; local pictures inlined by `inline-images.js`'s rules and limits. | `assets::tests` |
 | PDF (Dark) and PDF (Light) | Matches | Typst laid out with Chromium's CSS box model, computed in Rust: line boxes from CoreText ascent and descent with the leading split around them, collapsed margins, borders and padding, table half-borders, orphans and widows of 2 with the three-line exception. A4, the 2 cm × 2.2 cm inset as page margin, dark page to the edges, SF Pro with CoreText's `trak` tracking, Menlo for code. Every line of every fixture lands on Electron's page within 1 pt (`.autoloop/runs/native-print/`). | `line_baselines_match_chromium`, `layout_rules_measured_from_chromium` |
@@ -79,7 +80,7 @@ Shell files changed, each minimally: `chrome.rs` (its `export()` calls `export_d
 | Live Docs preview | wry island locked to the dev server origin (built, not yet in a panel) |
 | YouTube and Vimeo | `island::VideoPlayer` plays the nocookie or Vimeo player; export cards use the thumbnail like Electron. Not yet hooked to the rich editor's embed card (editor agent's area). |
 | PDF and print | No web view: Typst |
-| KaTeX math | No web view: markie-math |
+| KaTeX math | No web view: katex-rs HTML in the export file, which the reader's browser draws; markie-math in the editor and the PDF |
 | Raw inline HTML | Sanitized and interpreted natively in exports (mark, u, sub, sup, colour, background, alignment, kbd) |
 
 ## Evidence
@@ -108,6 +109,17 @@ From the worktree root, with the repo's `node_modules` symlinked:
 node --import ./rust/scripts/ts-run/register.mjs rust/crates/markie-export/scripts/goldens.mjs
 node --import ./rust/scripts/ts-run/register.mjs --import ./rust/crates/markie-web/scripts/raw-hooks.mjs rust/crates/markie-web/scripts/goldens.mjs
 node --import ./rust/scripts/ts-run/register.mjs rust/crates/markie-export/scripts/electron-pdf-html.mjs
+node --import ./rust/scripts/ts-run/register.mjs rust/crates/markie-export/scripts/katex-goldens.mjs
+```
+
+`katex-goldens.mjs` also rewrites `src/assets/katex.css` from Electron's `katex-css.generated.ts`. To compare the math pages in headless Chromium:
+
+```sh
+R=.autoloop/runs/katex-look
+KATEX_LOOK_PAGES=$PWD/$R/pages node --import ./rust/scripts/ts-run/register.mjs rust/crates/markie-export/scripts/katex-goldens.mjs
+(cd rust && cargo test -p markie-export --test render_golden write_math_pages -- --ignored)
+PLAYWRIGHT_CORE=<a playwright-core folder> node rust/crates/markie-export/scripts/katex-look.mjs $R/pages $R/after
+python3 rust/crates/markie-export/scripts/katex-look.py $R/after
 ```
 
 ## Open items
@@ -117,4 +129,3 @@ node --import ./rust/scripts/ts-run/register.mjs rust/crates/markie-export/scrip
 3. Hooking `VideoPlayer` to the rich editor's embed card.
 4. GPUI overlays other than title-bar menus can sit under a web island.
 5. Port the 26 `docx-print.ts` cases one by one.
-6. Math in the HTML export draws lighter than KaTeX's font glyphs (AUDIT-AGENTS-WEB.md row 23.3).

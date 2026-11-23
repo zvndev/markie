@@ -19,6 +19,10 @@ The cost is size. A release binary that only renders math is 41.7 MB, against 3.
 
 The public API hides the engine. If size starts to matter more than the KaTeX look, mathra is the swap: change `render` and keep the tests.
 
+### HTML export uses KaTeX's HTML instead
+
+An exported HTML file is drawn by the reader's browser, which has the CSS engine GPUI lacks. So Export HTML does not use this crate. `markie-export` renders math with katex-rs, the KaTeX port in the table below, and embeds Electron's `KATEX_CSS` (KaTeX's stylesheet with 12 fonts as data: URIs). The page then draws exactly as Electron's export does: headless Chromium shows no differing pixel on a 44-formula fixture, light and dark (AUDIT-AGENTS-WEB.md row 23.3). markie-math still draws the editor's math and the PDF's, through Typst.
+
 ## Evaluation
 
 Every engine ran on the same three input sets, scored against KaTeX 0.19.1 itself (the version the web app ships):

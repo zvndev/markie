@@ -4,17 +4,14 @@
 //! Electron's chain is remark-parse, remark-gfm, remark-math with strict
 //! single-dollar math, remark-rehype, rehype-raw, rehype-media, rehype-embeds,
 //! rehype-highlight, rehype-katex, rehype-sanitize, rehype-contain-styles,
-//! rehype-stringify. This runs the same steps in the same order, with one
-//! change: math is drawn by markie-math (the editor's renderer, MATH.md) as
-//! inline SVG instead of KaTeX HTML, after the sanitizer, as trusted output.
+//! rehype-stringify. This runs the same steps. Highlighting and KaTeX come
+//! after the sanitizer here so the PDF path can walk the sanitized tree with
+//! its math placeholders; KaTeX's HTML goes through the same sanitizer and
+//! style filter on its own (math_html.rs), so the result is the same.
 
 use crate::embeds::parse_embed;
 use crate::hast::{self, Element, Node};
 use crate::{highlight, markdown, sanitize};
-
-/// How math is drawn into HTML.
-#[derive(Clone, Copy, Debug)]
-pub struct MathColor(pub [u8; 4]);
 
 /// The sanitized tree, before math is drawn. The PDF path walks this.
 pub fn render_tree(markdown_text: &str) -> Vec<Node> {
@@ -28,16 +25,11 @@ pub fn render_tree(markdown_text: &str) -> Vec<Node> {
     tree
 }
 
-/// Markdown to the HTML an export carries, math as SVG in `color`.
-pub fn render_markdown_html_with(markdown_text: &str, color: MathColor) -> String {
-    let mut tree = render_tree(markdown_text);
-    crate::math_html::draw_math(&mut tree, color.0);
-    hast::to_html(&tree)
-}
-
-/// Markdown to export HTML with math in the light theme's text colour.
+/// Markdown to the HTML an export carries, math as KaTeX HTML.
 pub fn render_markdown_html(markdown_text: &str) -> String {
-    render_markdown_html_with(markdown_text, MathColor([0x1a, 0x1a, 0x2e, 0xff]))
+    let mut tree = render_tree(markdown_text);
+    crate::math_html::draw_math(&mut tree);
+    hast::to_html(&tree)
 }
 
 const VIDEO_EXT: &[&str] = &["mp4", "m4v", "webm", "ogv", "mov"];

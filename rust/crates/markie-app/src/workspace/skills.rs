@@ -10,7 +10,6 @@ use gpui_kit::prelude::FluentBuilder as _;
 use markie_agent::skills::{self, Kind, Row, Tool};
 use markie_core::{
     index::{self, IndexedDoc, ScanOptions},
-    paths,
     registry::Registry,
 };
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc};
@@ -24,15 +23,19 @@ impl Workspace {
             return;
         }
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter skills & agent files…"));
-        let home = paths::home_dir();
+        let directories = self.registry.as_ref().and_then(|r| r.roots().ok()).unwrap_or_default();
+        // The index's own home: the scratch data folder in a test run.
+        let opts = super::device_scan_options(directories);
+        let home = opts.home.clone();
         let config = |name: &str| {
             std::env::var(name)
                 .ok()
                 .filter(|v| !v.trim().is_empty())
                 .map(|v| PathBuf::from(v.trim()))
         };
-        let (claude, codex) = (config("CLAUDE_CONFIG_DIR"), config("CODEX_HOME"));
-        let directories = self.registry.as_ref().and_then(|r| r.roots().ok()).unwrap_or_default();
+        // A scratch run indexes no configured agent folders, so it names none.
+        let scratch = std::env::var_os("MARKIE_RS_DATA_DIR").is_some();
+        let (claude, codex) = if scratch { (None, None) } else { (config("CLAUDE_CONFIG_DIR"), config("CODEX_HOME")) };
         let snapshot = self.registry.as_ref().and_then(|r| r.load_snapshot().ok().flatten());
         let registry = self.registry.clone();
         let full_path = registry
@@ -46,7 +49,7 @@ impl Workspace {
                 input,
                 trash_roots: skills::roots(&home, claude.clone(), codex.clone()),
                 tool_roots: skills::tool_roots(&home, claude, codex),
-                opts: ScanOptions::from_env(home, directories),
+                opts,
                 rows: Vec::new(),
                 closed: BTreeSet::new(),
                 full_path,
@@ -508,5 +511,28 @@ mod tests {
         assert_eq!(compact_home_path(home, home, false), "");
         assert_eq!(compact_home_path(home, home, true), "~");
         assert_eq!(compact_home_path(Path::new("/opt/x"), home, true), "/opt/x");
+    }
+
+    /// A scratch run indexes its data folder as home; the Skills view must
+    /// match tool roots against that same folder, or it finds nothing.
+    #[test]
+    fn a_scratch_index_and_its_tool_roots_share_one_home() {
+        let data = tempfile::tempdir().unwrap();
+        let data = data.path().canonicalize().unwrap();
+        for (rel, text) in [
+            (".claude/skills/alpha/SKILL.md", "---\nname: alpha\ndescription: First\n---\n# Alpha\n"),
+            (".claude/CLAUDE.md", "# Claude\n"),
+        ] {
+            let path = data.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let opts = crate::workspace::scan_options_for(Some(data.clone()), "/nonexistent-home".into(), Vec::new());
+        assert_eq!(opts.home, data);
+        let index = markie_core::index::scan(&opts);
+        let rows = markie_agent::skills::from_index(&index.files, &markie_agent::skills::tool_roots(&opts.home, None, None));
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert!(rows.iter().any(|r| r.label == "alpha" && r.tool == markie_agent::skills::Tool::Claude), "{labels:?}");
+        assert!(rows.iter().any(|r| r.path.ends_with(".claude/CLAUDE.md")), "{labels:?}");
     }
 }

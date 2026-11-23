@@ -1,7 +1,7 @@
 # Markie RS Office and platform parity audit
 
-macOS score: **88.52% (54 PASS ÷ 61 eligible)**, after the native print work, the capture pass and the editor fixes pass on 2026-11-22. 105 rows: 54 PASS, 3 FAIL,
-39 EXCLUDED, 5 EXCLUDED-PLATFORM, 1 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
+macOS score: **88.52% (54 PASS ÷ 61 eligible)**, after the native print work, both capture passes and the editor fixes pass on 2026-11-22. 105 rows: 54 PASS, 4 FAIL,
+39 EXCLUDED, 5 EXCLUDED-PLATFORM, 0 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
 All 93 inventory bullets are represented. Both exclusion classes stay out of the denominator.
 
 Baseline: Rust `3b6f6c0`, Electron source `ae62cfa7e73f`, installed reference
@@ -109,7 +109,7 @@ can match an IPC operation without implementing the Electron transport.
 | 22.387a | RustCrypto, LocalAuthentication and separate Keychain | NEEDS-KIRBY | Electron `electron/vault-touch-id.js`, `src/lib/vault/envelope.ts`; Vault `Cargo.toml`, `device.rs`; App `the_vault_lives_in_markie_rs_own_places` | Crypto proven separately. Verify the actual consent sheet and Keychain lifecycle with a scratch vault. |
 | 22.387b | IndexedDB migration | EXCLUDED | Electron `src/lib/vault/storage.ts:44`; Migrate `the_migrated_vault_opens_with_the_fixture_passphrase` | Same switchover rule as 22.385. |
 | 22.A | Window hiding and idle lock | PASS | Electron `src/components/documents/vault-panel.tsx:328,610`; App `hidden_window_triggers_the_same_lock_as_idle_without_reentering` | Native visibility invokes the bounded checkpoint. The live minimize/restore and platform visibility definitions remain to be checked. |
-| 22.B | Locked and unlocked vault appearance | NEEDS-CAPTURE | Electron `src/components/documents/vault-panel.tsx:719`, `vault-env-editor.tsx`; App `workspace/vault.rs:1404,1671,1947` | Capture both themes and states, including the env page. |
+| 22.B | Locked and unlocked vault appearance | FAIL | Electron `src/components/documents/vault-panel.tsx:719`, `vault-env-editor.tsx`; App `workspace/vault.rs:1404,1671,1947` | Capture pass 2 (2026-11-22, `.autoloop/runs/capture-pass-2/`), light, scratch vault created by passphrase in both. The locked page now matches (`sbs-vault0-light.png`, `sbs-vault-typed-light.png`: card, label, fields, strength meter "Strong · about 71 bits", buttons). Fixed in `vault.rs` and `chrome.rs`: the title bar shows "Protected documents" with no rename or copy, as document-workspace.tsx; the header has `leading-tight` and `text-sm` lines; the card is `bg-surface`; the label has its tracking; Create, Suggest a passphrase and Restore from backup… are plain text buttons with `px-3 py-2` as Electron 0.9.7 paints them (its filled and underlined classes do not reach the screen), not a filled button and blue links. Fields are still about 4 pt shorter. Unlocked page (`sbs-vault-open-light.png`): same structure and wording, but Markie RS draws bordered Settings and Lock vault, a filled "Use Touch ID…", a link-styled "Not now", bordered list actions and a grey list column, where Electron paints plain text buttons on the page background. Fix: `plain_button` for those actions and the page background for the list column. Not reached: dark, lock and unlock, backup and the env page (macOS crash alerts for another app covered the middle of the screen). Touch ID was not touched. |
 
 ## 25. Hidden terminal
 

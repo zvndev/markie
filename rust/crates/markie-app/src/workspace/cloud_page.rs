@@ -169,8 +169,16 @@ pub(super) fn entries(
     by_me: Option<&[SharedByMeDoc]>,
     local: &[(PathBuf, Option<String>)],
     path_for: impl Fn(&str) -> Option<PathBuf>,
+    opened_at: impl Fn(&std::path::Path) -> Option<String>,
     area: Option<&str>,
 ) -> Vec<Entry> {
+    // sync.js `listLibrary`: a document with a file on this device is a
+    // registry row, and its time is when that file was last opened here;
+    // only a document with no local copy takes the listing's time.
+    let time_of = |path: &Option<PathBuf>, listed: Option<String>| match path {
+        Some(p) => opened_at(p),
+        None => listed,
+    };
     let in_area = |row: Option<&DocMeta>| area.is_none() || row.and_then(|r| r.area_id.as_deref()) == area;
     let mut unclaimed: HashMap<&str, &SharedByMeDoc> = by_me.unwrap_or_default().iter().map(|d| (d.id.as_str(), d)).collect();
     let mut out = Vec::new();
@@ -181,8 +189,8 @@ pub(super) fn entries(
                 key: format!("item:{}", doc.id),
                 source: Source::WithMe,
                 name: doc.name.clone(),
+                updated_at: time_of(&path, doc.updated_at.clone()),
                 path,
-                updated_at: doc.updated_at.clone(),
                 doc: Some(doc.clone()),
                 share: None,
             });
@@ -193,11 +201,11 @@ pub(super) fn entries(
             key: format!("item:{}", doc.id),
             source: if share.is_some() { Source::ByMe } else { Source::OnlyMe },
             name: doc.name.clone(),
-            path,
             updated_at: match &share {
-                Some(s) => later(doc.updated_at.clone(), s.updated_at.clone()),
-                None => doc.updated_at.clone(),
+                Some(s) => later(time_of(&path, doc.updated_at.clone()), s.updated_at.clone()),
+                None => time_of(&path, doc.updated_at.clone()),
             },
+            path,
             doc: Some(doc.clone()),
             share,
         });
@@ -209,7 +217,7 @@ pub(super) fn entries(
                 source: Source::OnlyMe,
                 name: name(path),
                 path: Some(path.clone()),
-                updated_at: None,
+                updated_at: opened_at(path),
                 doc: None,
                 share: None,
             });
@@ -914,7 +922,14 @@ impl Workspace {
             None => Vec::new(),
         };
         let all = match scope {
-            Some(s) => entries(&docs, by_me, &local, |id| self.cloud.find(s, id), self.cloud.area.as_deref()),
+            Some(s) => entries(
+                &docs,
+                by_me,
+                &local,
+                |id| self.cloud.find(s, id),
+                |path| self.registry.as_ref().and_then(|r| r.last_opened(path).ok().flatten()),
+                self.cloud.area.as_deref(),
+            ),
             None => Vec::new(),
         };
         let matched = query(all, q);
@@ -1378,7 +1393,7 @@ mod tests {
             doc("c", "gamma.docx", "2026-11-19T10:00:00Z", false),
         ];
         let by_me = vec![share("c", "gamma.docx", 2, 1), share("z", "only-shared.md", 1, 0)];
-        let rows = entries(&docs, Some(&by_me), &[], |_| None, None);
+        let rows = entries(&docs, Some(&by_me), &[], |_| None, |_| None, None);
         let summary: Vec<_> = rows.iter().map(|e| (e.name.as_str(), e.source)).collect();
         assert_eq!(
             summary,
@@ -1395,6 +1410,29 @@ mod tests {
         assert_eq!(source_badge_text(&rows[0], true), "Shared with you");
     }
 
+    /// sync.js lists a document with a file on this device by that file's
+    /// last open, so documents just landed or opened lead the default order.
+    #[test]
+    fn a_local_copy_dates_its_row_by_its_last_open() {
+        let docs = vec![
+            doc("old", "Roadmap.md", "2026-11-20T10:00:00Z", false),
+            doc("new", "From Bob.md", "2026-11-22T10:00:00Z", true),
+        ];
+        let rows = entries(
+            &docs,
+            Some(&[]),
+            &[],
+            |id| (id == "old").then(|| std::path::PathBuf::from("/x/Roadmap.md")),
+            |_| Some("2026-11-23T08:00:00Z".into()),
+            None,
+        );
+        let names: Vec<_> = rows.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["Roadmap.md", "From Bob.md"]);
+        // Never opened here: no time at all, as a registry row without one.
+        let rows = entries(&docs, Some(&[]), &[], |id| (id == "old").then(|| "/x/Roadmap.md".into()), |_| None, None);
+        assert_eq!(rows.last().map(|e| e.name.as_str()), Some("Roadmap.md"));
+    }
+
     #[test]
     fn type_and_order_menus_filter_like_library_document_query() {
         let docs = vec![
@@ -1403,7 +1441,7 @@ mod tests {
             doc("c", "data.csv", "2026-11-20T10:00:00Z", false),
             doc("d", "archive.zip", "2026-11-18T10:00:00Z", false),
         ];
-        let rows = entries(&docs, Some(&[]), &[], |_| None, None);
+        let rows = entries(&docs, Some(&[]), &[], |_| None, |_| None, None);
         let names = |q: Query| query(rows.clone(), &q).into_iter().map(|e| e.name).collect::<Vec<_>>();
         assert_eq!(names(Query::default()), ["report.docx", "Notes.md", "data.csv", "archive.zip"]);
         assert_eq!(names(Query { format: Some(FormatKind::Docx), ..Default::default() }), ["report.docx"]);

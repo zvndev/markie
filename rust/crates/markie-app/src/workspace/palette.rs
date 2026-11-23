@@ -120,7 +120,11 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         cmd("Library…", "File", Some("⌘L"), "documents cloud sync files recent projects organize workspace group", action(ToggleLibrary)),
         cmd("Browse all documents…", "File", None, "all files device skills index find", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::Browse, cx))),
         cmd("Cloud…", "File", None, "synced shared sharing people cloud sync backup invited", action(ShowCloud)),
-        cmd("Skills & agent files…", "File", None, "claude agents codex gemini cursor instructions", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::Skills, cx))),
+        cmd("Skills & agent files…", "File", None, "claude agents codex gemini cursor instructions", Rc::new(|ws, w, cx| {
+            // As the rail button does: the panel is built on first show.
+            ws.prepare_skills(w, cx);
+            ws.select_view(super::rail::LeftView::Skills, cx);
+        })),
         cmd("New file", "File", Some("⌘N"), "blank create empty document", action(NewDocument)),
         cmd("Share…", "File", None, "collaborate invite live people sync cloud link", Rc::new(|ws, w, cx| ws.open_share(w, cx))),
         cmd("History…", "File", None, "versions restore snapshot revert previous", action(ShowHistory)),

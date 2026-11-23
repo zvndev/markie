@@ -1649,7 +1649,10 @@ impl AccountSection {
     fn render_people(&self, l: Look, cx: &mut Context<Self>) -> Div {
         let store = self.store.read(cx);
         let busy = store.people_busy;
-        let heading = |text: &'static str| div().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(l.muted).child(text);
+        // `.markie-overlay-section`, its 0.08em tracking included.
+        let heading = |text: &'static str| {
+            div().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(l.muted).child(super::dialog_chrome::spaced_caps(text))
+        };
         let who = |p: &Person| p.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| p.email.clone());
         let row = |p: &Person| {
             h_flex().gap(px(8.)).py(px(2.)).child(
@@ -1687,7 +1690,8 @@ impl AccountSection {
                     let (id1, id2) = (person.id.clone(), person.id.clone());
                     let (n1, n2) = (name.clone(), name.clone());
                     section = section.child(
-                        row(person)
+                        // PersonRow: the buttons sit in their own `gap-1` group.
+                        row(person).child(h_flex().flex_none().gap(px(4.))
                             .child(button(format!("ppl-remove-{}", person.id), "Remove").when(!busy, |el| {
                                 el.on_click(cx.listener(move |this, _, window, cx| {
                                     this.confirm_people(
@@ -1714,7 +1718,7 @@ impl AccountSection {
                                             cx,
                                         )
                                     }))
-                            })),
+                            }))),
                     );
                 }
                 if !people.blocked.is_empty() {
@@ -1794,18 +1798,7 @@ impl Render for AccountSection {
                             .text_color(l.muted)
                             .cursor_pointer()
                             .child("Sync my documents to the cloud")
-                            .child(
-                                div()
-                                    .size(px(13.))
-                                    .rounded(px(3.))
-                                    .border_1()
-                                    .border_color(if on { l.blue } else { l.border })
-                                    .when(on, |el| el.bg(l.blue))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .when(on, |el| el.child(super::chrome::icon("markie/check.svg", 10., gpui_kit::white()))),
-                            )
+                            .child(native_checkbox(on))
                             .on_click(cx.listener(move |this, _, _, cx| this.store.update(cx, |s, cx| s.set_sync_enabled(!on, cx))))
                     })
                     .child(self.render_people(l, cx))
@@ -2322,4 +2315,22 @@ mod tests {
         assert_eq!(short_ago(&(now - chrono::Duration::days(65)).to_rfc3339()).as_deref(), Some("2mo"));
         assert_eq!(short_ago("not a time"), None);
     }
+}
+
+/// The sync switch is a bare `<input type="checkbox">` in settings.tsx, which
+/// Chromium draws in its own light colours whatever the theme: 13 px, white
+/// with a #767676 border unchecked, #0075ff with a white tick checked.
+fn native_checkbox(on: bool) -> Div {
+    div()
+        .size(px(13.))
+        .flex_none()
+        .rounded(px(2.5))
+        .flex()
+        .items_center()
+        .justify_center()
+        .when_else(
+            on,
+            |el| el.bg(rgb(0x0075ff)).child(super::chrome::icon("markie/check.svg", 10., gpui_kit::white())),
+            |el| el.bg(gpui_kit::white()).border_1().border_color(rgb(0x767676)),
+        )
 }

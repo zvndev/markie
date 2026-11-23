@@ -10,6 +10,7 @@ Both apps were compared at 1280x820, light and dark, on the same fixture folder 
 - 40px tall, 82px left inset, traffic lights at x 14, y 14.
 - The wordmark at 64px: the lettering in the text colour at 90% and the underline in brand red. Both layers are the same vector paths as `src/lib/brand.ts`.
 - Open (or "Open file…" without a document), the file name, Export with its chevron, Copy all, the commands button, the System/Light/Dark switch, the theme palette button and Share. Each uses Electron's sizes: 28px controls, 13px and 15px icons, 12px labels, 6px radius.
+- A Word, RTF, ODT or `.wd` document puts the bar in Electron's document mode: "Save file" before Export, no Copy all, and Export offers Save a Copy… (and Export PDF… when the document can print). Added 2026-11-22.
 - Every icon is Electron's own SVG path, drawn from `src/icons.rs`.
 - Dark mode draws the same left-to-right surface gradient. Light mode uses the flat surface.
 - Clicking the file name renames the file. A dirty document shows the muted dot after its name.
@@ -62,7 +63,7 @@ Both apps were compared at 1280x820, light and dark, on the same fixture folder 
 - The panel has a fixed 252px width; Electron's resizer is not ported.
 - Browse groups files by their folder, one level, rather than Electron's nested folder tree. It also has no per-row star buttons. Folders start open, as in Electron, until you toggle one.
 - Search matches names, paths and the indexed snippet through `markie_core::search`. It does not highlight matched words, and the footer does not count documents read.
-- Agents and Keyboard shortcuts open GPUI Kit dialogs. Electron draws its own overlay; the wording matches but the panel chrome is GPUI Kit's.
+- Agents and Keyboard shortcuts open GPUI Kit dialogs. Electron draws its own overlay. The Agents dialog now takes `.markie-overlay-panel`'s colours, border, shadow, centring and padding (2026-11-22); Keyboard shortcuts keeps GPUI Kit's panel chrome.
 - Title bar tooltips use GPUI Kit's delayed tooltip. Electron uses native titles there too, so they are equally slow.
 
 ### Deliberate deviation

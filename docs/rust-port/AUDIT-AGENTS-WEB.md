@@ -6,13 +6,13 @@ Sections: PARITY.md 15, 16, 18, 19 and 23.
 
 ## Score
 
-Parity score: **51 / 53 = 96.2%**. That is PASS over all 67 rows less the 14 excluded ones (13 nightly, 1 Windows). No row needed plain EXCLUDED: nothing in these sections is the updater, the terminal, the Recovered list, sign-in moving, file-type claims or the private-release gate.
+Parity score: **52 / 53 = 98.1%**. That is PASS over all 67 rows less the 14 excluded ones (13 nightly, 1 Windows). No row needed plain EXCLUDED: nothing in these sections is the updater, the terminal, the Recovered list, sign-in moving, file-type claims or the private-release gate.
 
 | Status | Rows |
 |---|---|
-| PASS | 51 |
+| PASS | 52 |
 | FAIL | 1 |
-| NEEDS-CAPTURE | 1 (and 4 visual checks on PASS rows, V2 to V5) |
+| NEEDS-CAPTURE | 0 (and 3 visual checks on PASS rows, V3 to V5) |
 | EXCLUDED | 0 |
 | EXCLUDED-NIGHTLY | 13 |
 | EXCLUDED-PLATFORM | 1 |
@@ -95,7 +95,7 @@ Follow-up on 2026-11-22, branch `t3/markie-rs-native-print` (no web views, Kirby
 | 18.10 | Pictures on a `markie-asset://<random host>/` URL | EXCLUDED-NIGHTLY | picture scope only with the nightly bridge | |
 | 18.11 | Web view isolation: no same-origin, no navigation, no popups | PASS | `island.rs` srcdoc iframe `sandbox="allow-scripts"` or empty, navigation and popups refused; golden CSP | |
 | 18.12 | Source limits before compiling | PASS | `past_200000_characters_the_preview_says_so_first`, `darkmown_golden` STOPS cases; commit b31dd35 | Was FAIL: past 200,000 characters Electron says "Darkmown preview is limited to 200,000 characters" before the worker's own limit; RS skipped that check. |
-| 18.13 | Preview look: untrusted and trusted, light and dark | NEEDS-CAPTURE | V1 | V1, capture pass 2026-11-22, `Everything.wd`, dark (`.autoloop/runs/capture-pass/sbs-wd-untrusted-dark.png`, `sbs-wd-trusted-dark.png`): the untrusted preview matches (header, notice, headings, quote, controls, computed line). Clicking "Trust this document" changed neither app on screen, so the trusted state is still uncaptured. Outside the preview, Markie RS has no Darkmown document toolbar (mode, Find, encoding, undo, zoom, style, font, size, bold, italic, list) and no status bar ("Saved", word count, DARKMOWN); that is a larger piece of work for the shell. |
+| 18.13 | Preview look: untrusted and trusted, light and dark | PASS | V1; `doc_toolbar::tests::*`; `island::tests::an_island_is_only_moved_when_its_place_changes`; `themes::tests::each_tone_paints_its_own_editor_background` | Was NEEDS-CAPTURE. Shell fixes, 2026-11-22, `Everything.wd`, all four states (`.autoloop/runs/shell-fixes/sbs-wd-{untrusted,trusted}-{dark,light}.png`). Markie RS now has Electron's `TextDocumentEditor` row (`workspace/doc_toolbar.rs`: "Darkmown · Source", Find, encoding, undo, redo, zoom, paragraph style, font, size, bold, italic, bullet list, editing the source as `wrap` and `setSourceStyle` do), the workspace's `docs-status` footer ("Saved", "230 words · DARKMOWN"), the plain 24 px textarea look and the document-mode title bar ("Save file", no Copy all). Trust is the preview's "Trust this document" button in both apps; in the first pass it never changed because Electron spends the first click on an inactive window activating it, and a filtering event tap dropped Markie RS's release (see the capture section). Also fixed: a preview that finished compiling between frames stayed blank, and the source editor stayed black after a live switch to light. Native form controls inside the preview differ (WebKit against Chromium), as the untrusted capture already showed. |
 
 Row 18.12 is a sub-behaviour of 18.1 and 18.2 found while reading `preview.ts`. It is counted on its own because it was a separate fix.
 
@@ -178,16 +178,27 @@ Screen locked. When unlocked, launch both apps per SCREEN.md, with `env -u CLAUD
 - MCP comparison: `mcp-diff.mjs`, Electron's server against the RS bootstrap on one scratch HOME, 23 of 23 identical.
 - Goldens rerun from the reference source: export and Darkmown unchanged.
 - PDFs: 8 fixture PDFs per app, page counts equal, pixel measurements in `.autoloop/runs/audit-agents-web/pdf/`.
-- Follow-up (`t3/markie-rs-native-print`): `cargo test --workspace` 1,080 passed, 0 failed, 5 ignored. New tests: markie-export `line_baselines_match_chromium`, `word_pagination_matches_electron`, `code_colours_match_highlight_js`; `layout_rules_measured_from_chromium` rewritten for the box model.
+- Follow-up (`t3/markie-rs-native-print`): `cargo test --workspace` 1,080 passed, 0 failed, 5 ignored.
+- Shell fixes (`t3/markie-rs-shell-fixes`): `cargo test --workspace` 1,090 passed, 0 failed, 5 ignored, 68 suites. New tests: markie-app `doc_toolbar::tests::*` (word count, save status, `wrap`, `setSourceStyle`), `watchdog::tests::*`, `themes::tests::each_tone_paints_its_own_editor_background`; markie-web `island::tests::an_island_is_only_moved_when_its_place_changes`. New tests: markie-export `line_baselines_match_chromium`, `word_pagination_matches_electron`, `code_colours_match_highlight_js`; `layout_rules_measured_from_chromium` rewritten for the box model.
 
 ## Capture pass, 2026-11-22
 
 Electron 0.9.7 against this branch at 1280x820, evidence in `.autoloop/runs/capture-pass/`.
 
-- V1 (18.13): see the row. Untrusted preview matches; trusted not reached; the Darkmown toolbar and status bar are missing in Markie RS.
-- V2 (15.1, 15.15): the Agents dialog matches in wording, order, widths and the tool list (`sbs-agents-dark.png`, `crop-agents-*.png`). One difference was fixed in `agents.rs`: section labels now use `.markie-overlay-section` (10 px spaced caps, muted). The fix was not recaptured, and Remote agents signed out was not reached.
+- V1 (18.13): see the row. Untrusted preview matches; trusted not reached; the Darkmown toolbar and status bar are missing in Markie RS. Closed by the shell fixes below.
+- V2 (15.1, 15.15): the Agents dialog matches in wording, order, widths and the tool list (`sbs-agents-dark.png`, `crop-agents-*.png`). One difference was fixed in `agents.rs`: section labels now use `.markie-overlay-section` (10 px spaced caps, muted). The fix was not recaptured, and Remote agents signed out was not reached. Recaptured in the shell fixes below.
 - V3 (15.12): not run.
 - V4 (16.1): the golden tree written into the scratch data folder did not show in the Skills panel ("No agent files found"), so nothing to compare yet.
 - V5 (23.2): ⌘P on `everything.md` opens the native print sheet with a three page preview (`rs-print-sheet.png`).
 
 The score is unchanged: V2 to V5 sit on PASS rows, and 18.13 stays NEEDS-CAPTURE.
+
+## Shell fixes, 2026-11-22
+
+Branch `t3/markie-rs-shell-fixes`, Electron 0.9.7 against the release bundle at 1280x820, evidence in `.autoloop/runs/shell-fixes/` (see its README).
+
+- The reported hang was not one. The main thread sat idle in its event loop in every sample. An AppKit event monitor (`MARKIE_RS_DEBUG_INPUT=1`) showed that synthetic presses reached the app as a mouse-down with the mouse-up missing or seconds late. Electron lost releases the same way. The cause is Codex Computer Use's filtering session event taps (`event-taps.txt`). SCREEN.md now says how to check for them and to drive presses with `act.sh press`. `MARKIE_RS_WATCHDOG=1` (on in debug builds) logs any real main-thread block over 2 s with its stack.
+- V1 (18.13): PASS, see the row. All four states captured, toolbar, footer and title bar matched.
+- V2 (15.1, 15.15): recaptured dark, top, scrolled and Remote agents signed out (`sbs-agents-dark.png`, `sbs-agents-dark-scrolled.png`, `sbs-remote-dark.png`). Fixed to match Electron: the panel is centred with 20 px padding that scrolls with the title, on `.markie-overlay-panel` colours, border and shadow; Electron's block margins; `CLAUDE.md`, `AGENTS.md`, `~/.claude/skills` and `~/.codex` in monospace; 18 px tool rows; a compact accent Remote agents… button and small accent Copy buttons. Left as is: GPUI has no backdrop blur, the checkbox is GPUI Kit's, and Remote agents replaces the dialog's content instead of stacking a second panel over it.
+
+Score: 52 of 53 PASS. 18.13 moves to PASS; V3 to V5 remain visual checks on PASS rows.

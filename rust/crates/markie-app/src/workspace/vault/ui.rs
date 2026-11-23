@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::input::{Editor, Input, InputState};
+use gpui_kit::component::input::{Editor, Input};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -138,126 +138,9 @@ pub fn shortcut(key: &str, platform: bool, shift: bool, alt: bool, control: bool
 
 // ── Pieces ──
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tone {
-    Primary,
-    Secondary,
-    Quiet,
-    Danger,
-}
-
-pub fn button(id: impl Into<ElementId>, label: impl Into<SharedString>, icon: Option<IconName>, tone: Tone, disabled: bool, p: &Palette) -> Stateful<Div> {
-    let hover = p.fg(0.06);
-    let base = h_flex()
-        .id(id)
-        .flex_none()
-        .gap(px(6.))
-        .items_center()
-        .justify_center()
-        .h(px(32.))
-        .px(px(if tone == Tone::Quiet { 8. } else { 12. }))
-        .rounded(px(7.))
-        .text_size(px(13.))
-        .font_weight(FontWeight::MEDIUM)
-        .whitespace_nowrap()
-        .border_1()
-        .border_color(transparent_black());
-    let base = match tone {
-        Tone::Primary => base.bg(p.foreground).text_color(p.background).when(!disabled, |el| el.hover(|s| s.opacity(0.86))),
-        Tone::Secondary => base.bg(p.background).border_color(p.border).text_color(p.foreground).when(!disabled, |el| el.hover(move |s| s.bg(hover))),
-        Tone::Quiet => base.text_color(p.muted).when(!disabled, |el| {
-            let fg = p.foreground;
-            el.hover(move |s| s.bg(hover).text_color(fg))
-        }),
-        Tone::Danger => {
-            let red = p.red;
-            base.text_color(red).when(!disabled, |el| el.hover(move |s| s.bg(red.opacity(0.08))))
-        }
-    };
-    base.when(disabled, |el| el.opacity(0.45))
-        .when(!disabled, |el| el.cursor_pointer())
-        .when_some(icon, |el, icon| el.child(Icon::new(icon).small()))
-        .child(label.into())
-}
-
-/// A square icon button for a table row.
-pub fn icon_button(id: impl Into<ElementId>, icon: IconName, active: bool, disabled: bool, p: &Palette) -> Stateful<Div> {
-    let hover = p.fg(0.07);
-    let fg = p.foreground;
-    div()
-        .id(id)
-        .flex_none()
-        .size(px(30.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .text_color(if active { p.foreground } else { p.muted })
-        .when(active, |el| el.bg(p.fg(0.08)))
-        .when(disabled, |el| el.opacity(0.45))
-        .when(!disabled, |el| el.cursor_pointer().hover(move |s| s.bg(hover).text_color(fg)))
-        .child(Icon::new(icon).small())
-}
-
-pub fn field(input: &Entity<InputState>, disabled: bool, p: &Palette) -> Input {
-    Styled::h(Input::new(input).disabled(disabled), px(36.)).px(px(10.)).text_size(px(14.)).rounded(px(7.)).bg(p.background).border_1().border_color(p.border)
-}
-
-pub fn label(text: impl Into<SharedString>, p: &Palette) -> Div {
-    div().text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(text.into())
-}
-
-pub fn hint(text: impl Into<SharedString>, p: &Palette) -> Div {
-    div().text_size(px(12.)).line_height(px(17.)).text_color(p.muted).child(text.into())
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Error,
-    Info,
-    Success,
-}
-
-/// A one-line message in a tinted box, with an icon.
-pub fn banner(kind: Kind, text: impl Into<SharedString>, p: &Palette) -> Div {
-    let (color, icon) = match kind {
-        Kind::Error => (p.red, IconName::CircleAlert),
-        Kind::Info => (p.muted, IconName::Info),
-        Kind::Success => (p.green, IconName::CircleCheck),
-    };
-    h_flex()
-        .w_full()
-        .items_start()
-        .gap(px(8.))
-        .rounded(px(8.))
-        .px(px(12.))
-        .py(px(9.))
-        .bg(if kind == Kind::Info { p.fg(0.04) } else { color.opacity(0.08) })
-        .border_1()
-        .border_color(if kind == Kind::Info { p.border } else { color.opacity(0.3) })
-        .text_size(px(13.))
-        .line_height(px(19.))
-        .text_color(p.foreground)
-        .child(div().mt(px(1.5)).flex_none().text_color(color).child(Icon::new(icon).small()))
-        .child(div().flex_1().min_w_0().child(text.into()))
-}
-
-/// A small dot and a word: Unlocked, Saved, On.
-pub fn chip(text: &'static str, color: Hsla, p: &Palette) -> Div {
-    h_flex()
-        .flex_none()
-        .gap(px(5.))
-        .items_center()
-        .h(px(20.))
-        .px(px(7.))
-        .rounded_full()
-        .bg(p.fg(0.05))
-        .text_size(px(11.5))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(p.muted)
-        .child(div().size(px(6.)).rounded_full().bg(color))
-        .child(text)
-}
+// The buttons, chips and banners moved to `workspace/ui.rs`, so the Recent
+// and Cloud pages wear the same ones.
+pub use crate::workspace::ui::{Kind, Tone, banner, button, chip, field, hint, icon_button, label};
 
 fn card(p: &Palette) -> Div {
     v_flex().w_full().rounded(px(10.)).border_1().border_color(p.border).bg(p.surface)

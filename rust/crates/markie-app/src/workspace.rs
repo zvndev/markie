@@ -38,6 +38,11 @@ mod collab;
 mod comments;
 mod share;
 mod dialog_chrome;
+// Used by the Recent and Cloud pages, which come next.
+#[allow(dead_code)]
+pub(crate) mod doc_grid;
+#[allow(dead_code)]
+pub(crate) mod doc_preview;
 mod doc_toolbar;
 mod edit_menu;
 mod document_failure;
@@ -71,6 +76,8 @@ mod theme_sync;
 mod doc_theme;
 mod welcome;
 mod untitled;
+#[allow(dead_code)]
+pub(crate) mod ui;
 mod settings;
 mod shortcuts;
 mod strips;

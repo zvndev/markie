@@ -93,6 +93,11 @@ const ICONS: &[(&str, &str)] = &[
     // `.markie-share-role-select`'s caret: two 0.3rem gradient half-squares
     // that meet as a filled triangle 9.6 wide and 4.8 tall.
     ("markie/select-caret.svg", r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" viewBox="0 0 9.6 4.8"><path d="M0 0h9.6L4.8 4.8z" fill="black"/></svg>"#),
+    // The Recent page and the document grid.
+    ("markie/recent.svg", stroke!("1.8", r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>"#)),
+    ("markie/star.svg", stroke!("1.8", r#"<path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>"#)),
+    ("markie/view-grid.svg", stroke!("1.9", r#"<rect x="4" y="4" width="6.5" height="6.5" rx="1.4"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.4"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.4"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.4"/>"#)),
+    ("markie/view-list.svg", stroke!("1.9", r#"<path d="M8.5 6.5h11.5M8.5 12h11.5M8.5 17.5h11.5M4.2 6.5h.01M4.2 12h.01M4.2 17.5h.01"/>"#)),
     ("markie/on-device.svg", stroke!("1.8", r#"<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2.5 19h19"/>"#)),
     // Format page: outline, the 12% fill, and one glyph per family.
     ("markie/fmt-page.svg", stroke!("1.5", r#"<path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5"/>"#)),

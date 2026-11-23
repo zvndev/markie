@@ -26,7 +26,7 @@ import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
 import { desktopAuthApp, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
-import { createMobileAuth } from "./mobile-auth.ts";
+import { createMobileAuth, isMobileAuthPage } from "./mobile-auth.ts";
 import { withoutAppleUserEmail } from "./apple-sign-in.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { canonicalHostRedirect } from "./canonical-host.ts";
@@ -146,7 +146,9 @@ app.use("*", async (c, next) => {
   // the read views at /d/<id> and /s/<token>, which are the same shell and
   // send the same policy (webAppShell). Only those two routes may: any other
   // page gets this one, header or not.
-  const shellHere = isWebAppPath(c.req.path) || (isReadViewPath(c.req.path) && h.has("Content-Security-Policy"));
+  // The phone sign-in's two pages send a stricter one still (mobile-auth.ts
+  // MOBILE_PAGE_CSP): no script at all.
+  const shellHere = isWebAppPath(c.req.path) || ((isReadViewPath(c.req.path) || isMobileAuthPage(c.req.path)) && h.has("Content-Security-Policy"));
   if ((h.get("content-type") ?? "").includes("text/html") && !shellHere) {
     h.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   }

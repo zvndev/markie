@@ -12,12 +12,13 @@
 //      and the `state` better-auth made for this one trip to the provider.
 //   2. The provider sends the browser to better-auth's callback. settle()
 //      below sees every answer the callback gives. When the answer is this
-//      flow's own (the same better-auth state, checked by better-auth against
-//      its own cookie), the session the callback just made is ended on the
-//      spot, its cookie is never sent to the browser, and the row is marked
-//      with the account that signed in. Nothing else can mark a row: not a
-//      session the browser already had, and not a callback from another
-//      start.
+//      flow's own (the same better-auth state) and the request came from the
+//      browser that opened the sign-in (it carries this row's cookie), the
+//      session the callback just made is ended on the spot, its cookie is
+//      never sent to the browser, and the row is marked with the account that
+//      signed in. Nothing else can mark a row: not a session the browser
+//      already had, not a callback from another start, and not this flow's
+//      callback arriving in somebody else's browser.
 //   3. The browser lands on GET /auth/mobile-bridge. Only the browser holding
 //      the row's cookie gets a code, once: 32 random bytes, good for two
 //      minutes and one use, stored only as a hash. The page's button carries
@@ -42,6 +43,13 @@
 // servers, whose hosts the app cannot claim, and for Android until its
 // signing fingerprint is published.
 //
+// What that does not close: an app that pretends to be Markie can run the
+// whole sign-in inside a web view of its own and read the code off the page.
+// A verified link only helps when the page is in a real browser. Closing it
+// needs the exchange to prove which app is asking (device attestation), or
+// Apple's and Google's native sign-in. Neither is built; it is an accepted,
+// open risk (apps/mobile/README.md).
+//
 // The bridge never sends the browser on by itself. The person taps "Return
 // to Markie", under the address they signed in with.
 //
@@ -51,6 +59,7 @@
 // refused, and the person starts again. Nothing is ever accepted that the
 // database does not hold.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { isIPv4, isIPv6 } from "node:net";
 import { Hono, type Context } from "hono";
 import type Database from "better-sqlite3";
 import { auth } from "./auth.ts";
@@ -72,17 +81,70 @@ export const MOBILE_HANDOFF_TTL_MS = 2 * 60 * 1000;
 // How long a sign-in may spend at the provider: better-auth keeps its own
 // state for ten minutes, so a later callback is refused there anyway.
 export const MOBILE_SIGN_IN_TTL_MS = 10 * 60 * 1000;
-// Sign-ins and codes waiting at once, in all and for one client address. A
-// start past either is refused, so the table cannot be grown without bound.
-export const MOBILE_PENDING_MAX = 2000;
+// Sign-ins waiting at once for one client address (an IPv6 /64 counts as
+// one), and in all. Past either, the oldest sign-in still at the provider
+// makes way for the new one, so a flood of starts cannot shut real people
+// out. One that has signed in and is waiting on its exchange is never
+// removed for this. The total is far above what a handful of addresses can
+// hold: filling it takes more than 1600 of them.
+export const MOBILE_PENDING_MAX = 50_000;
 export const MOBILE_PENDING_PER_ADDRESS = 30;
 // The exchange's whole body is four short strings.
 export const MOBILE_EXCHANGE_BODY_MAX = 4096;
 // Requests per client address per minute. Phones behind one carrier address
 // share a bucket, so these are loose for a person and tight for a script.
 export const MOBILE_RATE = { start: 20, bridge: 60, exchange: 20, windowMs: 60_000 } as const;
-/** The cookie that ties a sign-in to the browser it was opened in. */
-export const MOBILE_BROWSER_COOKIE = "markie_mobile_sign_in";
+/**
+ * The cookie that ties a sign-in to the browser it was opened in. With the
+ * `__Host-` prefix a browser only takes it over HTTPS, from this exact host,
+ * for every path: a sibling name (another *.markiedocs.com site, or a
+ * plain-HTTP one on the way) cannot set or replace it.
+ */
+export const MOBILE_BROWSER_COOKIE = "__Host-markie_mobile_sign_in";
+/**
+ * The same cookie over plain HTTP on this machine, for development only: a
+ * browser refuses the `__Host-` prefix without HTTPS. mobileBrowserCookie
+ * picks between them.
+ */
+export const MOBILE_BROWSER_COOKIE_DEV = "markie_mobile_sign_in";
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * The cookie this server uses, from BETTER_AUTH_URL. Plain HTTP gets the
+ * unprefixed name only on a loopback address. Plain HTTP anywhere else gets
+ * the prefixed, Secure one, which a browser will not store: Google and Apple
+ * sign-in on the phone then fails closed there instead of running on a
+ * cookie a neighbour could set.
+ */
+export function mobileBrowserCookie(authBase: string): { name: string; secure: boolean } {
+  const url = new URL(authBase);
+  const dev = url.protocol === "http:" && LOOPBACK.has(url.hostname);
+  return dev ? { name: MOBILE_BROWSER_COOKIE_DEV, secure: false } : { name: MOBILE_BROWSER_COOKIE, secure: true };
+}
+
+/**
+ * What the limits count as one client. An IPv4 address is itself. An IPv6
+ * address is its /64, because one subscriber is handed at least that many
+ * addresses and can use a new one for every request. Anything that is not an
+ * address shares one bucket.
+ */
+export function addressBucket(raw: string | null | undefined): string {
+  const value = (raw ?? "").split(",")[0].trim().replace(/^\[|\]$/g, "").split("%")[0].toLowerCase();
+  if (isIPv4(value)) return value;
+  if (!isIPv6(value)) return "unknown";
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(value);
+  if (mapped) return mapped[1];
+  // Write the address out in full: an IPv4 tail is two groups, and "::" is
+  // however many zero groups make eight.
+  const tail = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(value);
+  const hex = tail ? `${tail[1]}${((+tail[2] << 8) | +tail[3]).toString(16)}:${((+tail[4] << 8) | +tail[5]).toString(16)}` : value;
+  const [head, rest] = hex.split("::");
+  const left = head ? head.split(":") : [];
+  const right = rest ? rest.split(":") : [];
+  const groups = rest === undefined ? left : [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  return `${groups.slice(0, 4).map((group) => (parseInt(group, 16) || 0).toString(16)).join(":")}::/64`;
+}
 
 // SHA-256 of the app's secret, lowercase hex. Echoed into a URL, so only this
 // exact shape is ever accepted.
@@ -150,7 +212,10 @@ export function mobileRefusalLink(refusal: MobileRefusal, state: string | null, 
 }
 
 export interface MobileHandoffStore {
-  /** Whether one more sign-in may be opened for this client address. */
+  /**
+   * Whether one more sign-in can be opened for this client address: there is
+   * room, or an older sign-in still at the provider can make way.
+   */
   room(address: string): boolean;
   /**
    * Opens a sign-in: the challenge and state the app sent, and the better-auth
@@ -160,14 +225,22 @@ export interface MobileHandoffStore {
    */
   start(input: { provider: MobileProvider; challenge: string; state: string; flow: string; address: string; replaces?: unknown }): string | null;
   /**
-   * The provider callback for `flow` signed this account in. True once, and
-   * only for a sign-in that is open and waiting on exactly that flow.
+   * The provider callback for `flow`, arriving in the browser that holds
+   * `browser`, signed this account in. True once, and only for a sign-in that
+   * is open, waiting on exactly that flow, and was opened in that browser.
    */
-  complete(input: { flow: unknown; userId: string }): boolean;
+  complete(input: { flow: unknown; browser: unknown; userId: string }): boolean;
+  /** The same callback, refused by the provider or by this server. Once, as above. */
+  fail(input: { flow: unknown; browser: unknown; refusal: MobileRefusal }): boolean;
   /** A code for the finished sign-in this browser opened. Once. Only its hash is kept. */
   issue(browser: unknown): { code: string; state: string; userId: string } | null;
-  /** Ends this browser's sign-in without a code. The answer is what to tell the app. */
-  refuse(browser: unknown): { state: string; provider: MobileProvider } | null;
+  /**
+   * What to tell the app about this browser's refused sign-in, which is then
+   * gone. Null for a sign-in that is still under way: asking changes nothing.
+   */
+  refused(browser: unknown): { state: string; provider: MobileProvider; refusal: MobileRefusal } | null;
+  /** Drops this browser's sign-in, whatever state it is in. */
+  drop(browser: unknown): void;
   /**
    * Spends a code. The answer is the account it names, or null for anything
    * wrong. A code that was looked up is gone, whatever else was wrong.
@@ -183,10 +256,12 @@ export function createMobileHandoffStore(
   limits: { max: number; perAddress: number } = { max: MOBILE_PENDING_MAX, perAddress: MOBILE_PENDING_PER_ADDRESS }
 ): MobileHandoffStore {
   // One row per sign-in, from the start to the code. status goes
-  // started -> signed_in -> issued, forwards only, each step once.
+  // started -> signed_in -> issued, or started -> refused; forwards only,
+  // each step once. `seq` is the order they were opened in.
   db.exec(`
     CREATE TABLE IF NOT EXISTS mobile_sign_ins (
-      browser_hash TEXT PRIMARY KEY,
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      browser_hash TEXT NOT NULL UNIQUE,
       flow_hash TEXT NOT NULL UNIQUE,
       client TEXT NOT NULL,
       provider TEXT NOT NULL,
@@ -195,21 +270,32 @@ export function createMobileHandoffStore(
       address TEXT NOT NULL,
       status TEXT NOT NULL,
       user_id TEXT,
+      refusal TEXT,
       code_hash TEXT UNIQUE,
       expires_at INTEGER NOT NULL
     );
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_mobile_sign_ins_expiry ON mobile_sign_ins(expires_at)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_mobile_sign_ins_address ON mobile_sign_ins(address)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mobile_sign_ins_address ON mobile_sign_ins(address, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mobile_sign_ins_status ON mobile_sign_ins(status, seq)");
   const insert = db.prepare(
     "INSERT INTO mobile_sign_ins (browser_hash, flow_hash, client, provider, challenge, state, address, status, expires_at) VALUES (?,?,?,?,?,?,?,'started',?)"
   );
   const sweep = db.prepare("DELETE FROM mobile_sign_ins WHERE expires_at <= ?");
   const countAll = db.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins WHERE expires_at > ?");
   const countAddress = db.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins WHERE address = ? AND expires_at > ?");
-  const drop = db.prepare("DELETE FROM mobile_sign_ins WHERE browser_hash = ? RETURNING state, provider");
+  const startedAll = db.prepare("SELECT 1 FROM mobile_sign_ins WHERE status = 'started' LIMIT 1");
+  const startedAddress = db.prepare("SELECT 1 FROM mobile_sign_ins WHERE address = ? AND status = 'started' LIMIT 1");
+  // The oldest sign-in still at the provider. Never one past that point.
+  const evictAll = db.prepare("DELETE FROM mobile_sign_ins WHERE seq = (SELECT seq FROM mobile_sign_ins WHERE status = 'started' ORDER BY seq LIMIT 1)");
+  const evictAddress = db.prepare("DELETE FROM mobile_sign_ins WHERE seq = (SELECT seq FROM mobile_sign_ins WHERE address = ? AND status = 'started' ORDER BY seq LIMIT 1)");
+  const drop = db.prepare("DELETE FROM mobile_sign_ins WHERE browser_hash = ?");
+  const takeRefused = db.prepare("DELETE FROM mobile_sign_ins WHERE browser_hash = ? AND status = 'refused' RETURNING state, provider, refusal");
   const complete = db.prepare(
-    "UPDATE mobile_sign_ins SET status = 'signed_in', user_id = ? WHERE flow_hash = ? AND status = 'started' AND expires_at > ?"
+    "UPDATE mobile_sign_ins SET status = 'signed_in', user_id = ? WHERE flow_hash = ? AND browser_hash = ? AND status = 'started' AND expires_at > ?"
+  );
+  const fail = db.prepare(
+    "UPDATE mobile_sign_ins SET status = 'refused', refusal = ? WHERE flow_hash = ? AND browser_hash = ? AND status = 'started' AND expires_at > ?"
   );
   const issue = db.prepare(
     "UPDATE mobile_sign_ins SET status = 'issued', code_hash = ?, expires_at = ? WHERE browser_hash = ? AND status = 'signed_in' AND expires_at > ? RETURNING state, user_id AS userId"
@@ -218,27 +304,41 @@ export function createMobileHandoffStore(
     "DELETE FROM mobile_sign_ins WHERE code_hash = ? RETURNING client, challenge, state, status, user_id AS userId, expires_at AS expiresAt"
   );
   const browserHash = (browser: unknown) => (typeof browser === "string" && BROWSER.test(browser) ? sha256Hex(browser) : null);
+  const flowHash = (flow: unknown) => (typeof flow === "string" && flow ? sha256Hex(flow) : null);
   const addressKey = (address: string) => sha256Hex(address);
+  const fullAll = () => (countAll.get(now()) as { n: number }).n >= limits.max;
+  const fullAddress = (key: string) => (countAddress.get(key, now()) as { n: number }).n >= limits.perAddress;
   const room = (address: string) => {
-    const at = now();
-    if ((countAll.get(at) as { n: number }).n >= limits.max) return false;
-    return (countAddress.get(addressKey(address), at) as { n: number }).n < limits.perAddress;
+    const key = addressKey(address);
+    if (fullAddress(key) && !startedAddress.get(key)) return false;
+    return !fullAll() || !!startedAll.get();
   };
   const open = db.transaction((input: Parameters<MobileHandoffStore["start"]>[0]): string | null => {
     sweep.run(now());
     const old = browserHash(input.replaces);
     if (old) drop.run(old);
-    if (!room(input.address)) return null;
+    const key = addressKey(input.address);
+    // Make way: this address's own oldest first, then the oldest of all.
+    if (fullAddress(key) && evictAddress.run(key).changes === 0) return null;
+    if (fullAll() && evictAll.run().changes === 0) return null;
     const browser = randomBytes(32).toString("base64url");
-    insert.run(sha256Hex(browser), sha256Hex(input.flow), MOBILE_CLIENT, input.provider, input.challenge, input.state, addressKey(input.address), now() + MOBILE_SIGN_IN_TTL_MS);
+    insert.run(sha256Hex(browser), sha256Hex(input.flow), MOBILE_CLIENT, input.provider, input.challenge, input.state, key, now() + MOBILE_SIGN_IN_TTL_MS);
     return browser;
   });
   return {
     room,
     start: (input) => open(input),
-    complete({ flow, userId }) {
-      if (typeof flow !== "string" || !flow || !userId) return false;
-      return complete.run(userId, sha256Hex(flow), now()).changes === 1;
+    complete({ flow, browser, userId }) {
+      const flowKey = flowHash(flow);
+      const browserKey = browserHash(browser);
+      if (!flowKey || !browserKey || !userId) return false;
+      return complete.run(userId, flowKey, browserKey, now()).changes === 1;
+    },
+    fail({ flow, browser, refusal }) {
+      const flowKey = flowHash(flow);
+      const browserKey = browserHash(browser);
+      if (!flowKey || !browserKey) return false;
+      return fail.run(mobileRefusal(refusal), flowKey, browserKey, now()).changes === 1;
     },
     issue(browser) {
       const hash = browserHash(browser);
@@ -249,11 +349,15 @@ export function createMobileHandoffStore(
       const row = issue.get(sha256Hex(code), now() + MOBILE_HANDOFF_TTL_MS, hash, now()) as { state: string; userId: string } | undefined;
       return row ? { code, state: row.state, userId: row.userId } : null;
     },
-    refuse(browser) {
+    refused(browser) {
       const hash = browserHash(browser);
       if (!hash) return null;
-      const row = drop.get(hash) as { state: string; provider: string } | undefined;
-      return row ? { state: row.state, provider: mobileProvider(row.provider) ?? "google" } : null;
+      const row = takeRefused.get(hash) as { state: string; provider: string; refusal: string } | undefined;
+      return row ? { state: row.state, provider: mobileProvider(row.provider) ?? "google", refusal: mobileRefusal(row.refusal) } : null;
+    },
+    drop(browser) {
+      const hash = browserHash(browser);
+      if (hash) drop.run(hash);
     },
     redeem({ code, verifier, state, client }) {
       if (typeof code !== "string" || !CODE.test(code)) return null;
@@ -276,7 +380,9 @@ export function createMobileHandoffStore(
 
 /**
  * Counts requests per key in a fixed window, in memory. The map is bounded:
- * when it is full of live windows a new key is refused, not let through.
+ * when it is full of live windows the oldest one makes way, so a flood of
+ * new keys costs the flooder its own counts and never turns a new client
+ * away.
  */
 export function createRateLimiter(now: () => number = Date.now, maxKeys = 20_000) {
   const windows = new Map<string, { until: number; count: number }>();
@@ -289,9 +395,11 @@ export function createRateLimiter(now: () => number = Date.now, maxKeys = 20_000
       const at = now();
       const window = windows.get(key);
       if (window && window.until > at) return ++window.count <= max;
+      windows.delete(key);
       if (windows.size >= maxKeys) {
         prune();
-        if (windows.size >= maxKeys) return false;
+        // A Map keeps the order keys were added in, so the first is the oldest.
+        if (windows.size >= maxKeys) windows.delete(windows.keys().next().value as string);
       }
       windows.set(key, { until: at + windowMs, count: 1 });
       return true;
@@ -333,12 +441,32 @@ export async function readSmallJson(request: Request, max: number): Promise<{ ok
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+/**
+ * The policy for the bridge and return pages. No script from anywhere, no
+ * frames, no forms, nothing fetched but this server's own icons; inline
+ * styles only, which is all the page is made of.
+ */
+export const MOBILE_PAGE_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline'",
+  "img-src 'self' data:",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+/** The pages that carry MOBILE_PAGE_CSP. */
+export const isMobileAuthPage = (path: string) => path === "/auth/mobile-bridge" || path === MOBILE_RETURN_PATH;
+
 // No script: the only way on is the link, tapped by the person.
 function bridgePage(c: Context, status: 200 | 401, heading: string, sub: string, link: { href: string; label: string } | null): Response {
   // The page holds a one-use code. It is not a credential by itself, but it
   // has no business in a cache either.
   c.header("Cache-Control", "private, no-store");
   c.header("Referrer-Policy", "no-referrer");
+  // Nothing runs and nothing loads from anywhere else, and no other page may
+  // frame this one. index.ts leaves this policy in place for these pages.
+  c.header("Content-Security-Policy", MOBILE_PAGE_CSP);
+  c.header("X-Frame-Options", "DENY");
   return c.html(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Markie</title>
 ${BRAND_HEAD}</head>
@@ -411,10 +539,12 @@ export interface MobileAuth {
 export function createMobileAuth({ authBase, issuer, google, apple, verifiedReturn = null, store, now = Date.now, sweepEveryMs = 60_000 }: MobileAuthOptions): MobileAuth {
   const app = new Hono();
   const handoffs = store ?? createMobileHandoffStore(openDatabase(), now);
-  const limiter = createRateLimiter(now);
+  // One map per route, so a flood of starts cannot use up the room a person
+  // finishing a sign-in needs at the bridge or the exchange.
+  const limiters = { start: createRateLimiter(now), bridge: createRateLimiter(now), exchange: createRateLimiter(now) };
   const addressHeader = clientIpHeader();
   const bridgeAt = new URL("/auth/mobile-bridge", authBase);
-  const secure = bridgeAt.protocol === "https:";
+  const own = mobileBrowserCookie(authBase);
   const offered = (provider: MobileProvider | null): provider is MobileProvider =>
     provider === "google" ? google : provider === "apple" ? apple : false;
 
@@ -424,7 +554,7 @@ export function createMobileAuth({ authBase, issuer, google, apple, verifiedRetu
     ? setInterval(() => {
         try {
           handoffs.sweep();
-          limiter.prune();
+          for (const limiter of Object.values(limiters)) limiter.prune();
         } catch (err) {
           reportFault(err, "mobile sign-in sweep");
         }
@@ -433,22 +563,23 @@ export function createMobileAuth({ authBase, issuer, google, apple, verifiedRetu
   timer?.unref();
 
   // The address the edge names (runtime-config.ts clientIpHeader), as
-  // better-auth reads it for its own limits. Requests without one share a
-  // single bucket instead of going unlimited.
-  const addressOf = (c: Context) => (c.req.header(addressHeader) ?? "").split(",")[0].trim().slice(0, 64) || "unknown";
-  const allowed = (c: Context, route: keyof Omit<typeof MOBILE_RATE, "windowMs">) =>
-    limiter.allow(`${route}:${addressOf(c)}`, MOBILE_RATE[route], MOBILE_RATE.windowMs);
+  // better-auth reads it for its own limits, with IPv6 counted by /64.
+  // Requests without one share a single bucket instead of going unlimited.
+  const addressOf = (c: Context) => addressBucket(c.req.header(addressHeader));
+  const allowed = (c: Context, route: keyof typeof limiters) => limiters[route].allow(addressOf(c), MOBILE_RATE[route], MOBILE_RATE.windowMs);
   const busy = (c: Context) => {
     c.header("Retry-After", String(Math.ceil(MOBILE_RATE.windowMs / 1000)));
     return c.text("Too many sign-in tries. Wait a minute and try again.", 429);
   };
 
+  // Path=/ so the cookie also rides the provider callback under /api/auth,
+  // which is where the sign-in is marked. No Domain, ever.
   const browserCookie = (value: string, maxAge: number) =>
-    `${MOBILE_BROWSER_COOKIE}=${value}; Path=/auth; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
-  const browserOf = (c: Context) => {
-    for (const part of (c.req.header("cookie") ?? "").split(";")) {
+    `${own.name}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${own.secure ? "; Secure" : ""}`;
+  const browserOf = (headers: Headers) => {
+    for (const part of (headers.get("cookie") ?? "").split(";")) {
       const at = part.indexOf("=");
-      if (at > 0 && part.slice(0, at).trim() === MOBILE_BROWSER_COOKIE) return part.slice(at + 1).trim();
+      if (at > 0 && part.slice(0, at).trim() === own.name) return part.slice(at + 1).trim();
     }
     return null;
   };
@@ -483,7 +614,7 @@ export function createMobileAuth({ authBase, issuer, google, apple, verifiedRetu
       const { url } = (await res.clone().json()) as { url?: string };
       const flow = url ? new URL(url).searchParams.get("state") : null;
       if (!url || !flow) return c.text(`Could not start ${label} sign-in.`, 500);
-      const browser = handoffs.start({ provider, challenge, state, flow, address, replaces: browserOf(c) });
+      const browser = handoffs.start({ provider, challenge, state, flow, address, replaces: browserOf(c.req.raw.headers) });
       if (!browser) return busy(c);
       const headers = new Headers({ location: url, "cache-control": "private, no-store" });
       for (const cookie of res.headers.getSetCookie()) headers.append("set-cookie", cookie);
@@ -498,31 +629,32 @@ export function createMobileAuth({ authBase, issuer, google, apple, verifiedRetu
 
   // The provider's callback sends the browser here. By now settle() has
   // marked the sign-in or left it alone; this page only asks whether the
-  // browser that opened it is the one asking.
+  // browser that opened it is the one asking. Nothing in the address counts:
+  // the outcome is read from the row. So a page elsewhere that sends a
+  // browser here, with or without ?error=, changes nothing about a sign-in
+  // still under way: it gets the plain "didn't complete" page, and the
+  // sign-in and its cookie stay as they were.
   app.get("/auth/mobile-bridge", async (c) => {
     if (!allowed(c, "bridge")) return busy(c);
-    const browser = browserOf(c);
-    // The cookie is for one visit. It goes whatever happens next.
-    c.header("Set-Cookie", browserCookie("", 0));
+    const browser = browserOf(c.req.raw.headers);
     const verified = verifiedFor(c);
     const back = (refusal: MobileRefusal, state: string | null, provider: MobileProvider) => {
       const words = refusalWords(refusal, provider);
       return bridgePage(c, 401, words.heading, words.sub, { href: mobileRefusalLink(refusal, state, issuer, verified), label: "Back to Markie" });
     };
     const named = mobileProvider(c.req.query("provider")) ?? "google";
-    const error = c.req.query("error");
-    if (error) {
-      const ended = handoffs.refuse(browser);
-      return back(mobileRefusal(error), ended?.state ?? null, ended?.provider ?? named);
-    }
     const issued = handoffs.issue(browser);
     if (!issued) {
-      const ended = handoffs.refuse(browser);
-      return back("failed", ended?.state ?? null, ended?.provider ?? named);
+      const ended = handoffs.refused(browser);
+      if (!ended) return back("failed", null, named);
+      c.header("Set-Cookie", browserCookie("", 0));
+      return back(ended.refusal, ended.state, ended.provider);
     }
+    // The cookie has done its job. It goes with the code.
+    c.header("Set-Cookie", browserCookie("", 0));
     const user = await (await auth.$context).internalAdapter.findUserById(issued.userId);
     if (!user?.email) {
-      handoffs.refuse(browser);
+      handoffs.drop(browser);
       return back("failed", issued.state, named);
     }
     return bridgePage(
@@ -565,7 +697,7 @@ export function createMobileAuth({ authBase, issuer, google, apple, verifiedRetu
     const user = await context.internalAdapter.findUserById(userId);
     if (!user?.email) return refused();
     const session = await context.internalAdapter.createSession(userId, false, {
-      ipAddress: addressOf(c) === "unknown" ? "" : addressOf(c),
+      ipAddress: (c.req.header(addressHeader) ?? "").split(",")[0].trim().slice(0, 64),
       userAgent: (c.req.header("user-agent") ?? "").slice(0, 512),
     });
     if (!session?.token) return refused();
@@ -591,15 +723,22 @@ export function createMobileAuth({ authBase, issuer, google, apple, verifiedRetu
     const headers = new Headers({ location, "cache-control": "private, no-store" });
     for (const cookie of cookies) if (/;\s*max-age=0(?:;|$)/i.test(cookie)) headers.append("set-cookie", cookie);
     try {
-      const cookie = cookies.map((entry) => entry.split(";")[0]).join("; ");
-      const made = cookie ? await auth.api.getSession({ headers: new Headers({ cookie }) }) : null;
-      if (made?.session?.token) {
-        // Ended first. The sign-in is marked only once the session is gone,
-        // so a failure here leaves nothing a code could be minted from.
-        await (await auth.$context).internalAdapter.deleteSession(made.session.token);
-        const flow = new URL(request.url).searchParams.get("state");
-        if (!target.searchParams.has("error") && made.user?.id) handoffs.complete({ flow, userId: made.user.id });
-      }
+      const made = cookies.length
+        ? await auth.api.getSession({ headers: new Headers({ cookie: cookies.map((entry) => entry.split(";")[0]).join("; ") }) })
+        : null;
+      // Ended first. The sign-in is marked only once the session is gone,
+      // so a failure here leaves nothing a code could be minted from.
+      if (made?.session?.token) await (await auth.$context).internalAdapter.deleteSession(made.session.token);
+      // Which sign-in this is: better-auth's state for the flow, and the
+      // cookie of the browser the callback arrived in. Both must be the
+      // row's own. A callback that reaches another browser (its better-auth
+      // state cookie planted there) carries no cookie of ours, or another
+      // sign-in's, and marks nothing.
+      const flow = new URL(request.url).searchParams.get("state");
+      const browser = browserOf(request.headers);
+      const error = target.searchParams.get("error");
+      if (error !== null) handoffs.fail({ flow, browser, refusal: mobileRefusal(error) });
+      else if (made?.session?.token && made.user?.id) handoffs.complete({ flow, browser, userId: made.user.id });
     } catch (err) {
       console.error("mobile sign-in callback failed:", err instanceof Error ? err.message : "unknown error");
       reportFault(err, "/api/auth/callback (mobile)");

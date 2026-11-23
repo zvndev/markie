@@ -222,9 +222,15 @@ export type ProviderSignInResult = { origin: string; token: string; user: ApiUse
  * is waiting on: nothing waiting, a state that does not match, a server
  * other than the one chosen, or neither a well-formed code nor a refusal.
  * Such a link is ignored and what is waiting is left alone, so a page or an
- * app that fires a link, even one that has learned the state, cannot sign
- * anyone in or cancel a sign-in under way. The secret is used up only by a
- * link that passes all of that.
+ * app that fires a link cannot sign anyone in, and cannot cancel a sign-in
+ * under way unless it has the state. The secret is used up only by a link
+ * that passes all of that.
+ *
+ * One link from outside can end a sign-in: a refusal that carries the right
+ * state and names the right server. The app cannot tell it from the server's
+ * own refusal, so the attempt ends with the refusal's words. That costs the
+ * person a retry and nothing else, and it needs the state, which is random,
+ * kept in the Keychain, and shown only to the browser the sign-in runs in.
  *
  * `stillCurrent` is asked once the server has answered. If the person has
  * signed in another way or changed server in the meantime, the session that

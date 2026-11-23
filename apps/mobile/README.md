@@ -192,8 +192,10 @@ Google and Apple (`src/lib/provider-sign-in.ts`, `server/src/mobile-auth.ts`):
 - The app makes a random secret and keeps it in the Keychain or Keystore. The browser is sent to
   `/auth/mobile-start` with the secret's SHA-256 and a random state. That opens a sign-in on the
   server, tied to that browser by a cookie and to that one trip to the provider.
-- Only that trip's own callback can finish the sign-in. A session the browser already had, or a
-  callback from another start, finishes nothing. The session the provider step makes is ended at
+- Only that trip's own callback, arriving in the browser that opened the sign-in, can finish it.
+  A session the browser already had, a callback from another start, or the right callback in
+  somebody else's browser finishes nothing. The browser is known by a `__Host-` cookie, which
+  another site on a sibling name cannot set. The session the provider step makes is ended at
   the callback and its cookie is never sent, so the browser is left signed out of nothing and
   into nothing.
 - The server's page then shows who signed in and a "Return to Markie" button. The link carries a
@@ -217,6 +219,18 @@ trying it spends it. On the custom scheme, an app that opened the sign-in itself
 finish it and tap the button would hold the secret too. The verified link is what closes that, which
 is why Markie Cloud uses it. The result goes through the same `signedIn` path as every other
 sign-in, so the offline store's rules for a changed account hold.
+
+Accepted, open risk. An app that pretends to be Markie can run the whole sign-in inside a web view
+of its own and read the code from the page. It made the secret, so the exchange gives it a session.
+The verified link does not help there: it only protects a sign-in that runs in a real browser.
+Two things would close it, and neither is built:
+
+- Device attestation on the exchange (App Attest on iOS, Play Integrity on Android), so the server
+  only answers the real app.
+- Apple's and Google's native sign-in, which never shows a page another app can host.
+
+Until one of them exists, the defence is the person's own: the page is the provider's, in their
+browser, and it names the account that signed in.
 
 In the desktop browser (`npm run dev` only), `http://localhost:5174/?link=<url>` stands in for a tapped link.
 A document the user cannot read shows the server's message and a way back to Recent.

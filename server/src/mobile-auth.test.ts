@@ -81,8 +81,8 @@ if (toBeCreated.length > 0 || toBeAdded.length > 0) await runMigrations();
 const { app } = await import("./index.ts");
 const { markVerified } = await import("./test-users.ts");
 const {
-  MOBILE_BROWSER_COOKIE, MOBILE_EXCHANGE_BODY_MAX, MOBILE_HANDOFF_TTL_MS, MOBILE_RATE, MOBILE_SIGN_IN_TTL_MS,
-  createMobileAuth, createMobileHandoffStore, createRateLimiter, mobileChallenge, mobileProvider, mobileRefusal,
+  MOBILE_BROWSER_COOKIE, MOBILE_BROWSER_COOKIE_DEV, MOBILE_EXCHANGE_BODY_MAX, MOBILE_HANDOFF_TTL_MS, MOBILE_PAGE_CSP, MOBILE_PENDING_MAX,
+  MOBILE_PENDING_PER_ADDRESS, MOBILE_RATE, MOBILE_SIGN_IN_TTL_MS, addressBucket, createMobileAuth, mobileBrowserCookie, createMobileHandoffStore, createRateLimiter, mobileChallenge, mobileProvider, mobileRefusal,
   mobileRefusalLink, mobileReturnLink, mobileState, readSmallJson,
 } = await import("./mobile-auth.ts");
 const { verifiedReturnOrigin } = await import("./well-known.ts");
@@ -216,6 +216,7 @@ const everyToken = (email?: string) =>
     ? (db.prepare("SELECT token FROM test_seen_tokens WHERE user_id = ?").all(userId(email)) as { token: string }[])
     : (db.prepare("SELECT token FROM test_seen_tokens").all() as { token: string }[])
   ).map((row) => row.token);
+const statusOf = (p: Phone) => (db.prepare("SELECT status FROM mobile_sign_ins WHERE state = ?").get(p.state) as { status: string } | undefined)?.status ?? null;
 const signInRows = () => (db.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins").get() as { n: number }).n;
 
 test("the server says it can hand a sign-in back to the phone", async () => {
@@ -302,7 +303,8 @@ test("a browser that just signed in for something else cannot mint a hand-off, w
   assert.ok(browser.jar.has(MOBILE_BROWSER_COOKIE));
   const back = await noCode(await browser.visit("/auth/mobile-bridge?provider=google"));
   assert.equal(back.searchParams.get("error"), "failed");
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins WHERE state = ?").get(theirs.state)!.n, 0, "and that sign-in is over");
+  assert.equal(back.searchParams.get("state"), null);
+  assert.equal(statusOf(theirs), "started", "the sign-in is still where it was: nobody signed in for it");
   // The bystander's own session is untouched, and still only theirs.
   assert.deepEqual(liveSessions("bystander@example.org"), before);
 });
@@ -326,6 +328,9 @@ test("a callback finishes only the sign-in it was started for", async () => {
   assert.equal(userId("callback-theirs@example.org"), "", "and it signed nobody in");
   await noCode(await myBrowser.visit(`${refusal.pathname}${refusal.search}`));
   await noCode(await myBrowser.visit("/auth/mobile-bridge?provider=google"));
+  // Neither sign-in was touched by it: both are still waiting on their own callback.
+  assert.equal(statusOf(mine), "started");
+  assert.equal(statusOf(theirs), "started");
 
   // Their own callback, in their own browser, still works: once.
   const callback = await theirBrowser.visit(their.callbackPath);
@@ -372,7 +377,125 @@ test("a provider sign-in that names the bridge but was not opened by /auth/mobil
   assert.equal(callback.headers.getSetCookie().some((cookie) => !/max-age=0/i.test(cookie)), false);
   // And the open sign-in was not finished by it.
   await noCode(await browser.visit(`${landed.pathname}${landed.search}`));
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins WHERE state = ?").get(p.state)!.n, 0);
+  assert.equal(statusOf(p), "started");
+});
+
+test("a callback that arrives in another browser finishes nothing, even with better-auth's own state cookie planted there", async () => {
+  // Someone opens a sign-in with their own challenge, in their own browser.
+  const starter = phone();
+  const theirBrowser = new Browser();
+  const { callbackPath } = await googleStart(theirBrowser, starter);
+  // They get their better-auth state cookie into another person's browser: a
+  // script on a sibling name can set a cookie for the whole parent domain.
+  // Our cookie is host-only and prefixed, so it cannot be planted that way,
+  // and the other person's browser does not have it.
+  const victim = new Browser();
+  for (const [name, value] of theirBrowser.jar) if (name !== MOBILE_BROWSER_COOKIE) victim.jar.set(name, value);
+  assert.ok(victim.jar.size >= 1, "better-auth's state cookie was copied over");
+  assert.equal(victim.jar.has(MOBILE_BROWSER_COOKIE), false);
+  // The other person follows the provider link and signs in.
+  googleEmail = "led-astray@example.org";
+  const callback = await victim.visit(callbackPath);
+  const landed = new URL(callback.headers.get("location")!, ORIGIN);
+  assert.equal(landed.pathname, "/auth/mobile-bridge", "better-auth itself accepted the callback");
+  assert.ok(userId("led-astray@example.org"), "and signed them in");
+  // Their account is not attached to the starter's sign-in, the session is
+  // ended, and nobody gets a code: not their browser, not the starter's.
+  assert.deepEqual(liveSessions("led-astray@example.org"), []);
+  assert.equal(statusOf(starter), "started");
+  await noCode(await victim.visit(`${landed.pathname}${landed.search}`));
+  await noCode(await theirBrowser.visit("/auth/mobile-bridge?provider=google"));
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins WHERE user_id = ?").get(userId("led-astray@example.org"))!.n, 0);
+
+  // The same with a sign-in of the other person's own open in their browser:
+  // the flow is the starter's and the cookie is theirs, so neither row moves.
+  const again = phone();
+  const second = await googleStart(theirBrowser, again);
+  const own = phone();
+  const busyVictim = new Browser();
+  await googleStart(busyVictim, own);
+  for (const [name, value] of theirBrowser.jar) if (name !== MOBILE_BROWSER_COOKIE) busyVictim.jar.set(name, value);
+  googleEmail = "led-astray@example.org";
+  await busyVictim.visit(second.callbackPath);
+  assert.equal(statusOf(again), "started");
+  assert.equal(statusOf(own), "started");
+  await noCode(await theirBrowser.visit("/auth/mobile-bridge?provider=google"));
+  await noCode(await busyVictim.visit("/auth/mobile-bridge?provider=google"));
+  assert.deepEqual(liveSessions("led-astray@example.org"), []);
+});
+
+test("the browser's cookie is bound to this host: prefixed, Secure, for every path, with no Domain", async () => {
+  const start = await req(startPath(phone()));
+  const ours = start.headers.getSetCookie().filter((cookie) => cookie.includes("markie_mobile_sign_in"));
+  assert.equal(ours.length, 1);
+  assert.match(ours[0], /^__Host-markie_mobile_sign_in=[A-Za-z0-9_-]{43}; Path=\/; Max-Age=600; HttpOnly; SameSite=Lax; Secure$/);
+  assert.doesNotMatch(ours[0], /domain/i);
+
+  assert.deepEqual(mobileBrowserCookie("https://api.markiedocs.com"), { name: MOBILE_BROWSER_COOKIE, secure: true });
+  assert.deepEqual(mobileBrowserCookie("https://markie.example.com"), { name: MOBILE_BROWSER_COOKIE, secure: true });
+  // Development on this machine: a browser will not take __Host- over plain HTTP.
+  for (const local of ["http://localhost:8787", "http://127.0.0.1:8787", "http://[::1]:8787"]) {
+    assert.deepEqual(mobileBrowserCookie(local), { name: MOBILE_BROWSER_COOKIE_DEV, secure: false }, local);
+  }
+  // Plain HTTP anywhere else keeps the prefixed, Secure cookie, which a
+  // browser refuses: the sign-in fails closed there.
+  for (const elsewhere of ["http://markie.lan", "http://192.168.1.20:8787", "http://localhost.evil.example"]) {
+    assert.deepEqual(mobileBrowserCookie(elsewhere), { name: MOBILE_BROWSER_COOKIE, secure: true }, elsewhere);
+  }
+
+  // A development server reads and clears the plain name, and only that one.
+  const id = userId("phone-google@example.org");
+  const store = createMobileHandoffStore(new Database(":memory:"));
+  const dev = createMobileAuth({ authBase: "http://localhost:8787", issuer: "http://localhost:8787", google: true, apple: false, store, sweepEveryMs: 0 });
+  const p = phone();
+  const browser = store.start({ provider: "google", challenge: p.challenge, state: p.state, flow: "flow-dev", address: "127.0.0.1" })!;
+  assert.equal(store.complete({ flow: "flow-dev", browser, userId: id }), true);
+  const wrongName = await dev.app.request("/auth/mobile-bridge", { headers: { Cookie: `${MOBILE_BROWSER_COOKIE}=${browser}` } });
+  assert.equal(wrongName.status, 401);
+  const page = await dev.app.request("/auth/mobile-bridge", { headers: { Cookie: `${MOBILE_BROWSER_COOKIE_DEV}=${browser}` } });
+  assert.equal(page.status, 200);
+  assert.deepEqual(page.headers.getSetCookie(), ["markie_mobile_sign_in=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"]);
+});
+
+test("a page elsewhere that sends the browser to the bridge cannot cancel a sign-in under way", async () => {
+  const p = phone();
+  const browser = new Browser();
+  const { callbackPath } = await googleStart(browser, p);
+  // Top-level navigations from another site: the Lax cookie rides along.
+  for (const path of ["/auth/mobile-bridge", "/auth/mobile-bridge?provider=google&error=failed", "/auth/mobile-bridge?error=signup_closed"]) {
+    const response = await browser.visit(path);
+    const back = await noCode(response);
+    assert.equal(back.searchParams.get("error"), "failed", "whatever the address says, the page reports nothing it did not read from the sign-in");
+    assert.equal(back.searchParams.get("state"), null);
+    assert.equal(response.headers.getSetCookie().length, 0, "and the cookie is left alone");
+  }
+  assert.equal(statusOf(p), "started");
+  assert.ok(browser.jar.has(MOBILE_BROWSER_COOKIE));
+  // The person comes back from Google and the sign-in finishes as if nothing happened.
+  googleEmail = "not-cancelled@example.org";
+  const callback = await browser.visit(callbackPath);
+  const landed = new URL(callback.headers.get("location")!, ORIGIN);
+  const page = await browser.visit(`${landed.pathname}${landed.search}`);
+  assert.equal(page.status, 200);
+  const code = linkOn(await page.text()).searchParams.get("code")!;
+  assert.equal((await exchange({ client: "markie-mobile", code, verifier: p.verifier, state: p.state })).status, 200);
+});
+
+test("the bridge and return pages run nothing, load nothing from elsewhere, and cannot be framed", async () => {
+  assert.equal(MOBILE_PAGE_CSP, "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  const { page, html } = await googleTrip(phone(), "page-policy@example.org");
+  const pages: [string, Response, string][] = [
+    ["the return page", page, html],
+    ["a refusal", ...(await (async () => { const r = await req("/auth/mobile-bridge"); return [r, await r.clone().text()] as const; })())],
+    ["the page behind the verified link", ...(await (async () => { const r = await req("/auth/mobile-return"); return [r, await r.clone().text()] as const; })())],
+  ];
+  for (const [name, response, body] of pages) {
+    assert.equal(response.headers.get("content-security-policy"), MOBILE_PAGE_CSP, name);
+    assert.equal(response.headers.get("x-frame-options"), "DENY", name);
+    assert.equal(response.headers.get("referrer-policy"), "no-referrer", name);
+    assert.equal(response.headers.get("cache-control"), "private, no-store", name);
+    assert.doesNotMatch(body, /<script|<iframe|<form|<link[^>]+href="https?:|src="https?:|url\(https?:/i, name);
+  }
 });
 
 test("the browser is left with no session: the one the provider step made is ended before the page is shown", async () => {
@@ -625,49 +748,109 @@ test("each client address gets a fixed number of starts, bridge pages and exchan
   assert.equal(limited.status, 429);
   assert.deepEqual(await limited.json(), { error: "rate_limited" });
 
+  // The exchange keeps its own count: an address that has used up its starts
+  // can still finish a sign-in.
+  assert.equal((await req(startPath(p), from("10.8.0.1"))).status, 429);
+  assert.equal((await req("/auth/mobile-exchange", { method: "POST", headers: { "Content-Type": "application/json", "x-forwarded-for": "10.8.0.1" }, body }, null)).status, 400);
+
+  // IPv6: every address in one /64 is one client, however many it rotates through.
+  for (let i = 0; i < MOBILE_RATE.start; i += 1) {
+    assert.equal((await req(startPath(p), from(`2001:db8:aa:bb:${i.toString(16)}::${(i * 7 + 1).toString(16)}`))).status, 302, `rotated start ${i + 1}`);
+  }
+  assert.equal((await req(startPath(p), from("2001:db8:aa:bb:ffff:ffff:ffff:ffff"))).status, 429);
+  assert.equal((await req(startPath(p), from("2001:db8:aa:bc::1"))).status, 302, "the /64 next door is someone else");
+
   for (let i = 0; i < MOBILE_RATE.bridge; i += 1) assert.equal((await req("/auth/mobile-bridge", from("10.8.0.4"))).status, 401);
   assert.equal((await req("/auth/mobile-bridge", from("10.8.0.4"))).status, 429);
   assert.equal((await req("/auth/mobile-return", from("10.8.0.4"))).status, 429, "the return page shares the bridge's allowance");
 });
 
-test("the rate limiter: a window per key, and a full map refuses new keys instead of forgetting old ones", () => {
+test("the rate limiter: a window per key, and a full map drops its oldest key instead of turning a new one away", () => {
   let clock = 0;
   const limiter = createRateLimiter(() => clock, 2);
   assert.equal(limiter.allow("a", 2, 1000), true);
   assert.equal(limiter.allow("a", 2, 1000), true);
   assert.equal(limiter.allow("a", 2, 1000), false);
   assert.equal(limiter.allow("b", 2, 1000), true);
-  assert.equal(limiter.allow("c", 2, 1000), false, "no room for a third key while both windows are live");
-  assert.equal(limiter.size(), 2);
+  assert.equal(limiter.allow("c", 2, 1000), true, "a third key is let in");
+  assert.equal(limiter.size(), 2, "and the map is no bigger for it");
+  assert.equal(limiter.allow("b", 2, 1000), true, "the newer key kept its count");
+  assert.equal(limiter.allow("b", 2, 1000), false);
   clock = 1000;
-  assert.equal(limiter.allow("c", 2, 1000), true, "expired windows make room");
-  assert.equal(limiter.allow("a", 2, 1000), true, "and a new window starts the count again");
+  assert.equal(limiter.allow("b", 2, 1000), true, "a new window starts the count again");
+
+  // A flood of new keys never refuses anyone, and never grows the map.
+  const flooded = createRateLimiter(() => clock, 100);
+  for (let i = 0; i < 5000; i += 1) assert.equal(flooded.allow(`flood-${i}`, 20, 60_000), true);
+  assert.equal(flooded.size(), 100);
+  assert.equal(flooded.allow("a-real-person", 20, 60_000), true);
 });
 
-test("the store: only so many sign-ins wait at once, in all and for one address", () => {
+test("what counts as one client: an IPv4 address, or an IPv6 /64", () => {
+  assert.equal(addressBucket("203.0.113.9"), "203.0.113.9");
+  assert.equal(addressBucket(" 203.0.113.9 , 10.0.0.1"), "203.0.113.9", "the first address named, as better-auth reads it");
+  for (const same of ["2001:db8:1:2::1", "2001:0db8:0001:0002:ffff:ffff:ffff:ffff", "2001:DB8:1:2:a:b:c:d", "[2001:db8:1:2::9]", "2001:db8:1:2::9%eth0"]) {
+    assert.equal(addressBucket(same), "2001:db8:1:2::/64", same);
+  }
+  assert.equal(addressBucket("2001:db8:1:3::1"), "2001:db8:1:3::/64");
+  assert.equal(addressBucket("2001:db8::1"), "2001:db8:0:0::/64");
+  assert.equal(addressBucket("::1"), "0:0:0:0::/64");
+  assert.equal(addressBucket("2001:db8:1:2::203.0.113.9"), "2001:db8:1:2::/64");
+  // An IPv4 client reported in IPv6 clothing is still that IPv4 client.
+  assert.equal(addressBucket("::ffff:203.0.113.9"), "203.0.113.9");
+  for (const none of [undefined, null, "", "unknown", "not an address", "203.0.113", "2001:db8:::1", "<script>"]) assert.equal(addressBucket(none), "unknown", String(none));
+  // Far more addresses than the whole table holds are needed to fill it.
+  assert.ok(MOBILE_PENDING_MAX / MOBILE_PENDING_PER_ADDRESS > 1500);
+});
+
+test("the store: when it is full the oldest sign-in still at the provider makes way, and one that has signed in never does", () => {
   const memory = new Database(":memory:");
   let clock = 1_000_000;
-  const store = createMobileHandoffStore(memory, () => clock, { max: 3, perAddress: 2 });
+  const store = createMobileHandoffStore(memory, () => clock, { max: 4, perAddress: 2 });
+  const states = () => (memory.prepare("SELECT state FROM mobile_sign_ins ORDER BY seq").all() as { state: string }[]).map((row) => row.state);
+  let n = 0;
   const open = (address: string) => {
     const p = phone();
-    return store.start({ provider: "google", challenge: p.challenge, state: p.state, flow: randomBytes(16).toString("hex"), address });
+    const flow = `flow-${++n}`;
+    return { p, flow, browser: store.start({ provider: "google", challenge: p.challenge, state: p.state, flow, address }) };
   };
-  assert.ok(open("1.1.1.1"));
-  assert.ok(open("1.1.1.1"));
-  assert.equal(store.room("1.1.1.1"), false);
-  assert.equal(open("1.1.1.1"), null, "a third for one address is refused");
-  assert.ok(open("2.2.2.2"));
-  assert.equal(store.room("3.3.3.3"), false);
-  assert.equal(open("3.3.3.3"), null, "a fourth in all is refused, whoever asks");
-  assert.equal((memory.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins").get() as { n: number }).n, 3);
-  // The address itself is not what is stored.
-  assert.equal(JSON.stringify(memory.prepare("SELECT * FROM mobile_sign_ins").all()).includes("1.1.1.1"), false);
+  // One address: its third start replaces its own oldest, and nobody else's.
+  const a1 = open("1.1.1.1");
+  const a2 = open("1.1.1.1");
+  const b1 = open("2.2.2.2");
+  assert.equal(store.room("1.1.1.1"), true, "there is always room while something of its own can make way");
+  const a3 = open("1.1.1.1");
+  assert.ok(a3.browser);
+  assert.deepEqual(states(), [a2.p.state, b1.p.state, a3.p.state]);
+  assert.equal(states().includes(a1.p.state), false, "its oldest is the one that went");
+  assert.equal(JSON.stringify(memory.prepare("SELECT * FROM mobile_sign_ins").all()).includes("1.1.1.1"), false, "the address itself is not what is stored");
+
+  // Someone finishes at the provider. Their sign-in is now waiting on the
+  // bridge and the exchange, and a flood of starts must not take it.
+  assert.equal(store.complete({ flow: b1.flow, browser: b1.browser, userId: "user-b" }), true);
+  const flood = Array.from({ length: 40 }, (_, i) => open(`10.0.${i}.1`));
+  assert.ok(flood.every((entry) => entry.browser), "every start in the flood was let in");
+  assert.equal((memory.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins").get() as { n: number }).n, 4, "and the table is no bigger");
+  assert.ok(states().includes(b1.p.state), "the finished sign-in is still there");
+  const issued = store.issue(b1.browser)!;
+  assert.equal(store.redeem({ client: "markie-mobile", code: issued.code, verifier: b1.p.verifier, state: b1.p.state }), "user-b");
+
+  // Only when nothing can make way is a start refused: every row has signed in.
+  const full = createMobileHandoffStore(new Database(":memory:"), () => clock, { max: 2, perAddress: 2 });
+  for (const flow of ["f1", "f2"]) {
+    const p = phone();
+    const browser = full.start({ provider: "google", challenge: p.challenge, state: p.state, flow, address: "3.3.3.3" })!;
+    assert.equal(full.complete({ flow, browser, userId: "user-c" }), true);
+  }
+  assert.equal(full.room("3.3.3.3"), false);
+  assert.equal(full.room("4.4.4.4"), false);
+  const late = phone();
+  assert.equal(full.start({ provider: "google", challenge: late.challenge, state: late.state, flow: "f3", address: "4.4.4.4" }), null);
   // Once they expire there is room again, with or without a sweep having run.
   clock += MOBILE_SIGN_IN_TTL_MS;
-  assert.equal(store.room("1.1.1.1"), true);
-  assert.equal(store.sweep(), 3);
-  assert.equal(store.sweep(), 0);
-  assert.ok(open("1.1.1.1"));
+  assert.equal(full.room("4.4.4.4"), true);
+  assert.equal(full.sweep(), 2);
+  assert.equal(full.sweep(), 0);
 });
 
 test("expired sign-ins are swept on a timer, not only when someone signs in", async () => {
@@ -702,11 +885,19 @@ test("the store: each step happens once, in order, and only for the flow and bro
   // Not signed in yet: no code, for the right browser or any other.
   assert.equal(store.issue(browser), null);
   // Another flow's callback, or none, marks nothing.
-  assert.equal(store.complete({ flow: "flow-2", userId: "user-1" }), false);
-  assert.equal(store.complete({ flow: null, userId: "user-1" }), false);
-  assert.equal(store.complete({ flow: "flow-1", userId: "" }), false);
-  assert.equal(store.complete({ flow: "flow-1", userId: "user-1" }), true);
-  assert.equal(store.complete({ flow: "flow-1", userId: "user-2" }), false, "a second callback cannot change who signed in");
+  assert.equal(store.complete({ flow: "flow-2", browser, userId: "user-1" }), false);
+  assert.equal(store.complete({ flow: null, browser, userId: "user-1" }), false);
+  assert.equal(store.complete({ flow: "flow-1", browser, userId: "" }), false);
+  // The right flow, arriving in a browser that did not open the sign-in.
+  const stranger = open("flow-stranger");
+  for (const other of [null, undefined, "", stranger, randomBytes(32).toString("base64url"), `${browser}x`]) {
+    assert.equal(store.complete({ flow: "flow-1", browser: other, userId: "user-1" }), false);
+    assert.equal(store.fail({ flow: "flow-1", browser: other, refusal: "failed" }), false);
+  }
+  assert.equal(store.complete({ flow: "flow-1", browser, userId: "user-1" }), true);
+  assert.equal(store.complete({ flow: "flow-1", browser, userId: "user-2" }), false, "a second callback cannot change who signed in");
+  assert.equal(store.fail({ flow: "flow-1", browser, refusal: "failed" }), false, "or turn it into a refusal");
+  assert.equal(store.refused(browser), null);
   // Only the browser that opened it gets the code.
   for (const other of [null, undefined, "", randomBytes(32).toString("base64url"), `${browser}x`, { browser }]) assert.equal(store.issue(other), null);
   const issued = store.issue(browser)!;
@@ -715,9 +906,9 @@ test("the store: each step happens once, in order, and only for the flow and bro
   assert.equal(issued.userId, "user-1");
   assert.equal(store.issue(browser), null, "one code per sign-in");
   const rows = memory.prepare("SELECT * FROM mobile_sign_ins").all() as Record<string, unknown>[];
-  assert.equal(rows.length, 1);
-  for (const secret of [issued.code, browser, "flow-1"]) assert.equal(JSON.stringify(rows).includes(secret), false, "only hashes are stored");
-  assert.equal(rows[0].code_hash, sha256(issued.code));
+  assert.equal(rows.length, 2);
+  for (const secret of [issued.code, browser, stranger, "flow-1"]) assert.equal(JSON.stringify(rows).includes(secret), false, "only hashes are stored");
+  assert.equal(rows.find((row) => row.code_hash)?.code_hash, sha256(issued.code));
   assert.equal(store.redeem(good(issued.code)), "user-1");
   assert.equal(store.redeem(good(issued.code)), null, "spent");
 
@@ -725,12 +916,12 @@ test("the store: each step happens once, in order, and only for the flow and bro
   clock = 2_000_000;
   const slow = open("flow-slow");
   clock += MOBILE_SIGN_IN_TTL_MS;
-  assert.equal(store.complete({ flow: "flow-slow", userId: "user-1" }), false, "too late for the callback");
+  assert.equal(store.complete({ flow: "flow-slow", browser: slow, userId: "user-1" }), false, "too late for the callback");
   assert.equal(store.issue(slow), null);
 
   const codeFor = (flow: string) => {
     const b = open(flow);
-    assert.equal(store.complete({ flow, userId: "user-1" }), true);
+    assert.equal(store.complete({ flow, browser: b, userId: "user-1" }), true);
     return store.issue(b)!.code;
   };
   const late = codeFor("flow-late");
@@ -746,11 +937,22 @@ test("the store: each step happens once, in order, and only for the flow and bro
   codeFor("flow-b");
   assert.equal((memory.prepare("SELECT COUNT(*) AS n FROM mobile_sign_ins").get() as { n: number }).n, 1);
 
-  // A refused sign-in is gone, and says which state it was for.
+  // A sign-in still under way has nothing to say, and asking leaves it alone.
   const ended = open("flow-refused");
-  assert.deepEqual(store.refuse(ended), { state: p.state, provider: "google" });
-  assert.equal(store.refuse(ended), null);
-  assert.equal(store.complete({ flow: "flow-refused", userId: "user-1" }), false);
+  assert.equal(store.refused(ended), null);
+  assert.equal(store.fail({ flow: "flow-refused", browser: ended, refusal: "signup_closed" }), true);
+  assert.equal(store.complete({ flow: "flow-refused", browser: ended, userId: "user-1" }), false, "a refused sign-in cannot then be finished");
+  assert.equal(store.issue(ended), null);
+  // A refused one is told once, with the state it was for, and is then gone.
+  assert.deepEqual(store.refused(ended), { state: p.state, provider: "google", refusal: "signup_closed" });
+  assert.equal(store.refused(ended), null);
+  // A reason this server does not know is stored as "failed".
+  const odd = open("flow-odd");
+  assert.equal(store.fail({ flow: "flow-odd", browser: odd, refusal: "<script>" as never }), true);
+  assert.equal(store.refused(odd)?.refusal, "failed");
+  const dropped = open("flow-dropped");
+  store.drop(dropped);
+  assert.equal(store.complete({ flow: "flow-dropped", browser: dropped, userId: "user-1" }), false);
 
   for (const bad of [null, undefined, 7, "", "short", `${issued.code}x`, { code: issued.code }]) {
     assert.equal(store.redeem({ client: "markie-mobile", code: bad, verifier: p.verifier, state: p.state }), null);
@@ -786,7 +988,7 @@ test("on Markie Cloud the button is a link only the real app can be handed", asy
     });
     const p = phone();
     const browser = store.start({ provider: "apple", challenge: p.challenge, state: p.state, flow: "flow-cloud", address: "1.2.3.4" })!;
-    assert.equal(store.complete({ flow: "flow-cloud", userId: id }), true);
+    assert.equal(store.complete({ flow: "flow-cloud", browser, userId: id }), true);
     const page = await cloud.app.request("/auth/mobile-bridge?provider=apple", { headers: { Cookie: `${MOBILE_BROWSER_COOKIE}=${browser}`, "User-Agent": agent } });
     assert.equal(page.status, 200);
     assert.match(page.headers.getSetCookie().join("\n"), new RegExp(`${MOBILE_BROWSER_COOKIE}=; .*Max-Age=0.*Secure`), "the browser's cookie is cleared");
@@ -809,7 +1011,8 @@ test("on Markie Cloud the button is a link only the real app can be handed", asy
     // A refusal goes back the same way.
     const again = phone();
     const refusedBrowser = store.start({ provider: "apple", challenge: again.challenge, state: again.state, flow: "flow-cloud-2", address: "1.2.3.4" })!;
-    const refusal = await cloud.app.request("/auth/mobile-bridge?provider=apple&error=signup_closed", { headers: { Cookie: `${MOBILE_BROWSER_COOKIE}=${refusedBrowser}`, "User-Agent": agent } });
+    assert.equal(store.fail({ flow: "flow-cloud-2", browser: refusedBrowser, refusal: "signup_closed" }), true);
+    const refusal = await cloud.app.request("/auth/mobile-bridge?provider=apple", { headers: { Cookie: `${MOBILE_BROWSER_COOKIE}=${refusedBrowser}`, "User-Agent": agent } });
     assert.equal(refusal.status, 401);
     const back = linkOn(await refusal.text(), "https://markiedocs.com/");
     assert.equal(back.hash, `#error=signup_closed&state=${again.state}&iss=https%3A%2F%2Fapi.markiedocs.com`);

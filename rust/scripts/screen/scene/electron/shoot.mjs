@@ -55,8 +55,9 @@ try {
       }
       if (s.bridge) {
         // Just enough of preload.js for Settings › Advanced › Servers.
+        // electron/servers.js list(): Markie Cloud first, then added servers.
         const servers = [
-          { origin: s.primary.origin, name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true, apple: true, signup: "open" }, version: null },
+          { origin: "https://api.markiedocs.com", name: "Markie Cloud", isDefault: true, signIn: { email: true, google: true, apple: true, signup: "open" }, version: null },
           ...(s.servers ?? []).map((x) => ({ origin: x.origin, name: x.name, isDefault: false, signIn: { email: true, google: false, signup: "open" }, version: null })),
         ];
         const known = {
@@ -64,6 +65,12 @@ try {
           serversList: async () => servers,
           serversProbe: async () => ({ ok: false, error: "scene" }),
           serversAdd: async () => ({ error: "scene" }),
+          syncSession: async () => ({ ok: true }),
+          // Main's serverRequest: the call with that server's token.
+          serverRequest: async ({ origin, path, method, body, token }) => {
+            const res = await fetch(origin + path, { method, body, credentials: "omit", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+            return { ok: res.ok, status: res.status, data: await res.json().catch(() => null), setAuthToken: res.headers.get("set-auth-token") };
+          },
         };
         window.electronAPI = new Proxy(known, {
           get(target, key) {

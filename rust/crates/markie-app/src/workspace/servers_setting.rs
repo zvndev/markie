@@ -102,7 +102,11 @@ impl Workspace {
         let servers = self.cloud.servers.list();
         self.server_accounts(&servers, cx);
         let mut rows: Vec<AnyElement> = Vec::new();
-        for server in servers {
+        let primary = self.cloud.primary_origin();
+        // A local test server standing in for Markie Cloud is already the
+        // Markie Cloud row's session; electron/servers.js lists Markie Cloud
+        // and the servers someone added, nothing else.
+        for server in servers.into_iter().filter(|s| s.is_default || s.origin != primary) {
             let row = if server.is_default || server.origin == self.cloud.primary_origin() {
                 self.default_server_row(&server, t, cx)
             } else {
@@ -162,6 +166,8 @@ impl Workspace {
             .border_color(t.border)
             .px(px(12.))
             .py(px(8.))
+            // Tailwind's preflight: lines 1.5 times their text.
+            .line_height(relative(1.5))
             .child(div().min_w_0().child(div().text_size(px(13.)).text_color(t.foreground).truncate().child(server.name.clone())).child(div().text_size(px(11.)).text_color(t.muted).truncate().child(host_of(&server.origin))))
     }
 

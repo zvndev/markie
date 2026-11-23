@@ -29,7 +29,15 @@
   /* Brand red, darkened just enough for white text on it to read (4.9:1). */
   --m-brand-strong: #d03a26;
   -webkit-tap-highlight-color: transparent;
+  /* The web view never resizes text on its own. The system's text size
+     (Dynamic Type on iOS, font scale on Android) is read by lib/text-size.ts
+     and arrives as the two numbers below: what a person reads and writes
+     follows it all the way, and the app's own labels follow it part of the
+     way, so a bar or a row never outgrows the screen. */
   -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  --m-text-scale: 1;
+  --m-chrome-scale: 1;
 }
 
 :root[data-theme-tone="light"] {
@@ -1296,7 +1304,8 @@ textarea:not(.m-editor-text):focus-visible {
    scrolling sideways inside the page instead of widening it. */
 .m-markdown {
   padding: 18px var(--m-gutter) 40px;
-  font-size: 17px;
+  /* The system text size, and the size of a theme pinned to the document. */
+  font-size: calc(17px * var(--m-text-scale, 1) * var(--m-doc-theme-scale, 1));
   line-height: 1.6;
   /* A long link or token in a pasted transcript wraps, as it does on the
      desktop (.markdown-body), instead of being clipped at the screen edge. */
@@ -1464,10 +1473,22 @@ textarea:not(.m-editor-text):focus-visible {
   margin: 0;
   padding: 18px var(--m-gutter) 40px;
   font-family: var(--font-geist-mono), monospace;
-  font-size: 14px;
+  font-size: calc(14px * var(--m-text-scale, 1));
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A theme the owner pinned to the document (lib/doc-theme.ts). Its type
+   always applies. Its colours come only when they are the phone's own tone,
+   and then the article paints its own page under them. */
+.m-doc-themed .m-markdown {
+  line-height: var(--doc-line-height, 1.6);
+}
+
+.m-doc-themed.has-colors {
+  background: var(--background);
+  color: var(--foreground);
 }
 
 /* Darkmown: the trust choice above a frame that scrolls itself. */
@@ -1697,7 +1718,7 @@ textarea:not(.m-editor-text):focus-visible {
   color: var(--foreground);
   caret-color: var(--m-brand);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
-  font-size: 17px;
+  font-size: calc(17px * var(--m-text-scale, 1));
   line-height: 1.55;
   -webkit-user-select: text;
   user-select: text;
@@ -1705,7 +1726,7 @@ textarea:not(.m-editor-text):focus-visible {
 
 .m-editor-text.is-code {
   font-family: var(--font-geist-mono), monospace;
-  font-size: 15px;
+  font-size: calc(15px * var(--m-text-scale, 1));
   line-height: 1.6;
   tab-size: 2;
 }
@@ -1945,7 +1966,7 @@ textarea:not(.m-editor-text):focus-visible {
 .m-rich-host .markdown-body.markie-document-canvas {
   width: 100% !important;
   padding: 14px var(--m-gutter) 48px;
-  font-size: 17px !important;
+  font-size: calc(17px * var(--m-text-scale, 1)) !important;
   line-height: 1.6;
 }
 
@@ -1980,7 +2001,9 @@ textarea:not(.m-editor-text):focus-visible {
 
 .m-text-live .cm-editor {
   height: 100%;
-  font-size: 15px;
+  font-size: calc(15px * var(--m-text-scale, 1));
+  /* The desktop sizes the source editor's text from this (globals.css). */
+  --doc-zoom: var(--m-text-scale, 1);
 }
 
 /* The row above the keyboard. It is the last child of the editor column,
@@ -2392,7 +2415,7 @@ textarea:not(.m-editor-text):focus-visible {
 
 .m-comment-body {
   margin: 2px 0 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--m-text-scale, 1));
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2424,7 +2447,7 @@ textarea:not(.m-editor-text):focus-visible {
   background: var(--background);
   color: var(--foreground);
   font: inherit;
-  font-size: 16px;
+  font-size: calc(16px * var(--m-text-scale, 1));
   resize: none;
   -webkit-user-select: text;
   user-select: text;

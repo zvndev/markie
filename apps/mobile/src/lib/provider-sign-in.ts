@@ -22,7 +22,7 @@
 //
 // The app never offers a provider a server has not said it supports, and it
 // never sends a hand-off anywhere but the server the sign-in started on.
-import type { ApiUser } from "./api";
+import { retryAfterSeconds, waitWords, type ApiUser } from "./api";
 import { APP_SCHEME, CLAIMED_HOSTS } from "./deep-links";
 import { NetworkError, type HttpTransport } from "./http";
 import type { SecureKeyValue } from "./session";
@@ -278,7 +278,7 @@ export async function completeProviderSignIn(
   } catch (caught) {
     throw new ProviderSignInError(caught instanceof NetworkError ? `${caught.message} Then try ${name} again.` : failed);
   }
-  if (response.status === 429) throw new ProviderSignInError("Too many attempts. Wait a minute and try again.");
+  if (response.status === 429) throw new ProviderSignInError(`Too many attempts. ${waitWords(retryAfterSeconds(response.headers))}`);
   if (response.status !== 200) throw new ProviderSignInError(failed);
   let body: { token?: unknown; user?: { id?: unknown; email?: unknown; name?: unknown } };
   try {

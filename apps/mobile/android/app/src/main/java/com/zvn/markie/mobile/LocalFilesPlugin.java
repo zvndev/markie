@@ -472,15 +472,15 @@ public class LocalFilesPlugin extends Plugin {
         }
     }
 
+    /**
+     * Whether the system lent writing for this document. The document's own
+     * FLAG_SUPPORTS_WRITE is not asked: the media provider (the picker's
+     * "Recent" and "Documents") leaves it off files it writes without trouble.
+     * A provider that really can't write fails the save, which keeps the text
+     * on screen and says so.
+     */
     private boolean writable(Uri uri) {
-        if (getContext().checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != PackageManager.PERMISSION_GRANTED) return false;
-        try (Cursor cursor = getContext().getContentResolver().query(uri, new String[] { Document.COLUMN_FLAGS }, null, null, null)) {
-            // A provider that doesn't say is taken at its word when the save is tried.
-            if (cursor == null || !cursor.moveToFirst() || cursor.isNull(0)) return true;
-            return (cursor.getInt(0) & Document.FLAG_SUPPORTS_WRITE) != 0;
-        } catch (Exception error) {
-            return true;
-        }
+        return getContext().checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean exists(Grant grant) {

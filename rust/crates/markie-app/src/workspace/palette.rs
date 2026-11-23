@@ -118,7 +118,10 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         ),
         cmd("Search All Documents…", "File", Some("⇧⌘F"), "find files everywhere full text docx rtf word grep content global", action(FocusSearch)),
         cmd("Library…", "File", Some("⌘L"), "documents cloud sync files recent projects organize workspace group", action(ToggleLibrary)),
-        cmd("Browse all documents…", "File", None, "all files device skills index find", Rc::new(|ws, _, cx| ws.select_view(super::rail::LeftView::Browse, cx))),
+        cmd("Browse all documents…", "File", None, "all files device skills index find", Rc::new(|ws, window, cx| {
+            ws.select_view(super::rail::LeftView::Browse, cx);
+            ws.browse_focus_filter(window, cx);
+        })),
         cmd("Cloud…", "File", None, "synced shared sharing people cloud sync backup invited", action(ShowCloud)),
         cmd("Skills & agent files…", "File", None, "claude agents codex gemini cursor instructions", Rc::new(|ws, w, cx| {
             // As the rail button does: the panel is built on first show.

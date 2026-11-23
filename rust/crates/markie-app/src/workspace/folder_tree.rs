@@ -151,7 +151,7 @@ pub(super) fn initial_open_set(nodes: &[FolderNode]) -> HashSet<PathBuf> {
     open
 }
 
-fn is_under(path: &Path, dir: &Path) -> bool {
+pub(super) fn is_under(path: &Path, dir: &Path) -> bool {
     let (p, d) = (path.to_string_lossy(), dir.to_string_lossy());
     p.len() > d.len() && p.starts_with(d.as_ref()) && p[d.len()..].starts_with(is_sep)
 }
@@ -196,8 +196,6 @@ pub(super) fn sort_by_updated(nodes: &mut [FolderNode]) {
     }
 }
 
-/// A folder shows its first 200 rows until the person asks for the rest.
-pub(super) const ROW_CAP: usize = 200;
 
 #[cfg(test)]
 mod tests {

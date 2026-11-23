@@ -166,9 +166,9 @@ pub(super) fn sync_mark(status: SyncStatus) -> Option<Mark> {
 // -------------------------------------------------------------- behaviour
 
 impl Workspace {
-    /// A document is opening: the Recent and Cloud pages make way for it.
+    /// A document is opening: the Recent, Browse and Cloud pages make way for it.
     pub(super) fn leave_page_for_document(&mut self) {
-        if matches!(self.shell.view, LeftView::Recent | LeftView::Cloud) {
+        if matches!(self.shell.view, LeftView::Recent | LeftView::Browse | LeftView::Cloud) {
             self.shell.panel_open = false;
         }
     }

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use markie_core::doc_text::{SearchResponse, SearchRow, search_pool};
 use markie_core::formats::FormatKind;
-use markie_core::index::{IndexSnapshot, IndexedDoc};
+use markie_core::index::{IndexSnapshot, IndexedDoc, Truncation};
 use markie_core::search::{Hit, LibraryQuery, SearchIndex};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,6 +75,12 @@ pub struct Library {
     hits: Vec<Hit>,
     pub scanning: bool,
     pub truncated: bool,
+    /// Why the last walk stopped early, when it did.
+    pub truncation: Option<Truncation>,
+    /// When the index on show was walked, in ms since the epoch. 0 before any.
+    pub scanned_at_ms: u128,
+    /// Folders that hold at least one indexed document.
+    pub folders: usize,
     /// When each Recent row was last opened, in ms (`lastOpenedAt`).
     opened_at: HashMap<PathBuf, f64>,
     /// Recent rows whose file is gone (`exists: false`): still listed,
@@ -86,8 +92,11 @@ impl Library {
     /// Takes an `IndexSnapshot` (its search keys built here) or a
     /// [`PreparedSnapshot`] built off the main thread.
     pub fn set_snapshot(&mut self, prepared: impl Into<PreparedSnapshot>) {
-        let PreparedSnapshot { snapshot, index } = prepared.into();
+        let PreparedSnapshot { snapshot, index, folders } = prepared.into();
         self.truncated = snapshot.truncated.is_some();
+        self.truncation = snapshot.truncated;
+        self.scanned_at_ms = snapshot.scanned_at_ms;
+        self.folders = folders;
         self.docs = Rc::new(snapshot.files);
         self.docs_index = Rc::new(index);
         self.pool = Arc::new(Vec::new());
@@ -398,12 +407,14 @@ fn missing_row(path: &std::path::Path) -> IndexedDoc {
 pub struct PreparedSnapshot {
     snapshot: IndexSnapshot,
     index: SearchIndex,
+    folders: usize,
 }
 
 impl PreparedSnapshot {
     pub fn new(snapshot: IndexSnapshot) -> Self {
         let index = SearchIndex::new(&snapshot.files);
-        Self { snapshot, index }
+        let folders = snapshot.files.iter().map(|f| f.dir.as_path()).collect::<std::collections::HashSet<_>>().len();
+        Self { snapshot, index, folders }
     }
 
     pub fn elapsed_ms(&self) -> u128 {
@@ -482,6 +493,22 @@ mod tests {
         lib.clear_query();
         assert_eq!(lib.hits().len(), 3);
         assert!(!lib.query_active());
+    }
+
+    #[test]
+    fn a_snapshot_says_when_it_was_walked_and_how_many_folders_it_found() {
+        let mut lib = Library::default();
+        assert_eq!((lib.scanned_at_ms, lib.folders), (0, 0));
+        let mut far = doc("far.md", 1.0, FormatKind::Markdown);
+        far.dir = PathBuf::from("/y");
+        lib.set_snapshot(IndexSnapshot {
+            files: vec![doc("a.md", 1.0, FormatKind::Markdown), doc("b.md", 1.0, FormatKind::Markdown), far],
+            scanned_at_ms: 42,
+            truncated: Some(Truncation::Time),
+            ..Default::default()
+        });
+        assert_eq!((lib.scanned_at_ms, lib.folders), (42, 2));
+        assert_eq!(lib.truncation, Some(Truncation::Time));
     }
 
     #[test]

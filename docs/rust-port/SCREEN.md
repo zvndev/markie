@@ -43,6 +43,21 @@ SCENE_SERVER=http://localhost:18991 rust/scripts/screen/scene.sh <scene> <out.pn
 | `office-cloud` | `token`, optional `upload: true` | The open office file's cloud dialog, before or after Create a cloud copy |
 | `servers` | `token`, `second_origin`, `email`, `password`, optional `stop` (`confirm`, `added`, `form`) | Settings › Advanced with the second server added and signed in |
 | `vault` | `state`: `none`, `create`, `create-error`, `locked`, `locked-touch`, `locked-error`, `unlocking`, `empty`, `items`, `few`, `search`, `note`, `file`, `env`, `env-revealed`, `env-copied`, `gate`, `settings`, `settings-touch`, `restore` | The vault page on a scratch vault with synthetic items. Touch ID and the clipboard are in-memory doubles, so the Keychain and pasteboard are never touched |
+| `browse` | optional `state`: `scanning`, `rescanning`, `empty`, `truncated`; `filter` (words); `type`: `markdown`, `docx`; `starred: true`; `open` (folders to open in the tree); `select` (the folder on show); `cursor` (the highlighted row). Paths are relative to the scratch home | Browse, "Documents on this Mac", over a synthetic home folder. See below |
+
+#### Browse scenes
+
+Browse lists the home folder, so its scenes need a made-up one. A scratch `MARKIE_RS_DATA_DIR` already stands in for home in the index; fill it first, and put the documents folder inside it:
+
+```sh
+python3 rust/scripts/screen/scene/browse-fixture.py $S/data     # about 330 synthetic files
+SCENE_HOME=$S SCENE_DOCUMENTS=$S/data/Documents rust/scripts/screen/scene.sh browse out.png light '{"select":"Documents/Work"}'
+```
+
+- Every name in a Browse capture must come from `browse-fixture.py`. Never run a Browse scene without a scratch `SCENE_HOME`, and never point one at a real folder.
+- The scene drops the data folder's own files (the registry, drafts) from the list, since a real home folder has none.
+- A `select` or `open` path that does not exist shows the "no longer there" notice. `empty` needs an empty scratch data folder to look right from launch.
+- Electron's Browse may not be captured (rule 7 below), so these scenes compare Markie RS with itself, before and after.
 
 ### 3. Electron: headless renderer
 

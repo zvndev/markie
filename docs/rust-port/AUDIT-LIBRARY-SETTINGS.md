@@ -4,18 +4,19 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 91 of 91 = 100 %.** Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
+**Parity: 91 of 91 = 100 % (90 PASS and 1 IMPROVEMENT).** Row 3.1 became an IMPROVEMENT on 2026-11-23 (branch `t3/markie-rs-browse-ux`): Browse is a page, not Electron's narrow panel. Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
 
 | Count | Rows |
 |---|---|
 | All rows | 96 |
-| PASS | 91 |
+| PASS | 90 |
+| IMPROVEMENT | 1 (3.1: Browse is a page with a folder tree and the folder's contents) |
 | FAIL | 0 |
 | NEEDS-CAPTURE | 0 |
 | EXCLUDED | 4 (2.2, 2.3, 2.8 and the earlier one) |
 | EXCLUDED-PLATFORM | 1 |
 
-The score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). The schema rows 2.2, 2.3 and 2.8 were FAIL until Kirby excluded them on 2026-11-22.
+The score is (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron, and counts as meeting parity (SCORE.md). The schema rows 2.2, 2.3 and 2.8 were FAIL until Kirby excluded them on 2026-11-22.
 
 After the merge of `rust/markie-rs` at e8e8e07, rows 2.9, 2.10 and 29.7 pass with the other auditors' work, and their roll-ups 29.1 and 29.2 pass with them.
 
@@ -102,8 +103,8 @@ Shared files touched, kept small, for the other auditors:
 
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 3.1 | Browse every document, star, filter, sort, full paths, refresh, rescan on focus at most every 5 min | PASS | `browse-view.tsx`, `main.js:929`; `rail.rs`, `folder_tree.rs`, `workspace.rs` rescan_on_focus; `folder_tree::tests`, `count_tests`, `focus_walks_again_only_after_five_minutes` | Fixed: no rescan on focus. Electron's Browse may not be captured (SCREEN.md rule 7). |
-| 3.2 | Files | PASS | mdindex.js → `index.rs`; mdmeta.js → `projects/meta.rs`; frontmatter.js → `projects/frontmatter.rs`; skill-frontmatter.js → `markie-agent/src/skills.rs`; browse-view → `rail.rs` | |
+| 3.1 | Browse every document, star, filter, sort, full paths, refresh, rescan on focus at most every 5 min | IMPROVEMENT | `browse-view.tsx`, `main.js:929`; `rail/browse.rs`, `rail/browse_page.rs`, `folder_tree.rs`, `workspace.rs` rescan_on_focus; `rail::browse::tests` (14), `folder_tree::tests`, `focus_walks_again_only_after_five_minutes`; scenes `browse` in SCREEN.md, before and after in `.autoloop/runs/browse-ux/` | Deliberately differs: Electron's 252 px panel cut names short, lost the place in a deep tree, listed same-named matches with no path, and never said what was listed or when it was checked. Markie RS shows "Documents on this Mac" as a page: counts and last check in the header, a folders-only tree, the chosen folder's contents with a breadcrumb, matches with their folder and the word marked, and arrow keys, Return and Escape. Every function is kept (index, rescan, rescan on focus, type filter, name filter, sort, stars, open and closed folder memory, Add Folder). The full-path toggle is gone because the path is always shown (breadcrumb, match rows, tooltips). New: the row menu on documents, and a count of documents found while a scan runs. Electron's Browse may not be captured (SCREEN.md rule 7). |
+| 3.2 | Files | PASS | mdindex.js → `index.rs`; mdmeta.js → `projects/meta.rs`; frontmatter.js → `projects/frontmatter.rs`; skill-frontmatter.js → `markie-agent/src/skills.rs`; browse-view → `rail/browse.rs`, `rail/browse_page.rs` | |
 | 3.3 | Compatibility | PASS | Roll-up | |
 | 3.4 | IPC mdindex-*, `MdRow` | PASS | `index.rs` scan, `IndexedDoc`; `Registry::toggle_star`, `stars` | |
 | 3.5 | Walk budget 200k, 30 s, depth 24, 4000 snippets, 8 KB, under 256 KB | PASS | `mdindex.js:27-28`; `index.rs:18-19,66-71`; `stops_at_the_file_budget` | |

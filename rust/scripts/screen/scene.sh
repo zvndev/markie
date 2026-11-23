@@ -7,6 +7,8 @@
 #               `cargo build --release -p markie-app --features scene`)
 #   SCENE_HOME  scratch folder for HOME and the data folder (default: a new
 #               temporary folder, removed afterwards)
+#   SCENE_DOCUMENTS  the documents folder (default: $SCENE_HOME/documents). The
+#               Browse scenes put it inside the scratch home, as on a real Mac.
 #
 # Prints the frontmost app and the pointer before and after, and fails if
 # either changed while the scene ran.
@@ -30,7 +32,7 @@ before_app="$(front)"; before_ptr="$(pointer)"
 log="$SCENE_HOME/scene-$scene.log"
 env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u MARKIE_RS_CLOUD_SERVER \
   HOME="$SCENE_HOME/home" MARKIE_RS_DATA_DIR="$SCENE_HOME/data" \
-  MARKIE_RS_DOWNLOADS_DIR="$SCENE_HOME/downloads" MARKIE_RS_DOCUMENTS_DIR="$SCENE_HOME/documents" \
+  MARKIE_RS_DOWNLOADS_DIR="$SCENE_HOME/downloads" MARKIE_RS_DOCUMENTS_DIR="${SCENE_DOCUMENTS:-$SCENE_HOME/documents}" \
   ${SCENE_SERVER:+MARKIE_RS_CLOUD_SERVER=$SCENE_SERVER} \
   MARKIE_RS_SCENE="$scene" MARKIE_RS_SCENE_ARGS="$args" MARKIE_RS_SCENE_OUT="$out" MARKIE_RS_SCENE_THEME="$theme" \
   "$bin" "$@" >"$log" 2>&1 &

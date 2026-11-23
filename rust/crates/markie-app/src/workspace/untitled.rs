@@ -83,10 +83,12 @@ impl Workspace {
         self.doc_notes.clear();
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
         let format = kind_for_extension(&ext);
-        let literal = !matches!(format, FormatKind::Markdown | FormatKind::Darkmown | FormatKind::Csv);
+        // A .wd source is a plain textarea too.
+        let literal = !matches!(format, FormatKind::Markdown | FormatKind::Csv);
         self.editor.update(cx, |state, cx| {
             state.set_highlighter(if literal { "text" } else if format == FormatKind::Csv { "markdown" } else { format.editor_language() }, cx);
             state.set_line_number(!literal, window, cx);
+            state.set_folding(!literal, window, cx);
             state.set_value(text.clone(), window, cx);
         });
         if let Some(old) = &self.doc {

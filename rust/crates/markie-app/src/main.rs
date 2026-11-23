@@ -15,6 +15,7 @@ mod menus;
 mod open_urls;
 mod perf;
 mod themes;
+mod watchdog;
 mod workspace;
 
 use futures::StreamExt as _;
@@ -231,6 +232,8 @@ fn main() {
             })
             .expect("failed to open the Markie RS window");
 
+            watchdog::start(cx);
+            watchdog::trace_appkit_input();
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {
                 let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
             });

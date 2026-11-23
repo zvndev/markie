@@ -19,7 +19,7 @@
 //! windows.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -44,6 +44,43 @@ pub struct Bounds {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+}
+
+/// Every island starts unfocused. wry gives a focused child web view first
+/// responder and calls `NSApplication.activate` while building it, which
+/// took the keyboard from the editor and pulled Markie RS in front of the app
+/// the person was using whenever a `.wd` preview, a Live Doc or a video
+/// opened. A click in the web view still focuses it.
+fn child_builder<'a>() -> WebViewBuilder<'a> {
+    WebViewBuilder::new().with_focused(false)
+}
+
+/// Where an island was last put. The panes report their bounds, and the
+/// workspace its visibility, on every frame; only a change reaches WebKit,
+/// so an idle preview costs no `setFrame` or `setHidden` per frame.
+#[derive(Default)]
+struct Placement {
+    bounds: Cell<Option<Bounds>>,
+    visible: Cell<Option<bool>>,
+}
+
+impl Placement {
+    fn set_bounds(&self, webview: &WebView, bounds: Bounds) -> Result<(), Error> {
+        if changed(&self.bounds, bounds) { webview.set_bounds(rect(bounds)) } else { Ok(()) }
+    }
+
+    fn set_visible(&self, webview: &WebView, visible: bool) -> Result<(), Error> {
+        if changed(&self.visible, visible) { webview.set_visible(visible) } else { Ok(()) }
+    }
+}
+
+/// Records `next` and says whether it differs from what was recorded.
+fn changed<T: PartialEq + Copy>(last: &Cell<Option<T>>, next: T) -> bool {
+    if last.get() == Some(next) {
+        return false;
+    }
+    last.set(Some(next));
+    true
 }
 
 fn rect(b: Bounds) -> Rect {
@@ -155,6 +192,7 @@ fn not_found() -> Response<Cow<'static, [u8]>> {
 
 pub struct DarkmownFrame {
     webview: WebView,
+    placement: Placement,
 }
 
 impl DarkmownFrame {
@@ -169,7 +207,7 @@ impl DarkmownFrame {
             "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\"><style>html,body{{margin:0;height:100%;background:transparent;overflow:hidden}}iframe{{border:0;width:100%;height:100%;display:block}}</style></head><body><script>{DARKMOWN_HOST_JS}</script></body></html>"
         );
         let last_link = Rc::new(RefCell::new(std::time::Instant::now() - Duration::from_secs(10)));
-        let webview = WebViewBuilder::new()
+        let webview = child_builder()
             .with_html(html)
             .with_bounds(rect(bounds))
             .with_incognito(true)
@@ -205,7 +243,7 @@ impl DarkmownFrame {
                 }
             })
             .build_as_child(window)?;
-        Ok(Self { webview })
+        Ok(Self { webview, placement: Placement::default() })
     }
 
     /// Shows a built preview document. `sandbox` is `allow-scripts` or empty.
@@ -229,11 +267,11 @@ impl DarkmownFrame {
     }
 
     pub fn set_bounds(&self, bounds: Bounds) -> Result<(), Error> {
-        self.webview.set_bounds(rect(bounds))
+        self.placement.set_bounds(&self.webview, bounds)
     }
 
     pub fn set_visible(&self, visible: bool) -> Result<(), Error> {
-        self.webview.set_visible(visible)
+        self.placement.set_visible(&self.webview, visible)
     }
 }
 
@@ -293,7 +331,7 @@ impl Compiler {
         );
         let result = Rc::new(RefCell::new(None));
         let slot = result.clone();
-        let webview = WebViewBuilder::new()
+        let webview = child_builder()
             .with_html(html)
             .with_bounds(rect(Bounds { x: 0.0, y: 0.0, width: 1.0, height: 1.0 }))
             .with_visible(false)
@@ -349,6 +387,7 @@ pub fn parse_compile_reply(body: &str) -> Result<preview::Compiled, String> {
 
 pub struct SitePreview {
     webview: WebView,
+    placement: Placement,
     pub origin: String,
 }
 
@@ -356,7 +395,7 @@ impl SitePreview {
     pub fn new<W: HasWindowHandle>(window: &W, bounds: Bounds, origin: &str) -> Result<Self, Error> {
         let nav_origin = origin.to_string();
         let new_window_origin = origin.to_string();
-        let webview = WebViewBuilder::new()
+        let webview = child_builder()
             .with_url(format!("{origin}/"))
             .with_bounds(rect(bounds))
             .with_incognito(true)
@@ -383,7 +422,7 @@ impl SitePreview {
             })
             .with_download_started_handler(|_, _| false)
             .build_as_child(window)?;
-        Ok(Self { webview, origin: origin.to_string() })
+        Ok(Self { webview, placement: Placement::default(), origin: origin.to_string() })
     }
 
     pub fn reload(&self) -> Result<(), Error> {
@@ -391,11 +430,11 @@ impl SitePreview {
     }
 
     pub fn set_bounds(&self, bounds: Bounds) -> Result<(), Error> {
-        self.webview.set_bounds(rect(bounds))
+        self.placement.set_bounds(&self.webview, bounds)
     }
 
     pub fn set_visible(&self, visible: bool) -> Result<(), Error> {
-        self.webview.set_visible(visible)
+        self.placement.set_visible(&self.webview, visible)
     }
 }
 
@@ -403,6 +442,7 @@ impl SitePreview {
 
 pub struct VideoPlayer {
     webview: WebView,
+    placement: Placement,
 }
 
 impl VideoPlayer {
@@ -411,7 +451,7 @@ impl VideoPlayer {
     pub fn from_local_mp4<W: HasWindowHandle>(window: &W, bounds: Bounds, file: File, len: u64) -> Result<Self, Error> {
         const HTML: &str = "<!doctype html><meta charset=utf-8><meta http-equiv=Content-Security-Policy content=\"default-src 'none'; media-src markie-video:; style-src 'unsafe-inline'\"><style>html,body,video{width:100%;height:100%;margin:0;background:#000}</style><video controls autoplay playsinline preload=metadata src=markie-video://asset/clip.mp4></video>";
         let file = Mutex::new(file);
-        let webview = WebViewBuilder::new()
+        let webview = child_builder()
             .with_html(HTML)
             .with_bounds(rect(bounds))
             .with_incognito(true)
@@ -445,7 +485,7 @@ impl VideoPlayer {
                 response.body(Cow::Owned(body)).unwrap()
             })
             .build_as_child(window)?;
-        Ok(Self { webview })
+        Ok(Self { webview, placement: Placement::default() })
     }
     /// Plays a YouTube or Vimeo embed in place. Only the provider's player
     /// origin may load in the frame; links out of it open in the browser.
@@ -457,7 +497,7 @@ impl VideoPlayer {
             markie_export::hast::escape_attr(&frame),
             embed.label()
         );
-        let webview = WebViewBuilder::new()
+        let webview = child_builder()
             .with_html(html)
             .with_bounds(rect(bounds))
             .with_incognito(true)
@@ -481,15 +521,15 @@ impl VideoPlayer {
                 NewWindowResponse::Deny
             })
             .build_as_child(window)?;
-        Ok(Self { webview })
+        Ok(Self { webview, placement: Placement::default() })
     }
 
     pub fn set_bounds(&self, bounds: Bounds) -> Result<(), Error> {
-        self.webview.set_bounds(rect(bounds))
+        self.placement.set_bounds(&self.webview, bounds)
     }
 
     pub fn set_visible(&self, visible: bool) -> Result<(), Error> {
-        self.webview.set_visible(visible)
+        self.placement.set_visible(&self.webview, visible)
     }
 }
 
@@ -510,6 +550,18 @@ fn mp4_range(header: Option<&str>, len: u64) -> Option<(u64, u64)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_island_is_only_moved_when_its_place_changes() {
+        use super::{Bounds, Cell, changed};
+        let last = Cell::new(None);
+        let at = Bounds { x: 10.0, y: 20.0, width: 300.0, height: 200.0 };
+        assert!(changed(&last, at), "the first placement goes through");
+        assert!(!changed(&last, at), "the same bounds on the next frame do not");
+        assert!(changed(&last, Bounds { width: 301.0, ..at }), "a resize does");
+        let shown = Cell::new(None);
+        assert!(changed(&shown, true) && !changed(&shown, true) && changed(&shown, false));
+    }
+
     #[test]
     fn mp4_seeking_accepts_a_bounded_range_only() {
         use super::mp4_range;

@@ -321,12 +321,28 @@ impl Workspace {
             fresh: None,
             error: None,
         });
+        let template = self.setting_or("style_template", "markie");
         window.open_dialog(cx, move |dialog, _, cx| {
             // A stray click outside must not throw away a token that cannot
             // be shown again (remote-agents-panel.tsx closes on the scrim
             // only while no new token is on screen).
             let closable = !panel.read(cx).holds_secret();
-            dialog.w(px(520.)).close_button(false).overlay_closable(closable).child(panel.clone())
+            // `markie-overlay-panel ... p-5`, centred by its flex scrim. The
+            // top and bottom padding sit inside the scroll area (render), as
+            // the panel itself scrolls in Electron.
+            // `.markie-overlay-panel`: surface-2, its border and shadow.
+            let t = super::dialog_chrome::Tokens::current(&template, cx);
+            dialog
+                .w(px(520.))
+                .centered()
+                .px(px(20.))
+                .py(px(0.))
+                .bg(t.panel_bg())
+                .border_color(t.panel_border())
+                .shadow(t.panel_shadow())
+                .close_button(false)
+                .overlay_closable(closable)
+                .child(panel.clone())
         });
     }
 }
@@ -748,15 +764,31 @@ fn paragraph(s: impl Into<SharedString>, cx: &App) -> Div {
         .child(s.into())
 }
 
+/// A paragraph with `<code>` spans: the same text, those runs in the
+/// monospace face the tool list uses.
+fn code_paragraph(parts: &[(&str, bool)], window: &Window, cx: &App) -> Div {
+    let color = cx.theme().muted_foreground;
+    let base = window.text_style().font();
+    let mono = Font { family: "Menlo".into(), ..base.clone() };
+    let mut text = String::new();
+    let runs = parts
+        .iter()
+        .map(|(part, code)| {
+            text.push_str(part);
+            TextRun { len: part.len(), font: if *code { mono.clone() } else { base.clone() }, color, background_color: None, underline: None, strikethrough: None }
+        })
+        .collect::<Vec<_>>();
+    div().text_size(px(12.)).line_height(relative(1.625)).text_color(color).child(StyledText::new(text).with_runs(runs))
+}
+
 fn red(s: impl Into<SharedString>) -> Div {
     div().text_size(px(12.)).line_height(relative(1.625)).text_color(rgb(0xdc2626)).child(s.into())
 }
 
-/// `.markie-overlay-section`: 10 px, semibold, muted, upper case with
-/// 0.08 em tracking, 6 px above what it labels.
+/// `.markie-overlay-section` with `mb-1.5`: 10 px, semibold, muted, upper
+/// case with 0.08 em tracking, 6 px above what it labels (in an 8 px gap).
 fn heading(s: &'static str, cx: &App) -> Div {
     div()
-        .mt_2()
         .mb(px(-2.))
         .text_size(px(10.))
         .font_weight(FontWeight::SEMIBOLD)
@@ -781,9 +813,24 @@ fn copy_block(id: impl Into<SharedString>, label: impl Into<SharedString>, hint:
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(label.into().to_uppercase()))
                         .child(hint),
                 )
-                .child(Button::new(id.into()).small().label("Copy").on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
-                })),
+                // `markie-overlay-button text-[11px] px-2 py-0.5 rounded-md bg-accent`.
+                .child(
+                    div()
+                        .id(id.into())
+                        .px(px(8.))
+                        .py(px(2.))
+                        .rounded(px(6.))
+                        .bg(cx.theme().accent)
+                        .text_size(px(11.))
+                        .line_height(px(16.5))
+                        .text_color(cx.theme().foreground)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.9))
+                        .child("Copy")
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
+                        }),
+                ),
         )
         .child(
             div()
@@ -819,21 +866,19 @@ impl Render for AgentsPanel {
                     window.close_dialog(cx);
                 }
             })));
-        let body = if self.remote { self.remote_body(cx) } else { self.local_body(cx) };
-        v_flex().gap_2().child(header).child(
-            div()
-                .id("agents-body")
-                // `max-h-[86vh]` is the whole panel's: less its 20 px
-                // padding and the title row.
-                .max_h(window.viewport_size().height * 0.86 - px(70.))
-                .overflow_y_scroll()
-                .child(body),
-        )
+        let body = if self.remote { self.remote_body(cx) } else { self.local_body(window, cx) };
+        // `max-h-[86vh] overflow-y-auto` on the padded panel itself: the
+        // title and the 20 px padding scroll with the rest.
+        div()
+            .id(if self.remote { "remote-agents-body" } else { "agents-body" })
+            .max_h(window.viewport_size().height * 0.86)
+            .overflow_y_scroll()
+            .child(v_flex().py(px(20.)).child(header).child(body))
     }
 }
 
 impl AgentsPanel {
-    fn local_body(&self, cx: &mut Context<Self>) -> Div {
+    fn local_body(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = self.server.to_string_lossy();
         // Markie RS's own server name and adapter, so this never changes the
         // `markie` entry an agent keeps for Electron Markie. The path has a
@@ -845,40 +890,78 @@ impl AgentsPanel {
             serde_json::to_string(&p).expect("path")
         );
         let always = permissions::sync_always(&self.data);
+        // agents-dialog.tsx spaces its blocks with margins, not a gap.
         v_flex()
-            .gap_2()
-            .child(paragraph("Hand your agent the documents on this computer. It can find a document by name, search inside it, read it, write a new one, and open it here in Markie: your notes and docs, Word, RTF and OpenDocument files, CSV, JSON and YAML, and your agent files too (CLAUDE.md, AGENTS.md, ~/.claude/skills, ~/.codex).", cx))
-            .child(paragraph("Word, RTF, OpenDocument and HTML files stay read-only to agents. An agent reads their text and opens them here for you to edit, so their formatting is never overwritten.", cx))
-            .child(div().text_size(px(12.)).line_height(relative(1.625)).mb_2().text_color(cx.theme().success).child("Runs on demand, on this computer. Nothing is uploaded unless you let an agent put a file in your Markie Cloud."))
-            .child(heading("Tools it gives your agent", cx))
-            .child(v_flex().gap_1().mb_2().children(TOOLS.iter().map(|(tool, desc)| {
+            .child(code_paragraph(
+                &[
+                    ("Hand your agent the documents on this computer. It can find a document by name, search inside it, read it, write a new one, and open it here in Markie: your notes and docs, Word, RTF and OpenDocument files, CSV, JSON and YAML, and your agent files too (", false),
+                    ("CLAUDE.md", true),
+                    (", ", false),
+                    ("AGENTS.md", true),
+                    (", ", false),
+                    ("~/.claude/skills", true),
+                    (", ", false),
+                    ("~/.codex", true),
+                    (").", false),
+                ],
+                window,
+                cx,
+            )
+            .mb(px(10.)))
+            .child(paragraph("Word, RTF, OpenDocument and HTML files stay read-only to agents. An agent reads their text and opens them here for you to edit, so their formatting is never overwritten.", cx).mb(px(10.)))
+            .child(div().text_size(px(12.)).line_height(relative(1.625)).mb(px(16.)).text_color(cx.theme().success).child("Runs on demand, on this computer. Nothing is uploaded unless you let an agent put a file in your Markie Cloud."))
+            .child(heading("Tools it gives your agent", cx).mb(px(6.)))
+            .child(v_flex().gap_1().mb(px(16.)).children(TOOLS.iter().map(|(tool, desc)| {
                 h_flex()
                     .gap_2()
                     .text_size(px(12.))
+                    // The page's 1.5 line height: 18 px rows, 4 px apart.
+                    .line_height(px(18.))
                     .child(div().flex_none().font_family("Menlo").text_color(cx.theme().foreground.opacity(0.9)).child(*tool))
                     .child(div().min_w_0().truncate().text_color(cx.theme().muted_foreground).child(*desc))
             })))
-            .child(heading("Markie Cloud", cx))
-            .child(paragraph("Ask an agent for a private Markie copy of something and it puts the file in your Cloud and hands you a private link. That link opens only for you, after you sign in, on any browser or phone. Markie asks you before the first upload. A public link is only made when you ask for one, and Markie confirms it with you every time.", cx))
+            .child(heading("Markie Cloud", cx).mb(px(6.)))
+            .child(paragraph("Ask an agent for a private Markie copy of something and it puts the file in your Cloud and hands you a private link. That link opens only for you, after you sign in, on any browser or phone. Markie asks you before the first upload. A public link is only made when you ask for one, and Markie confirms it with you every time.", cx).mb(px(8.)))
             .child(
-                gpui_kit::component::checkbox::Checkbox::new("agent-always")
-                    .checked(always)
-                    .label("Let agents put files in Markie Cloud without asking")
-                    .text_size(px(12.))
-                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                        this.error = permissions::set_sync_always(&this.data, *checked)
-                            .err()
-                            .map(|_| "Markie RS could not save the permission.".into());
-                        cx.notify();
-                    })),
+                div().mb(px(16.)).child(
+                    gpui_kit::component::checkbox::Checkbox::new("agent-always")
+                        .checked(always)
+                        .label("Let agents put files in Markie Cloud without asking")
+                        .text_size(px(12.))
+                        .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                            this.error = permissions::set_sync_always(&this.data, *checked)
+                                .err()
+                                .map(|_| "Markie RS could not save the permission.".into());
+                            cx.notify();
+                        })),
+                ),
             )
-            .child(heading("Remote agents", cx))
-            .child(paragraph("An agent that is not on this computer, such as Claude on your phone, can make documents in your Cloud with a token. Create and revoke tokens here.", cx))
-            .child(div().mb_2().child(Button::new("remote-agents").small().label("Remote agents…").on_click(cx.listener(|this, _, _, cx| this.open_remote(cx)))))
-            .child(heading("It files what it writes", cx))
-            .child(paragraph("Every connected agent is handed Markie’s organization conventions when it starts, so it declares which project and block a document belongs to as it writes:", cx))
+            .child(heading("Remote agents", cx).mb(px(6.)))
+            .child(paragraph("An agent that is not on this computer, such as Claude on your phone, can make documents in your Cloud with a token. Create and revoke tokens here.", cx).mb(px(8.)))
+            // `markie-overlay-button text-[12px] px-3 py-1 rounded-md bg-accent`:
+            // as wide as its label.
+            .child(
+                h_flex().mb(px(16.)).child(
+                    div()
+                        .id("remote-agents")
+                        .px(px(12.))
+                        .py(px(4.))
+                        .rounded(px(6.))
+                        .bg(cx.theme().accent)
+                        .text_size(px(12.))
+                        .line_height(px(18.))
+                        .text_color(cx.theme().foreground)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.9))
+                        .child("Remote agents…")
+                        .on_click(cx.listener(|this, _, _, cx| this.open_remote(cx))),
+                ),
+            )
+            .child(heading("It files what it writes", cx).mb(px(6.)))
+            .child(paragraph("Every connected agent is handed Markie’s organization conventions when it starts, so it declares which project and block a document belongs to as it writes:", cx).mb(px(8.)))
             .child(
                 div()
+                    .mb(px(8.))
                     .text_size(px(11.5))
                     .line_height(relative(1.625))
                     .font_family("Menlo")
@@ -890,11 +973,12 @@ impl AgentsPanel {
                     .text_color(cx.theme().foreground.opacity(0.9))
                     .child(FRONT_MATTER_EXAMPLE),
             )
-            .child(paragraph("New documents arrive organized in Projects instead of loose on disk, and nothing moves on your disk to make it happen. Works with Claude Code, Codex, and any other MCP client.", cx))
+            .child(paragraph("New documents arrive organized in Projects instead of loose on disk, and nothing moves on your disk to make it happen. Works with Claude Code, Codex, and any other MCP client.", cx).mb(px(16.)))
             .child(copy_block("claude-rs", "Claude Code", "run this in your terminal", claude, cx))
             .child(copy_block("codex-rs", "Codex", "add to ~/.codex/config.toml", codex, cx))
             .child(
                 div()
+                    .mt(px(12.))
                     .text_size(px(11.))
                     .line_height(relative(1.625))
                     .text_color(cx.theme().muted_foreground)
@@ -929,7 +1013,7 @@ impl AgentsPanel {
         let can_create = !self.creating && !self.input.read(cx).value().trim().is_empty();
         content = content
             .child(copy_block("remote-url", "MCP URL", "the hosted Markie server", url.clone(), cx))
-            .child(heading("Create a token", cx))
+            .child(heading("Create a token", cx).mt_2())
             .child(
                 h_flex()
                     .gap_2()
@@ -970,7 +1054,7 @@ impl AgentsPanel {
             );
         }
         content = content
-            .child(heading("Set up your agent", cx))
+            .child(heading("Set up your agent", cx).mt_2())
             .child(paragraph(
                 if self.fresh.is_some() {
                     "These include the token you just made.".to_string()
@@ -981,7 +1065,7 @@ impl AgentsPanel {
             ))
             .child(copy_block("remote-claude", "Claude Code", "run this in your terminal", tokens::claude(&url, secret), cx))
             .child(copy_block("remote-config", "Other MCP clients", "add to the client's MCP config", tokens::config(&url, secret), cx))
-            .child(heading("Your tokens", cx));
+            .child(heading("Your tokens", cx).mt_2());
         content = match (&self.load_error, &self.rows) {
             (Some(error), _) => content.child(
                 h_flex().gap_1().child(red(error.clone())).child(

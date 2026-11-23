@@ -245,6 +245,7 @@ impl Workspace {
         let dirty = !vault_page
             && (self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)));
         let has_text = !vault_page && matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }));
+        let document_mode = !vault_page && self.document_mode();
 
         let bg = if p.dark {
             Background::from(linear_gradient(
@@ -293,8 +294,11 @@ impl Workspace {
                         ))
                     })
                     .child(vrule(&p))
+                    // toolbar.tsx in document mode: "Save file" before Export,
+                    // and no Copy all (page.tsx passes no `copyText`).
+                    .when(document_mode, |el| el.child(self.render_save_file(&p, cx)))
                     .child(self.render_export(&p, cx))
-                    .when(has_text, |el| el.child(self.render_copy_all(&p, cx))),
+                    .when(has_text && !document_mode, |el| el.child(self.render_copy_all(&p, cx))),
             );
 
         let right = h_flex()
@@ -450,6 +454,40 @@ impl Workspace {
         )
     }
 
+    /// Whether Electron shows this file, opened from disk, in its document
+    /// workspace (`documentMode`): Word, RTF and ODT, and a `.wd`. Markdown,
+    /// CSV and plain text open in the main viewer, with every export and
+    /// Copy all.
+    pub(super) fn document_mode(&self) -> bool {
+        self.doc.as_ref().is_some_and(|d| match d.kind {
+            DocKind::Office(_) | DocKind::Engine => true,
+            DocKind::Text { .. } => !d.large && d.format == FormatKind::Darkmown,
+            _ => false,
+        })
+    }
+
+    /// `markie-toolbar-action ... h-7 px-2 text-[12px] text-muted`.
+    fn render_save_file(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let (fg, fill) = (p.foreground, hover_fill(p));
+        no_drag(
+            div()
+                .id("tb-save")
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(28.))
+                .px(px(8.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(transparent_black())
+                .text_size(px(12.))
+                .text_color(p.muted)
+                .hover(|s| s.bg(fill).text_color(fg).border_color(p.fg(0.07)))
+                .child("Save file")
+                .on_click(cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(Save), cx))),
+        )
+    }
+
     fn render_copy_all(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let copied = self.shell.copied == CopyState::Copied;
         let (fg, fill) = (p.foreground, hover_fill(p));
@@ -514,7 +552,7 @@ impl Workspace {
         let has_doc = doc.is_some();
         let format = doc.map(|d| d.format);
         let is_text = matches!(doc.map(|d| &d.kind), Some(DocKind::Text { .. }));
-        let document_mode = matches!(doc.map(|d| &d.kind), Some(DocKind::Office(_) | DocKind::Engine));
+        let document_mode = self.document_mode();
         let markdown = format == Some(FormatKind::Markdown);
         let p = *p;
 

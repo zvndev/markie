@@ -31,3 +31,16 @@ Every agent that runs Markie RS or Electron Markie shares Kirby's one Mac screen
 - Keep evidence images under `.autoloop/runs/` in your worktree. That folder is gitignored.
 
 Font smoothing differs slightly between Chromium and GPUI. Everything else should match: layout, sizes, colours, icons, spacing, wording and behaviour. A little more polished is fine. Different is not.
+
+## When a click does nothing
+
+A click that changes nothing is usually lost input, not a frozen app. Check before you debug the app.
+
+1. **Look for event taps.** Another agent's computer-use service can hold a filtering session event tap that drops or delays mouse releases for every app. On 2026-11-22, Codex Computer Use (`SkyComputerUseService`) did exactly that, and both Electron and Markie RS saw presses without releases. List them with `rust/scripts/screen/taps.swift` (build line at its top). Never stop another agent's service; work around it.
+2. **Press, then check.** `act.sh <pid> press <x> <y> <ms>` moves the pointer, waits, holds the button and releases. Do one press per step and capture before the next. A release can arrive seconds late, during your next press, so two quick presses on a toggle can cancel out.
+3. **Electron's first click activates.** A click on an inactive Electron window only brings it forward. Press twice on idempotent controls, or check after each press.
+4. **Trace Markie RS's input.** Launch with `MARKIE_RS_DEBUG_INPUT=1`. Each mouse press, release and key that AppKit hands the app is printed to stderr, with the window it targets, the key window and the first responder. A press with no AppKit release means the release never reached the app.
+5. **Catch a real block.** `MARKIE_RS_WATCHDOG=1` (on in debug builds) appends to `main-thread-stalls.log` in the data folder when the main thread misses its beat for more than 2 s, and writes its stack beside it with `sample`. A stack idle in the event loop is labelled as a late timer.
+6. **Keyboard paths are steadier.** ⌘K and the palette reach dialogs without a mouse press.
+
+Coordinates for `act.sh` are points from the window's top-left. A 2560 px capture of a 1280 pt window is 2x, so halve pixel positions; a screenshot shown scaled to 2000 px wide maps to points by 0.64.

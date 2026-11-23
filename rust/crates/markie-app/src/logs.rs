@@ -667,3 +667,14 @@ mod tests {
         assert!(body.contains("plan.md"));
     }
 }
+
+/// `MARKIE_RS_DEBUG_INPUT=1` prints input diagnostics to stderr with a
+/// monotonic timestamp (`watchdog::trace_appkit_input`). Off by default.
+pub fn trace_input(message: impl FnOnce() -> String) {
+    static ON: OnceLock<bool> = OnceLock::new();
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    if *ON.get_or_init(|| std::env::var("MARKIE_RS_DEBUG_INPUT").is_ok_and(|v| v == "1")) {
+        let t = START.get_or_init(std::time::Instant::now).elapsed();
+        eprintln!("markie-rs input {:>9.3}s {}", t.as_secs_f64(), message());
+    }
+}

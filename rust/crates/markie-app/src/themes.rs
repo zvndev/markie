@@ -87,8 +87,25 @@ fn config(name: &str, mode: &str, t: &Tokens) -> serde_json::Value {
             // also blurs it; GPUI has no backdrop blur, so the dim is the
             // stronger 72% that dialog_chrome's scrim uses.
             "overlay": scrim(&t.background),
-        }
+        },
+        "highlight": highlight(mode, t),
     })
+}
+
+/// GPUI Kit paints its code editor on the highlight theme's background, and
+/// a theme config without a `highlight` keeps the last one: after a switch
+/// to light, the source and literal-text editors stayed black with dark
+/// text. Each tone gets the stock syntax colours of that tone, on the
+/// template's own background and text colour.
+fn highlight(mode: &str, t: &Tokens) -> serde_json::Value {
+    use gpui_kit::component::highlighter::HighlightTheme;
+    let base = if mode == "dark" { HighlightTheme::default_dark() } else { HighlightTheme::default_light() };
+    let mut style = serde_json::to_value(&base.style).unwrap_or_default();
+    if let Some(map) = style.as_object_mut() {
+        map.insert("editor.background".into(), serde_json::json!(t.background));
+        map.insert("editor.foreground".into(), serde_json::json!(t.foreground));
+    }
+    style
 }
 
 /// The background at 72% opacity, as `#rrggbbaa`.
@@ -277,6 +294,20 @@ impl ModeExt for App {
 
 #[cfg(test)]
 mod tests {
+    /// Both tones carry an editor background, so a live switch repaints
+    /// the source editor instead of keeping the other tone's.
+    #[test]
+    fn each_tone_paints_its_own_editor_background() {
+        let t = super::templates().into_iter().next().expect("one template");
+        for (mode, tokens) in [("light", &t.light), ("dark", &t.dark)] {
+            let cfg: gpui_kit::component::ThemeConfig = serde_json::from_value(super::config("x", mode, tokens)).expect("config parses");
+            let style = cfg.highlight.expect("a highlight style");
+            assert_eq!(style.editor_background, Some(super::hex(&tokens.background)), "{mode}");
+            assert_eq!(style.editor_foreground, Some(super::hex(&tokens.foreground)), "{mode}");
+            assert!(style.syntax != Default::default(), "{mode} keeps its syntax colours");
+        }
+    }
+
     #[test]
     fn hex_and_mix_match_css() {
         let white = super::hex("#fff").to_rgb();

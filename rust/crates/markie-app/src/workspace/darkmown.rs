@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::input::Editor;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use markie_web::darkmown::preview::{ColorScheme, Compiled, PreviewOptions, build_preview, frame_sandbox};
@@ -97,7 +97,7 @@ fn island_bounds(b: Bounds<Pixels>) -> IslandBounds {
 }
 
 impl Workspace {
-    fn is_darkmown_doc(&self) -> bool {
+    pub(super) fn is_darkmown_doc(&self) -> bool {
         self.doc.as_ref().is_some_and(|d| d.format == markie_core::formats::FormatKind::Darkmown && !d.large && matches!(d.kind, super::DocKind::Text { .. }))
     }
 
@@ -154,7 +154,9 @@ impl Workspace {
             }
         }
         let Some(frame) = self.darkmown.frame.clone() else { return };
-        let _ = frame.set_visible(!overlay && self.darkmown.bounds.get().is_some());
+        let visible = !overlay && self.darkmown.bounds.get().is_some();
+        trace(|| format!("frame visible={visible} overlay={overlay} bounds={:?}", self.darkmown.bounds.get()));
+        let _ = frame.set_visible(visible);
 
         let links = nightly();
         let picture_base = if nightly() { self.doc.as_ref().and_then(|d| d.path.parent()).and_then(|dir| self.darkmown.scopes.scope_for(dir)) } else { None };
@@ -298,12 +300,26 @@ impl Workspace {
         let state = &self.darkmown;
         let text_hash = hash(&self.current_text(cx));
         let trusted = state.grant == Some(text_hash);
-        let source = div()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .bg(p.background)
-            .child(Editor::new(&self.editor).bordered(false).h(relative(1.)).font_family(markie_editor::MONO).text_size(px(14. * self.zoom)).line_height(relative(super::SOURCE_LINE_HEIGHT)));
+        // `.docs-darkmown-source .docs-textarea`: 24 px of padding, the
+        // toolbar's font and size, 1.85 line height, no line numbers.
+        let theme_font = cx.theme().font_family.clone();
+        // The padding sits inside the pane so the two halves stay equal
+        // (`minmax(0, 1fr)` twice), less the editor's own inset.
+        let source = div().flex_1().min_w_0().h_full().bg(p.background).child(
+            div()
+                .size_full()
+                .pl(px(24.) - super::doc_toolbar::EDITOR_INSET.0)
+                .pr(px(24.) - super::doc_toolbar::EDITOR_INSET.1)
+                .py(px(24.) - super::doc_toolbar::EDITOR_INSET.2)
+                .child(
+                Editor::new(&self.editor)
+                    .bordered(false)
+                    .h(relative(1.))
+                    .font_family(super::doc_toolbar::font_family(&theme_font))
+                    .text_size(px(super::doc_toolbar::font_size() * self.zoom))
+                    .line_height(relative(1.85)),
+            ),
+        );
 
         let button = |id: &'static str, label: &'static str, primary: bool| {
             div()
@@ -378,10 +394,19 @@ impl Workspace {
             div().p(px(30.)).text_color(p.muted).text_size(px(13.)).child("Building document preview…").into_any_element()
         } else {
             canvas(
-                move |b, _, _| {
+                move |b, window, _| {
+                    // The frame is shown in `sync_darkmown`, before a render,
+                    // once it has bounds. The first bounds arrive after that
+                    // render, so ask for one more: without it a preview that
+                    // finished compiling between frames stayed blank until
+                    // something else redrew the window.
+                    let first = bounds.get().is_none();
                     bounds.set(Some(b));
                     if let Some(frame) = &frame {
                         let _ = frame.set_bounds(island_bounds(b));
+                    }
+                    if first {
+                        window.refresh();
                     }
                 },
                 |_, _, _, _| {},
@@ -408,13 +433,23 @@ impl Workspace {
                 )
             })
             .child(body);
-        match state.mode {
-            Mode::Source => h_flex().size_full().child(source),
-            Mode::Preview => h_flex().size_full().child(preview),
-            Mode::Split => h_flex().size_full().child(source).child(preview),
-        }
-        .relative()
-        .into_any_element()
+        // A plain flex row: its panes stretch to its height (h_flex would
+        // centre them, and the preview's frame would get no height).
+        let panes = div().flex().flex_row().w_full().flex_1().min_h_0().relative();
+        let panes = match state.mode {
+            Mode::Source => panes.child(source),
+            Mode::Preview => panes.child(preview),
+            Mode::Split => panes.child(source).child(preview),
+        };
+        // `TextDocumentEditor`'s row above the panes and the workspace's
+        // `docs-status` below them.
+        v_flex()
+            .size_full()
+            .bg(p.background)
+            .child(self.text_toolbar(cx))
+            .child(panes)
+            .child(self.doc_status(cx))
+            .into_any_element()
     }
 }
 

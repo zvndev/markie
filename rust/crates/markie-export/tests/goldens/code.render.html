@@ -1,0 +1,94 @@
+<h1>Code in many languages</h1>
+<pre><code class="hljs language-js"><span class="hljs-comment">// Fetch a note and render it</span>
+<span class="hljs-keyword">import</span> { render } <span class="hljs-keyword">from</span> <span class="hljs-string">"./render.js"</span>;
+<span class="hljs-keyword">const</span> <span class="hljs-variable constant_">MAX</span> = <span class="hljs-number">3</span>, retries = [<span class="hljs-number">1</span>, <span class="hljs-number">2.5</span>, <span class="hljs-number">0x1f</span>];
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">async</span> <span class="hljs-keyword">function</span> <span class="hljs-title function_">load</span>(<span class="hljs-params">path, { force = <span class="hljs-literal">false</span> } = {}</span>) {
+  <span class="hljs-keyword">const</span> res = <span class="hljs-keyword">await</span> <span class="hljs-title function_">fetch</span>(<span class="hljs-string">`/api/notes/<span class="hljs-subst">${path}</span>?force=<span class="hljs-subst">${force}</span>`</span>);
+  <span class="hljs-keyword">if</span> (!res.<span class="hljs-property">ok</span>) <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">"failed: "</span> + res.<span class="hljs-property">status</span>);
+  <span class="hljs-keyword">return</span> res.<span class="hljs-title function_">json</span>().<span class="hljs-title function_">then</span>(<span class="hljs-function">(<span class="hljs-params">note</span>) =></span> <span class="hljs-title function_">render</span>(note, <span class="hljs-literal">null</span>, <span class="hljs-literal">true</span>));
+}
+<span class="hljs-keyword">class</span> <span class="hljs-title class_">Note</span> <span class="hljs-keyword">extends</span> <span class="hljs-title class_ inherited__">Base</span> {
+  <span class="hljs-title function_">constructor</span>(<span class="hljs-params">title</span>) { <span class="hljs-variable language_">super</span>(); <span class="hljs-variable language_">this</span>.<span class="hljs-property">title</span> = title; }
+}
+</code></pre>
+<pre><code class="hljs language-ts"><span class="hljs-keyword">interface</span> <span class="hljs-title class_">Note</span> { <span class="hljs-attr">id</span>: <span class="hljs-built_in">string</span>; <span class="hljs-attr">tags</span>?: <span class="hljs-built_in">string</span>[]; <span class="hljs-attr">pinned</span>: <span class="hljs-built_in">boolean</span> }
+<span class="hljs-keyword">type</span> <span class="hljs-title class_">Id</span> = <span class="hljs-built_in">number</span> | <span class="hljs-built_in">string</span>;
+<span class="hljs-keyword">function</span> first&#x3C;T>(<span class="hljs-attr">items</span>: T[]): T | <span class="hljs-literal">undefined</span> {
+  <span class="hljs-keyword">return</span> items.<span class="hljs-property">length</span> > <span class="hljs-number">0</span> ? items[<span class="hljs-number">0</span>] : <span class="hljs-literal">undefined</span>;
+}
+<span class="hljs-keyword">const</span> <span class="hljs-attr">notes</span>: <span class="hljs-title class_">Note</span>[] = [];
+</code></pre>
+<pre><code class="hljs language-python"><span class="hljs-keyword">import</span> os
+<span class="hljs-keyword">from</span> pathlib <span class="hljs-keyword">import</span> Path
+
+<span class="hljs-keyword">def</span> <span class="hljs-title function_">count_words</span>(<span class="hljs-params">path: <span class="hljs-built_in">str</span>, limit=<span class="hljs-number">10</span></span>) -> <span class="hljs-built_in">int</span>:
+    <span class="hljs-string">"""Count the words in a file."""</span>
+    text = Path(path).read_text()  <span class="hljs-comment"># read it all</span>
+    <span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> text <span class="hljs-keyword">or</span> <span class="hljs-built_in">len</span>(text) > <span class="hljs-number">1_000_000</span>:
+        <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>
+    <span class="hljs-keyword">return</span> <span class="hljs-built_in">sum</span>(<span class="hljs-number">1</span> <span class="hljs-keyword">for</span> word <span class="hljs-keyword">in</span> text.split() <span class="hljs-keyword">if</span> word)
+
+<span class="hljs-keyword">class</span> <span class="hljs-title class_">Library</span>(<span class="hljs-title class_ inherited__">object</span>):
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">__init__</span>(<span class="hljs-params">self, root=<span class="hljs-literal">None</span></span>):
+        <span class="hljs-variable language_">self</span>.root = root <span class="hljs-keyword">or</span> os.getcwd()
+        <span class="hljs-built_in">print</span>(<span class="hljs-string">f"library at <span class="hljs-subst">{self.root}</span>"</span>, <span class="hljs-literal">True</span>, <span class="hljs-literal">None</span>)
+</code></pre>
+<pre><code class="hljs language-bash"><span class="hljs-meta">#!/usr/bin/env bash</span>
+<span class="hljs-built_in">set</span> -euo pipefail
+<span class="hljs-keyword">for</span> f <span class="hljs-keyword">in</span> <span class="hljs-string">"<span class="hljs-variable">$HOME</span>"</span>/notes/*.md; <span class="hljs-keyword">do</span>
+  <span class="hljs-built_in">echo</span> <span class="hljs-string">"file: <span class="hljs-variable">$f</span>"</span> | grep -c note || <span class="hljs-literal">true</span>
+<span class="hljs-keyword">done</span>
+<span class="hljs-built_in">export</span> PATH=<span class="hljs-string">"/usr/local/bin:<span class="hljs-variable">$PATH</span>"</span>
+</code></pre>
+<pre><code class="hljs language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">"name"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"markie"</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">"version"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">3</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">"private"</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">"tags"</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">"notes"</span><span class="hljs-punctuation">,</span> <span class="hljs-literal"><span class="hljs-keyword">null</span></span><span class="hljs-punctuation">,</span> <span class="hljs-number">1.5</span><span class="hljs-punctuation">]</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<pre><code class="hljs language-css"><span class="hljs-selector-class">.markdown-body</span> pre > <span class="hljs-selector-tag">code</span><span class="hljs-selector-pseudo">:hover</span> {
+  <span class="hljs-attribute">color</span>: <span class="hljs-number">#24292e</span>;
+  <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span> auto <span class="hljs-meta">!important</span>;
+  <span class="hljs-attribute">font-size</span>: <span class="hljs-number">0.85em</span>;
+}
+<span class="hljs-keyword">@media</span> print { <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">padding</span>: <span class="hljs-number">2cm</span>; } }
+</code></pre>
+<pre><code class="hljs language-html"><span class="hljs-meta">&#x3C;!doctype <span class="hljs-keyword">html</span>></span>
+<span class="hljs-tag">&#x3C;<span class="hljs-name">div</span> <span class="hljs-attr">class</span>=<span class="hljs-string">"note"</span> <span class="hljs-attr">data-id</span>=<span class="hljs-string">"7"</span>></span>
+  <span class="hljs-tag">&#x3C;<span class="hljs-name">a</span> <span class="hljs-attr">href</span>=<span class="hljs-string">"https://markiedocs.com"</span>></span>Markie<span class="hljs-tag">&#x3C;/<span class="hljs-name">a</span>></span>
+  <span class="hljs-comment">&#x3C;!-- a comment --></span>
+<span class="hljs-tag">&#x3C;/<span class="hljs-name">div</span>></span>
+</code></pre>
+<pre><code class="hljs language-yaml"><span class="hljs-attr">name:</span> <span class="hljs-string">Markie</span>
+<span class="hljs-attr">version:</span> <span class="hljs-number">1.2</span>
+<span class="hljs-attr">features:</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-string">notes</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-string">sync</span> <span class="hljs-comment"># comment</span>
+<span class="hljs-attr">enabled:</span> <span class="hljs-literal">true</span>
+</code></pre>
+<pre><code class="hljs language-rust"><span class="hljs-keyword">use</span> std::collections::HashMap;
+
+<span class="hljs-comment">/// Counts words.</span>
+<span class="hljs-keyword">fn</span> <span class="hljs-title function_">count</span>(text: &#x26;<span class="hljs-type">str</span>) <span class="hljs-punctuation">-></span> <span class="hljs-type">usize</span> {
+    <span class="hljs-keyword">let</span> <span class="hljs-keyword">mut </span><span class="hljs-variable">seen</span>: HashMap&#x3C;<span class="hljs-type">String</span>, <span class="hljs-type">u32</span>> = HashMap::<span class="hljs-title function_ invoke__">new</span>();
+    <span class="hljs-keyword">for</span> <span class="hljs-variable">word</span> <span class="hljs-keyword">in</span> text.<span class="hljs-title function_ invoke__">split_whitespace</span>() {
+        *seen.<span class="hljs-title function_ invoke__">entry</span>(word.<span class="hljs-title function_ invoke__">to_string</span>()).<span class="hljs-title function_ invoke__">or_insert</span>(<span class="hljs-number">0</span>) += <span class="hljs-number">1</span>;
+    }
+    <span class="hljs-built_in">println!</span>(<span class="hljs-string">"{} words"</span>, seen.<span class="hljs-title function_ invoke__">len</span>());
+    seen.<span class="hljs-title function_ invoke__">len</span>()
+}
+</code></pre>
+<pre><code class="hljs language-go"><span class="hljs-keyword">package</span> main
+
+<span class="hljs-keyword">import</span> <span class="hljs-string">"fmt"</span>
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">main</span><span class="hljs-params">()</span></span> {
+	notes := []<span class="hljs-type">string</span>{<span class="hljs-string">"a"</span>, <span class="hljs-string">"b"</span>}
+	<span class="hljs-keyword">for</span> i, n := <span class="hljs-keyword">range</span> notes {
+		fmt.Println(i, n, <span class="hljs-built_in">len</span>(n) > <span class="hljs-number">0</span>, <span class="hljs-literal">nil</span>)
+	}
+}
+</code></pre>
+<pre><code class="hljs language-sql"><span class="hljs-keyword">SELECT</span> id, title <span class="hljs-keyword">FROM</span> notes <span class="hljs-keyword">WHERE</span> pinned <span class="hljs-operator">=</span> <span class="hljs-literal">TRUE</span> <span class="hljs-keyword">AND</span> views <span class="hljs-operator">></span> <span class="hljs-number">10</span> <span class="hljs-keyword">ORDER</span> <span class="hljs-keyword">BY</span> title;
+</code></pre>

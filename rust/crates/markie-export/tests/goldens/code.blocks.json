@@ -1,0 +1,66 @@
+[
+ {
+  "kind": "heading",
+  "level": 1,
+  "content": [
+   {
+    "text": "Code in many languages"
+   }
+  ]
+ },
+ {
+  "kind": "code",
+  "text": "// Fetch a note and render it\nimport { render } from \"./render.js\";\nconst MAX = 3, retries = [1, 2.5, 0x1f];\nexport async function load(path, { force = false } = {}) {\n  const res = await fetch(`/api/notes/${path}?force=${force}`);\n  if (!res.ok) throw new Error(\"failed: \" + res.status);\n  return res.json().then((note) => render(note, null, true));\n}\nclass Note extends Base {\n  constructor(title) { super(); this.title = title; }\n}",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "interface Note { id: string; tags?: string[]; pinned: boolean }\ntype Id = number | string;\nfunction first<T>(items: T[]): T | undefined {\n  return items.length > 0 ? items[0] : undefined;\n}\nconst notes: Note[] = [];",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "import os\nfrom pathlib import Path\n\ndef count_words(path: str, limit=10) -> int:\n    \"\"\"Count the words in a file.\"\"\"\n    text = Path(path).read_text()  # read it all\n    if not text or len(text) > 1_000_000:\n        return 0\n    return sum(1 for word in text.split() if word)\n\nclass Library(object):\n    def __init__(self, root=None):\n        self.root = root or os.getcwd()\n        print(f\"library at {self.root}\", True, None)",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "#!/usr/bin/env bash\nset -euo pipefail\nfor f in \"$HOME\"/notes/*.md; do\n  echo \"file: $f\" | grep -c note || true\ndone\nexport PATH=\"/usr/local/bin:$PATH\"",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "{\n  \"name\": \"markie\",\n  \"version\": 3,\n  \"private\": true,\n  \"tags\": [\"notes\", null, 1.5]\n}",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": ".markdown-body pre > code:hover {\n  color: #24292e;\n  margin: 0 auto !important;\n  font-size: 0.85em;\n}\n@media print { body { padding: 2cm; } }",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "<!doctype html>\n<div class=\"note\" data-id=\"7\">\n  <a href=\"https://markiedocs.com\">Markie</a>\n  <!-- a comment -->\n</div>",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "name: Markie\nversion: 1.2\nfeatures:\n  - notes\n  - sync # comment\nenabled: true",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "use std::collections::HashMap;\n\n/// Counts words.\nfn count(text: &str) -> usize {\n    let mut seen: HashMap<String, u32> = HashMap::new();\n    for word in text.split_whitespace() {\n        *seen.entry(word.to_string()).or_insert(0) += 1;\n    }\n    println!(\"{} words\", seen.len());\n    seen.len()\n}",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tnotes := []string{\"a\", \"b\"}\n\tfor i, n := range notes {\n\t\tfmt.Println(i, n, len(n) > 0, nil)\n\t}\n}",
+  "quote": false
+ },
+ {
+  "kind": "code",
+  "text": "SELECT id, title FROM notes WHERE pinned = TRUE AND views > 10 ORDER BY title;",
+  "quote": false
+ }
+]

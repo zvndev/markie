@@ -1,0 +1,84 @@
+{\rtf1\ansi\ansicpg1252\deff0\uc1{\fonttbl{\f0\fnil Times New Roman;}{\f1\fnil Courier New;}}{\colortbl;}\paperw12240\paperh15840\margl1440\margr1440\margt1440\margb1440\pard\ql\sb240\sa120\sl240\slmult1 \plain\f0\fs48\b Code in many languages\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 // Fetch a note and render it\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 import \{ render \} from "./render.js";\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 const MAX = 3, retries = [1, 2.5, 0x1f];\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 export async function load(path, \{ force = false \} = \{\}) \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   const res = await fetch(`/api/notes/$\{path\}?force=$\{force\}`);\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   if (!res.ok) throw new Error("failed: " + res.status);\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   return res.json().then((note) => render(note, null, true));\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 class Note extends Base \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   constructor(title) \{ super(); this.title = title; \}\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 \}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 interface Note \{ id: string; tags?: string[]; pinned: boolean \}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 type Id = number | string;\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 function first<T>(items: T[]): T | undefined \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   return items.length > 0 ? items[0] : undefined;\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \}\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 const notes: Note[] = [];\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 import os\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 from pathlib import Path\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f0\fs24 \par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 def count_words(path: str, limit=10) -> int:\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     """Count the words in a file."""\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     text = Path(path).read_text()  # read it all\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     if not text or len(text) > 1_000_000:\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24         return 0\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     return sum(1 for word in text.split() if word)\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f0\fs24 \par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 class Library(object):\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     def __init__(self, root=None):\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24         self.root = root or os.getcwd()\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24         print(f"library at \{self.root\}", True, None)\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 #!/usr/bin/env bash\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 set -euo pipefail\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 for f in "$HOME"/notes/*.md; do\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   echo "file: $f" | grep -c note || true\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 done\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 export PATH="/usr/local/bin:$PATH"\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   "name": "markie",\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   "version": 3,\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   "private": true,\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   "tags": ["notes", null, 1.5]\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 \}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 .markdown-body pre > code:hover \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   color: #24292e;\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   margin: 0 auto !important;\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   font-size: 0.85em;\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \}\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 @media print \{ body \{ padding: 2cm; \} \}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 <!doctype html>\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 <div class="note" data-id="7">\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   <a href="https://markiedocs.com">Markie</a>\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   <!-- a comment -->\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 </div>\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 name: Markie\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 version: 1.2\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 features:\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   - notes\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24   - sync # comment\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 enabled: true\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 use std::collections::HashMap;\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f0\fs24 \par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 /// Counts words.\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 fn count(text: &str) -> usize \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     let mut seen: HashMap<String, u32> = HashMap::new();\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     for word in text.split_whitespace() \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24         *seen.entry(word.to_string()).or_insert(0) += 1;\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     \}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     println!("\{\} words", seen.len());\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24     seen.len()\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 \}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 package main\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f0\fs24 \par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 import "fmt"\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f0\fs24 \par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 func main() \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \tab notes := []string\{"a", "b"\}\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \tab for i, n := range notes \{\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \tab \tab fmt.Println(i, n, len(n) > 0, nil)\par
+\pard\ql\sb0\sa0\sl240\slmult1 \plain\f1\fs24 \tab \}\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 \}\par
+\pard\ql\sb0\sa120\sl240\slmult1 \plain\f1\fs24 SELECT id, title FROM notes WHERE pinned = TRUE AND views > 10 ORDER BY title;\par
+}

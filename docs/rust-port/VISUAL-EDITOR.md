@@ -97,10 +97,8 @@ Each pair was captured at 1280 by 820 with the same `rich.md` fixture. It holds 
 
 The pairs were taken before the window shell's rewrite was merged in, so the panels around the page differ. The page and toolbar are this work.
 
-Not yet captured, because the Mac was locked for the rest of the run:
+Captured in the capture pass on 2026-11-22 (`.autoloop/runs/capture-pass/`, Electron 0.9.7, 1280 by 820):
 
-- The toolbar above Source mode, and Source's 14 px SF Mono.
-- The page inside the window shell's new frame, after both merges.
-- The seven templates other than Markie, and the New York face.
-
-Each is built and its tests pass. One more capture pass at 1280 by 820 settles them.
+- The toolbar above Source mode matches. Source's rows were GPUI Kit's 1.5 and are now CodeMirror's 1.4 (20 pt, since GPUI rounds line heights; Electron's are 19.6 pt). Still different: Electron centres Source's text in the page column, Markie RS runs it full width (`sbs-source-dark.png`).
+- The page inside the window shell matches (`sbs-rail-on-dark.png`, `sbs-pics-dark.png`).
+- All eight templates match in light and dark, the New York face included (`sbs-tpl-<id>-<mode>.png`). Two fixes came out of it: list discs drawn as Chromium draws them, and struck text keeping its ink.

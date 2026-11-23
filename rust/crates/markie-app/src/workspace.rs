@@ -486,18 +486,54 @@ impl Workspace {
     fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
         // Hundredths: Electron's zoom presets include 0.75 and 1.25.
         self.zoom = (zoom * 100.0).round().clamp(50.0, 300.0) / 100.0;
-        if let Some(reg) = &self.registry {
-            let _ = reg.set_setting("zoom", &self.zoom.to_string());
-        }
+        self.save_appearance();
         cx.notify();
     }
 
     fn set_page_width(&mut self, width: f32, cx: &mut Context<Self>) {
         self.page_width = width.clamp(480.0, 1600.0);
-        if let Some(reg) = &self.registry {
-            let _ = reg.set_setting("page_width", &self.page_width.to_string());
-        }
+        self.save_appearance();
         cx.notify();
+    }
+
+    /// `appearanceKey` in doc-appearance.ts: a Markdown document's zoom and
+    /// page width are its own, keyed by path ("untitled" without one), so
+    /// two files can be read differently. Anything else shares the one
+    /// zoom, as Electron's documents workspace does.
+    fn appearance_key(&self) -> Option<String> {
+        let doc = self.doc.as_ref()?;
+        if !matches!(doc.format, FormatKind::Markdown | FormatKind::Csv | FormatKind::Darkmown) {
+            return None;
+        }
+        Some(if doc.untitled { "appearance:untitled".into() } else { format!("appearance:{}", doc.path.display()) })
+    }
+
+    fn save_appearance(&self) {
+        let Some(reg) = &self.registry else { return };
+        match self.appearance_key() {
+            Some(key) => {
+                let _ = reg.set_setting(&key, &appearance_value(self.zoom, self.page_width));
+            }
+            None => {
+                let _ = reg.set_setting("zoom", &self.zoom.to_string());
+                let _ = reg.set_setting("page_width", &self.page_width.to_string());
+            }
+        }
+    }
+
+    /// The opened document's own zoom and width, or the defaults when it has
+    /// none (`DEFAULT_APPEARANCE`: 100 %, the template's width).
+    fn load_appearance(&mut self) {
+        let Some(reg) = &self.registry else { return };
+        let (zoom, width) = match self.appearance_key() {
+            Some(key) => reg.setting(&key).ok().flatten().as_deref().and_then(parse_appearance).unwrap_or((1.0, 768.0)),
+            None => (
+                reg.setting("zoom").ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(1.0),
+                reg.setting("page_width").ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(768.0),
+            ),
+        };
+        self.zoom = zoom;
+        self.page_width = width;
     }
 
     fn pinch_zoom_by(&mut self, delta_y: f32, cx: &mut Context<Self>) {
@@ -698,6 +734,7 @@ impl Workspace {
                     self.disk.forget(&old.path);
                 }
                 self.doc = Some(OpenDoc { path: doc.path.clone(), format: doc.format, large, kind, untitled: false });
+                self.load_appearance();
                 if self.shell.view == rail::LeftView::Cloud {
                     self.shell.panel_open = false;
                 }
@@ -1316,7 +1353,9 @@ impl Workspace {
                 .bordered(false)
                 .h(relative(1.))
                 .font_family(markie_editor::MONO)
-                .text_size(px(14. * self.zoom)),
+                .text_size(px(14. * self.zoom))
+                // CodeMirror's `.cm-content` line height; GPUI Kit's editor uses 1.5.
+                .line_height(relative(SOURCE_LINE_HEIGHT)),
             cx,
         );
         let theme = cx.theme();
@@ -1480,7 +1519,8 @@ impl Workspace {
                         .bordered(false)
                         .h(relative(1.))
                         .font_family(markie_editor::MONO)
-                        .text_size(px(14. * self.zoom)),
+                        .text_size(px(14. * self.zoom))
+                        .line_height(relative(SOURCE_LINE_HEIGHT)),
                     cx,
                 ))
                 .into_any_element(),
@@ -1488,6 +1528,21 @@ impl Workspace {
     }
 
 }
+
+/// A document's remembered zoom and page width, as one setting value.
+fn appearance_value(zoom: f32, width: f32) -> String {
+    format!("{zoom} {width}")
+}
+
+fn parse_appearance(value: &str) -> Option<(f32, f32)> {
+    let mut parts = value.split_whitespace();
+    let zoom: f32 = parts.next()?.parse().ok()?;
+    let width: f32 = parts.next()?.parse().ok()?;
+    (zoom > 0. && width > 0.).then_some((zoom, width))
+}
+
+/// Source mode's rows: CodeMirror's 1.4, 19.6 pt at 14 pt, as Electron draws them.
+const SOURCE_LINE_HEIGHT: f32 = 1.4;
 
 /// May `format` show in `mode`? Electron's `requestMode`: large and literal
 /// text documents only edit as source; Markdown and CSV also split.
@@ -1526,6 +1581,21 @@ mod mode_tests {
         // Electron edits a CSV as its Markdown table, so it is not plain text.
         assert!(mode_allowed(FormatKind::Csv, false, Mode::View));
         assert!(mode_allowed(FormatKind::Csv, false, Mode::Split));
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::{appearance_value, parse_appearance};
+
+    #[test]
+    fn a_documents_zoom_and_width_round_trip() {
+        assert_eq!(parse_appearance(&appearance_value(1.25, 1040.)), Some((1.25, 1040.)));
+        assert_eq!(parse_appearance(&appearance_value(0.9, 768.)), Some((0.9, 768.)));
+        // Anything else reads as no remembered appearance: the defaults.
+        for bad in ["", "1.1", "x 768", "0 768", "1.0 -4"] {
+            assert_eq!(parse_appearance(bad), None, "{bad:?}");
+        }
     }
 }
 
@@ -1611,14 +1681,28 @@ impl Render for Workspace {
                 let dy = markie_editor::style::PinchZoom::wheel_delta_for_magnification(e.delta);
                 this.pinch_zoom_by(dy, cx);
             }))
-            .on_scroll(cx.listener(|this, e: &ScrollEvent, _, cx| {
-                if e.modifiers.control {
-                    // GPUI's y is positive toward the top; a wheel's is down.
-                    let dy = -f32::from(e.delta.pixel_delta(px(20.)).y);
-                    this.pinch_zoom_by(dy, cx);
-                    cx.stop_propagation();
-                }
-            }))
+            // ctrl + scroll zooms and never scrolls, as Chromium's ctrl + wheel
+            // does: it is caught on the way down, before the page's scroll
+            // view would move under it.
+            .child({
+                let this = cx.entity().downgrade();
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        let this = this.clone();
+                        window.on_mouse_event(move |e: &ScrollEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Capture && e.modifiers.control {
+                                // GPUI's y is positive toward the top; a wheel's is down.
+                                let dy = -f32::from(e.delta.pixel_delta(px(20.)).y);
+                                let _ = this.update(cx, |this, cx| this.pinch_zoom_by(dy, cx));
+                                cx.stop_propagation();
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_0()
+            })
             .map(|d| Self::source_actions(d, cx))
             .map(|d| Self::edit_menu_actions(d, cx))
             .on_action(cx.listener(Self::on_open))

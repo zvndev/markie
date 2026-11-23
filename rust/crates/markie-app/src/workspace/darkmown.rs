@@ -303,7 +303,7 @@ impl Workspace {
             .min_w_0()
             .h_full()
             .bg(p.background)
-            .child(Editor::new(&self.editor).bordered(false).h(relative(1.)).font_family(markie_editor::MONO).text_size(px(14. * self.zoom)));
+            .child(Editor::new(&self.editor).bordered(false).h(relative(1.)).font_family(markie_editor::MONO).text_size(px(14. * self.zoom)).line_height(relative(super::SOURCE_LINE_HEIGHT)));
 
         let button = |id: &'static str, label: &'static str, primary: bool| {
             div()

@@ -4,14 +4,14 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 88 of 94 = 93.6 %.**
+**Parity: 91 of 94 = 96.8 %.** Updated by the capture pass on 2026-11-22.
 
 | Count | Rows |
 |---|---|
 | All rows | 96 |
-| PASS | 88 |
+| PASS | 91 |
 | FAIL | 3 |
-| NEEDS-CAPTURE | 3 |
+| NEEDS-CAPTURE | 0 |
 | EXCLUDED | 1 |
 | EXCLUDED-PLATFORM | 1 |
 
@@ -161,10 +161,10 @@ Shared files touched, kept small, for the other auditors:
 
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 28.1 | What the user can do | NEEDS-CAPTURE | Roll-up | 28.2a and 28.2b need a capture. |
+| 28.1 | What the user can do | PASS | Roll-up | Roll-up: 28.2a and 28.2b pass on screen. |
 | 28.2 | Sections: account, appearance, files, advanced (servers, updates, error reporting, links) | PASS | `settings.tsx:57-180`, `servers-setting.tsx`; `settings.rs`, `servers_setting.rs` (cloud audit); `rows_say_who_is_signed_in_like_account_line`, `the_submit_button_reads_like_server_sign_in`, `only_an_explicit_zero_turns_previews_off`, `logs` consent tests | Tabs, order and wording match. Updates is greyed (updater excluded). Files' "Use Markie" buttons are greyed (no file-type claims, excluded). The Servers section, with add, remove and per-server sign-in, came with the cloud audit. |
-| 28.2a | Advanced: "Get new versions early" and "Preview links on hover" show their checkbox | NEEDS-CAPTURE | `settings.tsx:225-283`; `settings.rs` setting_text; `setting_text_may_shrink_so_its_checkbox_stays_on_the_panel` | Found by the cloud auditor side by side. Fixed in ac0bea6: the text column had no zero minimum width, so it pushed the checkbox out. Capture 10 confirms it. |
-| 28.2b | Advanced: the descriptions wrap inside the panel | NEEDS-CAPTURE | same | Same cause and fix as 28.2a. |
+| 28.2a | Advanced: "Get new versions early" and "Preview links on hover" show their checkbox | PASS | `settings.tsx:225-283`; `settings.rs` setting_text; `setting_text_may_shrink_so_its_checkbox_stays_on_the_panel` | Capture pass 2026-11-22, Electron 0.9.7 at 1280x820: both checkboxes sit on the panel in light and dark (`.autoloop/runs/capture-pass/sbs-adv-light.png`, `sbs-adv-dark.png`). The "Not in Markie RS yet" tag and "You are running Markie RS 0.1.0." are the side build's own wording. |
+| 28.2b | Advanced: the descriptions wrap inside the panel | PASS | same | Same captures: every description wraps inside the panel at the same line breaks as Electron's. |
 | 28.3 | Eight templates, light and dark | PASS | `theme.rs`; `eight_templates_with_their_typography` | |
 | 28.4 | Light, dark or system | PASS | `chrome.rs` ColorMode, observe_window_appearance; `color_mode_round_trips` | Following a live macOS change was not exercised, as before. |
 | 28.5 | Custom presets: colours plus typography | PASS | `ThemeStore`, `appearance.rs`; `store_transitions_match_theme_ts`, `appearance::tests::*` | Colour wells are hex fields, as recorded in LOCAL-FEATURES.md. |

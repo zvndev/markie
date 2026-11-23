@@ -1,9 +1,10 @@
 // Sharing a document from the phone, through the routes the desktop's share
 // dialog uses: invite by email, change someone's role, take them off. Only
 // the owner manages people; anyone on the document can see who else is.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, type ShareRole } from "../lib/api";
-import { haptics, shareLink } from "../lib/native";
+import { exportOffer, runExport, type ExportDevice, type ExportId, type ExportSource } from "../lib/export";
+import { exportDevice, haptics, shareLink } from "../lib/native";
 import { displayName } from "../lib/recent";
 import { Sheet } from "./sheet";
 import { Avatar } from "./presence";
@@ -76,13 +77,15 @@ interface ShareSheetProps {
   me: { email: string; name: string };
   /** The private link, for the system share sheet. None for a file that has no web page. */
   link: string | null;
+  /** The document as it is on screen, to export as a file. None while it isn't loaded. */
+  exportSource?: ExportSource | null;
   onClose: () => void;
   onUnauthorized: () => void;
   /** After any change, so the screen underneath can recount who is on it. */
   onChanged?: () => void;
 }
 
-export function ShareSheet({ title, people, publicLink = null, liveDoc = false, editsTogether = false, canManage, owner = null, me, link, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
+export function ShareSheet({ title, people, publicLink = null, liveDoc = false, editsTogether = false, canManage, owner = null, me, link, exportSource = null, onClose, onUnauthorized, onChanged }: ShareSheetProps) {
   const [list, setList] = useState<SharePerson[] | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<ShareRole>("viewer");
@@ -148,6 +151,7 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
         </div>
       ) : null}
       {link ? <p className="m-group-footer">The link opens only for people on this document, after they sign in.</p> : null}
+      {exportSource ? <ExportSection source={exportSource} /> : null}
 
       {canManage ? (
         <form className="m-share-invite" onSubmit={(event) => { event.preventDefault(); invite(); }}>
@@ -236,6 +240,76 @@ export function ShareSheet({ title, people, publicLink = null, liveDoc = false, 
           {editsTogether ? "Nobody else is on this document yet. Once someone is, you edit it together live." : "Nobody else is on this document yet."}
         </p>
       ) : null}
+    </Sheet>
+  );
+}
+
+/**
+ * The document as a file: its own source, an HTML page, a PDF. Each row makes
+ * the file and hands it to the system share sheet (src/lib/export.ts). What a
+ * kind of document can't honestly become is not offered, and one line says why.
+ */
+export function ExportSection({ source, device = exportDevice }: { source: ExportSource; device?: ExportDevice }) {
+  const offer = exportOffer(source);
+  const [busy, setBusy] = useState<ExportId | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // The ref is the guard: a second tap can't start a second export.
+  const running = useRef(false);
+
+  const run = async (id: ExportId, confirm?: string) => {
+    if (running.current) return;
+    if (confirm && !window.confirm(confirm)) return;
+    running.current = true;
+    setBusy(id);
+    setError(null);
+    try {
+      if (await runExport(source, id, device) !== "canceled") haptics.success();
+    } catch (failure) {
+      setError(failure instanceof Error && failure.message ? failure.message : "Couldn't make that file. Try again.");
+    } finally {
+      running.current = false;
+      setBusy(null);
+    }
+  };
+
+  if (!offer.options.length && !offer.note) return null;
+  return (
+    <section className="m-share-export" aria-label="Export">
+      <h3 className="m-group-heading">Export</h3>
+      {offer.options.length ? (
+        <div className="m-group">
+          {offer.options.map((option) => (
+            <button key={option.id} type="button" className="m-group-row m-group-action" data-export={option.id} disabled={busy !== null} onClick={() => void run(option.id, option.confirm)}>
+              <span className="m-group-label">{option.label}</span>
+              <span className="m-group-value">{busy === option.id ? "Preparing…" : option.fileName}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {offer.note ? <p className="m-group-footer" data-export-note>{offer.note}</p> : null}
+      {error ? <p className="m-form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+/**
+ * Sharing for someone who can't manage the people on a document: a reader of
+ * a public link (signed in or not), or someone a Word file was shared with.
+ * The link when there is one, and the document as a file.
+ */
+export function ExportSheet({ title, link = null, source, onClose }: { title: string; link?: string | null; source: ExportSource; onClose: () => void }) {
+  return (
+    <Sheet title="Share" onClose={onClose} className="m-share">
+      <p className="m-share-doc">{displayName(title)}</p>
+      {link ? (
+        <div className="m-group">
+          <button type="button" className="m-group-action" onClick={() => void shareLink(displayName(title), link)}>
+            <ShareIcon size={20} />
+            <span>Send the link</span>
+          </button>
+        </div>
+      ) : null}
+      <ExportSection source={source} />
     </Sheet>
   );
 }

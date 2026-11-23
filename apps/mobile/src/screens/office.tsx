@@ -13,14 +13,15 @@ import type { DocxDocument } from "@/lib/office/docx-types";
 import type { RichDocument } from "@/lib/office/rich-text-types";
 import { ApiError, type ApiClient } from "../lib/api";
 import { haptics, openExternal } from "../lib/native";
+import { platformExportSource, type ExportSource } from "../lib/export";
 import { kindLabel } from "../lib/docs";
 import { platformPeople } from "../lib/share-people";
 import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
 import { DarkmownView } from "../components/darkmown-view";
-import { ShareSheet } from "../components/share-sheet";
-import { AlertIcon, PencilIcon, UserPlusIcon } from "../components/icons";
+import { ExportSheet, ShareSheet } from "../components/share-sheet";
+import { AlertIcon, PencilIcon, ShareIcon, UserPlusIcon } from "../components/icons";
 
 const WordEditor = lazy(() => import("@/components/documents/word-document-editor").then((module) => ({ default: module.WordDocumentEditor })));
 
@@ -32,7 +33,8 @@ type Body =
 
 type State =
   | { status: "loading" }
-  | { status: "ready"; snapshot: CloudSnapshot; body: Body }
+  /** `exportSource` is the file as stored: its bytes, and what it can become (src/lib/export.ts). */
+  | { status: "ready"; snapshot: CloudSnapshot; body: Body; exportSource: ExportSource }
   | { status: "error"; message: string };
 
 interface OfficeProps {
@@ -64,6 +66,10 @@ async function bodyFor(name: string, bytes: Uint8Array): Promise<Body> {
     return { kind: "text", text: metadata.text, metadata };
   }
   return { kind: "binary" };
+}
+
+function exportSourceFor(name: string, bytes: Uint8Array, body: Body): Promise<ExportSource> {
+  return platformExportSource(name, bytes, body.kind === "text" ? { text: body.text } : body.kind === "binary" ? null : { document: body.document });
 }
 
 async function bytesFor(body: Body): Promise<Uint8Array | null> {
@@ -98,8 +104,9 @@ export function OfficeScreen({ api, id, initialName, backLabel, tone, me, startE
       const decoded = await client.decode(response.document);
       if (decoded.snapshot.id !== id) throw new Error("The server sent a different document.");
       const body = await bodyFor(decoded.snapshot.name, decoded.bytes);
+      const exportSource = await exportSourceFor(decoded.snapshot.name, decoded.bytes, body);
       if (current !== run.current) return;
-      setState({ status: "ready", snapshot: decoded.snapshot, body });
+      setState({ status: "ready", snapshot: decoded.snapshot, body, exportSource });
       setDraft(null);
       setEpoch((value) => value + 1);
       if (startEditing && body.kind !== "binary" && decoded.snapshot.role !== "viewer") setEditing(true);
@@ -136,7 +143,7 @@ export function OfficeScreen({ api, id, initialName, backLabel, tone, me, startE
       if (!bytes) throw new Error("This format can't be saved from a phone.");
       const snapshot = await api.platform().upload({ name: doc.snapshot.name, bytes }, { id: doc.snapshot.id, version: doc.snapshot.version });
       haptics.success();
-      setState({ status: "ready", snapshot, body: draft });
+      setState({ status: "ready", snapshot, body: draft, exportSource: await exportSourceFor(snapshot.name, bytes, draft) });
       setDraft(null);
       setEditing(false);
       onChanged();
@@ -159,7 +166,7 @@ export function OfficeScreen({ api, id, initialName, backLabel, tone, me, startE
   ) : (
     <>
       {canEdit ? <button type="button" className="m-nav-icon" aria-label="Edit" onClick={() => { haptics.tap(); setEditing(true); }}><PencilIcon size={22} /></button> : null}
-      {role === "owner" ? <button type="button" className="m-nav-icon" aria-label="Share" onClick={() => setSharing(true)}><UserPlusIcon size={23} /></button> : null}
+      <button type="button" className="m-nav-icon" aria-label="Share" onClick={() => setSharing(true)}>{role === "owner" ? <UserPlusIcon size={23} /> : <ShareIcon size={23} />}</button>
     </>
   ) : null;
 
@@ -242,13 +249,15 @@ export function OfficeScreen({ api, id, initialName, backLabel, tone, me, startE
           ) : null}
         </>
       ) : null}
-      {sharing && doc ? (
+      {sharing && doc && role !== "owner" ? <ExportSheet title={name} source={doc.exportSource} onClose={() => setSharing(false)} /> : null}
+      {sharing && doc && role === "owner" ? (
         <ShareSheet
           title={name}
           people={platformPeople(api, id)}
           canManage={role === "owner"}
           me={me}
           link={null}
+          exportSource={doc.exportSource}
           onClose={() => setSharing(false)}
           onUnauthorized={onUnauthorized}
         />

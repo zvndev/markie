@@ -8,6 +8,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // The app's own plugin: a document printed to a PDF file (MarkiePdfPlugin).
+        registerPlugin(MarkiePdfPlugin.class);
         super.onCreate(savedInstanceState);
         // The page scrolls inside its own screens and draws no scrollbar there
         // (src/styles.css). The web view's overlay bar would sit over the nav

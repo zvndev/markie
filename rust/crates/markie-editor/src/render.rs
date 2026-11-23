@@ -124,6 +124,31 @@ fn stack(children: Vec<(AnyElement, f32, f32)>) -> (AnyElement, f32, f32) {
     (v_flex().w_full().children(out).into_any_element(), top, prev.unwrap_or(0.))
 }
 
+/// Where a bullet list's disc sits in its 1.8 em gutter.
+#[derive(Debug, PartialEq)]
+struct Disc {
+    left: f32,
+    top: f32,
+    size: f32,
+}
+
+/// Chromium paints `list-style-type: disc` as a shape, not the "•" glyph:
+/// `ListMarker::RelativeSymbolMarkerRect` makes it `(ascent * 2 / 3 + 1) / 2`
+/// wide and sets it `3 * (ascent - ascent * 2 / 3) / 2` below the ascent
+/// line, in whole device pixels (`scale` is the window's). The text line puts
+/// its baseline where `layout.rs` does; GPUI's descent is negative. Across,
+/// its centre sits 0.685 em before the item's text, measured from Electron
+/// at 16 px.
+fn disc_marker(size: f32, line_height: f32, ascent: f32, descent: f32, scale: f32) -> Disc {
+    let (ascent, descent) = (ascent.abs(), descent.abs());
+    let a = (ascent * scale).floor() as i32;
+    let width = ((a * 2 / 3 + 1) / 2) as f32 / scale;
+    let below_ascent = (3 * (a - a * 2 / 3) / 2) as f32 / scale;
+    let baseline = (line_height - (ascent + descent)) / 2. + ascent;
+    let gutter = 1.8 * size;
+    Disc { left: gutter - 0.685 * size - width / 2., top: baseline - a as f32 / scale + below_ascent, size: width }
+}
+
 impl RichView {
     pub(crate) fn look(&self, theme: &Theme, window: &Window) -> Look {
         let mut font = window.text_style().font();
@@ -744,26 +769,38 @@ impl RichView {
                     ip.push(k);
                     let (body, t, bm) = self.render_item(b, item, ip, counter, depth, item_ctx, look, window, cx);
                     // `::marker`: outside, muted, at the item's own size.
-                    let (marker, gap) = match start {
-                        Some(s) => (format!("{}.", s + k as u64), 0.3),
-                        None => ("•".to_string(), 0.45),
-                    };
                     let lh = look.size * ctx.line_height.unwrap_or(look.line_height);
+                    let marker = match start {
+                        Some(s) => div()
+                            .w(px(gutter))
+                            .flex_none()
+                            .flex()
+                            .justify_end()
+                            .pr(px(look.size * 0.3))
+                            .text_size(px(look.size))
+                            .line_height(px(lh))
+                            .font_family(look.font.family.clone())
+                            .text_color(look.muted)
+                            .child(format!("{}.", s + k as u64)),
+                        None => {
+                            let ts = window.text_system();
+                            let id = ts.resolve_font(&look.font);
+                            let (asc, desc) = (f32::from(ts.ascent(id, px(look.size))), f32::from(ts.descent(id, px(look.size))));
+                            let disc = disc_marker(look.size, lh, asc, desc, window.scale_factor());
+                            div().w(px(gutter)).h(px(lh)).flex_none().relative().child(
+                                div()
+                                    .absolute()
+                                    .left(px(disc.left))
+                                    .top(px(disc.top))
+                                    .size(px(disc.size))
+                                    .rounded_full()
+                                    .bg(look.muted),
+                            )
+                        }
+                    };
                     let row = h_flex()
                         .items_start()
-                        .child(
-                            div()
-                                .w(px(gutter))
-                                .flex_none()
-                                .flex()
-                                .justify_end()
-                                .pr(px(look.size * gap))
-                                .text_size(px(look.size))
-                                .line_height(px(lh))
-                                .font_family(look.font.family.clone())
-                                .text_color(look.muted)
-                                .child(marker),
-                        )
+                        .child(marker)
                         .child(div().flex_1().min_w_0().child(body))
                         .into_any_element();
                     rows.push((row, li.max(t), li.max(bm)));
@@ -1428,10 +1465,9 @@ fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
         s.font.style = FontStyle::Italic;
     }
     s.underline = m.underline;
-    if m.strike {
-        s.strike = true;
-        s.color = look.muted;
-    }
+    // TipTap writes `<s>`, which keeps the text's own ink; globals.css mutes
+    // only `del`, which the rich editor never writes.
+    s.strike = m.strike;
     if let Some(t) = &m.text_style {
         if let Some(c) = t.color.as_deref().and_then(media::css_color) {
             s.color = c;
@@ -1481,4 +1517,25 @@ fn cell_text(nodes: &[Node]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::disc_marker;
+
+    #[test]
+    fn the_disc_is_chromiums_symbol_marker() {
+        // SF Pro at 16 px in a 1.75 line on a 2x screen: ascent 30.4 device
+        // pixels floors to 30, so a 10 px (5 pt) disc 15 px below the ascent
+        // line, its top 7.5 pt over the baseline; Electron's measures 7.25.
+        let d = disc_marker(16., 28., 15.2, -3.85, 2.);
+        assert_eq!(d.size, 5.);
+        let baseline = (28. - (15.2 + 3.85)) / 2. + 15.2;
+        assert!((baseline - d.top - 7.5).abs() < 0.01, "{d:?}");
+        assert!((1.8 * 16. - (d.left + d.size / 2.) - 0.685 * 16.).abs() < 0.01);
+        // On a 1x screen Chromium rounds in its own pixels: 15 floors to 15, 5 px.
+        assert_eq!(disc_marker(16., 28., 15.2, -3.85, 1.).size, 5.);
+        // Zoom grows it in whole device pixels.
+        assert_eq!(disc_marker(32., 56., 30.4, -7.7, 2.).size, 10.);
+    }
 }

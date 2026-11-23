@@ -207,7 +207,9 @@ impl RichView {
             return None;
         }
         let theme = cx.theme();
-        let (surface, border) = (theme.secondary, theme.border);
+        // `bg-surface`: GPUI Kit's muted background is Electron's surface;
+        // `secondary` is surface-2, a step lighter in dark and darker in light.
+        let (surface, border) = (theme.muted, theme.border);
         let mut col = div().id("format-rail-col").size_full().flex().flex_col().items_center().py(px(8.)).gap(px(2.)).overflow_y_scroll();
         for (key, title, face) in COMMON {
             let active = is_active(&self.editor, key);
@@ -230,7 +232,17 @@ impl RichView {
                 .items_center()
                 .justify_center()
                 .rounded(px(6.))
-                .when(advanced, |d| d.bg(accent))
+                .when(advanced, |d| {
+                    // `btnClass(showAdvanced)`: the pressed toggle has the same
+                    // inset ring as a pressed formatting button.
+                    d.bg(accent).shadow(vec![BoxShadow {
+                        color: fg.opacity(0.12),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(1.),
+                        inset: true,
+                    }])
+                })
                 .when(!advanced && !disabled, |d| d.hover(move |s| s.bg(accent.opacity(0.45))))
                 .when(disabled, |d| d.opacity(0.35))
                 .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(toggle_title).build(window, cx))

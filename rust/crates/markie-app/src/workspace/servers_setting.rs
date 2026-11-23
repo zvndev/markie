@@ -607,6 +607,67 @@ impl Workspace {
     }
 }
 
+/// Scene mode: Settings › Advanced, the second server checked, added and
+/// signed in, through the functions its buttons call. `stop` ends early:
+/// `confirm` ("Add this server?"), `added`, or `form` (sign-in form filled).
+#[cfg(feature = "scene")]
+impl Workspace {
+    pub(super) fn scene_servers(&mut self, args: &serde_json::Value, step: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let get = |k: &str| args.get(k).and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+        let (origin, stop) = (get("second_origin"), get("stop"));
+        match *step {
+            0 => {
+                self.open_settings(super::overlay::SettingsSection::Advanced, window, cx);
+                *step = 1;
+                false
+            }
+            1 => {
+                let Some(address) = self.cloud.servers_ui.address.clone() else { return false };
+                address.update(cx, |s, cx| s.set_value(origin.as_str(), window, cx));
+                self.server_check(window, cx);
+                *step = 2;
+                false
+            }
+            2 => {
+                if self.cloud.servers_ui.probe.is_none() {
+                    return self.cloud.servers_ui.add_error.is_some();
+                }
+                if stop == "confirm" {
+                    return true;
+                }
+                self.server_add(window, cx);
+                *step = 3;
+                false
+            }
+            3 => {
+                if self.cloud.servers.get(&origin).is_none() {
+                    return false;
+                }
+                if stop == "added" {
+                    return true;
+                }
+                self.server_open_sign_in(origin.clone(), window, cx);
+                if let Some(form) = self.cloud.servers_ui.sign_in.as_ref() {
+                    let (email, password) = (form.email.clone(), form.password.clone());
+                    email.update(cx, |s, cx| s.set_value(get("email"), window, cx));
+                    password.update(cx, |s, cx| s.set_value(get("password"), window, cx));
+                }
+                if stop == "form" {
+                    return true;
+                }
+                self.server_submit(cx);
+                *step = 4;
+                false
+            }
+            _ => {
+                let form = self.cloud.servers_ui.sign_in.as_ref();
+                form.is_some_and(|f| f.error.is_some() || f.notice.is_some())
+                    || self.cloud.servers_ui.emails.get(&origin).is_some_and(|e| e.is_some())
+            }
+        }
+    }
+}
+
 fn small_button(id: impl Into<ElementId>, label: &str, t: &Tokens) -> Stateful<Div> {
     let (fg, hover) = (t.foreground, t.hover_soft());
     div()

@@ -306,6 +306,15 @@ impl AccountStore {
 
     /// Ask the server whether this session is alive, the way the Electron
     /// auth store's boot probe does. Offline reads as signed out.
+    /// Scene mode: take a local test server's session token, then ask who it is.
+    #[cfg(feature = "scene")]
+    pub(crate) fn scene_sign_in(&mut self, token: &str, cx: &mut Context<Self>) {
+        if let Some(client) = &self.client {
+            let _ = client.set_token(Some(token));
+        }
+        self.restore(cx);
+    }
+
     pub fn restore(&mut self, cx: &mut Context<Self>) {
         self.ticket += 1;
         let mine = self.ticket;

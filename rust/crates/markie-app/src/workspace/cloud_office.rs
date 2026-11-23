@@ -577,6 +577,21 @@ impl Workspace {
     }
 
     /// A new area made in this dialog's picker is selected in it.
+    /// Scene mode: the dialog is open and nothing is in flight. With
+    /// `upload`, presses Upload once first, as the button does.
+    #[cfg(feature = "scene")]
+    pub(super) fn scene_office_settled(&mut self, upload: bool, uploaded: &mut bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.cloud_office.dialog.is_none() || self.cloud_office.busy {
+            return false;
+        }
+        if upload && !*uploaded {
+            *uploaded = true;
+            self.office_publish(window, cx);
+            return false;
+        }
+        !upload || self.cloud_office.dialog.as_ref().is_some_and(|d| d.cloud.is_some())
+    }
+
     pub(super) fn office_area_created(&mut self, area: String) {
         if let Some(d) = self.cloud_office.dialog.as_mut() {
             d.area = Some(area);

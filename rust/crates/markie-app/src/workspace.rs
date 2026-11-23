@@ -78,6 +78,8 @@ mod skills;
 pub mod source;
 mod source_column;
 pub(crate) mod vault;
+#[cfg(feature = "scene")]
+pub(crate) mod scene;
 
 /// How long typing must pause before the edited marker, word count and
 /// outline catch up.

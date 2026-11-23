@@ -87,6 +87,12 @@ impl ShareSheet {
     }
 }
 
+/// The outer widths Chromium gives the two selects in 0.9.7: each is as wide
+/// as its longest option ("Remove access" at 12.5 pt; "Anyone with the link"
+/// at 13.5 pt medium) plus its padding.
+const ROLE_SELECT_W: f32 = 157.;
+const GENERAL_SELECT_W: f32 = 160.;
+
 fn error_text(e: &CloudError, fallback: &str) -> String {
     match e {
         CloudError::Status { message: Some(m), .. } if !m.is_empty() => m.clone(),
@@ -285,13 +291,18 @@ impl Workspace {
             .unwrap_or_else(|| markie_cloud::auth::MarkieUser { id: scope.user.clone(), email: String::new(), name: None });
         let account = Arc::new(super::collab::CloudAccount { client: Arc::new(scope.client.clone()), user });
         let doc = super::collab::CloudDoc { account, doc_id, name: name.clone() };
+        self.share_open_ready(doc, name, String::new(), window, cx);
+    }
+
+    /// The dialog for a cloud document whose access is already known.
+    pub(super) fn share_open_ready(&mut self, doc: super::collab::CloudDoc, name: String, body: String, window: &mut Window, cx: &mut Context<Self>) {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Add people by email"));
         let subs = vec![cx.subscribe_in(&query, window, |w, state, ev: &InputEvent, window, cx| w.share_field_event(state, ev, window, cx))];
         self.collab.share = Some(ShareSheet {
             gate: Gate::Ready,
             doc: Some(doc),
             file_name: name,
-            body: String::new(),
+            body,
             access: None,
             members: None,
             public_url: None,
@@ -318,6 +329,38 @@ impl Workspace {
         });
         self.share_load(cx);
         query.update(cx, |s, cx| s.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Scene mode: the dialog has its people and link.
+    #[cfg(feature = "scene")]
+    pub(super) fn scene_share_loaded(&self) -> bool {
+        self.collab.share.as_ref().is_some_and(|s| s.loaded)
+    }
+
+    /// Scene mode: chips, typed text, the invite role and an open menu, set
+    /// the way the field's own handlers set them.
+    #[cfg(feature = "scene")]
+    pub(super) fn scene_share_fill(&mut self, pending: &[String], query: &str, editor: bool, menu: &str, window: &mut Window, cx: &mut Context<Self>) {
+        for address in pending {
+            self.share_add_pending(address, window, cx);
+        }
+        let Some(s) = self.collab.share.as_mut() else { return };
+        s.role = if editor { Role::Editor } else { Role::Viewer };
+        let q = s.query.clone();
+        if !query.is_empty() {
+            q.update(cx, |st, cx| st.set_value(query, window, cx));
+        }
+        if let Some(s) = self.collab.share.as_mut() {
+            s.menu = match menu {
+                "role" => Some(Menu::InviteRole),
+                "general" => Some(Menu::General),
+                "suggestions" => Some(Menu::Suggestions),
+                "row0" => Some(Menu::Row(0)),
+                "row1" => Some(Menu::Row(1)),
+                _ => s.menu,
+            };
+        }
         cx.notify();
     }
 
@@ -860,7 +903,10 @@ impl Workspace {
         let link = s.doc.as_ref().map(|d| sv::link_to_copy(d.account.client.origin(), &d.doc_id, &s.file_name, s.public_url.as_deref())).unwrap_or_default();
         let public_url = s.public_url.clone();
         let blue = p.blue;
-        let _ = window;
+        // `.markie-share-field:focus-within`: a blue border and a 1px blue
+        // ring while the field has the caret (in the active window, as
+        // Chromium only shows focus there).
+        let field_focus = window.is_window_active() && query.read(cx).focus_handle(cx).is_focused(window);
 
         let field = div()
             .id("share-field")
@@ -870,10 +916,11 @@ impl Workspace {
             .gap(px(5.6))
             .min_h(px(41.6))
             .px(px(9.6))
-            .py(px(5.6))
+            .py(px(3.8))
             .bg(p.background)
             .border_1()
-            .border_color(p.border)
+            .border_color(if field_focus { blue } else { p.border })
+            .when(field_focus, |el| el.shadow(vec![BoxShadow { color: blue, offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(1.), inset: false }]))
             .rounded(px(10.))
             .children(pending.iter().map(|addr| {
                 let a = addr.clone();
@@ -912,7 +959,9 @@ impl Workspace {
                             })),
                     )
             }))
-            .child(div().flex_1().min_w(px(128.)).child(Input::new(&query).appearance(false).text_size(px(13.5))));
+            // GPUI Kit's input pads its text 10 pt; `.markie-share-input` pads
+            // it 2.4 pt, so the text starts 13 pt in from the border.
+            .child(div().flex_1().min_w(px(128.)).ml(px(-7.6)).mr(px(-9.6)).child(Input::new(&query).appearance(false).text_size(px(13.5))));
 
         let suggestions_menu = show_menu.then(|| {
             Self::share_menu_list(p)
@@ -976,7 +1025,7 @@ impl Workspace {
             let row = Self::share_member_row(&name, &name, &sub, m.pending || m.waiting, p);
             let row = if can_manage {
                 let busy_row = row_busy.as_deref() == Some(key.as_str());
-                row.child(self.share_select_button(format!("role-{i}"), sv::role_label(r), menu == Some(Menu::Row(i)), !busy_row, p, cx.listener(move |w, _, _, cx| {
+                row.child(self.share_select_button(format!("role-{i}"), sv::role_label(r), ROLE_SELECT_W, menu == Some(Menu::Row(i)), !busy_row, p, cx.listener(move |w, _, _, cx| {
                     if let Some(s) = w.collab.share.as_mut() {
                         s.menu = if s.menu == Some(Menu::Row(i)) { None } else { Some(Menu::Row(i)) };
                     }
@@ -1033,7 +1082,7 @@ impl Workspace {
                         v_flex()
                             .min_w_0()
                             .flex_1()
-                            .child(h_flex().ml(px(-8.)).child(self.share_select_button("general-access", if public { "Anyone with the link" } else { "Restricted" }, menu == Some(Menu::General), !link_busy && loaded, p, cx.listener(|w, _, _, cx| {
+                            .child(h_flex().ml(px(-8.)).child(self.share_select_button("general-access", if public { "Anyone with the link" } else { "Restricted" }, GENERAL_SELECT_W, menu == Some(Menu::General), !link_busy && loaded, p, cx.listener(|w, _, _, cx| {
                                 if let Some(s) = w.collab.share.as_mut() {
                                     s.menu = if s.menu == Some(Menu::General) { None } else { Some(Menu::General) };
                                 }
@@ -1113,7 +1162,15 @@ impl Workspace {
             .max_h(px(720.))
             .overflow_y_scroll()
             .rounded(px(16.))
-            .bg(p.surface)
+            // `.markie-share` paints the surface; in light the overlay
+            // panel's own fill wins (a more specific rule), so keep it.
+            .when(p.dark, |el| el.bg(p.surface))
+            .when(field_focus && p.dark, |el| el.shadow(vec![
+                BoxShadow { color: hsla(0., 0., 0., 0.26), offset: point(px(0.), px(18.)), blur_radius: px(44.), spread_radius: px(0.), inset: false },
+                BoxShadow { color: blue.opacity(0.45), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(1.), inset: false },
+            ]))
+            // Tailwind's preflight: every line is 1.5 times its text.
+            .line_height(relative(1.5))
             .pt(px(20.))
             .px(px(22.))
             .pb(px(18.))
@@ -1253,14 +1310,19 @@ impl Workspace {
             .child(super::dialog_chrome::stroke_icon(super::dialog_chrome::PATH_CHEVRON_DOWN, p.foreground, 15., 1.9))
     }
 
-    /// `.markie-share-role-select`: transparent until hovered, with a chevron.
-    fn share_select_button(&self, id: impl Into<SharedString>, label: &'static str, open: bool, enabled: bool, p: &Palette, on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Stateful<Div> {
+    /// `.markie-share-role-select` and `-general-select`: a native select
+    /// with `appearance: none`, so as wide as its longest option (measured
+    /// from 0.9.7 in headless Chromium), text 8 pt in, transparent until
+    /// hovered, and a small filled caret whose tip is 12 pt from the right.
+    #[allow(clippy::too_many_arguments)]
+    fn share_select_button(&self, id: impl Into<SharedString>, label: &'static str, width: f32, open: bool, enabled: bool, p: &Palette, on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Stateful<Div> {
         h_flex()
             .id(id.into())
+            .relative()
             .flex_none()
-            .gap(px(6.))
+            .w(px(width))
             .pl(px(8.))
-            .pr(px(6.))
+            .pr(px(22.4))
             .py(px(4.8))
             .rounded(px(6.))
             .border_1()
@@ -1269,8 +1331,8 @@ impl Workspace {
             .text_color(p.foreground)
             .when(!enabled, |el| el.opacity(0.55))
             .when(enabled, |el| el.hover(|s| s.bg(p.fg(0.07))).cursor_pointer().on_click(on_click))
-            .child(label)
-            .child(svg().path("markie/select-chevron.svg").size(px(10.)).text_color(p.muted))
+            .child(div().truncate().child(label))
+            .child(svg().path("markie/select-caret.svg").absolute().right(px(7.2)).top(relative(0.55)).mt(px(-2.64)).w(px(9.6)).h(px(4.8)).text_color(p.muted))
     }
 
     fn share_pill_button(&self, id: &'static str, label: &'static str, primary: bool, disabled: bool, p: &Palette) -> Stateful<Div> {

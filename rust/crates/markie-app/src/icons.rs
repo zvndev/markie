@@ -90,6 +90,9 @@ const ICONS: &[(&str, &str)] = &[
     ("markie/filter-search.svg", stroke!("2", r#"<circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/>"#)),
     ("markie/big-search.svg", stroke!("2", r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>"#)),
     ("markie/select-chevron.svg", stroke!("2.2", r#"<path d="m6 9 6 6 6-6"/>"#)),
+    // `.markie-share-role-select`'s caret: two 0.3rem gradient half-squares
+    // that meet as a filled triangle 9.6 wide and 4.8 tall.
+    ("markie/select-caret.svg", r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5" viewBox="0 0 9.6 4.8"><path d="M0 0h9.6L4.8 4.8z" fill="black"/></svg>"#),
     ("markie/on-device.svg", stroke!("1.8", r#"<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2.5 19h19"/>"#)),
     // Format page: outline, the 12% fill, and one glyph per family.
     ("markie/fmt-page.svg", stroke!("1.5", r#"<path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5"/>"#)),

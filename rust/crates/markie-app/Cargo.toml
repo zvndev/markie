@@ -53,6 +53,14 @@ gpui-kit = { version = "=0.10.0", features = [
   "tree-sitter-languages",
 ] }
 
+# Scene mode for background screen comparisons (docs/rust-port/SCREEN.md):
+# `cargo build --release --features scene`. Never part of a shipped build.
+# It turns on GPUI's test-support for `Window::render_to_image`.
+gpui-scene = { package = "gpui-pre", version = "=0.3.12", optional = true, default-features = false, features = ["test-support"] }
+
+[features]
+scene = ["dep:gpui-scene", "dep:gpui-scene-macos"]
+
 [dev-dependencies]
 tempfile.workspace = true
 
@@ -63,3 +71,5 @@ objc2-foundation = { version = "0.3.2", features = ["NSData", "NSString", "NSPro
 block2 = "0.6"
 objc2-pdf-kit = { version = "0.3.2", features = ["PDFDocument", "objc2-app-kit"] }
 raw-window-handle = "0.6"
+# The macOS half of `render_to_image`, for the `scene` feature only.
+gpui-scene-macos = { package = "gpui-pre-macos", version = "=0.3.12", optional = true, default-features = false, features = ["test-support"] }

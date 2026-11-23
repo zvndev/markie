@@ -168,6 +168,14 @@ fn main() {
     // launch through Launch Services, often hands the first file the same way
     // instead of in argv. The callback has no App, so it only queues.
     let (open_tx, mut open_rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
+    // Scene mode (`--features scene`): a hidden, never-activating window put
+    // in a state from code and drawn to a PNG. docs/rust-port/SCREEN.md.
+    #[cfg(feature = "scene")]
+    let mut scene = workspace::scene::from_env();
+    #[cfg(feature = "scene")]
+    let in_scene = scene.is_some();
+    #[cfg(not(feature = "scene"))]
+    let in_scene = false;
     let app = gpui_kit::application().with_assets(icons::MarkieAssets);
     let instance_tx = open_tx.clone();
     app.on_open_urls(move |urls| {
@@ -193,11 +201,18 @@ fn main() {
                 instance::release(&markie_core::paths::data_dir());
                 cx.quit()
             });
-            cx.activate(true);
+            if in_scene {
+                // No Dock icon, no menu bar, never the active app.
+                cx.set_activation_policy(ActivationPolicy::Accessory);
+            } else {
+                cx.activate(true);
+            }
             // The Markie Cloud session, restored from the Keychain, and this
             // copy registered as the one markie-rs:// sign-ins come back to.
             workspace::account::AccountStore::init(cx);
-            std::thread::spawn(open_urls::register_url_scheme);
+            if !in_scene {
+                std::thread::spawn(open_urls::register_url_scheme);
+            }
 
             // Include Finder's already delivered launch documents before the
             // workspace chooses its first document or marks the welcome seen.
@@ -216,6 +231,9 @@ fn main() {
                     traffic_light_position: Some(point(px(14.), px(14.))),
                     ..TitleBar::title_bar_options()
                 }),
+                // A scene's window is never shown and never key.
+                show: !in_scene,
+                focus: !in_scene,
                 ..TitleBar::window_options()
             };
             let (window_handle, workspace) = gpui_kit::open_window(options, cx, move |window, cx| {
@@ -227,7 +245,9 @@ fn main() {
                 // The menu bar after the first frame: building it took 50 to
                 // 80 ms of the launch. Shortcuts are bound above and work
                 // from the start.
-                window.on_next_frame(|_, cx| set_menus(cx));
+                if !in_scene {
+                    window.on_next_frame(|_, cx| set_menus(cx));
+                }
                 view
             })
             .expect("failed to open the Markie RS window");
@@ -246,6 +266,10 @@ fn main() {
                         });
                     });
                 });
+            }
+            #[cfg(feature = "scene")]
+            if let Some(spec) = scene.take() {
+                workspace::scene::start(spec, window_handle, workspace.clone(), cx);
             }
             watchdog::start(cx);
             watchdog::trace_appkit_input();

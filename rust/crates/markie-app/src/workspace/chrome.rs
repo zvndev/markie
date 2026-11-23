@@ -8,12 +8,13 @@
 
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::{Theme, ThemeMode, TitleBar, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Theme, ThemeMode, TitleBar, WindowExt as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use markie_core::formats::FormatKind;
 
+use super::overlay::SettingsSection;
 use super::{DocKind, Workspace};
 use crate::actions::*;
 use crate::themes::{self, Palette, mix};
@@ -49,7 +50,6 @@ impl ColorMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ChromeMenu {
     Export,
-    Theme,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -149,17 +149,6 @@ impl Workspace {
     pub(super) fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
         let next = if Theme::global(cx).mode.is_dark() { ColorMode::Light } else { ColorMode::Dark };
         self.pick_color_mode(next, window, cx);
-    }
-
-    fn pick_template(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(reg) = &self.registry {
-            let _ = reg.set_setting("style_template", id);
-        }
-        themes::apply(id, Some(window), cx);
-        self.theme_changed(cx);
-        self.shell.template = id.to_string();
-        self.shell.menu = None;
-        cx.notify();
     }
 
     fn toggle_menu(&mut self, menu: ChromeMenu, cx: &mut Context<Self>) {
@@ -646,80 +635,19 @@ impl Workspace {
         )
     }
 
+    /// `toolbar.tsx`'s "Theme presets" button: it opens Settings at
+    /// Appearance (`onThemePresets` in `page.tsx`), where the templates are.
     fn render_theme_button(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let open = self.shell.menu == Some(ChromeMenu::Theme);
         let button = self
             .icon_button(
                 "tb-theme",
                 "markie/palette.svg",
                 15.,
                 p,
-                cx.listener(|this, _, _, cx| this.toggle_menu(ChromeMenu::Theme, cx)),
+                cx.listener(|this, _, window, cx| this.open_settings(SettingsSection::Appearance, window, cx)),
             )
-            .when(open, |el| el.bg(hover_fill(p)))
-            .when(!open, |el| {
-                el.tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Theme presets").build(window, cx))
-            });
-        div().relative().flex_none().child(button).when(open, |el| el.child(self.render_theme_menu(p, cx)))
-    }
-
-    /// The eight style templates, each with its light and dark swatch.
-    fn render_theme_menu(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *p;
-        let current = self.shell.template.clone();
-        let rows = themes::templates().into_iter().map(|t| {
-            let on = t.id == current;
-            let id = t.id.clone();
-            let hover = menu_hover(&p);
-            let sw = |c: &str| div().size(px(10.)).rounded_full().bg(themes::hex(c)).border_1().border_color(p.border);
-            div()
-                .id(SharedString::from(format!("tpl-{}", t.id)))
-                .flex()
-                .items_start()
-                .gap(px(10.))
-                .px(px(12.))
-                .py(px(7.))
-                .rounded(px(6.))
-                .cursor_pointer()
-                .when(on, |el| el.bg(hover))
-                .hover(|s| s.bg(hover))
-                .child(
-                    h_flex()
-                        .mt(px(2.))
-                        .gap(px(3.))
-                        .child(sw(&t.light.background))
-                        .child(sw(&t.dark.background))
-                        .child(sw(&t.dark.link)),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().text_size(px(12.)).text_color(p.foreground).child(t.name.clone()))
-                        .child(div().text_size(px(10.5)).text_color(p.muted).child(t.description.clone())),
-                )
-                .child(div().w(px(14.)).text_size(px(11.)).text_color(p.foreground).child(if on { "✓" } else { "" }))
-                .on_click(cx.listener(move |this, _, window, cx| this.pick_template(&id, window, cx)))
-        });
-        let panel = menu_panel(&p)
-            .p(px(4.))
-            .w(px(300.))
-            .child(
-                div()
-                    .px(px(12.))
-                    .pt(px(6.))
-                    .pb(px(4.))
-                    .text_size(px(10.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(p.muted.opacity(0.8))
-                    .child("THEME PRESETS"),
-            )
-            .children(rows);
-        div().absolute().top(px(34.)).right_0().child(deferred(
-            anchored().anchor(Anchor::TopRight).snap_to_window_with_margin(px(8.)).child(
-                panel.id("theme-menu").occlude().on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_menu(cx))),
-            ),
-        ))
+            .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Theme presets").build(window, cx));
+        div().relative().flex_none().child(button)
     }
 }
 

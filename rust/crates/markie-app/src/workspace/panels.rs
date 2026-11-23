@@ -127,10 +127,14 @@ impl Workspace {
                     .border_color(t.border)
                     .child(super::dialog_chrome::section_label("Statistics", &t))
                     .child(
+                        // `markie-overlay-close`: a 1.5 rem square, 6 px corners.
                         div()
                             .id("stats-close")
-                            .px(px(4.))
-                            .rounded(px(4.))
+                            .size(px(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.))
                             .text_size(px(13.))
                             .line_height(px(13.))
                             .text_color(t.muted)
@@ -148,6 +152,8 @@ impl Workspace {
                     .px(px(12.))
                     .py(px(6.))
                     .text_size(px(12.))
+                    // The body's 1.5: 18 px lines, 30 px rows, as `py-1.5`.
+                    .line_height(px(18.))
                     .child(div().text_color(t.muted).child(label))
                     .child(div().text_color(t.foreground).child(value))
             }));

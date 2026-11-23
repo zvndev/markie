@@ -1,7 +1,7 @@
 # Markie RS Office and platform parity audit
 
-macOS score: **83.61% (51 PASS ÷ 61 eligible)**. 105 rows: 51 PASS, 4 FAIL,
-39 EXCLUDED, 5 EXCLUDED-PLATFORM, 3 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
+macOS score: **85.25% (52 PASS ÷ 61 eligible)**, updated by the capture pass on 2026-11-22. 105 rows: 52 PASS, 4 FAIL,
+39 EXCLUDED, 5 EXCLUDED-PLATFORM, 2 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
 All 93 inventory bullets are represented. Both exclusion classes stay out of the denominator.
 
 Baseline: Rust `3b6f6c0`, Electron source `ae62cfa7e73f`, installed reference
@@ -63,7 +63,7 @@ can match an IPC operation without implementing the Electron transport.
 | 17.309b | Unchanged bytes and edited reopen | PASS | Electron `src/lib/office/rich-document.ts`; App `workspace/office.rs:147`; Word `an_untouched_document_saves_its_original_bytes`; Office `returns_the_byte_identical_original_when_untouched_or_reverted` | Save untouched is a no-op on disk; exported bytes equal the input for DOCX, RTF and ODT, and all three reopen with the edit. |
 | 17.310 | Native port placement | PASS | Electron `src/lib/office/` and `src/components/documents/word-document-editor.tsx:579`; Rust `markie-office` and `markie-office-view` Cargo manifests | Architecture row. The editor and codecs are native. |
 | 17.311 | Original codecs and provenance | PASS | Electron `docs/decisions/2026-10-14-original-document-engine.md`; Office `Cargo.toml` and `src/lib.rs` | No third-party Office engine in the port. |
-| 17.312 | Native Word page layout appearance | NEEDS-CAPTURE | Electron `src/components/documents/word-document-editor.tsx:579`; Word `view.rs:662,835` | Capture Word page, continuous and outline. See procedure below. |
+| 17.312 | Native Word page layout appearance | NEEDS-CAPTURE | Electron `src/components/documents/word-document-editor.tsx:579`; Word `view.rs:662,835` | Capture pass, light only, `sample.docx` from `sample_docx`: Page, Continuous and Outline match Electron in page size, margins, type, the picture, lists, table and the page-break rule (`sbs-word-page-light.png`, `grid-word-views.png`). Two things left: dark was not captured, and the Outline list entry is drawn larger and less indented in Markie RS than Electron's. Note: a Word document opened at the zoom left by an earlier Markdown session until this pass made Markdown zoom per document. |
 
 ## 20. OS integration
 
@@ -77,7 +77,7 @@ can match an IPC operation without implementing the Electron transport.
 | 20.344 | Claim file types in Settings | EXCLUDED | Electron `electron/default-apps.js`, `src/components/default-apps-section.tsx`; App `default_apps.rs` | Native buttons intentionally cannot take over. |
 | 20.345 | Single instance; macOS OS events; argv | PASS | Electron `electron/main.js:4007,4022,4026,4128`; App `a_second_launch_hands_over_and_a_stale_socket_is_taken_over`, `args_round_trip`, `open_urls.rs:13` | Mac handlers route file URLs and auth callbacks; Unix handoff and cold path/URL ordering are covered by the isolated instance and open URL tests. No Windows implementation is claimed. |
 | 20.345w | Windows second-instance handoff | EXCLUDED-PLATFORM | App `instance.rs` `cfg(not(unix))` | macOS-only benchmark; named-pipe single-instance support is deferred. |
-| 20.346a | Hidden inset title bar and traffic lights | NEEDS-CAPTURE | Electron `electron/main.js:883`; App `main.rs` `TitlebarOptions` | Native position is set to (14, 14). Capture on both themes. |
+| 20.346a | Hidden inset title bar and traffic lights | PASS | Electron `electron/main.js:883`; App `main.rs` `TitlebarOptions` | Capture pass 2026-11-22 against Electron 0.9.7, each window focused: the red light sits at (14, 14) and spans 13.5 pt in both apps, light and dark, with the same spacing to the markie wordmark (`.autoloop/runs/capture-pass/crop-titlebar.png`). |
 | 20.346b | Linux desktop integration | EXCLUDED-PLATFORM | Electron `electron/linux-desktop.js:69,112`; Rust `scripts/com.zvn.markie.rs.desktop`; App `linux_launcher_advertises_only_the_side_build_scheme` | Linux registration and launcher behavior are a later phase. |
 | 20.347 | Open passive local files, reveal other files | PASS | Electron `electron/main.js:2453`, `file-grants.js:66,87`, `local-open-policy.js:19`; Core `workspace_roots_grant_passive_files_and_never_turn_scripts_into_opens`; App `workspace/rich.rs` `open_rich_link` | `attachment_grants_are_exact_and_opened_document_grants_follow_moves` proves exact dropped-file grants, opened-document roots, and workspace roots. Targets are resolved before classification; scripts reveal only. |
 | 20.348 | Source inventory for OS integration | PASS | Electron `electron/deep-links.js`, `default-apps.js`, `desktop-intents.js`, `local-open-policy.js`; App `deeplinks.rs`, `default_apps.rs`, `open_urls.rs`; Core `links.rs` | Implementation map, not a separate behavioral claim. |

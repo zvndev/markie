@@ -4,18 +4,18 @@ Date: 2026-11-22. Branch: `t3/markie-rs-editor-parity-1`, from `rust/markie-rs` 
 
 ## Score
 
-**Parity: 43 PASS of 53 scored rows (81.1%).**
+**Parity: 44 PASS of 53 scored rows (83.0%).** Updated by the capture pass on 2026-11-22.
 
 | Status | Rows |
 |---|---|
-| PASS | 43 |
-| FAIL | 5 (two leaf rows, 7.4 and 8.13, and the three groups above them) |
-| NEEDS-CAPTURE | 5 |
+| PASS | 44 |
+| FAIL | 6 (three leaf rows, 7.4, 7.5 and 8.13, and the three groups above them) |
+| NEEDS-CAPTURE | 3 |
 | EXCLUDED | 0 |
 | EXCLUDED-PLATFORM | 0 |
 | Total | 53 |
 
-Score = PASS ÷ (all rows − EXCLUDED) = 43 ÷ 53. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
+Score = PASS ÷ (all rows − EXCLUDED) = 44 ÷ 53. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
 
 The screen was locked for the whole run (`IOConsoleLocked = Yes`). No captures were taken and no app was launched. Visual and live-gesture rows are NEEDS-CAPTURE, with their steps below.
 
@@ -67,12 +67,12 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 
 | # | Bullet | Status | Evidence (Electron / Markie RS) | Notes |
 |---|---|---|---|---|
-| 7.0 | What the user can do (group) | FAIL | children | Follows 7.4; 7.5 needs a capture. |
+| 7.0 | What the user can do (group) | FAIL | children | Follows 7.4 and 7.5; 7.9 needs a timed run. |
 | 7.1 | Edit raw source in Source (⌘2) or Split (⌘3); Rich is ⌘1 | PASS | `page.tsx` `requestMode` / `markie-app/src/main.rs:61-63`, `workspace.rs` `set_mode`, `mode_tests` | Large and literal documents stay in Source, as `requestMode`. |
 | 7.2 | Find and replace (⌘F, ⌥⌘F) | PASS | `find-bar.tsx` / GPUI Kit search, `workspace/source.rs` `FindReplace` | Now also in the Edit menu (7.5). |
 | 7.3 | Format GFM tables (⌥⌘T) | PASS | `format-tables.ts` / `markie-core/src/format_tables.rs`; fixture, 14 inputs byte-identical | Also in the Edit menu. |
 | 7.4 | Syntax highlighting for fenced code through `@codemirror/language-data` | FAIL | `source-editor.tsx` / `markie-app/Cargo.toml` `tree-sitter-languages` | Fixed in part: Source now has every grammar GPUI Kit ships (36 plus JSON, was 11). Blocker for the rest: `language-data` covers about 150 languages through CodeMirror's legacy modes; GPUI Kit has no grammar for the others (for example R, Haskell, Clojure, Dart, Perl, OCaml, Fortran), and adding one means a tree-sitter crate and highlight queries per language outside GPUI Kit. |
-| 7.5 | Undo and redo through the menu | NEEDS-CAPTURE | `electron/main.js` Edit menu, `undo-target.ts` / `workspace/source.rs` `edit_menu`, `source_actions` | Was FAIL: Markie RS had no Edit menu. Fixed: Undo, Redo, Cut, Copy, Paste, Select All, Find…, Find and Replace…, Format Tables, routed to the rich editor when it has the keyboard and to GPUI Kit's action otherwise (the source editor, the find box), as `undoTargetFor`. Builds; needs a live click (steps below). |
+| 7.5 | Undo and redo through the menu | FAIL | `electron/main.js` Edit menu, `undo-target.ts` / `workspace/source.rs` `edit_menu`, `source_actions` | Capture pass: Edit › Undo and Redo route right in all three places (Source, View, the find box; `grid-edit-menu.png`, `grid-edit-menu-2.png`), and in Source the result matches Electron exactly. In View it does not: typing " Typed in view." then Edit › Undo removes the whole run in Electron (ProseMirror history groups typing by time, 500 ms) but only the last word in Markie RS (`markie-rich` `editor/ops.rs` breaks the undo group at whitespace). Fix: group rich-editor typing by a 500 ms pause instead of by word, or record that difference as a product decision. |
 | 7.6 | Large documents get a virtualized editor | PASS | `doc-tiers.ts` `LARGE_DOC_BYTES`, `large-doc.tsx` / `markie-core/src/document.rs:29`, `mode_allowed`, `text_view.rs:218` | Same 1 MB line, same note wording, GPUI Kit's rope editor draws only visible lines. |
 | 7.7 | CSV shows as a table, converts CSV ↔ GFM | PASS | `csv.ts` / `workspace/csv_doc.rs`, `markie-core/src/csv.rs`; fixture | Fixed: a CSV save of a document with no table wrote an empty file; Electron writes `"\n"`. |
 | 7.8 | Files | PASS | each file has its port: `editor-keymap.ts` (`main.rs` bindings), `source-find.ts` (GPUI Kit search), `source-handle.ts` (`workspace.rs` editor entity), `format-tables.ts`, `csv.ts`, `undo-target.ts` (`edit_menu`), `large-doc.tsx` (`text_view.rs`) | `source-comments.ts` is local comments, section 12's. |
@@ -82,13 +82,13 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 8.0 | What the user can do (group) | FAIL | children | Follows 8.13 through 8.11; 8.4 to 8.6 need captures. |
+| 8.0 | What the user can do (group) | FAIL | children | Follows 8.13 through 8.11; 8.5 and 8.6 need captures. |
 | 8.1 | WYSIWYG: headings, aligned blocks, lists, task lists, aligned tables, sized pictures, video cards | PASS | `rich-extensions.ts` / `markie-rich` `tests/editor.rs` (`lists_split_exit_indent_outdent`, `tables_tab_and_align`, `images_alignment_and_find`), interop 34/34, `video::tests` | |
 | 8.2 | Math, inline and block (KaTeX) | PASS | `rich-math.ts` / `markie-math` (MATH.md: 98 of 98 Markie formulas) | Drawn by typst, not KaTeX; glyphs differ slightly (VISUAL-EDITOR.md). |
 | 8.3 | Highlight, colour, font family, size, underline as inline HTML | PASS | `rich-extensions.ts` / `markie-rich/src/html.rs`, `marks_and_tiptap_html_marks`, interop | |
-| 8.4 | Formatting rail, document toolbar, formatting toolbar | NEEDS-CAPTURE | `format-rail.tsx` / new `markie-editor/src/format_rail.rs`, tests `the_buttons_are_electrons_in_order`, `commands_write_what_tiptap_writes` | Was FAIL: the pencil view drew no rail. Fixed: the 44 pt rail with Electron's 16 buttons, the advanced four, active states and the read-only state. One stated difference: link and picture open Markie RS's prompt bar, not Electron's small centred form. Toolbars were captured before (VISUAL-EDITOR.md); the rail was not. |
-| 8.5 | Section rail, image lightbox, statistics panel (⇧⌘I) | NEEDS-CAPTURE | `section-rail.tsx` / `rail.rs` (`rail::tests`); `image-lightbox.tsx` / new `lightbox.rs` (`steps_stop_at_the_ends_and_the_caption_counts`); `stats-panel.tsx`, `stats.ts` / `panels.rs`, `markie-core/src/stats.rs` (fixture) | Two FAILs fixed. The picture viewer was missing: now a double-click (a click when read-only) opens it, with arrows, the caption pill, ‹ › and natural size on click. Statistics showed 5 of 8 rows, counted code points, had no thousands separators, read the Source buffer in View mode and sat in a side panel: now Electron's 8 rows and counts, en-US grouping, Electron's dash character (`\u{2014}`) for no reading time, a 240 pt popover 48 pt from the top, Escape closes. |
-| 8.6 | Zoom (⌘=, ⌘-, ⌘0), page width (⌥⌘], ⌥⌘[), pinch zoom | NEEDS-CAPTURE | `doc-appearance.ts`, `document-zoom.ts` / `style.rs` (`ZOOM_STEPS`, `PinchZoom`, `pinch_collects_like_document_zoom_ts`), `workspace.rs` `on_pinch` | Was FAIL: no pinch. Fixed with Electron's 60-unit steps and 220 ms reset, for a trackpad pinch and ctrl + scroll. The pinch's magnification is mapped to Chromium's wheel delta by formula; a live pinch should confirm one pinch moves one or two steps. |
+| 8.4 | Formatting rail, document toolbar, formatting toolbar | PASS | `format-rail.tsx` / new `markie-editor/src/format_rail.rs`, tests `the_buttons_are_electrons_in_order`, `commands_write_what_tiptap_writes` | Capture pass 2026-11-22 against Electron 0.9.7, 1280x820, light and dark: rail with a heading, a list and Advanced open (`sbs-rail-*`, `crop-rail-dark.png`, `crop-rail-light.png`); all eight templates on `everything.md` in both modes (`sbs-tpl-<id>-<mode>.png`, page colour checked against templates.json); the page inside the shell and the toolbar above Source match. Fixed in the pass: list discs drawn as Chromium draws them (5 pt, `render.rs` `disc_marker`), struck text keeps its ink as TipTap's `<s>` does, the rail's fill is surface not surface-2 and the pressed Advanced toggle has its ring (`format_rail.rs`), the title bar palette opens Settings at Appearance (`chrome.rs`). Source rows are 20 pt against CodeMirror's 19.6 pt because GPUI rounds line heights to whole points. Still differing, outside this row: Source centres its text in a page-width column in Electron (`.cm-content` max-width and auto margins) and runs full width in Markie RS, and Source's Markdown colours differ (row 7.4). |
+| 8.5 | Section rail, image lightbox, statistics panel (⇧⌘I) | NEEDS-CAPTURE | `section-rail.tsx` / `rail.rs` (`rail::tests`); `image-lightbox.tsx` / new `lightbox.rs` (`steps_stop_at_the_ends_and_the_caption_counts`); `stats-panel.tsx`, `stats.ts` / `panels.rs`, `markie-core/src/stats.rs` (fixture) | Capture pass: statistics now match Electron row for row (`crop-stats-dark.png`) after a fix in `panels.rs` (24 pt close button and 18 pt row lines, as `markie-overlay-close` and `py-1.5`). The picture viewer works in Markie RS (`grid-rs-lightbox.png`: 1/3, → → to 3/3, ← to 2/3, natural size on click; arrows 44 pt, 16 pt from the sides; caption pill 16 pt from the bottom, all as `image-lightbox.tsx`), but Electron's viewer never opened from a synthetic double-click (the picture was selected instead), so there is no pair yet. Section rail not recaptured. |
+| 8.6 | Zoom (⌘=, ⌘-, ⌘0), page width (⌥⌘], ⌥⌘[), pinch zoom | NEEDS-CAPTURE | `doc-appearance.ts`, `document-zoom.ts` / `style.rs` (`ZOOM_STEPS`, `PinchZoom`, `pinch_collects_like_document_zoom_ts`), `workspace.rs` `on_pinch` | Capture pass: ⌘= ⌘- ⌘0 and ⌥⌘] land on the same steps as Electron (`sbs-zoom-keys.png`: 125 %, 1040 px, same page and picture widths), and a ctrl + wheel gesture (what Chromium receives for a pinch) moves both apps by the same steps (`crop-zoom-pinch*.png`: 100 to 110, to 200 in three, back to 90 in five). Fixed: ctrl + wheel also scrolled the RS page (now caught in the capture phase, `workspace.rs`), and RS shared one zoom and width across documents where Electron keeps them per document (`appearanceKey`; `workspace.rs` `appearance_key`, test `a_documents_zoom_and_width_round_trip`). Only a real trackpad pinch (GPUI's pinch event and its magnification mapping) is left; it cannot be synthesized and needs Kirby's hands. |
 | 8.7 | Front matter held aside, never shown | PASS | `front-matter.ts` / `markie-rich/src/document.rs` `front_matter_len`, `zero_edit_preserved` | |
 | 8.8 | Byte-for-byte preservation | PASS | `rich-block-preserve.ts` / `markie-rich` `zero_edit_and_undo_are_byte_exact`, `editing_one_paragraph_of_a_400_line_document_leaves_every_other_line_identical`, fuzz 900 of 900, the TipTap corpus above | |
 | 8.9 | Files: components | PASS | each has a port in `markie-editor` (`render.rs`, `chrome.rs`, `format_rail.rs`, `rail.rs`, `lightbox.rs`, `video.rs`) and `panels.rs` | `rich-guard.tsx` and `rich-pane-error.tsx` gate documents TipTap cannot rebuild; Markie RS reconstructs every document exactly (corpus), so it never needs the gate. |

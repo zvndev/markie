@@ -93,7 +93,7 @@ The screen was locked for the whole run (`IOConsoleLocked = Yes`), so no window 
 | 18.10 | Pictures on a `markie-asset://<random host>/` URL | EXCLUDED-NIGHTLY | picture scope only with the nightly bridge | |
 | 18.11 | Web view isolation: no same-origin, no navigation, no popups | PASS | `island.rs` srcdoc iframe `sandbox="allow-scripts"` or empty, navigation and popups refused; golden CSP | |
 | 18.12 | Source limits before compiling | PASS | `past_200000_characters_the_preview_says_so_first`, `darkmown_golden` STOPS cases; commit b31dd35 | Was FAIL: past 200,000 characters Electron says "Darkmown preview is limited to 200,000 characters" before the worker's own limit; RS skipped that check. |
-| 18.13 | Preview look: untrusted and trusted, light and dark | NEEDS-CAPTURE | V1 | |
+| 18.13 | Preview look: untrusted and trusted, light and dark | NEEDS-CAPTURE | V1 | V1, capture pass 2026-11-22, `Everything.wd`, dark (`.autoloop/runs/capture-pass/sbs-wd-untrusted-dark.png`, `sbs-wd-trusted-dark.png`): the untrusted preview matches (header, notice, headings, quote, controls, computed line). Clicking "Trust this document" changed neither app on screen, so the trusted state is still uncaptured. Outside the preview, Markie RS has no Darkmown document toolbar (mode, Find, encoding, undo, zoom, style, font, size, bold, italic, list) and no status bar ("Saved", word count, DARKMOWN); that is a larger piece of work for the shell. |
 
 Row 18.12 is a sub-behaviour of 18.1 and 18.2 found while reading `preview.ts`. It is counted on its own because it was a separate fix.
 
@@ -175,3 +175,15 @@ Screen locked. When unlocked, launch both apps per SCREEN.md, with `env -u CLAUD
 - MCP comparison: `mcp-diff.mjs`, Electron's server against the RS bootstrap on one scratch HOME, 23 of 23 identical.
 - Goldens rerun from the reference source: export and Darkmown unchanged.
 - PDFs: 8 fixture PDFs per app, page counts equal, pixel measurements in `.autoloop/runs/audit-agents-web/pdf/`.
+
+## Capture pass, 2026-11-22
+
+Electron 0.9.7 against this branch at 1280x820, evidence in `.autoloop/runs/capture-pass/`.
+
+- V1 (18.13): see the row. Untrusted preview matches; trusted not reached; the Darkmown toolbar and status bar are missing in Markie RS.
+- V2 (15.1, 15.15): the Agents dialog matches in wording, order, widths and the tool list (`sbs-agents-dark.png`, `crop-agents-*.png`). One difference was fixed in `agents.rs`: section labels now use `.markie-overlay-section` (10 px spaced caps, muted). The fix was not recaptured, and Remote agents signed out was not reached.
+- V3 (15.12): not run.
+- V4 (16.1): the golden tree written into the scratch data folder did not show in the Skills panel ("No agent files found"), so nothing to compare yet.
+- V5 (23.2): ⌘P on `everything.md` opens the native print sheet with a three page preview (`rs-print-sheet.png`).
+
+The score is unchanged: V2 to V5 sit on PASS rows, and 18.13 stays NEEDS-CAPTURE.

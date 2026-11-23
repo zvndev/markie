@@ -1233,6 +1233,15 @@ impl Workspace {
                         }
                     }
                     this.refresh_lists(cx);
+                    // Signed in while a synced document was open: its account
+                    // was not known when the sign-in asked, so ask again now
+                    // (page.tsx refreshCollab reruns on the session change).
+                    if let Some(path) = this.doc.as_ref().map(|d| d.path.clone())
+                        && this.collab_unresolved()
+                        && this.cloud.bound_scope(&path).is_some()
+                    {
+                        this.collab_recheck(cx);
+                    }
                     // The requests waiting for the Cloud page's account.
                     this.people_refresh(cx);
                 }

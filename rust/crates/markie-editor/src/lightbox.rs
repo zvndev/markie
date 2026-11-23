@@ -28,6 +28,9 @@ use super::render::Look;
 use markie_rich::editor::{LeafKind, Pos};
 use markie_rich::Node;
 
+/// How much of the page colour the viewer's scrim lays over the document.
+const SCRIM_STRONG: f32 = 0.82;
+
 /// One picture as the viewer lists it (`LightboxImage`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LightboxImage {
@@ -235,13 +238,16 @@ impl RichView {
                         .children(count.map(|c| div().flex_none().text_color(look.muted).child(c))),
                 )
         });
-        // `.markie-scrim-strong`: the page colour at 72%.
+        // `.markie-scrim-strong`: the page colour at 72% under a 12 px
+        // backdrop blur. GPUI has no backdrop blur, so the dim is the stronger
+        // 82% the app's other strong scrims use (dialog_chrome `scrim_strong`),
+        // which keeps the page behind as far back as Chromium's blur does.
         let scrim = div()
             .id("lightbox-scrim")
             .relative()
             .w(px(w))
             .h(px(h))
-            .bg(look.background.opacity(0.72))
+            .bg(look.background.opacity(SCRIM_STRONG))
             .occlude()
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
                 this.close_lightbox(cx);

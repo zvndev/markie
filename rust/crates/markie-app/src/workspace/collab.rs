@@ -384,6 +384,9 @@ impl Workspace {
             let _ = reg.set_setting(&role_memory_key(&path), &format!("{word}|{me}"));
         }
         self.collab.role = Some(ShareRoleState::from_role(role));
+        // Only a viewer sees the banner, so only a viewer needs the name on
+        // it: who shared it, from the cloud listing (page.tsx `setSharedBy`).
+        self.collab.shared_by = if role == Role::Viewer { shared_by_in(self.cloud.listings.values(), &cloud.doc_id) } else { None };
         self.collab.access = Some(access);
         self.collab.members = members.len();
         self.apply_lock(cx);
@@ -885,6 +888,12 @@ impl Workspace {
         self.collab.cloud.is_some() || self.collab.docs.contains_key(path) || self.cloud.bound_scope(path).is_some()
     }
 
+    /// No answer about the open document's cloud copy yet: not asked, or
+    /// asked before its account was known. A resolved copy sets `cloud`.
+    pub(super) fn collab_unresolved(&self) -> bool {
+        self.collab.cloud.is_none() && self.collab.live.is_none()
+    }
+
     pub(super) fn live_running(&self) -> bool {
         self.collab.live.is_some()
     }
@@ -1008,6 +1017,17 @@ impl Workspace {
 }
 
 /// A round avatar with initials, like the peers' and the share dialog's.
+/// Who shared document `id` with this account, as any listing names it.
+fn shared_by_in<'a>(listings: impl IntoIterator<Item = &'a super::cloud::Listing>, id: &str) -> Option<String> {
+    listings
+        .into_iter()
+        .filter_map(|l| l.docs.as_ref())
+        .flatten()
+        .find(|d| d.id == id)
+        .and_then(|d| d.shared_by.clone())
+        .filter(|name| !name.trim().is_empty())
+}
+
 pub(super) fn avatar(name: &str, color: Hsla, ring: Hsla, size: f32, font: f32) -> Div {
     div()
         .flex_none()
@@ -1023,4 +1043,38 @@ pub(super) fn avatar(name: &str, color: Hsla, ring: Hsla, size: f32, font: f32) 
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(hsla(0., 0., 0., 0.8))
         .child(initials(name))
+}
+
+#[cfg(test)]
+mod shared_by_tests {
+    use super::shared_by_in;
+    use crate::workspace::cloud::Listing;
+    use markie_cloud::docs::DocMeta;
+
+    fn doc(id: &str, by: Option<&str>) -> DocMeta {
+        DocMeta {
+            id: id.into(),
+            name: format!("{id}.md"),
+            version: 1,
+            hash: None,
+            updated_at: None,
+            shared: by.is_some(),
+            role: None,
+            shared_by: by.map(str::to_string),
+            shared_out: None,
+            area_id: None,
+        }
+    }
+
+    /// The viewer banner names who shared the document, from whichever
+    /// server's listing has it, and says nothing when no name came.
+    #[test]
+    fn the_banner_takes_the_sharer_from_the_listing() {
+        let a = Listing { docs: Some(vec![doc("mine", None)]), ..Default::default() };
+        let b = Listing { docs: Some(vec![doc("theirs", Some("Bob Tiptap")), doc("blank", Some(" "))]), ..Default::default() };
+        assert_eq!(shared_by_in([&a, &b], "theirs").as_deref(), Some("Bob Tiptap"));
+        assert_eq!(shared_by_in([&a, &b], "blank"), None);
+        assert_eq!(shared_by_in([&a, &b], "mine"), None);
+        assert_eq!(shared_by_in([&a, &b], "missing"), None);
+    }
 }

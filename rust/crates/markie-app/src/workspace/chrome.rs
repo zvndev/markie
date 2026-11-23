@@ -234,10 +234,17 @@ impl Workspace {
     pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = themes::palette(cx);
         // An untitled buffer shows no name, as Electron's null fileName.
-        let name = self.doc.as_ref().filter(|d| !d.untitled).and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned());
-        let dirty = self.dirty
-            || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx));
-        let has_text = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }));
+        // document-workspace.tsx: the vault page names the window "Protected
+        // documents", with no document of its own to rename, mark or copy.
+        let vault_page = self.workspace_page_open() && self.shell.view == super::rail::LeftView::Vault;
+        let name = if vault_page {
+            Some("Protected documents".to_string())
+        } else {
+            self.doc.as_ref().filter(|d| !d.untitled).and_then(|d| d.path.file_name()).map(|n| n.to_string_lossy().into_owned())
+        };
+        let dirty = !vault_page
+            && (self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)));
+        let has_text = !vault_page && matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }));
 
         let bg = if p.dark {
             Background::from(linear_gradient(
@@ -276,9 +283,11 @@ impl Workspace {
                                 .items_center()
                                 .text_size(px(12.))
                                 .text_color(p.fg(0.8))
-                                .hover(|s| s.text_color(p.foreground))
-                                .cursor_pointer()
-                                .on_click(|_, window, cx| window.dispatch_action(Box::new(RenameDocument), cx))
+                                .when(!vault_page, |el| {
+                                    el.hover(|s| s.text_color(p.foreground))
+                                        .cursor_pointer()
+                                        .on_click(|_, window, cx| window.dispatch_action(Box::new(RenameDocument), cx))
+                                })
                                 .child(div().truncate().child(name))
                                 .when(dirty, |el| el.child(div().ml(px(6.)).text_color(p.muted).child("•"))),
                         ))
@@ -317,11 +326,15 @@ impl Workspace {
             .child(self.render_mode_switch(&p, cx))
             .child(self.render_theme_button(&p, cx))
             .child(vrule(&p))
-            .child(self.action_button(
+            // toolbar.tsx: Share reads in full ink once the document has a
+            // cloud copy and a session (`canShare`), muted while it would
+            // first walk you through syncing.
+            .child(self.action_button_toned(
                 "tb-share",
                 "markie/share.svg",
                 "Share",
                 false,
+                self.has_cloud_copy(),
                 &p,
                 cx.listener(|this, _, window, cx| this.open_share(window, cx)),
             ));
@@ -369,7 +382,23 @@ impl Workspace {
         p: &Palette,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        let (fg, muted, fill) = (p.foreground, p.muted, hover_fill(p));
+        self.action_button_toned(id, glyph, label, open, false, p, on_click)
+    }
+
+    /// `bright`: the label and glyph in full ink without the open fill.
+    #[allow(clippy::too_many_arguments)]
+    fn action_button_toned(
+        &self,
+        id: &'static str,
+        glyph: &'static str,
+        label: &'static str,
+        open: bool,
+        bright: bool,
+        p: &Palette,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> impl IntoElement {
+        let (fg, fill) = (p.foreground, hover_fill(p));
+        let muted = if bright { fg } else { p.muted };
         no_drag(
             div()
                 .id(id)

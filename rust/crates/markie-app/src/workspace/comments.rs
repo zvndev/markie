@@ -133,6 +133,10 @@ impl Workspace {
         }
         let input = cx.new(|cx| TextareaState::new(window, cx).rows(2).submit_on_enter(true).placeholder(placeholder));
         let sub = cx.subscribe_in(&input, window, move |this, state, ev: &InputEvent, window, cx| {
+            // Send follows the draft (disabled while it is empty).
+            if let InputEvent::Change = ev {
+                cx.notify();
+            }
             if let InputEvent::PressEnter { shift: false, .. } = ev {
                 let body = state.read(cx).value().trim().to_string();
                 if body.is_empty() {
@@ -404,7 +408,7 @@ impl Workspace {
             })
             // The new-thread composer.
             .when_some(composer_top.zip(composer_input), |el, (top, input)| {
-                el.child(div().absolute().top(px(top)).right(px(6.)).w(px(260.)).child(composer_box(&input, true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, window, cx| {
+                el.child(div().absolute().top(px(top)).right(px(6.)).w(px(260.)).child(composer_box(&input, input.read(cx).value().trim().is_empty(), true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("new", cx)), cx.listener(|w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get("new") {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -531,7 +535,7 @@ impl Workspace {
             .when_some(reply.filter(|_| can_comment && !resolved), |el, input| {
                 let tid = tid2.clone();
                 let key = format!("reply-{tid}");
-                el.child(composer_box(&input, false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
+                el.child(composer_box(&input, input.read(cx).value().trim().is_empty(), false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get(&key) {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -922,7 +926,7 @@ impl Workspace {
                                             .p(px(8.))
                                             .gap(px(8.))
                                             .child(quote(&anchor.exact, &p))
-                                            .child(composer_box(&input, true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, window, cx| {
+                                            .child(composer_box(&input, input.read(cx).value().trim().is_empty(), true, &p, cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, _, cx| w.composer_cancel("local-new", cx)), cx.listener(|w, _, window, cx| {
                                                 if let Some(c) = w.collab.comments.composers.get("local-new") {
                                                     let body = c.input.read(cx).value().trim().to_string();
                                                     if !body.is_empty() {
@@ -1043,7 +1047,7 @@ impl Workspace {
             .when_some(reply.filter(|_| can_comment && !resolved), |el, input| {
                 let tid = t.id.clone();
                 let key = format!("local-reply-{tid}");
-                el.child(composer_box(&input, false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
+                el.child(composer_box(&input, input.read(cx).value().trim().is_empty(), false, p, cx.listener(|_, _, _, _| {}), cx.listener(|_, _, _, _| {}), cx.listener(move |w, _, window, cx| {
                     if let Some(c) = w.collab.comments.composers.get(&key) {
                         let body = c.input.read(cx).value().trim().to_string();
                         if !body.is_empty() {
@@ -1172,6 +1176,7 @@ fn comment_row(name: &str, time: &str, body: &str, p: &Palette) -> Div {
 /// The comment composer: the field, Cancel (when there is one) and Send.
 fn composer_box(
     input: &Entity<TextareaState>,
+    empty: bool,
     cancel: bool,
     p: &Palette,
     on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -1208,10 +1213,10 @@ fn composer_box(
                         .bg(p.accent)
                         .text_size(px(11.))
                         .text_color(p.foreground)
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(0.9))
                         .child("Send")
-                        .on_click(on_send),
+                        // `disabled={!draft.trim()}`, drawn at 40%.
+                        .when(empty, |el| el.opacity(0.4))
+                        .when(!empty, |el| el.cursor_pointer().hover(|s| s.opacity(0.9)).on_click(on_send)),
                 ),
         )
 }

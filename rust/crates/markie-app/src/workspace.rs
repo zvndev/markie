@@ -591,11 +591,7 @@ impl Workspace {
             .as_ref()
             .and_then(|r| r.roots().ok())
             .unwrap_or_default();
-        let opts = if std::env::var_os("MARKIE_RS_DATA_DIR").is_some() {
-            ScanOptions { roots, ..ScanOptions::for_home(paths::data_dir()) }
-        } else {
-            ScanOptions::from_env(paths::home_dir(), roots)
-        };
+        let opts = device_scan_options(roots);
         let db_path = self.registry.is_some().then(|| paths::data_dir().join("registry.db"));
         cx.spawn(async move |this, cx| {
             // Scan, save and prepare off the main thread: saving serializes
@@ -1813,5 +1809,26 @@ impl Render for Workspace {
             .children(self.render_share(window, cx))
             .children(crate::perf::marker());
         self.dialog_actions(root, cx).children(dialogs)
+    }
+}
+
+/// The device index's scan options. A scratch data folder
+/// (`MARKIE_RS_DATA_DIR`) stands in for home, so a test run never walks the
+/// real home folder. Everything that reads the index, the Skills view's tool
+/// roots and its `~/` paths included, must use this same home, or no indexed
+/// file sits under the roots it is matched against.
+pub(crate) fn device_scan_options(roots: Vec<std::path::PathBuf>) -> ScanOptions {
+    let scratch = std::env::var_os("MARKIE_RS_DATA_DIR").map(|_| paths::data_dir());
+    scan_options_for(scratch, paths::home_dir(), roots)
+}
+
+pub(crate) fn scan_options_for(
+    scratch_data: Option<std::path::PathBuf>,
+    home: std::path::PathBuf,
+    roots: Vec<std::path::PathBuf>,
+) -> ScanOptions {
+    match scratch_data {
+        Some(data) => ScanOptions { roots, ..ScanOptions::for_home(data) },
+        None => ScanOptions::from_env(home, roots),
     }
 }

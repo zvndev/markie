@@ -1503,6 +1503,23 @@ fn group_title(text: &'static str, cx: &App) -> Div {
     div().px_2().pt_1().pb_1().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(cx.theme().muted_foreground).child(text.to_uppercase())
 }
 
+/// The locked page's text buttons as Electron 0.9.7 paints them: plain
+/// `text-sm` in the foreground colour with `px-3 py-2`, no fill and no
+/// underline, 40% when disabled.
+fn plain_button(id: &'static str, label: &'static str, disabled: bool, theme: &gpui_kit::component::Theme) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .text_sm()
+        .text_color(theme.foreground)
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .when(disabled, |el| el.opacity(0.4))
+        .when(!disabled, |el| el.cursor_pointer())
+        .child(label)
+}
+
 impl VaultPage {
     fn field_label(&self, label: &'static str, input: &Entity<InputState>, disabled: bool) -> Div {
         v_flex().gap_2().text_sm().child(label).child(Input::new(input).disabled(disabled))
@@ -1524,9 +1541,11 @@ impl VaultPage {
             .rounded_lg()
             .border_1()
             .border_color(theme.border)
-            .bg(theme.secondary)
+            // `bg-surface`, as Electron paints the card.
+            .bg(crate::themes::palette(cx).surface)
             .p_6()
-            .child(div().text_xs().text_color(theme.muted_foreground).child("PRIVATE ON THIS DEVICE"));
+            // `tracking-widest uppercase`.
+            .child(div().text_xs().text_color(theme.muted_foreground).child(super::dialog_chrome::spaced_caps("Private on this device")));
 
         let restoring_first = creating && self.restore_file.is_some();
         if !self.shielded && restoring_first {
@@ -1589,24 +1608,38 @@ impl VaultPage {
             } else {
                 "Unlock vault"
             };
-            let mut submit = Button::new("vault-submit")
-                .label(submit_label)
-                .disabled(busy || pass.is_empty() || (creating && conf_empty))
-                .on_click(cx.listener(|this, _, window, cx| this.authenticate(window, cx)));
-            submit = if touch_ready { submit.outline() } else { submit.primary() };
+            let submit_disabled = busy || pass.is_empty() || (creating && conf_empty);
+            let submit = if touch_ready {
+                Button::new("vault-submit")
+                    .outline()
+                    .label(submit_label)
+                    .disabled(submit_disabled)
+                    .on_click(cx.listener(|this, _, window, cx| this.authenticate(window, cx)))
+                    .into_any_element()
+            } else {
+                plain_button("vault-submit", submit_label, submit_disabled, &theme)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if !submit_disabled {
+                            this.authenticate(window, cx)
+                        }
+                    }))
+                    .into_any_element()
+            };
             card = card.child(h_flex().gap_3().items_center().child(submit).when(creating, |el| {
-                el.child(Button::new("vault-suggest").link().label("Suggest a passphrase").disabled(busy).on_click(cx.listener(|this, _, window, cx| this.suggest(window, cx))))
+                el.child(plain_button("vault-suggest", "Suggest a passphrase", busy, &theme).on_click(cx.listener(move |this, _, window, cx| {
+                    if !busy {
+                        this.suggest(window, cx)
+                    }
+                })))
             }));
             if creating {
                 card = card
                     .child(div().text_xs().text_color(theme.muted_foreground).child("Only you can unlock this vault. Save the passphrase in your password manager; there is no reset."))
-                    .child(
-                        Button::new("vault-restore-first")
-                            .link()
-                            .label("Restore from backup…")
-                            .disabled(busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.choose_backup(window, cx))),
-                    );
+                    .child(h_flex().child(plain_button("vault-restore-first", "Restore from backup…", busy, &theme).on_click(cx.listener(move |this, _, window, cx| {
+                        if !busy {
+                            this.choose_backup(window, cx)
+                        }
+                    }))));
             }
         }
         div().flex_1().min_h_0().p_7().child(h_flex().justify_center().pt(px(48.)).child(card)).into_any_element()
@@ -2096,8 +2129,9 @@ impl Render for VaultPage {
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Vault"))
-                    .child(div().mt(px(2.)).text_sm().text_color(muted).child(if self.shielded { "Securing last edits and locking…".to_string() } else { self.notice.clone() })),
+                    // `text-lg leading-tight` over `text-sm` (20 px lines).
+                    .child(div().text_lg().line_height(px(22.5)).font_weight(FontWeight::SEMIBOLD).child("Vault"))
+                    .child(div().mt(px(2.)).text_sm().line_height(px(20.)).text_color(muted).child(if self.shielded { "Securing last edits and locking…".to_string() } else { self.notice.clone() })),
             )
             .when(unlocked, |el| {
                 el.child(Button::new("vault-settings").outline().label("Settings").selected(self.settings_open).on_click(cx.listener(|this, _, window, cx| {

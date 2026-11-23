@@ -151,6 +151,15 @@ impl Registry {
         Ok(())
     }
 
+    /// When the file was last opened (or landed) on this device, if ever.
+    pub fn last_opened(&self, path: &Path) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT last_opened_at FROM files WHERE path = ?1", params![key(path)], |r| r.get::<_, Option<String>>(0))
+            .optional()?
+            .flatten())
+    }
+
     /// Star without toggling. Returns true when the star is new.
     pub fn set_star(&self, path: &Path, kind: &str) -> Result<bool> {
         let added = self.db.execute(
@@ -359,6 +368,9 @@ mod tests {
         let snap = IndexSnapshot::default();
         reg.save_snapshot(&snap).unwrap();
         assert!(reg.load_snapshot().unwrap().is_some());
+        reg.track_opened_at(Path::new("/a/three.md"), "2026-11-23T08:00:00Z").unwrap();
+        assert_eq!(reg.last_opened(Path::new("/a/three.md")).unwrap().as_deref(), Some("2026-11-23T08:00:00Z"));
+        assert_eq!(reg.last_opened(Path::new("/a/never.md")).unwrap(), None);
     }
 
     #[test]

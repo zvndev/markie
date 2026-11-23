@@ -5,12 +5,15 @@ import { MarkieMobileApp } from "./app";
 import { fetchTransport } from "./lib/http";
 import { nativeTransport } from "./lib/native-http";
 import { platformSecureStore } from "./lib/secure-store";
+import { sweepShareFiles } from "./lib/native";
 import { paintTone, loadThemeMode, resolveTone, systemPrefersDark } from "./lib/theme-mode";
 
 const native = Capacitor.isNativePlatform();
 document.documentElement.dataset.platform = Capacitor.getPlatform();
 // Paint before the first frame so a launch never flashes the wrong tone.
 paintTone(resolveTone(loadThemeMode(), systemPrefersDark()));
+// A file exported for the share sheet never outlives the launch after it.
+void sweepShareFiles();
 
 createRoot(document.getElementById("root")!).render(
   <MarkieMobileApp

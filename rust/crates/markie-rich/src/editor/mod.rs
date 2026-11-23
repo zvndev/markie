@@ -130,6 +130,16 @@ pub struct Editor {
     /// The selection version right after an input rule ran, so Backspace
     /// straight after it can take the rule back (`rules.rs`).
     rule_undo: Option<u64>,
+    /// Set by `insert_text` around its keystroke's transaction: the step is
+    /// pushed on its own, and whether it would have joined the group before
+    /// it is kept in `held`. A rule the keystroke triggers then takes the
+    /// keystroke into its own step, as TipTap's rule replaces the typed text
+    /// in one transaction; otherwise the step joins its group after all.
+    hold_join: bool,
+    held: Option<bool>,
+    /// What the keystroke that triggered the last rule typed. Backspace
+    /// straight after the rule puts it back (TipTap's `undoInputRule`).
+    pub(crate) rule_typed: Option<String>,
 }
 
 const MAX_UNDO: usize = 500;
@@ -172,6 +182,9 @@ impl Editor {
             pending: None,
             leaves_dirty: false,
             rule_undo: None,
+            hold_join: false,
+            held: None,
+            rule_typed: None,
         };
         let first = ed.first_text_pos().unwrap_or_default();
         ed.anchor = first;
@@ -453,6 +466,11 @@ impl Editor {
         }
         self.prev_range = (kind != EditKind::Other).then_some(left);
         self.coalesce = kind != EditKind::Other;
+        if self.hold_join {
+            self.held = Some(joins);
+            self.undo.push(step);
+            return;
+        }
         if joins {
             if let Some(last) = self.undo.last_mut() {
                 if merge_steps(last, &step) {
@@ -461,9 +479,39 @@ impl Editor {
             }
         }
         self.undo.push(step);
+        self.trim_undo();
+    }
+
+    fn trim_undo(&mut self) {
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
         }
+    }
+
+    /// Run a keystroke's edit with its step held apart (`hold_join`).
+    /// Returns whether a step was pushed and whether it would have joined.
+    pub(crate) fn transact_held(&mut self, range: Range<usize>, kind: EditKind, f: impl FnOnce(&mut Editor)) -> Option<bool> {
+        self.hold_join = true;
+        self.held = None;
+        self.transact(range, kind, f);
+        self.hold_join = false;
+        self.held.take()
+    }
+
+    /// Settle a held keystroke step. `rule` is whether a rule pushed its
+    /// step right after it: the two become one undo, so Undo takes back the
+    /// rule and the keystroke and leaves what was typed before, as in
+    /// TipTap. Otherwise the keystroke joins the group it would have joined.
+    pub(crate) fn settle_held(&mut self, joins: bool, rule: bool) {
+        let fold = if rule { self.undo.len() >= 2 } else { joins && self.undo.len() >= 2 };
+        if fold {
+            let next = self.undo.pop().expect("two steps");
+            let last = self.undo.last_mut().expect("two steps");
+            if !merge_steps(last, &next) {
+                self.undo.push(next);
+            }
+        }
+        self.trim_undo();
     }
 
     fn now(&self) -> Instant {

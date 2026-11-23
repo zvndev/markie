@@ -61,6 +61,16 @@ fn first_save_path(mut path: PathBuf, key: &Path, format: FormatKind) -> Option<
 }
 
 impl Workspace {
+    /// A View menu Word item that no focused page took (the toolbar or the
+    /// title bar had the click): it goes to the open Word document, as
+    /// Electron's View menu reaches the document with or without focus.
+    pub fn route_word_view_command(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(DocKind::Office(office)) = self.doc.as_ref().map(|d| &d.kind) {
+            let view = office.view.clone();
+            view.update(cx, |view, cx| view.view_command(id, window, cx));
+        }
+    }
+
     pub(super) fn on_document_details(&mut self, _: &crate::actions::DocumentDetails, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = &self.doc else { return };
         let Some(name) = doc.path.file_name() else { return };

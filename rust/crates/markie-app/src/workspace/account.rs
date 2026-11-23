@@ -766,6 +766,9 @@ pub struct SignInForm {
     clear: Vec<Entity<InputState>>,
     /// Text to put in the password field at the next render.
     fill_password: Option<String>,
+    /// Put the caret in the code field at the next render, once the code
+    /// view is up, so the code can be typed or pasted straight away.
+    focus_otp: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -800,6 +803,7 @@ impl SignInForm {
             busy: false,
             clear: Vec::new(),
             fill_password: None,
+            focus_otp: false,
             _subs: subs,
         }
     }
@@ -891,6 +895,7 @@ impl SignInForm {
             Ok(flow) => {
                 this.flow = Some(flow);
                 this.clear.push(this.otp.clone());
+                this.focus_otp = true;
                 this.set_view(View::OtpCode, cx);
             }
             Err(e) => this.error = Some(auth_errors::auth_error_message(&e, AuthContext::OtpSend).into()),
@@ -902,6 +907,7 @@ impl SignInForm {
     fn prove_address(&mut self, cx: &mut Context<Self>) {
         self.proving = true;
         self.clear.push(self.otp.clone());
+        self.focus_otp = true;
         self.view = View::OtpCode;
         let email = self.email(cx);
         self.run(cx, move |c| Box::pin(async move { AuthClient::new(&c).send_verification_code(&email).await }), |this, r, _| {
@@ -1035,6 +1041,9 @@ impl Render for SignInForm {
         if let Some(text) = self.fill_password.take() {
             self.password.update(cx, |s, cx| s.set_value(text, window, cx));
         }
+        if std::mem::take(&mut self.focus_otp) && self.view == View::OtpCode {
+            self.otp.update(cx, |s, cx| s.focus(window, cx));
+        }
         let l = look(cx);
         let (title, body) = auth_errors::reason_copy(self.reason);
         let store = self.store.read(cx);
@@ -1066,15 +1075,17 @@ impl Render for SignInForm {
                             el.on_click(cx.listener(|this, _, _, cx| this.start_provider(Provider::Apple, cx)))
                         }))
                     })
+                    // Markie RS's own note: the line wraps inside the
+                    // panel, with the switch on its own line under it.
                     .when(!browser, |col| {
                         col.child(
-                            h_flex()
-                                .gap(px(6.))
-                                .flex_wrap()
-                                .child(muted_line("Google and Apple sign-in in Markie RS wait for a Markie Cloud update. Use an email code for now.", 11., l))
-                                .child(link_button("browser-on", "Server updated? Turn them on", false, l).on_click(cx.listener(|this, _, _, cx| {
+                            v_flex()
+                                .w_full()
+                                .gap(px(4.))
+                                .child(muted_line("Google and Apple sign-in in Markie RS wait for a Markie Cloud update. Use an email code for now.", 11., l).w_full().line_height(relative(1.5)))
+                                .child(h_flex().child(link_button("browser-on", "Server updated? Turn them on", false, l).on_click(cx.listener(|this, _, _, cx| {
                                     this.store.update(cx, |s, cx| s.set_browser_sign_in(true, cx));
-                                }))),
+                                })))),
                         )
                     })
                     .child(

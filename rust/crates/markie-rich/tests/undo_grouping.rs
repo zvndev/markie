@@ -265,3 +265,53 @@ fn groups_spanning_blocks_undo_byte_for_byte() {
     assert!(ed.undo());
     assert_eq!(ed.to_markdown(), doc);
 }
+
+/// The text of top-level paragraph `i`.
+fn para_text(ed: &Editor, i: usize) -> String {
+    let markie_rich::Node::Paragraph { content, .. } = &ed.doc.nodes()[i] else { panic!("not a paragraph: {:?}", ed.doc.nodes()[i]) };
+    content.iter().map(|inline| match inline {
+        markie_rich::Inline::Text { text, .. } => text.as_str(),
+        _ => "",
+    }).collect()
+}
+
+#[test]
+fn undo_after_a_typed_rule_leaves_the_text_before_the_keystroke() {
+    // TipTap's rule replaces the typed space in its own transaction, so
+    // Undo after `# ` leaves `#`, not `# `.
+    let mut ed = editor("x\n");
+    ed.advance_clock(MS(600));
+    ed.enter();
+    type_keys(&mut ed, "# ", MS(60));
+    assert!(matches!(ed.doc.nodes()[1], markie_rich::Node::Heading { .. }));
+    assert!(ed.undo());
+    assert_eq!(para_text(&ed, 1), "#");
+    assert!(ed.redo());
+    assert!(matches!(ed.doc.nodes()[1], markie_rich::Node::Heading { .. }));
+    // The same for a list and a mark rule.
+    let mut ed = editor("x\n");
+    ed.advance_clock(MS(600));
+    ed.enter();
+    type_keys(&mut ed, "- ", MS(60));
+    assert!(ed.undo());
+    assert_eq!(para_text(&ed, 1), "-");
+    let mut ed = editor("x\n");
+    ed.advance_clock(MS(600));
+    type_keys(&mut ed, " **b**", MS(60));
+    assert!(ed.undo());
+    assert_eq!(para_text(&ed, 0), "x **b*");
+}
+
+#[test]
+fn backspace_after_a_typed_rule_keeps_the_keystroke() {
+    let mut ed = editor("x\n");
+    ed.advance_clock(MS(600));
+    ed.enter();
+    type_keys(&mut ed, "# ", MS(60));
+    ed.backspace();
+    assert_eq!(para_text(&ed, 1), "# ");
+    // Typing that does not trigger a rule still groups as before.
+    let mut ed = editor("A\n");
+    type_keys(&mut ed, " one two", MS(60));
+    assert_eq!(ed.undo_depth(), 1);
+}

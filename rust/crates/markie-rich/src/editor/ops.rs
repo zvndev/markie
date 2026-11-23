@@ -106,18 +106,24 @@ impl Editor {
         let (from, to) = self.range();
         let blocks = from.block..to.block + 1;
         let typing = self.typing.clone();
-        self.transact(blocks, EditKind::Typing, |ed| {
+        let held = self.transact_held(blocks, EditKind::Typing, |ed| {
             let mut at = from;
             if from != to {
                 at = ed.delete_range_inner(from, to);
             }
             ed.insert_at(at, s, typing);
         });
-        self.run_input_rules(s);
+        let ran = self.run_input_rules(s) && self.rule_undo == Some(self.sel_version);
+        if let Some(joins) = held {
+            self.settle_held(joins, ran);
+            if ran {
+                self.rule_typed = Some(s.to_string());
+            }
+        }
     }
 
     /// Insert text at `at` (inside a transaction, leaves current).
-    fn insert_at(&mut self, at: Pos, s: &str, typing: Option<Marks>) {
+    pub(crate) fn insert_at(&mut self, at: Pos, s: &str, typing: Option<Marks>) {
         match self.kind(at) {
             Some(LeafKind::Atom) => {
                 // Typing over a selected picture replaces it with a paragraph.

@@ -102,3 +102,13 @@ Captured in the capture pass on 2026-11-22 (`.autoloop/runs/capture-pass/`, Elec
 - The toolbar above Source mode matches. Source's rows were GPUI Kit's 1.5 and are now CodeMirror's 1.4 (20 pt, since GPUI rounds line heights; Electron's are 19.6 pt). Still different: Electron centres Source's text in the page column, Markie RS runs it full width (`sbs-source-dark.png`).
 - The page inside the window shell matches (`sbs-rail-on-dark.png`, `sbs-pics-dark.png`).
 - All eight templates match in light and dark, the New York face included (`sbs-tpl-<id>-<mode>.png`). Two fixes came out of it: list discs drawn as Chromium draws them, and struck text keeping its ink.
+
+Polish pass on 2026-11-22 (`.autoloop/runs/polish/`, Electron 0.9.7, 1280 by 820, light and dark):
+
+- Source's first line now sits within 1 pt of CodeMirror's. It was 12 pt high.
+- Source no longer reserves Electron's 24 pt section rail column on documents too short for the rail. That had put the text 12 pt right of Electron's (`sbs-source-dark.png`, `sbs-source-light.png`).
+- A `.txt`, `.text` or `.log` file opened from disk now shows as Electron's main viewer shows it: the Source editor with line numbers and the page column, and no formatting row (`sbs-txt-dark.png`, `sbs-txt-light.png`). A new text document, and JSON, YAML, XML and CSV, keep the documents workspace layout with its toolbar row, as in Electron.
+- Still different, all limits of GPUI Kit 0.10.0, with the detail in `AUDIT-EDITORS.md` row 8.4:
+  - The line numbers sit beside the column. GPUI Kit keeps its fold chevrons beside the text and offers no fold toggle, so a gutter at the pane's edge would split the numbers from their chevrons.
+  - A scrolled document clips 20 pt below the toolbar.
+  - Long lines break after `/` inside an address, where Chromium breaks before `(`. GPUI Kit wraps by UAX 14 and has no hook for another rule.

@@ -678,15 +678,18 @@ impl Workspace {
                         let language = if doc.format == FormatKind::Csv { "markdown" } else { doc.format.editor_language() };
                         // Electron shows literal text formats in a plain field:
                         // no syntax colors and no line numbers.
-                        // A .wd source is a plain textarea too.
-                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && !large;
+                        // A .wd source is a plain textarea too. Plain text
+                        // from disk is Electron's main source editor instead,
+                        // line numbers and all (`text_view::documents_layout`).
+                        let plain = doc.format == FormatKind::Text;
+                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && !plain && !large;
                         self.editor.update(cx, |state, cx| {
                             // Soft wrap measures every line of the file with the
                             // text system before the first frame (gpui-kit has
                             // no lazy wrap): 5 s and 2.5 GB for 10 MB. Files in
                             // the large tier (Source only) open unwrapped.
                             state.set_soft_wrap(!large, window, cx);
-                            state.set_highlighter(if literal { "text" } else { language }, cx);
+                            state.set_highlighter(if literal || plain { "text" } else { language }, cx);
                             state.set_line_number(!literal, window, cx);
                             state.set_folding(!literal, window, cx);
                             state.set_value(text.clone(), window, cx);
@@ -1365,6 +1368,7 @@ impl Workspace {
                 self.page_width,
                 14. * self.zoom,
                 SOURCE_LINE_HEIGHT,
+                self.rail_sections(),
                 cx,
             ),
             cx,
@@ -1514,7 +1518,7 @@ impl Workspace {
                 self.source_column.clear(&self.editor, cx);
                 self.render_darkmown(cx)
             }
-            (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => {
+            (DocKind::Text { .. }, _) if text_view::documents_layout(doc.format, doc.untitled) && !doc.large => {
                 self.source_column.clear(&self.editor, cx);
                 self.render_text(cx)
             }
@@ -1544,6 +1548,7 @@ impl Workspace {
                         self.page_width,
                         14. * self.zoom,
                         SOURCE_LINE_HEIGHT,
+                        self.rail_sections(),
                         cx,
                     ),
                     cx,
@@ -1552,6 +1557,14 @@ impl Workspace {
         }
     }
 
+    /// The headings Electron's Source section rail ticks (`extractSections`:
+    /// h1 to h3 with text). Plain text documents have no rail.
+    fn rail_sections(&self) -> usize {
+        if !self.doc.as_ref().is_some_and(|d| matches!(d.format, FormatKind::Markdown | FormatKind::Darkmown)) {
+            return 0;
+        }
+        self.sections.iter().filter(|s| s.level <= 3 && !s.text.trim().is_empty()).count()
+    }
 }
 
 /// A document's remembered zoom and page width, as one setting value.

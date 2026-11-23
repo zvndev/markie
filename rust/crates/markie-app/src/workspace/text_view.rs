@@ -1,4 +1,4 @@
-//! Plain text, CSV source, JSON, YAML and XML as Electron's
+//! New plain text documents, CSV source, JSON, YAML and XML as Electron's
 //! `TextDocumentEditor` shows them: a toolbar row with the format, Find,
 //! encoding and newline, history, zoom, font and size, over the literal text
 //! in a padded monospace field with no line numbers or syntax colors. The
@@ -7,6 +7,8 @@
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::input::Editor;
 use gpui_kit::*;
+
+use markie_core::formats::FormatKind;
 
 use super::{Workspace, doc_toolbar};
 
@@ -48,6 +50,20 @@ impl Workspace {
     }
 }
 
+/// Whether a literal text document takes Electron's documents workspace
+/// layout (`TextDocumentEditor`, with its toolbar row) rather than the main
+/// viewer's Source editor. Electron's main viewer edits plain text opened
+/// from disk itself (`page.tsx` `isPlainTextName`: `.txt`, `.text`, `.log`),
+/// in its source editor with line numbers and no formatting row; a new text
+/// document, and JSON, YAML, XML and CSV, go to the documents workspace.
+pub(super) fn documents_layout(format: FormatKind, untitled: bool) -> bool {
+    match format {
+        FormatKind::Markdown | FormatKind::Darkmown => false,
+        FormatKind::Text => untitled,
+        _ => true,
+    }
+}
+
 fn h_flex_row() -> Div {
     div().flex().flex_row().items_center()
 }
@@ -78,4 +94,17 @@ pub(super) fn large_strip(bytes: usize, cx: &App) -> AnyElement {
         .child(div().text_size(px(12.)).line_height(px(12.)).child("≡"))
         .child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(11.)).text_color(theme.muted_foreground).child(note))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn plain_text_from_disk_opens_in_the_source_editor() {
+        use markie_core::formats::FormatKind;
+        assert!(!super::documents_layout(FormatKind::Text, false));
+        assert!(super::documents_layout(FormatKind::Text, true));
+        assert!(super::documents_layout(FormatKind::Json, false));
+        assert!(super::documents_layout(FormatKind::Yaml, false));
+        assert!(!super::documents_layout(FormatKind::Markdown, false));
+    }
 }

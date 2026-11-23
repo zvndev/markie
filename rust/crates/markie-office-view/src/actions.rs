@@ -74,6 +74,25 @@ word_commands! {
     ViewLightPaper => "view-light-paper",
 }
 
+/// The View menu's Word layout items. The page registers them while it
+/// has keyboard focus; `route_view_commands` takes them the rest of the
+/// time, as Electron's View menu reaches the document either way.
+pub const VIEW_COMMANDS: [&str; 5] = ["view-page", "view-continuous", "view-outline", "view-zoom-reset", "view-light-paper"];
+
+/// Register app-wide handlers for the View menu's Word items that call
+/// `route` with the command id. They run only when no focused element took
+/// the action first, so a focused page still handles its own.
+pub fn route_view_commands(cx: &mut App, route: impl Fn(&'static str, &mut App) + 'static) {
+    let route = std::rc::Rc::new(route);
+    macro_rules! on {
+        ($($action:ident => $id:literal),*) => {$({
+            let route = route.clone();
+            cx.on_action(move |_: &$action, cx| route($id, cx));
+        })*};
+    }
+    on!(ViewPage => "view-page", ViewContinuous => "view-continuous", ViewOutline => "view-outline", ViewZoomReset => "view-zoom-reset", ViewLightPaper => "view-light-paper");
+}
+
 gpui_kit::actions!(markie_word, [WordCopy, WordCut, WordPaste, WordSelectAll, WordUndo, WordRedo, WordFind]);
 
 /// The key context of the editing surface.
@@ -135,4 +154,16 @@ pub fn view_menu_items() -> Vec<MenuItem> {
     group("View").into_iter().filter(|item| {
         !matches!(item, MenuItem::Action { name, .. } if name.as_ref() == "Actual Size")
     }).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_view_menu_item_is_routed() {
+        let view: Vec<&str> = crate::commands::COMMANDS.iter().filter(|(g, _, _)| *g == "View").map(|(_, id, _)| *id).collect();
+        assert_eq!(view, super::VIEW_COMMANDS.to_vec());
+        for id in super::VIEW_COMMANDS {
+            assert!(super::command_action(id).is_some(), "{id}");
+        }
+    }
 }

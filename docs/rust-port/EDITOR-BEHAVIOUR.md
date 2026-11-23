@@ -81,6 +81,7 @@ All from TipTap's own regular expressions, matched by hand in `rules.rs`.
 | Backspace in an empty code block | Matches | Becomes a paragraph. |
 | Backspace at the start of an empty heading at the top | Matches | Becomes a paragraph. A non-empty one stays, as in TipTap. |
 | ⌃A, ⌃E, ⌃H, ⌃K, ⌃B, ⌃F, ⌃P, ⌃N, ⌘⌦ | Matches | TipTap's macOS keymap and Chromium's Cocoa keys. |
+| Undo grouping (⌘Z, Edit › Undo) | Matches | ProseMirror history's rules (`prosemirror-history` 1.5.1, `newGroupDelay` 500 ms): a change joins the group when it comes within 500 ms of the last one and touches the range it left. Typing with spaces, Backspace, Enter and paste at the caret join; a click elsewhere, formatting, a pause or an undo start a new group; an input rule closes the group first; one input method composition is one group. Tests: `markie-rich/tests/undo_grouping.rs`. |
 | ⌘E in Source vs View | Differs | Unchanged from RICH-EDITOR.md. ⌘E is inline code in View. |
 
 ### Paste and drop

@@ -1,7 +1,7 @@
 # Markie RS Office and platform parity audit
 
-macOS score: **88.52% (54 PASS ÷ 61 eligible)**, after the native print work and the capture pass on 2026-11-22. 105 rows: 54 PASS, 2 FAIL,
-39 EXCLUDED, 5 EXCLUDED-PLATFORM, 2 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
+macOS score: **88.52% (54 PASS ÷ 61 eligible)**, after the native print work, the capture pass and the editor fixes pass on 2026-11-22. 105 rows: 54 PASS, 3 FAIL,
+39 EXCLUDED, 5 EXCLUDED-PLATFORM, 1 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
 All 93 inventory bullets are represented. Both exclusion classes stay out of the denominator.
 
 Baseline: Rust `3b6f6c0`, Electron source `ae62cfa7e73f`, installed reference
@@ -63,7 +63,7 @@ can match an IPC operation without implementing the Electron transport.
 | 17.309b | Unchanged bytes and edited reopen | PASS | Electron `src/lib/office/rich-document.ts`; App `workspace/office.rs:147`; Word `an_untouched_document_saves_its_original_bytes`; Office `returns_the_byte_identical_original_when_untouched_or_reverted` | Save untouched is a no-op on disk; exported bytes equal the input for DOCX, RTF and ODT, and all three reopen with the edit. |
 | 17.310 | Native port placement | PASS | Electron `src/lib/office/` and `src/components/documents/word-document-editor.tsx:579`; Rust `markie-office` and `markie-office-view` Cargo manifests | Architecture row. The editor and codecs are native. |
 | 17.311 | Original codecs and provenance | PASS | Electron `docs/decisions/2026-10-14-original-document-engine.md`; Office `Cargo.toml` and `src/lib.rs` | No third-party Office engine in the port. |
-| 17.312 | Native Word page layout appearance | NEEDS-CAPTURE | Electron `src/components/documents/word-document-editor.tsx:579`; Word `view.rs:662,835` | Capture pass, light only, `sample.docx` from `sample_docx`: Page, Continuous and Outline match Electron in page size, margins, type, the picture, lists, table and the page-break rule (`sbs-word-page-light.png`, `grid-word-views.png`). Two things left: dark was not captured, and the Outline list entry is drawn larger and less indented in Markie RS than Electron's. Note: a Word document opened at the zoom left by an earlier Markdown session until this pass made Markdown zoom per document. |
+| 17.312 | Native Word page layout appearance | FAIL | Electron `src/components/documents/word-document-editor.tsx:579`, `document-workspace.css` `.docs-word-outline`; Word `view.rs` `render_outline`, `break_marker`, `paragraph_with_break` | Editor fixes pass, 2026-11-22, `sample.docx` from `sample_docx`, 1280x820, scratch profiles, light and dark (`.autoloop/runs/editor-fixes/sbs-word-outline-light.png`, `sbs-word-outline-dark.png`, `sbs-word-dark.png`, `sbs-word-continuous-dark.png`). Fixed: the Outline is Electron's `.docs-word-outline` now, 165 pt on the surface colour, padding 18 by 10, a bold 10 pt muted label, 11 pt entries with 6 by 9 padding at one indent for every level, line height 1.5 (Tailwind preflight); it was 180 pt, 14 pt entries indented by level. Label and entries land on the same pixels as Electron's in both themes. Dark Page and Continuous were captured for the first time and match in colours, page size, margins, type, the picture, lists and table. Blockers, in both themes and missed by the earlier light pass: the page-break rule sits 26.5 pt higher in Markie RS (Electron draws an empty line before a break that opens a paragraph, `word-paragraph.tsx` puts the marker inside the run span), the list after the picture sits about 3.5 pt higher, Continuous paper runs about 64 pt further past the last paragraph, and Electron's `Saved` and `49 words · DOCX` status strip under the page has no counterpart. Note: a Word document opened at the zoom left by an earlier Markdown session until the capture pass made Markdown zoom per document. |
 
 ## 20. OS integration
 
@@ -169,8 +169,8 @@ Word and vault views in both themes at 1280 × 820 points. Installed Electron
 0.9.7 opened the scratch Office Library automatically. Close inputs sent
 only to the scratch PID did not dismiss it, and accessibility exposed no
 web area to confirm panel state, so those reference captures were removed.
-There is no valid paired geometry or styling verdict for 17.312, 20.346a
-and 22.B yet. To repeat them:
+There is no valid paired geometry or styling verdict for 20.346a and 22.B
+yet. 17.312 was captured in both themes by the editor fixes pass (row above). To repeat them:
 
 1. Make a private scratch directory with separate `rs-home`, `rs-data`,
    `electron-home`, `electron-data` and fixture directories. Generate a Word

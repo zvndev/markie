@@ -323,12 +323,13 @@ impl Editor {
         false
     }
 
-    /// One rule as its own undo step, remembered so Backspace can take it back.
+    /// One rule as its own undo step, remembered so Backspace can take it
+    /// back. TipTap closes the history before a rule's transaction, so the
+    /// rule starts a new group; typing straight after it joins that group.
     fn rule_step(&mut self, blocks: std::ops::Range<usize>, f: impl FnOnce(&mut Editor)) {
         self.break_undo();
         let v = self.version;
-        self.transact(blocks, EditKind::Other, f);
-        self.break_undo();
+        self.transact(blocks, EditKind::Replacing, f);
         if self.version != v {
             self.rule_undo = Some(self.sel_version);
         }

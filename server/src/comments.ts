@@ -14,6 +14,7 @@ import {
   isOwner,
 } from "./shares.ts";
 import { sendEmail } from "./email.ts";
+import { pushComment } from "./devices.ts";
 
 const db = openDatabase();
 
@@ -109,6 +110,8 @@ function notify(
   recipients.delete(author.id);
   const name = docName(docId);
   const from = author.name || author.email;
+  // The same people, on their phones (devices.ts). It never carries the comment.
+  pushComment({ userIds: [...recipients.keys()], from: author.name, docId, docName: name, threadId });
   for (const email of recipients.values()) {
     void sendEmail({
       to: email,

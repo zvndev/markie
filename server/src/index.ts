@@ -8,6 +8,7 @@ import { docs, configureDocsCloudAreas } from "./docs.ts";
 import { shares, takeInviteAllowance } from "./shares.ts";
 import { people } from "./share-people.ts";
 import { comments } from "./comments.ts";
+import { devices } from "./devices.ts";
 import { themes } from "./themes.ts";
 import { assetsApi, sweepOrphans } from "./assets.ts";
 import { docLinksApi } from "./doc-links.ts";
@@ -482,6 +483,8 @@ app.route("/api/docs", shares);
 // The recipient's side of sharing: requests, accepted people, blocked people.
 app.route("/api/people", people);
 app.route("/api/docs", comments);
+// The phones a person gets push notifications on (devices.ts). Session only.
+app.route("/api/me/devices", devices);
 // The pass a live-editing socket opens with, instead of the session token.
 app.route("/api/docs", collabTickets);
 // A Live Doc's address for its owner, and the pass that opens it. Only

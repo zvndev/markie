@@ -17,6 +17,7 @@ icon!(PAGE_SETUP, r#"<rect x="5" y="3" width="14" height="18" rx="1.5"/><path d=
 icon!(SPACING, r#"<path d="M11 6h9M11 12h9M11 18h9M5 4v16M3 6l2-2 2 2M3 18l2 2 2-2"/>"#);
 icon!(UNDO, r#"<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>"#);
 icon!(REDO, r#"<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>"#);
+icon!(HISTORY, r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#);
 icon!(ZOOM_OUT, r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/><path d="M8 11h6"/>"#);
 icon!(ZOOM_IN, r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/><path d="M11 8v6"/><path d="M8 11h6"/>"#);
 icon!(MINUS, r#"<path d="M5 12h14"/>"#);

@@ -1454,7 +1454,7 @@ impl Workspace {
         }
 
         match (&doc.kind, self.mode) {
-            (DocKind::Office(office), _) => office::render(office, self.zoom, cx),
+            (DocKind::Office(office), _) => office::render(office, doc.untitled, doc.format, self.zoom, cx),
             (DocKind::Engine, _) => {
                 // The Office engine refused the file. Electron keeps the page
                 // and shows its reason in a red strip; the reason is in the

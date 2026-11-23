@@ -1,0 +1,9 @@
+{
+ "print": 2,
+ "break-leading": 2,
+ "break-trailing": 2,
+ "break-consecutive": 3,
+ "break-middle": 2,
+ "pagination": 7,
+ "min-height": 3
+}

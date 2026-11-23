@@ -1157,8 +1157,9 @@ fn prelude(p: &Palette) -> String {
 #let mono = ("Menlo", "DejaVu Sans Mono")
 #set document(title: none)
 #set page(paper: "a4", margin: (x: 2.2cm, y: 2cm), fill: rgb("{bg}"))
-#set text(font: sans, size: 10.5pt, fill: c-fg, {edges}, hyphenate: false, lang: "en", tracking: {t_body:.5}em)
-#set par(leading: 0pt, spacing: 0pt, justify: false)
+#set text(font: sans, size: 10.5pt, fill: c-fg, {edges}, hyphenate: false, overhang: false, lang: "en", tracking: {t_body:.5}em)
+// CSS breaks lines greedily and never shrinks a space to fit a word.
+#set par(leading: 0pt, spacing: 0pt, justify: false, linebreaks: "simple", justification-limits: (spacing: (min: 100%, max: 100%)))
 #set block(above: 0pt, below: 0pt)
 #set table.cell(breakable: false)
 #show raw: set text(font: mono, tracking: 0em, size: 1.25em)

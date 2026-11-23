@@ -248,6 +248,40 @@ describe("the wipe", () => {
     expect(other!.entries()).toEqual([]);
   });
 
+  it("a different account after a server-ended session never sees or sends the held edits", async () => {
+    const srv = server({ d1: { name: "Plan.md", content: "x", version: 1 }, d2: { name: "B.md", content: "b", version: 1 } });
+    const first = await phone(srv);
+    await first.api.recent();
+    await first.api.doc("d2");
+    srv.state.online = false;
+    await first.offline.save({ id: "d2", name: "B.md", content: "the first account's secret edit", baseVersion: 1 });
+    const made = await first.offline.create({ name: "Private idea.md", content: "also theirs" });
+    expect(await first.store.hold()).toBe(2);
+    // The app is relaunched signed out, then someone else signs in.
+    expect(await createOfflineStore(first.backend).start(null)).toBeNull();
+    srv.state.online = true;
+    const second = await phone(srv, first.backend, OTHER);
+    const everything = JSON.stringify(await Promise.all((["meta", "index", "docs", "assets"] as const).map((name) => first.backend.readAll(name))));
+    expect(everything).not.toContain("secret edit");
+    expect(everything).not.toContain("also theirs");
+    expect(everything).not.toContain(ME.email);
+    expect(second.session.unsent()).toBe(0);
+    expect(second.offline.snapshot().marks.size).toBe(0);
+    expect(second.offline.pending("d2")).toBeNull();
+    expect(await second.offline.mine("d2")).toBeNull();
+    // Nothing waits to be sent, and nothing is: not by a drain, a list or an open.
+    expect(await second.offline.drain()).toEqual({ sent: 0, conflicts: 0, refused: 0, waiting: 0 });
+    expect((await second.api.recent()).map((item) => item.name)).not.toContain("Private idea.md");
+    expect((await second.api.doc("d2")).content).toBe("b");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(srv.state.puts).toEqual([]);
+    expect(srv.docs.get("d2")).toMatchObject({ content: "b", version: 1 });
+    expect(srv.docs.has(made.id)).toBe(false);
+    // And the first account, coming back after that, finds them gone too.
+    const back = await createOfflineStore(first.backend).start(ME);
+    expect(back!.entries()).toEqual([]);
+  });
+
   it("holding with nothing unsent is a full wipe", async () => {
     const srv = server({ d1: { name: "Plan.md", content: "x", version: 1 } });
     const { api, store, backend } = await phone(srv);

@@ -90,7 +90,7 @@ const MARKDOWN_ACTIONS: { action: MarkdownAction; label: string; text: string }[
 export const COMMENTS_UNAVAILABLE_NOTE = "Comments can't load right now.";
 
 /** What a viewer reads on a document no editor has opened live yet. */
-export const EMPTY_ROOM_NOTE = "This is the saved copy. Nobody who can edit has opened it live yet, and comments start once someone does.";
+export const EMPTY_ROOM_NOTE = "This is the saved copy. Nobody who can edit has opened it live yet. To comment, go back to the document.";
 
 /** What a removed person reads. The room is closed to them and nothing typed after this is kept. */
 export const ACCESS_CHANGED_NOTE = "Your access to this document changed. It is read-only now. Copy anything you still need.";

@@ -10,6 +10,9 @@ import { offlineInfo, offlineOf, type OfflineMark, type OfflineSnapshot } from "
 import { displayName } from "../lib/recent";
 import { ConflictSheet } from "./conflict-sheet";
 
+/** In the comment sheet, with no connection. Comments are never kept on the phone or queued. */
+export const COMMENTS_OFFLINE_NOTE = "You're offline. Comments need a connection, so they will show when you're back online.";
+
 const noSubscription = () => () => undefined;
 const noSnapshot = () => null;
 

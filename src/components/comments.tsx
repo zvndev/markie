@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import type * as Y from "yjs";
 import { commentsClient, type CommentThread } from "@/lib/comments";
+import { quoteOf } from "@/lib/quote-anchor";
 import type { CollabRuntime } from "@/lib/collab-loader";
 import type { MarkieUser } from "@/lib/auth-client";
 import { useAuth } from "@/lib/auth-store";
@@ -54,6 +55,7 @@ export function CommentLayer({
   const [composing, setComposing] = useState<{ from: number; to: number } | null>(null);
   const [pendingSel, setPendingSel] = useState<{ from: number; to: number } | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+  const [showUnplaced, setShowUnplaced] = useState(false);
   const [tick, setTick] = useState(0);
 
   const refresh = useMemo(
@@ -137,11 +139,17 @@ export function CommentLayer({
   const open = (threads ?? []).filter((t) => t.status === "open");
   const resolved = (threads ?? []).filter((t) => t.status === "resolved");
   const bubbles: Array<{ thread: CommentThread; top: number; from: number; to: number }> = [];
+  // Open threads with no place in the document as it is now: the words were
+  // deleted, or a quote's words can't be found. They are listed, never hidden.
+  const unplaced: CommentThread[] = [];
   for (const thread of open) {
     const abs = anchors.anchorToAbsolute(editor, ydoc, thread.anchor);
-    if (!abs) continue; // anchored text was deleted
+    if (!abs) {
+      unplaced.push(thread);
+      continue;
+    }
     const top = topFor(abs.from);
-    if (top === null) continue;
+    if (top === null) continue; // nothing to measure against yet
     bubbles.push({ thread, top, ...abs });
   }
   bubbles.sort((a, b) => a.top - b.top);
@@ -177,34 +185,78 @@ export function CommentLayer({
 
   return (
     <div className="absolute inset-y-0 right-0 w-0 z-20">
-      {/* Resolved toggle */}
-      {resolved.length > 0 && (
-        <div className="absolute top-2 right-2">
-          <button
-            onClick={() => setShowResolved((v) => !v)}
-            className="text-[11px] px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted hover:text-foreground"
-            style={{ background: "var(--surface-2)" }}
-          >
-            {resolved.length} resolved {showResolved ? "▴" : "▾"}
-          </button>
-          {showResolved && (
-            <div
-              className="absolute right-0 mt-1.5 w-[280px] max-h-[50vh] overflow-y-auto rounded-lg border border-border shadow-xl p-2 flex flex-col gap-2"
-              style={{ background: "var(--surface-2)" }}
-            >
-              {resolved.map((t) => (
-                <ThreadCard
-                  key={t.id}
-                  thread={t}
-                  me={me}
-                  docId={docId}
-                  readonly={readonly}
-                  canComment={canComment}
-                  canModerate={canModerate}
-                  onChanged={refresh}
-                  onClose={() => setShowResolved(false)}
-                />
-              ))}
+      {/* Resolved and not-placed toggles */}
+      {(resolved.length > 0 || unplaced.length > 0) && (
+        <div className="absolute top-2 right-2 flex items-start gap-1.5">
+          {unplaced.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowUnplaced((v) => !v);
+                  setShowResolved(false);
+                }}
+                title="Comments on words that are no longer in the document"
+                className="text-[11px] px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted hover:text-foreground whitespace-nowrap"
+                style={{ background: "var(--surface-2)" }}
+                data-comment-unplaced={unplaced.length}
+              >
+                {unplaced.length} not placed {showUnplaced ? "▴" : "▾"}
+              </button>
+              {showUnplaced && (
+                <div
+                  className="absolute right-0 mt-1.5 w-[280px] max-h-[50vh] overflow-y-auto rounded-lg border border-border shadow-xl p-2 flex flex-col gap-2"
+                  style={{ background: "var(--surface-2)" }}
+                >
+                  {unplaced.map((t) => (
+                    <ThreadCard
+                      key={t.id}
+                      thread={t}
+                      me={me}
+                      docId={docId}
+                      readonly={readonly}
+                      canComment={canComment}
+                      canModerate={canModerate}
+                      unplaced
+                      onChanged={refresh}
+                      onClose={() => setShowUnplaced(false)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {resolved.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowResolved((v) => !v);
+                  setShowUnplaced(false);
+                }}
+                className="text-[11px] px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted hover:text-foreground whitespace-nowrap"
+                style={{ background: "var(--surface-2)" }}
+              >
+                {resolved.length} resolved {showResolved ? "▴" : "▾"}
+              </button>
+              {showResolved && (
+                <div
+                  className="absolute right-0 mt-1.5 w-[280px] max-h-[50vh] overflow-y-auto rounded-lg border border-border shadow-xl p-2 flex flex-col gap-2"
+                  style={{ background: "var(--surface-2)" }}
+                >
+                  {resolved.map((t) => (
+                    <ThreadCard
+                      key={t.id}
+                      thread={t}
+                      me={me}
+                      docId={docId}
+                      readonly={readonly}
+                      canComment={canComment}
+                      canModerate={canModerate}
+                      onChanged={refresh}
+                      onClose={() => setShowResolved(false)}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -285,10 +337,13 @@ function ThreadCard({
   readonly,
   canComment,
   canModerate,
+  unplaced = false,
   onChanged,
   onClose,
 }: {
   thread: CommentThread;
+  /** The thread has no place in the document: say so, and quote its words if it kept them. */
+  unplaced?: boolean;
   me: MarkieUser | null;
   docId: string;
   readonly: boolean;
@@ -315,6 +370,8 @@ function ThreadCard({
     await commentsClient.deleteComment(docId, thread.id, commentId);
     onChanged();
   };
+
+  const quote = unplaced ? (quoteOf(thread.anchor)?.exact ?? null) : null;
 
   return (
     <div className="p-2.5 flex flex-col gap-2" data-comment-panel={thread.id}>
@@ -344,6 +401,19 @@ function ThreadCard({
           </button>
         </div>
       </div>
+
+      {unplaced && (
+        <div className="text-[11px] text-muted border-l-2 border-border pl-2" data-comment-lost>
+          {quote ? (
+            <>
+              <span className="italic break-words">“{quote}”</span>
+              <span className="block mt-0.5">These words are no longer in the document.</span>
+            </>
+          ) : (
+            "The commented text is no longer in the document."
+          )}
+        </div>
+      )}
 
       {thread.comments.map((c) => (
         <div key={c.id} className="flex gap-2">

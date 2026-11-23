@@ -237,6 +237,19 @@ describe("the HTML an export writes", () => {
     expect(html).not.toContain('src="missing.png"');
   });
 
+  it("still exports when no picture can be fetched, as for a document opened offline", async () => {
+    const offline = async () => { throw new Error("The network connection was lost."); };
+    const source = markdown("# Kept on the phone\n\n![chart](charts/a.png)\n\nStill here.\n", "Kept.md", offline);
+    const html = await buildExportHtml(source, "light");
+    expect(html).toContain("Still here.");
+    expect(html).toContain('<span class="markie-picture-missing">Picture not available: chart</span>');
+    // The file and HTML rows touch nothing but the device.
+    const { device, calls } = fakeDevice("ios");
+    expect(await runExport(source, "file", device)).toBe("shared");
+    expect(await runExport(source, "html", device)).toBe("shared");
+    expect(calls.filter((call) => call.startsWith("write "))).toHaveLength(2);
+  });
+
   it("never folds in something that isn't a picture", async () => {
     const html = await inlinePictures('<img src="a.png" alt="a">', async () => new Blob(["<html>"], { type: "text/html" }));
     expect(html).toBe('<span class="markie-picture-missing">Picture not available: a</span>');

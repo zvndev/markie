@@ -70,6 +70,7 @@ export const OLD_WORD_NOTE = "Older Word files (.doc) leave as the original file
 const DARKMOWN_STILL_MAX_CHARS = 200_000;
 /** All of a document's own pictures together, folded into one HTML file. */
 export const MAX_INLINE_PICTURE_BYTES = 30_000_000;
+const PICTURE_CONCURRENCY = 4;
 
 // ── Names ────────────────────────────────────────────────────────────────
 
@@ -203,21 +204,31 @@ export async function inlinePictures(html: string, loadAsset: ExportSource["load
   template.innerHTML = html;
   const images = Array.from(template.content.querySelectorAll("img[src]")).filter((img) => isLocalRef((img.getAttribute("src") ?? "").trim()));
   if (!images.length) return html;
+  // A few at a time, so a document opened offline doesn't wait on each
+  // picture in turn. A picture that fails is left out; it never fails the export.
+  const refs = Array.from(new Set(images.map((img) => refOf(img.getAttribute("src") ?? "")))).filter(Boolean).slice(0, MAX_DOCUMENT_ASSETS);
+  const blobs = new Map<string, Blob | null>();
+  const queue = [...refs];
+  const worker = async () => {
+    while (queue.length) {
+      const ref = queue.shift()!;
+      blobs.set(ref, loadAsset ? await Promise.resolve().then(() => loadAsset(ref)).catch(() => null) : null);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PICTURE_CONCURRENCY, refs.length) }, worker));
   const fetched = new Map<string, string | null>();
   let total = 0;
+  for (const ref of refs) {
+    const blob = blobs.get(ref);
+    let uri: string | null = null;
+    if (blob && /^image\//i.test(blob.type) && total + blob.size <= MAX_INLINE_PICTURE_BYTES) {
+      total += blob.size;
+      uri = await bytesOf(blob).then((bytes) => `data:${blob.type};base64,${toBase64(bytes)}`, () => null);
+    }
+    fetched.set(ref, uri);
+  }
   for (const img of images) {
     const ref = refOf(img.getAttribute("src") ?? "");
-    if (!fetched.has(ref)) {
-      let uri: string | null = null;
-      if (ref && loadAsset && fetched.size < MAX_DOCUMENT_ASSETS) {
-        const blob = await loadAsset(ref).catch(() => null);
-        if (blob && /^image\//i.test(blob.type) && total + blob.size <= MAX_INLINE_PICTURE_BYTES) {
-          total += blob.size;
-          uri = `data:${blob.type};base64,${toBase64(await bytesOf(blob))}`;
-        }
-      }
-      fetched.set(ref, uri);
-    }
     const uri = fetched.get(ref);
     img.removeAttribute("srcset");
     if (uri) {

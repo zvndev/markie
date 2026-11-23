@@ -26,6 +26,7 @@ import { createOfflineApi, offlineOf } from "./lib/offline-api";
 import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
 import { loadThemeMode, paintTone, resolveTone, saveThemeMode, systemPrefersDark, type ThemeMode } from "./lib/theme-mode";
 import { openExternal, setSystemBars } from "./lib/native";
+import { pushController } from "./lib/push";
 import { Navigator, type StackEntry } from "./components/navigator";
 import { SignInScreen } from "./screens/sign-in";
 import { clearRecentCache, RecentScreen } from "./screens/recent";
@@ -84,6 +85,7 @@ function pendingStorage(): Storage | null {
 
 export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const sessionStore = useMemo(() => createSessionStore(secure), [secure]);
+  const push = useMemo(() => pushController(), []);
   // Opened documents kept for reading with no network (lib/offline-store.ts).
   // It belongs to one account, and is wiped whenever that account leaves.
   const offlineStore = useMemo(() => createOfflineStore(platformOfflineBackend()), []);
@@ -177,8 +179,14 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     });
     // The same client, with the phone's store behind it for when the
     // network isn't there. Without a store it is the plain client.
-    return offlineSession ? createOfflineApi(client, offlineSession) : client;
-  }, [apiIdentity, transport, persistRotatedToken, offlineSession]);
+    // push.watch: the same client again, asking about notifications once,
+    // after a first comment or share goes through (src/lib/push.ts).
+    return push.watch(offlineSession ? createOfflineApi(client, offlineSession) : client);
+  }, [apiIdentity, transport, persistRotatedToken, offlineSession, push]);
+  // Push: this phone is filed under whoever is signed in, and under nobody
+  // once they are not.
+  useEffect(() => { push.setApi(api); }, [push, api]);
+
   const openTarget = useCallback((target: LinkTarget, { replaceStack = false, name, sharedBy = null }: { replaceStack?: boolean; name?: string; sharedBy?: string | null } = {}) => {
     const current = sessionRef.current;
     if (!current) return;
@@ -187,7 +195,11 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     const route: Route = { key: nextKey("doc"), kind: "doc", target: resolved.target, name, sharedBy };
     setRoutes((stack) => {
       const top = stack[stack.length - 1];
-      if (top.kind === "doc" && sameTarget(top.target, resolved.target)) return stack;
+      if (top.kind === "doc" && sameTarget(top.target, resolved.target)) {
+        // Already open. A notification about another thread still shows it.
+        const thread = threadOf(resolved.target);
+        return thread && thread !== threadOf(top.target) ? [...stack.slice(0, -1), { ...top, target: resolved.target }] : stack;
+      }
       return replaceStack ? [ROOT, route] : [...stack, route];
     });
   }, [showToast]);
@@ -253,12 +265,15 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
 
   // A tapped push notification carries a Markie link. This is the one place
   // it enters the app, and it takes the same road as a link from outside, so
-  // sign-in, the pending link and the server pin all apply to it. Nothing
-  // calls it yet: the push work subscribes here and nowhere else.
+  // sign-in, the pending link and the server pin all apply to it. The push
+  // listener (src/lib/push.ts) subscribes here and nowhere else.
   const openPushLink = useCallback((link: string) => handleIncomingUrl(link), [handleIncomingUrl]);
-  void openPushLink;
 
   const sessionKnown = session !== undefined;
+  useEffect(() => {
+    if (!native || !sessionKnown) return;
+    return push.start(openPushLink);
+  }, [native, sessionKnown, push, openPushLink]);
   useEffect(() => {
     if (!native || !sessionKnown) return;
     let removed = false;
@@ -379,8 +394,10 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     await endSession(null);
     if (!ending) return;
     const courtesy = createApiClient({ origin: ending.origin, transport, getToken: () => ending.token });
+    // Push: take this phone off the server while the ending session can still ask.
+    await push.signOut(courtesy);
     void courtesy.signOut({ timeoutMs: SERVER_SIGN_OUT_TIMEOUT_MS }).catch(() => undefined);
-  }, [endSession, transport]);
+  }, [endSession, transport, push]);
 
   const signedIn = useCallback(async ({ origin, token, user }: { origin: string; token: string; user: ApiUser }) => {
     const next: StoredSession = { origin, token, email: user.email, name: user.name, userId: user.id };
@@ -471,7 +488,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     if (route.kind === "settings") {
       return {
         key: route.key,
-        node: <SettingsScreen session={session} api={api} themeMode={themeMode} onThemeMode={setThemeMode} onSignOut={signOut} onBack={pop} />,
+        node: <SettingsScreen session={session} api={api} themeMode={themeMode} onThemeMode={setThemeMode} push={push} onSignOut={signOut} onBack={pop} />,
       };
     }
     if (route.kind === "new") {
@@ -600,6 +617,10 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
 function sameTarget(a: LinkTarget, b: LinkTarget): boolean {
   if (a.kind !== b.kind || a.origin !== b.origin) return false;
   return a.kind === "doc" ? a.id === (b as typeof a).id : a.token === (b as typeof a).token;
+}
+
+function threadOf(target: LinkTarget): string | null {
+  return target.kind === "doc" ? target.thread ?? null : null;
 }
 
 function labelFor(route: Route): string {

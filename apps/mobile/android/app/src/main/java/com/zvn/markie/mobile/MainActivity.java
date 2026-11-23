@@ -8,6 +8,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Before super.onCreate, which builds the bridge with the plugins known so far.
+        registerPlugin(PushAvailabilityPlugin.class);
         // The app's own plugin: a document printed to a PDF file (MarkiePdfPlugin).
         registerPlugin(MarkiePdfPlugin.class);
         super.onCreate(savedInstanceState);

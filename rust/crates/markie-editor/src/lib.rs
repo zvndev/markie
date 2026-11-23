@@ -308,6 +308,8 @@ pub struct RichView {
     pub(crate) text_drag: Option<(Point<Pixels>, Option<Pos>)>,
     /// The IME's marked (composing) text: its start and length in units.
     marked: Option<(Pos, usize)>,
+    /// Bumped when an input method starts composing, for undo grouping.
+    composition_seq: u64,
     pub(crate) find: Option<FindBar>,
     pub(crate) prompt: Option<Prompt>,
     pub(crate) media: media::Media,
@@ -427,6 +429,7 @@ impl RichView {
             drag: None,
             text_drag: None,
             marked: None,
+            composition_seq: 0,
             find: None,
             prompt: None,
             media: media::Media::default(),
@@ -1503,11 +1506,16 @@ impl EntityInputHandler for RichView {
             return;
         }
         self.select_utf16(range);
-        self.marked = None;
+        // Committing a composition is part of it, for the undo grouping.
+        let committing = self.marked.take().is_some();
         let t = text.to_string();
         if t == "\n" || t == "\r" {
+            self.editor.composition = None;
             self.edit(cx, |e| e.enter());
             return;
+        }
+        if !committing {
+            self.editor.composition = None;
         }
         self.editor.typing = self.editor.typing.take();
         let typing = self.editor.typing.clone();
@@ -1515,6 +1523,7 @@ impl EntityInputHandler for RichView {
             e.typing = typing;
             e.insert_text(&t)
         });
+        self.editor.composition = None;
     }
 
     fn replace_and_mark_text_in_range(
@@ -1539,7 +1548,11 @@ impl EntityInputHandler for RichView {
             return;
         }
         // Composing text goes into the document as typed, marked, so the
-        // next update replaces it.
+        // next update replaces it. A new composition gets a new id.
+        if self.marked.is_none() {
+            self.composition_seq += 1;
+        }
+        self.editor.composition = Some(self.composition_seq);
         let typing = self.editor.typing.clone();
         f_insert(&mut self.editor, &t, typing);
         let n = t.chars().count();

@@ -22,7 +22,7 @@ The view is its own crate because `markie-math`'s corpus test depends on `markie
 - Typing goes through GPUI's `EntityInputHandler`, so the platform input method can compose text in place. Composing text is marked and underlined.
 - The caret moves by character (grapheme), word and visual line, with Home, End, ⌘ and ⌥ chords, Page Up and Page Down. Up and Down keep their column.
 - Mouse: click, Shift-click, drag, double-click for a word, triple-click for a block. Selection runs across blocks, lists, quotes and tables.
-- Undo and redo (⌘Z, ⌘⇧Z). Typing merges into one step per word. Undoing everything gives back the file byte for byte.
+- Undo and redo (⌘Z, ⌘⇧Z). Changes group as ProseMirror's history groups them in Electron (`newGroupDelay` 500 ms): typing, deleting, Enter and paste at the caret are one undo until a pause of more than 500 ms or an edit somewhere else. Formatting is always its own undo, an input rule starts a new one, and one input method composition stays one. Undoing everything gives back the file byte for byte.
 - ⌘C copies the selection as Markdown. Whole blocks are copied as their own bytes. ⌘⇧C copies plain text. ⌘V pastes text as Markdown, like TipTap's `transformPastedText`. One line pastes inline and keeps its marks.
 
 ### Blocks

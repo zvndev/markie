@@ -41,8 +41,7 @@ impl Editor {
     /// it. Returns false outside a code block.
     pub fn exit_code(&mut self) -> bool {
         let Some((p, path)) = self.code_leaf() else { return false };
-        self.break_undo();
-        self.transact(p.block..p.block + 1, EditKind::Other, |ed| {
+        self.transact(p.block..p.block + 1, EditKind::Replacing, |ed| {
             let Some(nodes) = ed.nodes_mut(p.block) else { return };
             let (c, i) = tree::split_path(&path);
             let c = c.to_vec();

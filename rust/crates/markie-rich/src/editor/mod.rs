@@ -26,6 +26,7 @@ mod table;
 mod drag;
 
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use crate::document::{Block, BlockContent, Document};
 use crate::edit::Unit;
@@ -51,13 +52,31 @@ impl Pos {
     }
 }
 
-/// What kind of change a step was, for merging keystrokes into one undo.
+/// What kind of change a step was, for grouping changes into one undo.
+///
+/// The grouping is ProseMirror's history (`prosemirror-history` 1.5.1,
+/// `applyTransaction`), which TipTap's `undoRedo` runs with
+/// `newGroupDelay: 500`. A change joins the group before it when it comes
+/// within 500 ms of the previous change and touches the range that change
+/// left. Typing, deleting, Enter and paste are replaces at the selection,
+/// so a run of them at the caret is one undo. A formatting change maps no
+/// positions in ProseMirror, so it is never adjacent: it is a group of its
+/// own and the next keystroke starts a new one. A selection move changes
+/// nothing; the next edit simply is not adjacent unless it is back at the
+/// caret. An input rule closes the group first (`closeHistory`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditKind {
     Typing,
     Deleting,
+    /// Enter, a hard break, a paste or an input rule: a replace at the
+    /// selection, grouped exactly like typing.
+    Replacing,
+    /// Formatting, block and table commands: always a group of its own.
     Other,
 }
+
+/// ProseMirror history's `newGroupDelay`, as TipTap configures it.
+pub const NEW_GROUP_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 struct Step {
@@ -81,8 +100,21 @@ pub struct Editor {
     pub typing: Option<Marks>,
     undo: Vec<Step>,
     redo: Vec<Step>,
-    /// False once the caret moved, so the next keystroke starts a new step.
+    /// False when the group is closed (`closeHistory`, an undo, a redo, a
+    /// formatting change), so the next change starts a new step.
     coalesce: bool,
+    /// When the last change was made, for the 500 ms grouping delay.
+    prev_time: Option<Instant>,
+    /// The range the last change touched, in the document it left
+    /// (ProseMirror's `prevRanges`). None after a formatting change.
+    prev_range: Option<(Pos, Pos)>,
+    /// A fixed clock for tests (`set_clock`); None reads the system clock.
+    clock: Option<Instant>,
+    /// The input method composition the next change belongs to, set by the
+    /// view (ProseMirror's `composition` meta). Changes of one composition
+    /// stay one group however long the composing takes.
+    pub composition: Option<u64>,
+    prev_composition: Option<u64>,
     /// Bumped on every change to the document.
     pub version: u64,
     /// Bumped on every change to the selection or document.
@@ -129,6 +161,11 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             coalesce: false,
+            prev_time: None,
+            prev_range: None,
+            clock: None,
+            composition: None,
+            prev_composition: None,
             version: 0,
             sel_version: 0,
             goal_x: None,
@@ -311,7 +348,6 @@ impl Editor {
         self.anchor = self.clamp(anchor);
         self.head = self.clamp(head);
         self.typing = None;
-        self.coalesce = false;
         self.sel_version += 1;
     }
 
@@ -395,12 +431,31 @@ impl Editor {
         self.version += 1;
         self.sel_version += 1;
         self.redo.clear();
-        let step = Step { start: range.start, before, after_len, sel_before, sel_after: (self.anchor, self.head), kind };
-        if self.coalesce && kind != EditKind::Other {
+        let sel_after = (self.anchor, self.head);
+        let step = Step { start: range.start, before, after_len, sel_before, sel_after, kind };
+        // ProseMirror's grouping: the range this change replaced, in the
+        // document before it, and the range it left, in the document after.
+        let (b0, b1) = ordered(sel_before);
+        let (a0, a1) = ordered(sel_after);
+        let lo = b0.min(a0);
+        let replaced = (lo, b1.max(lo));
+        let left = (lo, a1.max(lo));
+        let now = self.now();
+        let same_composition = self.composition.is_some() && self.composition == self.prev_composition;
+        let joins = self.coalesce
+            && kind != EditKind::Other
+            && (same_composition
+                || (self.prev_time.is_some_and(|t| now.saturating_duration_since(t) <= NEW_GROUP_DELAY)
+                    && self.prev_range.is_some_and(|(s, e)| replaced.0 <= e && replaced.1 >= s)));
+        self.prev_time = Some(now);
+        if self.composition.is_some() {
+            self.prev_composition = self.composition;
+        }
+        self.prev_range = (kind != EditKind::Other).then_some(left);
+        self.coalesce = kind != EditKind::Other;
+        if joins {
             if let Some(last) = self.undo.last_mut() {
-                if last.kind == kind && last.start == step.start && last.after_len == step.before.len() {
-                    last.after_len = step.after_len;
-                    last.sel_after = step.sel_after;
+                if merge_steps(last, &step) {
                     return;
                 }
             }
@@ -409,10 +464,32 @@ impl Editor {
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
         }
-        self.coalesce = kind != EditKind::Other;
     }
 
-    /// End the current run of typing, so the next keystroke is its own undo.
+    fn now(&self) -> Instant {
+        self.clock.unwrap_or_else(Instant::now)
+    }
+
+    /// Fix the clock the undo grouping reads, for tests. `advance_clock`
+    /// moves it on.
+    #[doc(hidden)]
+    pub fn set_clock(&mut self, t: Instant) {
+        self.clock = Some(t);
+    }
+
+    #[doc(hidden)]
+    pub fn advance_clock(&mut self, d: Duration) {
+        self.clock = Some(self.now() + d);
+    }
+
+    /// How many undo steps there are, for tests.
+    #[doc(hidden)]
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Close the current group (ProseMirror's `closeHistory`), so the next
+    /// change is its own undo.
     pub fn break_undo(&mut self) {
         self.coalesce = false;
     }
@@ -600,4 +677,37 @@ pub(crate) fn block_leaves(b: &Block) -> Vec<Leaf> {
 
 fn same_list(a: &Node, b: &Node) -> bool {
     tree::list_kind(a).is_some() && tree::list_kind(a) == tree::list_kind(b)
+}
+
+fn ordered((a, b): (Pos, Pos)) -> (Pos, Pos) {
+    if a <= b { (a, b) } else { (b, a) }
+}
+
+/// Fold `next` into `last`, the step before it, as one undo. `last` left
+/// blocks `s1..s1 + a1`; `next` replaced blocks `s2..s2 + b2` of that
+/// document. The merged step covers the union of the two, in blocks as they
+/// were before `last`. Returns false when the ranges neither overlap nor
+/// touch, which a pair of adjacent edits never does.
+fn merge_steps(last: &mut Step, next: &Step) -> bool {
+    let (s1, e1) = (last.start, last.start + last.after_len);
+    let (s2, e2) = (next.start, next.start + next.before.len());
+    if s2 > e1 || s1 > e2 {
+        return false;
+    }
+    let mut before = Vec::with_capacity(last.before.len() + next.before.len());
+    if s2 < s1 {
+        before.extend_from_slice(&next.before[..s1 - s2]);
+    }
+    before.append(&mut last.before);
+    if e2 > e1 {
+        before.extend_from_slice(&next.before[e1 - s2..]);
+    }
+    let start = s1.min(s2);
+    let union = e1.max(e2) - start;
+    last.after_len = union - next.before.len() + next.after_len;
+    last.start = start;
+    last.before = before;
+    last.sel_after = next.sel_after;
+    last.kind = next.kind;
+    true
 }

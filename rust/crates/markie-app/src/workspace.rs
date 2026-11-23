@@ -75,6 +75,7 @@ mod shortcuts;
 mod strips;
 mod skills;
 pub mod source;
+mod source_column;
 pub(crate) mod vault;
 
 /// How long typing must pause before the edited marker, word count and
@@ -198,6 +199,8 @@ pub struct Workspace {
     /// document like the Electron app's `markie.documents.zoom.v1`.
     zoom: f32,
     page_width: f32,
+    /// Source's page-width column (`source_column.rs`).
+    source_column: source_column::SourceColumn,
     /// Text to put in the editor at the next render, which has the window.
     pending_editor_text: Option<String>,
     /// Live collaboration, comments and sharing (collab.rs, comments.rs, share.rs).
@@ -367,6 +370,7 @@ impl Workspace {
             cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
             zoom: 1.0,
             page_width: 768.0,
+            source_column: Default::default(),
             vault: None,
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
@@ -1349,13 +1353,21 @@ impl Workspace {
         // One formatting row above both panes, as Electron's DocToolbar.
         let toolbar = self.rich.update(cx, |r, cx| r.split_toolbar(cx));
         let source = self.source_mouse(
-            Editor::new(&self.editor)
-                .bordered(false)
-                .h(relative(1.))
-                .font_family(markie_editor::MONO)
-                .text_size(px(14. * self.zoom))
-                // CodeMirror's `.cm-content` line height; GPUI Kit's editor uses 1.5.
-                .line_height(relative(SOURCE_LINE_HEIGHT)),
+            self.source_column.render(
+                &self.editor,
+                Editor::new(&self.editor)
+                    .bordered(false)
+                    .h(relative(1.))
+                    .font_family(markie_editor::MONO)
+                    .text_size(px(14. * self.zoom))
+                    // CodeMirror's `.cm-content` line height; GPUI Kit's editor uses 1.5.
+                    .line_height(relative(SOURCE_LINE_HEIGHT))
+                    .into_any_element(),
+                self.page_width,
+                14. * self.zoom,
+                SOURCE_LINE_HEIGHT,
+                cx,
+            ),
             cx,
         );
         let theme = cx.theme();
@@ -1499,8 +1511,14 @@ impl Workspace {
                     .into_any_element()
             }
             // Literal text formats look like Electron's TextDocumentEditor.
-            (DocKind::Text { .. }, _) if doc.format == FormatKind::Darkmown && !doc.large => self.render_darkmown(cx),
-            (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => self.render_text(cx),
+            (DocKind::Text { .. }, _) if doc.format == FormatKind::Darkmown && !doc.large => {
+                self.source_column.clear(&self.editor, cx);
+                self.render_darkmown(cx)
+            }
+            (DocKind::Text { .. }, _) if !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown) && !doc.large => {
+                self.source_column.clear(&self.editor, cx);
+                self.render_text(cx)
+            }
             _ => div()
                 .size_full()
                 .flex()
@@ -1515,12 +1533,20 @@ impl Workspace {
                 )
                 .when(matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown), |d| d.child(self.source_toolbar(cx)))
                 .child(self.source_mouse(
-                    Editor::new(&self.editor)
-                        .bordered(false)
-                        .h(relative(1.))
-                        .font_family(markie_editor::MONO)
-                        .text_size(px(14. * self.zoom))
-                        .line_height(relative(SOURCE_LINE_HEIGHT)),
+                    self.source_column.render(
+                        &self.editor,
+                        Editor::new(&self.editor)
+                            .bordered(false)
+                            .h(relative(1.))
+                            .font_family(markie_editor::MONO)
+                            .text_size(px(14. * self.zoom))
+                            .line_height(relative(SOURCE_LINE_HEIGHT))
+                            .into_any_element(),
+                        self.page_width,
+                        14. * self.zoom,
+                        SOURCE_LINE_HEIGHT,
+                        cx,
+                    ),
                     cx,
                 ))
                 .into_any_element(),

@@ -1,14 +1,21 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  APP_SCHEME,
+  CLAIMED_HOSTS,
   appLinkFor,
   classifyDocumentLink,
   hasPendingLink,
   isMarkieWebLink,
   parseMarkieLink,
+  peekPendingLink,
   rememberPendingLink,
   resolveForSession,
+  signedOutDestination,
   takePendingLink,
 } from "../src/lib/deep-links";
+import { ApiError } from "../src/lib/api";
+import { publicLinkErrorCopy } from "../src/lib/public-link";
 
 const CLOUD = "https://api.markiedocs.com";
 
@@ -79,7 +86,65 @@ describe("resolveForSession", () => {
   });
 });
 
+describe("links with nobody signed in", () => {
+  const TOKEN = "pub_aaaaaaaaaaaaaaaaaaaa";
+
+  it.each([
+    [`https://markiedocs.com/s/${TOKEN}`, CLOUD],
+    [`https://api.markiedocs.com/s/${TOKEN}`, CLOUD],
+    [`https://www.markiedocs.com/s/${TOKEN}`, CLOUD],
+  ])("opens the public share %s to read, on Markie Cloud", (url, origin) => {
+    // Whatever server the sign-in screen is set to, a Markie Cloud link reads from Markie Cloud.
+    expect(signedOutDestination(parseMarkieLink(url)!, "https://markie.example.com")).toEqual({ kind: "public", token: TOKEN, origin });
+  });
+
+  it("opens a markie-mobile://s link on the server the sign-in screen is set to", () => {
+    const target = parseMarkieLink(`markie-mobile://s/${TOKEN}`)!;
+    expect(signedOutDestination(target, CLOUD)).toEqual({ kind: "public", token: TOKEN, origin: CLOUD });
+    expect(signedOutDestination(target, "http://localhost:8790")).toEqual({ kind: "public", token: TOKEN, origin: "http://localhost:8790" });
+  });
+
+  it.each([
+    "https://markiedocs.com/d/abc-123",
+    "https://api.markiedocs.com/d/abc-123",
+    "https://markiedocs.com/d/abc-123?k=invite-token",
+    "markie-mobile://d/abc-123",
+  ])("keeps the private document %s behind sign-in", (url) => {
+    expect(signedOutDestination(parseMarkieLink(url)!, CLOUD)).toBeNull();
+  });
+
+  it("leaves /download to the browser, signed in or not", () => {
+    for (const url of ["https://markiedocs.com/download", "https://api.markiedocs.com/download", "https://markiedocs.com/download/mac"]) {
+      expect(parseMarkieLink(url)).toBeNull();
+      expect(isMarkieWebLink(url)).toBe(true);
+    }
+  });
+
+  it("never treats a path under a share as the share", () => {
+    expect(parseMarkieLink(`https://markiedocs.com/s/${TOKEN}/raw`)).toBeNull();
+    expect(parseMarkieLink(`https://markiedocs.com/s/${TOKEN}/assets?ref=a.png`)).toBeNull();
+  });
+
+  it("says a dead public link is off, without talking about an account's access", () => {
+    const off = publicLinkErrorCopy(new ApiError(404, "This share link was turned off, or never existed."));
+    expect(off).toMatchObject({ title: "This link is off", retry: false });
+    expect(off.body).not.toContain("this account");
+    expect(publicLinkErrorCopy(new ApiError(0, "Check your connection and try again."))).toMatchObject({ title: "You're offline", retry: true });
+    expect(publicLinkErrorCopy(new ApiError(500, "Server error"))).toMatchObject({ retry: true });
+  });
+});
+
 describe("pending links", () => {
+  it("can be looked at without being used up", () => {
+    const storage = memoryStorage();
+    rememberPendingLink({ kind: "public", token: "pub_aaaaaaaaaaaaaaaaaaaa", origin: CLOUD }, storage, 1_000);
+    expect(peekPendingLink(storage, 2_000)).toEqual({ kind: "public", token: "pub_aaaaaaaaaaaaaaaaaaaa", origin: CLOUD });
+    expect(peekPendingLink(storage, 2_000)).not.toBeNull();
+    expect(peekPendingLink(storage, 2 * 60 * 60 * 1000)).toBeNull();
+    expect(takePendingLink(storage, 2_000)).toMatchObject({ kind: "public" });
+    expect(peekPendingLink(storage, 2_000)).toBeNull();
+  });
+
   it("remembers a link tapped before sign-in, once", () => {
     const storage = memoryStorage();
     rememberPendingLink({ kind: "doc", id: "abc", origin: CLOUD }, storage, 1_000);
@@ -146,5 +211,46 @@ describe("URLs other apps send", () => {
     expect(isMarkieWebLink("https://user:pw@api.markiedocs.com/d/abc/raw")).toBe(false);
     expect(isMarkieWebLink("http://api.markiedocs.com/d/abc/raw")).toBe(false);
     expect(isMarkieWebLink("javascript:alert(1)")).toBe(false);
+  });
+});
+
+// What the two systems are told to hand the app, checked against the router
+// and against the files the server publishes for them. A host or path claimed
+// natively but not routed here would open the app on a link it then refuses.
+describe("the links iOS and Android hand over", () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+  const manifest = read("../android/app/src/main/AndroidManifest.xml");
+  const wellKnown = read("../../../server/src/well-known.ts");
+  const verified = /<intent-filter android:autoVerify="true">([\s\S]*?)<\/intent-filter>/.exec(manifest)?.[1] ?? "";
+  const attrs = (block: string, name: string) => [...block.matchAll(new RegExp(`android:${name}="([^"]+)"`, "g"))].map((match) => match[1]);
+
+  it("Android verifies https links to /d/ and /s/ on the two hosts that serve assetlinks.json, and nothing else", () => {
+    expect(attrs(verified, "scheme")).toEqual(["https"]);
+    // Not www: it redirects, and Android's verifier refuses a redirect.
+    expect(attrs(verified, "host")).toEqual(["api.markiedocs.com", "markiedocs.com"]);
+    expect(attrs(verified, "pathPrefix")).toEqual(["/d/", "/s/"]);
+    for (const host of attrs(verified, "host")) expect(CLAIMED_HOSTS).toContain(host);
+    expect(manifest).not.toContain("/download");
+  });
+
+  it("iOS claims the same two hosts", () => {
+    const entitlements = read("../ios/App/App/App.entitlements");
+    expect([...entitlements.matchAll(/<string>applinks:([^<]+)<\/string>/g)].map((match) => match[1])).toEqual(attrs(verified, "host"));
+  });
+
+  it("the server's files name this app and the same paths", () => {
+    const appId = /applicationId "([^"]+)"/.exec(read("../android/app/build.gradle"))?.[1];
+    expect(appId).toBe("com.zvn.markie.mobile");
+    expect(wellKnown).toContain(`MOBILE_APP_ID = "${appId}"`);
+    expect(wellKnown).toContain('{ "/": "/d/*" }');
+    expect(wellKnown).toContain('{ "/": "/s/*" }');
+    expect(wellKnown).not.toContain("/download");
+  });
+
+  it("the custom scheme takes d and s only", () => {
+    const scheme = /<string name="custom_url_scheme">([^<]+)<\/string>/.exec(read("../android/app/src/main/res/values/strings.xml"))?.[1];
+    expect(scheme).toBe(APP_SCHEME);
+    const block = manifest.split("<intent-filter").find((part) => part.includes("@string/custom_url_scheme")) ?? "";
+    expect(attrs(block, "host")).toEqual(["d", "s"]);
   });
 });

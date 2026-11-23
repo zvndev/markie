@@ -17,6 +17,7 @@ import {
   type CloudDoc,
   type RecentDoc,
 } from "./docs";
+import { parseSharedByMe, type SharedOutDoc } from "./recent";
 import { DocumentCloudClient } from "@/lib/document-cloud";
 import { docLinkOrigin } from "@/lib/cloud-origin";
 import { COLLAB_SCHEMA_VERSION, type CollabTicketAnswer } from "@/lib/collab";
@@ -206,6 +207,16 @@ export function createApiClient(options: ApiClientOptions) {
       const { data } = await json("GET", `/api/docs/recent?${params}`);
       try {
         return parseRecentList(data, origin);
+      } catch (error) {
+        throw new ApiError(502, error instanceof Error ? error.message : "The server's answer wasn't readable.");
+      }
+    },
+
+    /** Documents this account owns that someone else can reach. A server from before the route answers 404. */
+    async sharedByMe(): Promise<SharedOutDoc[]> {
+      const { data } = await json("GET", "/api/docs/shared-by-me");
+      try {
+        return parseSharedByMe(data);
       } catch (error) {
         throw new ApiError(502, error instanceof Error ? error.message : "The server's answer wasn't readable.");
       }

@@ -16,9 +16,13 @@ import {
   nextCursor,
   sectionRecent,
   sharedLabel,
+  sharedOutIndex,
+  sharedOutLabel,
+  sharedOutRows,
   timeLabel,
   withPlatform,
   type RecentScope,
+  type SharedOutDoc,
 } from "../lib/recent";
 import { Screen } from "../components/screen";
 import { AlertIcon, ChevronRight, ClearIcon, GearIcon, PeopleIcon, PlusIcon, SearchIcon, SparkleIcon } from "../components/icons";
@@ -38,7 +42,13 @@ interface RecentProps {
 type LoadState = { status: "loading" } | { status: "ready" } | { status: "error"; message: string };
 
 // The last list this launch saw, so coming back from a document is instant.
-let cached: { origin: string; docs: RecentDoc[]; cursor: string | null } | null = null;
+let cached: { origin: string; docs: RecentDoc[]; cursor: string | null; sharedOut: SharedOutDoc[] } | null = null;
+
+const SCOPES: { id: RecentScope; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "shared", label: "Shared with you" },
+  { id: "mine", label: "Shared by me" },
+];
 
 export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUnauthorized, refreshKey }: RecentProps) {
   const warm = cached?.origin === api.origin ? cached : null;
@@ -54,6 +64,11 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
   // How many shares wait for this account to accept their sender. A server
   // from before requests answers 404, which is simply none.
   const [requestCount, setRequestCount] = useState(0);
+  // The documents this account owns that someone else can reach, with how
+  // many people. A server from before the route answers 404, which is none.
+  const [sharedOut, setSharedOut] = useState<SharedOutDoc[]>(warm?.sharedOut ?? []);
+  // The two lists answer in either order, and each writes the warm copy.
+  const sharedOutRef = useRef(sharedOut);
 
   const handleError = useCallback((error: unknown) => {
     if (error instanceof ApiError && error.status === 401) { onUnauthorized(); return; }
@@ -66,6 +81,12 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
       // Word, RTF and OpenDocument files live in the document platform, which
       // answers with everything at once; the Markdown list pages.
       void api.shareRequests().then((listed) => { if (run === generation.current) setRequestCount(listed.count); }, () => undefined);
+      void api.sharedByMe().then((listed) => {
+        if (run !== generation.current) return;
+        sharedOutRef.current = listed;
+        setSharedOut(listed);
+        if (cached?.origin === api.origin) cached = { ...cached, sharedOut: listed };
+      }, () => undefined);
       const [page, platform] = await Promise.all([api.recent({ limit: PAGE_SIZE }), api.platformRecent()]);
       if (run !== generation.current) return;
       const next = withPlatform(mergeRecent([], page), platform);
@@ -73,7 +94,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
       setCursor(nextCursor(page));
       setNow(Date.now());
       setState({ status: "ready" });
-      cached = { origin: api.origin, docs: next, cursor: nextCursor(page) };
+      cached = { origin: api.origin, docs: next, cursor: nextCursor(page), sharedOut: sharedOutRef.current };
     } catch (error) {
       if (run === generation.current) handleError(error);
     }
@@ -90,7 +111,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
       if (run !== generation.current) return;
       setDocs((current) => {
         const next = mergeRecent(current, page);
-        cached = { origin: api.origin, docs: next, cursor: nextCursor(page) };
+        cached = { origin: api.origin, docs: next, cursor: nextCursor(page), sharedOut: sharedOutRef.current };
         return next;
       });
       setCursor(nextCursor(page));
@@ -102,8 +123,12 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
     }
   }, [api, cursor, loadingMore, state.status, onUnauthorized]);
 
-  const visible = useMemo(() => filterRecent(docs, query, scope, type), [docs, query, scope, type]);
-  const typesPresent = useMemo(() => new Set(docs.map((doc) => filterGroup(doc))), [docs]);
+  const sharedOutById = useMemo(() => sharedOutIndex(sharedOut), [sharedOut]);
+  // "Shared by me" is the server's own list, so it is whole before Recent has paged to its oldest row.
+  const mine = useMemo(() => sharedOutRows(sharedOut, docs, api.origin), [sharedOut, docs, api.origin]);
+  const pool = scope === "mine" ? mine : docs;
+  const visible = useMemo(() => filterRecent(pool, query, scope, type), [pool, query, scope, type]);
+  const typesPresent = useMemo(() => new Set(pool.map((doc) => filterGroup(doc))), [pool]);
   const sections = useMemo(() => sectionRecent(visible, now), [visible, now]);
   const sharedCount = useMemo(() => docs.filter((doc) => doc.shared).length, [docs]);
 
@@ -124,19 +149,22 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
         />
         {query ? <button type="button" className="m-search-clear" aria-label="Clear search" onClick={() => setQuery("")}><ClearIcon size={17} /></button> : null}
       </label>
-      <div className="m-segmented" role="tablist" aria-label="Which documents">
-        {(["all", "shared"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={scope === value}
-            className={scope === value ? "is-selected" : ""}
-            onClick={() => { if (scope !== value) { haptics.selection(); setScope(value); } }}
-          >
-            {value === "all" ? "All" : `Shared with you${sharedCount ? ` (${sharedCount})` : ""}`}
-          </button>
-        ))}
+      <div className="m-segmented m-segmented-fit" role="tablist" aria-label="Which documents">
+        {SCOPES.map(({ id, label }) => {
+          const total = id === "shared" ? sharedCount : id === "mine" ? mine.length : 0;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={scope === id}
+              className={scope === id ? "is-selected" : ""}
+              onClick={() => { if (scope !== id) { haptics.selection(); setScope(id); } }}
+            >
+              {total ? `${label} (${total})` : label}
+            </button>
+          );
+        })}
       </div>
       <div className="m-chips" role="radiogroup" aria-label="Type of document">
         {DOC_TYPE_FILTERS.filter((item) => item.id === "all" || item.id === type || typesPresent.has(item.id)).map((item) => (
@@ -167,7 +195,7 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
         </>
       }
       onRefresh={load}
-      onNearEnd={cursor ? () => void loadMore() : undefined}
+      onNearEnd={cursor && scope !== "mine" ? () => void loadMore() : undefined}
     >
       {requestCount > 0 && onRequests ? (
         <button type="button" className="m-requests-entry" onClick={onRequests}>
@@ -197,15 +225,15 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
       ) : null}
       {docs.length > 0 && visible.length === 0 ? (
         <div className="m-empty m-empty-compact">
-          <h2>{query || type !== "all" ? "No matches" : "Nothing shared with you yet"}</h2>
-          <p>{query ? `No document names match "${query}".` : type !== "all" ? "No documents of that type here." : "When someone shares a document with this account, it appears here."}</p>
+          <h2>{query || type !== "all" ? "No matches" : scope === "mine" ? "Nothing shared by you yet" : "Nothing shared with you yet"}</h2>
+          <p>{query ? `No document names match "${query}".` : type !== "all" ? "No documents of that type here." : scope === "mine" ? "When you share a document with someone, it appears here." : "When someone shares a document with this account, it appears here."}</p>
         </div>
       ) : null}
       {sections.map((section) => (
         <section key={section.title} className="m-list-section" aria-label={section.title}>
           <h2 className="m-list-heading">{section.title}</h2>
           <ul className="m-list">
-            {section.docs.map((doc) => <DocRow key={`${doc.store}:${doc.id}`} doc={doc} now={now} onOpen={onOpen} />)}
+            {section.docs.map((doc) => <DocRow key={`${doc.store}:${doc.id}`} doc={doc} sharedOut={doc.store === "docs" ? sharedOutById.get(doc.id) : undefined} now={now} onOpen={onOpen} />)}
           </ul>
         </section>
       ))}
@@ -214,9 +242,10 @@ export function RecentScreen({ api, onOpen, onSettings, onNew, onRequests, onUna
   );
 }
 
-function DocRow({ doc, now, onOpen }: { doc: RecentDoc; now: number; onOpen: (doc: RecentDoc) => void }) {
+function DocRow({ doc, sharedOut, now, onOpen }: { doc: RecentDoc; sharedOut?: SharedOutDoc; now: number; onOpen: (doc: RecentDoc) => void }) {
   const badge = agentBadge(doc);
-  const shared = sharedLabel(doc);
+  // Shared with this account, or owned and shared with others: never both.
+  const shared = sharedLabel(doc) ?? sharedOutLabel(sharedOut);
   return (
     <li>
       <button type="button" className="m-row" onClick={() => onOpen(doc)}>
@@ -225,7 +254,7 @@ function DocRow({ doc, now, onOpen }: { doc: RecentDoc; now: number; onOpen: (do
           <span className="m-row-title">{displayName(doc.name)}</span>
           <span className="m-row-meta">
             {badge ? <span className="m-badge m-badge-agent"><SparkleIcon size={11} />{badge}</span> : null}
-            {shared ? <span className="m-row-shared"><PeopleIcon size={13} />{shared}</span> : null}
+            {shared ? <span className="m-row-shared"><PeopleIcon size={13} /><span>{shared}</span></span> : null}
             {!badge && !shared ? <span className="m-row-kind">{kindLabel(doc)}</span> : null}
           </span>
         </span>

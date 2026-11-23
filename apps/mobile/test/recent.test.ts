@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { RecentDoc } from "../src/lib/docs";
-import { agentBadge, displayName, filterRecent, mergeRecent, nextCursor, sectionRecent, sharedLabel, timeLabel } from "../src/lib/recent";
+import {
+  agentBadge, displayName, filterRecent, mergeRecent, nextCursor, parseSharedByMe, sectionRecent, sharedLabel, sharedOutIndex, sharedOutLabel,
+  sharedOutRows, timeLabel,
+} from "../src/lib/recent";
 
 const NOW = Date.parse("2026-10-25T15:00:00.000Z");
 
@@ -40,6 +43,53 @@ describe("recent list", () => {
   it("filters to what was shared with you", () => {
     expect(filterRecent([a, b, c, d], "", "shared").map((x) => x.id)).toEqual(["b"]);
     expect(filterRecent([a, b, c, d], "launch", "shared")).toEqual([]);
+  });
+
+  describe("shared by me", () => {
+    const answer = {
+      docs: [
+        { id: "a", name: "Launch brief.md", updated_at: "2026-10-25T14:50:00.000Z", memberCount: 2, pendingCount: 1, folder_id: null },
+        { id: "old", name: "Hiring plan.txt", updated_at: "2026-03-02T08:00:00.000Z", memberCount: 0, pendingCount: 2 },
+        { id: "solo", name: "One reader.md", updated_at: "2026-10-01T08:00:00.000Z", memberCount: 1, pendingCount: 0 },
+        // Left out: nobody on it, a bad id, no time, not an object.
+        { id: "none", name: "Nobody.md", updated_at: "2026-10-01T08:00:00.000Z", memberCount: 0, pendingCount: 0 },
+        { id: "../etc", name: "x.md", updated_at: "2026-10-01T08:00:00.000Z", memberCount: 1, pendingCount: 0 },
+        { id: "undated", name: "x.md", memberCount: 1, pendingCount: 0 },
+        "nonsense",
+      ],
+    };
+    const list = parseSharedByMe(answer);
+
+    it("reads the server's list and leaves out what it can't trust", () => {
+      expect(list.map((x) => x.id)).toEqual(["a", "old", "solo"]);
+      expect(list[0]).toEqual({ id: "a", name: "Launch brief.md", updatedAt: "2026-10-25T14:50:00.000Z", memberCount: 2, pendingCount: 1 });
+      expect(parseSharedByMe({ docs: [{ id: "x", name: "x.md", updated_at: "2026-10-01T08:00:00.000Z", memberCount: -3, pendingCount: "4" }] })).toEqual([]);
+      expect(() => parseSharedByMe({ error: "nope" })).toThrow();
+      expect(() => parseSharedByMe(null)).toThrow();
+    });
+
+    it("says who a document is shared with, as far as the server says: how many", () => {
+      const byId = sharedOutIndex(list);
+      expect(sharedOutLabel(byId.get("a"))).toBe("Shared with 2, invited 1");
+      expect(sharedOutLabel(byId.get("old"))).toBe("2 people invited");
+      expect(sharedOutLabel(byId.get("solo"))).toBe("Shared with 1 person");
+      expect(sharedOutLabel(byId.get("b"))).toBeNull();
+    });
+
+    it("lists every shared document, newest first, even one Recent hasn't paged to", () => {
+      const rows = sharedOutRows(list, [a, b, c, d], "https://api.markiedocs.com");
+      expect(rows.map((x) => x.id)).toEqual(["a", "solo", "old"]);
+      // The loaded row is kept as it is, with what only Recent knows.
+      expect(rows[0]).toBe(a);
+      expect(rows[2]).toMatchObject({ store: "docs", format: "text", kind: "text", role: "owner", shared: false, privateLink: "https://markiedocs.com/d/old" });
+    });
+
+    it("searches and filters by type inside the scope", () => {
+      const rows = sharedOutRows(list, [a], "https://api.markiedocs.com");
+      expect(filterRecent(rows, "hiring", "mine").map((x) => x.id)).toEqual(["old"]);
+      expect(filterRecent(rows, "", "mine", "text").map((x) => x.id)).toEqual(["old"]);
+      expect(filterRecent(rows, "", "mine").map((x) => x.id)).toEqual(["a", "solo", "old"]);
+    });
   });
 
   it("badges agent documents by name, or as an agent when unnamed", () => {

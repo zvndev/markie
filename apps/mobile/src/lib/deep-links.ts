@@ -9,6 +9,9 @@
 //
 // Anything else is not a document link. A query string (an invite's ?k=) is
 // ignored: the app reads through the signed-in account, never a link token.
+//
+// With no account, a /s link opens to read (a public share needs no session
+// anywhere) and a /d link waits for sign-in. See signedOutDestination.
 import { CLOUD_ORIGIN } from "@/lib/cloud-origin";
 import { DOC_ID, PUBLIC_TOKEN } from "./docs";
 import { isMarkieCloud } from "./server-origin";
@@ -19,6 +22,10 @@ export const CLAIMED_HOSTS = ["api.markiedocs.com", "markiedocs.com", "www.marki
 export type LinkTarget =
   | { kind: "doc"; id: string; origin: string | null }
   | { kind: "public"; token: string; origin: string | null };
+
+export type PublicTarget = Extract<LinkTarget, { kind: "public" }>;
+/** A public share on a known server: what the signed-out reader shows. */
+export type PinnedPublicTarget = PublicTarget & { origin: string };
 
 function routeFromPath(path: string, origin: string | null): LinkTarget | null {
   const match = /^\/([ds])\/([^/]+)\/?$/.exec(path);
@@ -93,6 +100,18 @@ export function resolveForSession(target: LinkTarget, sessionOrigin: string): Re
   return { ok: false, message: `This link is for ${where}, and you're signed in to a different server. Sign out and sign in to ${where} to open it.` };
 }
 
+/**
+ * Where a link goes when nobody is signed in. A public share opens to read,
+ * on the server the link names or, for a markie-mobile:// link that names
+ * none, the server the sign-in screen is set to. A private document returns
+ * null: it waits for sign-in, because the server decides who may read it and
+ * can only do that for an account.
+ */
+export function signedOutDestination(target: LinkTarget, preferredOrigin: string): PinnedPublicTarget | null {
+  if (target.kind !== "public") return null;
+  return { ...target, origin: target.origin ?? preferredOrigin };
+}
+
 /** The app-scheme form of a target, for the in-app route and for tests. */
 export function appLinkFor(target: LinkTarget): string {
   return target.kind === "doc" ? `${APP_SCHEME}://d/${encodeURIComponent(target.id)}` : `${APP_SCHEME}://s/${encodeURIComponent(target.token)}`;
@@ -133,14 +152,7 @@ export function clearPendingLink(storage: Pick<Storage, "removeItem">): void {
   }
 }
 
-export function takePendingLink(storage: PendingStorage, now = Date.now()): LinkTarget | null {
-  let raw: string | null = null;
-  try {
-    raw = storage.getItem(PENDING_LINK_KEY);
-    storage.removeItem(PENDING_LINK_KEY);
-  } catch {
-    return null;
-  }
+function readPendingLink(raw: string | null, now: number): LinkTarget | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as { link?: unknown; origin?: unknown; at?: unknown };
@@ -154,6 +166,26 @@ export function takePendingLink(storage: PendingStorage, now = Date.now()): Link
   } catch {
     return null;
   }
+}
+
+/** The waiting link, left where it is. */
+export function peekPendingLink(storage: Pick<Storage, "getItem">, now = Date.now()): LinkTarget | null {
+  try {
+    return readPendingLink(storage.getItem(PENDING_LINK_KEY), now);
+  } catch {
+    return null;
+  }
+}
+
+export function takePendingLink(storage: PendingStorage, now = Date.now()): LinkTarget | null {
+  let raw: string | null = null;
+  try {
+    raw = storage.getItem(PENDING_LINK_KEY);
+    storage.removeItem(PENDING_LINK_KEY);
+  } catch {
+    return null;
+  }
+  return readPendingLink(raw, now);
 }
 
 /** What an in-document link does when tapped. */

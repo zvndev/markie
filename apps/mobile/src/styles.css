@@ -432,6 +432,26 @@ textarea:not(.m-editor-text):focus-visible {
   box-shadow: 0 1px 3px rgb(15 23 42 / 0.12), 0 0 0 0.5px rgb(15 23 42 / 0.06);
 }
 
+/* Three scopes on Recent: each tab as wide as its words, so "All" gives room to the long ones. */
+.m-segmented-fit button {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-row-shared svg {
+  flex: none;
+}
+
+.m-row-shared span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .m-segmented-full button {
   min-height: 34px;
   font-size: 14px;
@@ -511,10 +531,13 @@ textarea:not(.m-editor-text):focus-visible {
   line-clamp: 2;
 }
 
+/* A badge and a shared line that don't fit side by side take a line each:
+   "from Claude Code" beside "Shared with 2 people" was cut off at "Shared". */
 .m-row-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 3px 8px;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -528,6 +551,7 @@ textarea:not(.m-editor-text):focus-visible {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -949,6 +973,58 @@ textarea:not(.m-editor-text):focus-visible {
   flex: none;
   margin-top: 1px;
   color: var(--m-brand);
+}
+
+.m-callout-link {
+  display: block;
+  min-height: 32px;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--m-tint);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* ── A public share, read signed out ───────────────────────────────────── */
+
+.m-guest {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.m-guest-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The bar below owns the bottom safe area. */
+.m-guest-screen .m-screen-body:not(.is-fill) {
+  padding-bottom: 24px;
+}
+
+.m-guest-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px calc(var(--m-gutter) + var(--sar)) calc(10px + var(--sab)) calc(var(--m-gutter) + var(--sal));
+  border-top: 0.5px solid var(--m-separator);
+  background: var(--background);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.m-guest-bar .m-button {
+  flex: none;
 }
 
 .m-advanced {

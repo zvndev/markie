@@ -1,5 +1,8 @@
-# Deep links while signed in: a document on someone else's account (403) and
-# one that doesn't exist (404). Both offer the way back, not a retry.
+# Deep links while signed in: a document on someone else's account (403), one
+# that doesn't exist (404), and a public share. The first two offer the way
+# back, not a retry. The signed-out half (a public share opens to read, a
+# private document waits for sign-in) is at the end of e2e/settings.yaml,
+# which is the flow that signs out.
 # Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/links.yaml
 appId: com.zvn.markie.mobile
 ---
@@ -35,3 +38,18 @@ appId: com.zvn.markie.mobile
 - assertNotVisible: "Try again"
 - waitForAnimationToEnd
 - takeScreenshot: ${OUT}/${NAME}-10-link-404
+- tapOn:
+    text: "Back to Recent"
+    index: 1
+- waitForAnimationToEnd
+# A public share, signed in: the reading screen, with the account's own actions.
+- openLink: "markie-mobile://s/pub_launch_brief_demo_token"
+- tapOn:
+    text: "Open"
+    optional: true
+- extendedWaitUntil:
+    visible: "Public link"
+    timeout: 10000
+- assertNotVisible: "Sign in to edit, comment or share."
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-11-link-public

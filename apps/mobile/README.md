@@ -4,7 +4,7 @@ A Capacitor 8 app that opens Markie Cloud documents on a phone, including the on
 It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contract").
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
-- Screens: Sign in (email code), Recent (search, "Shared with you", "Shared by me" and type filters), Document (markdown, text,
+- Screens: Sign in (email code, password, Google and Apple), Recent (search, "Shared with you", "Shared by me" and type filters), Document (markdown, text,
   Darkmown), Word/RTF/OpenDocument, Editor (rich, source, live), Comments, Share, New document, an
   incoming file, Settings.
 - The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key
@@ -175,6 +175,35 @@ In the desktop browser (`npm run dev` only), `http://localhost:5174/?link=<url>`
 A document the user cannot read shows the server's message and a way back to Recent.
 An https link on a Markie host that the app cannot route (a raw download) opens in the default browser.
 Any other URL another app sends is ignored.
+
+## Signing in
+
+The sign-in screen offers an emailed code, the account's password ("Use a password instead"), and
+Google and Apple where the chosen server offers them. No account is created with a password on the
+phone: a new address signs in with a code.
+
+Google and Apple (`src/lib/provider-sign-in.ts`, `server/src/mobile-auth.ts`):
+
+- The app asks the server what it supports (`GET /api/server-info`). It shows Google or Apple only
+  when the answer has `signIn.mobile: true` and names that provider. A server that does not answer,
+  or one from before the hand-off, gets neither. This holds for a self-hosted server under Advanced.
+- On iOS, Google shows only where Apple shows too, with Apple first (App Store guideline 4.8).
+- The provider's screen opens in the phone's browser, never in a web view inside the app.
+- The app makes a random secret and keeps it in the Keychain or Keystore. The browser is sent to
+  `/auth/mobile-start` with the secret's SHA-256 and a random state.
+- After the provider, the server's page shows who signed in and a "Return to Markie" button. Its
+  link is `markie-mobile://auth?code=...&state=...&iss=...`. The code lasts two minutes and works
+  once. The link never carries a session token.
+- The app accepts the link only when the state is its own and `iss` is the server it started on.
+  It then posts the code and the secret to `/auth/mobile-exchange` on that server and gets the
+  session back over HTTPS. Any other link is ignored, and a sign-in under way is left alone.
+
+A link that leaks, or that another app receives, is a code with no secret. It opens nothing, and
+trying it spends it. The result goes through the same `signedIn` path as every other sign-in, so the
+offline store's rules for a changed account hold.
+
+In the desktop browser (`npm run dev` only), a `markie-dev-link` window event carrying the link
+stands in for the tap, without the reload that would lose the secret.
 
 ## Writing
 

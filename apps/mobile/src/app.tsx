@@ -21,6 +21,7 @@ import {
 } from "./lib/deep-links";
 import { IncomingFileError, isIncomingFileUrl, readIncomingFile, type IncomingFile } from "./lib/incoming-file";
 import { createSessionStore, type SecureKeyValue, type StoredSession } from "./lib/session";
+import { ProviderSignInError, completeProviderSignIn, isAuthReturnLink } from "./lib/provider-sign-in";
 import { createOfflineStore, platformOfflineBackend, type OfflineSession } from "./lib/offline-store";
 import { createOfflineApi, offlineOf } from "./lib/offline-api";
 import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
@@ -228,6 +229,9 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     }
   }, [openFile, showToast]);
 
+  // A markie-mobile://auth link that came in, until it is dealt with below.
+  const [authReturn, setAuthReturn] = useState<string | null>(null);
+
   // Links from outside: universal links, app links and markie-mobile://.
   const lastUrl = useRef<{ url: string; at: number } | null>(null);
   const handleIncomingUrl = useCallback((url: string) => {
@@ -236,6 +240,8 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     if (lastUrl.current && lastUrl.current.url === url && now - lastUrl.current.at < 3000) return;
     lastUrl.current = { url, at: now };
     if (isIncomingFileUrl(url)) { void receiveFile(url); return; }
+    // The way back from Google or Apple. Finished further down, by signedIn.
+    if (isAuthReturnLink(url)) { setAuthReturn(url); return; }
     const target = parseMarkieLink(url, sessionRef.current?.origin ?? null);
     if (!target) {
       // Android app links can only claim path prefixes, so a /d/<id>/raw or
@@ -276,6 +282,11 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     if (!import.meta.env.DEV || native || !sessionKnown) return;
     const link = new URLSearchParams(window.location.search).get("link");
     if (link) handleIncomingUrl(link);
+    // The same door without a reload, for a link that answers something this
+    // page started (a Google sign-in, whose secret a reload would lose).
+    const onLink = (event: Event) => { const sent = (event as CustomEvent<unknown>).detail; if (typeof sent === "string") handleIncomingUrl(sent); };
+    window.addEventListener("markie-dev-link", onLink);
+    return () => window.removeEventListener("markie-dev-link", onLink);
   }, [native, sessionKnown, handleIncomingUrl]);
 
   const pop = useCallback(() => setRoutes((stack) => (stack.length > 1 ? stack.slice(0, -1) : stack)), []);
@@ -403,6 +414,19 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     else if (pending) openTarget(pending, { replaceStack: true });
   }, [openFile, openTarget, sessionStore, offlineStore]);
 
+  // Google or Apple handed back. The link carries a one-use code, never a
+  // session: lib/provider-sign-in.ts trades it, with the secret this phone
+  // kept, for the session, and the result takes the same road as every other
+  // sign-in. A link nobody here is waiting for is dropped without a word.
+  useEffect(() => {
+    if (!authReturn || !sessionKnown) return;
+    setAuthReturn(null);
+    if (sessionRef.current) return;
+    void completeProviderSignIn(authReturn, { secure, transport })
+      .then((result) => (result ? signedIn(result) : undefined))
+      .catch((error) => setSignInNotice(error instanceof ProviderSignInError ? error.message : "Sign-in didn't finish. Try again."));
+  }, [authReturn, sessionKnown, secure, transport, signedIn]);
+
   const setThemeMode = useCallback((mode: ThemeMode) => {
     saveThemeMode(mode);
     setThemeModeState(mode);
@@ -430,6 +454,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       <>
         <SignInScreen
           transport={transport}
+          secure={secure}
           initialOrigin={preferredOrigin}
           pendingLink={hasPending}
           onReadPending={hasPending && waitingPublic ? () => openSignedOut(waitingPublic) : undefined}

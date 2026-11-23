@@ -247,10 +247,13 @@ describe("the links iOS and Android hand over", () => {
     expect(wellKnown).not.toContain("/download");
   });
 
-  it("the custom scheme takes d and s only", () => {
+  it("the custom scheme takes documents, shares and the way back from sign-in, nothing else", () => {
     const scheme = /<string name="custom_url_scheme">([^<]+)<\/string>/.exec(read("../android/app/src/main/res/values/strings.xml"))?.[1];
     expect(scheme).toBe(APP_SCHEME);
     const block = manifest.split("<intent-filter").find((part) => part.includes("@string/custom_url_scheme")) ?? "";
-    expect(attrs(block, "host")).toEqual(["d", "s"]);
+    expect(attrs(block, "host")).toEqual(["d", "s", "auth"]);
+    // The sign-in link is never read as a document, whatever it carries.
+    expect(parseMarkieLink("markie-mobile://auth?code=abc&state=def")).toBeNull();
+    expect(parseMarkieLink("markie-mobile://auth/d/doc-1")).toBeNull();
   });
 });

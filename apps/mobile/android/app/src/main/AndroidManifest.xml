@@ -40,7 +40,10 @@
                 <data android:pathPrefix="/s/" />
             </intent-filter>
 
-            <!-- markie-mobile://d/<id> and markie-mobile://s/<token> -->
+            <!-- markie-mobile://d/<id> and markie-mobile://s/<token>, and
+                 markie-mobile://auth, the way back from Google or Apple
+                 sign-in. That link carries a one-use code and never a
+                 session (src/lib/provider-sign-in.ts). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -48,6 +51,7 @@
                 <data android:scheme="@string/custom_url_scheme" />
                 <data android:host="d" />
                 <data android:host="s" />
+                <data android:host="auth" />
             </intent-filter>
 
             <!-- "Open with Markie" for a document from Gmail, Drive or Files.

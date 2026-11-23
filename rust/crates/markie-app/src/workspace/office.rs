@@ -190,7 +190,7 @@ fn doc_text(raw: &str) -> String {
 
 fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>) -> (Entity<WordView>, Subscription) {
     let view = cx.new(|cx| WordView::new(editor, window, cx));
-    let subscription = cx.subscribe(&view, |this: &mut Workspace, view, event: &WordViewEvent, cx| match event {
+    let subscription = cx.subscribe_in(&view, window, |this: &mut Workspace, view, event: &WordViewEvent, window, cx| match event {
         WordViewEvent::RenderFailed(detail) => this.show_document_failure(detail, cx),
         WordViewEvent::Changed => {
             this.on_office_changed(cx);
@@ -201,6 +201,7 @@ fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>
             view.update(cx, |v, _| v.set_zoom(1.0));
             cx.notify();
         }
+        WordViewEvent::History => this.on_show_history(&crate::actions::ShowHistory, window, cx),
         WordViewEvent::Zoom(zoom) => {
             // Electron's presets (0.75, 1.25) are finer than the shared
             // setting's tenths; the Word view keeps the exact preset.
@@ -526,8 +527,77 @@ impl Workspace {
     }
 }
 
-pub(super) fn render(office: &OfficeDoc, zoom: f32, cx: &mut Context<Workspace>) -> AnyElement {
-    office.view.update(cx, |view, _| view.set_zoom(zoom));
+/// Electron's `.docs-status` wording (`document-workspace.tsx`): whether
+/// the file holds the latest words, and the hover detail.
+pub(super) fn file_status(untitled: bool, dirty: bool) -> (&'static str, &'static str) {
+    if untitled {
+        ("Not saved to a file yet", "Kept safe on this Mac as you type. Save file to choose where it goes.")
+    } else if dirty {
+        ("Edited", "Your changes are kept safe on this Mac. Save file to write them to the file.")
+    } else {
+        ("Saved", "Saved")
+    }
+}
+
+/// The right side of the strip: `49 words · DOCX`, and a note past the
+/// first million characters (UTF-16 units, as JavaScript counts them).
+pub(super) fn word_summary(text: &str, format: FormatKind) -> String {
+    let words = text.split_whitespace().count();
+    let format = match format {
+        FormatKind::Docx => "DOCX",
+        FormatKind::Rtf => "RTF",
+        FormatKind::Odt => "ODT",
+        _ => "DOC",
+    };
+    let long = text.encode_utf16().count() > 1024 * 1024;
+    format!("{words} words · {format}{}", if long { " · First 1M characters searchable" } else { "" })
+}
+
+/// `color-mix(in srgb, a, b share)`.
+fn mix(a: Hsla, b: Hsla, share: f32) -> Hsla {
+    let (a, b) = (a.to_rgb(), b.to_rgb());
+    let at = |x: f32, y: f32| x * (1. - share) + y * share;
+    Rgba { r: at(a.r, b.r), g: at(a.g, b.g), b: at(a.b, b.b), a: at(a.a, b.a) }.into()
+}
+
+/// Electron's `.docs-status` footer under the page: 38 px with a top rule
+/// of the border mixed 10% toward the text colour, 18 px side padding and
+/// gap, 12 px muted text. It follows every edit and save.
+fn status_strip(office: &OfficeDoc, untitled: bool, format: FormatKind, cx: &mut Context<Workspace>) -> AnyElement {
+    let theme = cx.theme().clone();
+    let view = office.view.read(cx);
+    let (label, detail) = file_status(untitled, view.editor.is_dirty());
+    let summary = word_summary(&view.editor.rich().text, format);
+    h_flex()
+        .id("office-status")
+        .flex_none()
+        .h(px(38.))
+        .border_t_1()
+        .border_color(mix(theme.border, theme.foreground, 0.1))
+        .bg(theme.background)
+        .px(px(18.))
+        .gap(px(18.))
+        .text_size(px(12.))
+        .text_color(theme.muted_foreground)
+        .child(
+            div()
+                .id("office-status-file")
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(label)
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(detail).build(window, cx)),
+        )
+        .child(div().flex_none().child(summary))
+        .into_any_element()
+}
+
+pub(super) fn render(office: &OfficeDoc, untitled: bool, format: FormatKind, zoom: f32, cx: &mut Context<Workspace>) -> AnyElement {
+    let history = matches!(office.source, Source::Rich);
+    office.view.update(cx, |view, _| {
+        view.set_zoom(zoom);
+        view.history = history;
+    });
     let theme = cx.theme().clone();
     let banner = match &office.source {
         Source::Rich => None,
@@ -545,7 +615,32 @@ pub(super) fn render(office: &OfficeDoc, zoom: f32, cx: &mut Context<Workspace>)
                 }),
         ),
     };
-    v_flex().size_full().children(banner).child(div().flex_1().min_h_0().child(office.view.clone())).into_any_element()
+    let status = matches!(office.source, Source::Rich).then(|| status_strip(office, untitled, format, cx));
+    v_flex().size_full().children(banner).child(div().flex_1().min_h_0().child(office.view.clone())).children(status).into_any_element()
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use ::core::prelude::v1::test;
+
+    #[test]
+    fn the_strip_says_whether_the_file_has_the_latest_words() {
+        assert_eq!(file_status(false, false).0, "Saved");
+        assert_eq!(file_status(false, true).0, "Edited");
+        assert_eq!(file_status(true, false).0, "Not saved to a file yet");
+        assert_eq!(file_status(true, true).0, "Not saved to a file yet");
+        assert!(file_status(false, true).1.starts_with("Your changes are kept safe"));
+    }
+
+    #[test]
+    fn words_count_like_electrons_whitespace_split() {
+        assert_eq!(word_summary("  Two\nwords  ", FormatKind::Docx), "2 words · DOCX");
+        assert_eq!(word_summary("", FormatKind::Rtf), "0 words · RTF");
+        assert_eq!(word_summary("a\tb c", FormatKind::Odt), "3 words · ODT");
+        let long = "x".repeat(1024 * 1024 + 1);
+        assert_eq!(word_summary(&long, FormatKind::Docx), "1 words · DOCX · First 1M characters searchable");
+    }
 }
 
 use gpui_kit::prelude::FluentBuilder as _;

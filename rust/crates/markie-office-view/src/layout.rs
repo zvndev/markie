@@ -152,6 +152,89 @@ pub struct BreakHint {
     pub after: bool,
 }
 
+impl BreakHint {
+    /// Electron's marker is a block inside the run span, so Chromium keeps a
+    /// line box on each side of it: a break that opens the text leaves an
+    /// empty line above the marker, and one that ends it leaves an empty
+    /// line below. A break inside the text has text on both sides.
+    pub fn empty_line_before(self) -> bool {
+        self.before
+    }
+
+    pub fn empty_line_after(self) -> bool {
+        self.after
+    }
+
+    /// The height a break adds to its paragraph in CSS pixels at 100% zoom:
+    /// `.docs-page-break-marker` (20 px tall, 10 px margins) and its empty
+    /// line of `line_px`.
+    pub fn added_px(self, line_px: f32) -> f32 {
+        if !self.before && !self.after {
+            return 0.0;
+        }
+        BREAK_MARKER_PX + 2.0 * BREAK_MARGIN_PX + line_px
+    }
+}
+
+/// `.docs-page-break-marker`: 20 px tall with 10 px above and below.
+pub const BREAK_MARKER_PX: f32 = 20.0;
+pub const BREAK_MARGIN_PX: f32 = 10.0;
+
+/// `.docs-workspace .docs-word-image`: a block button with 10 px vertical
+/// margins and the workspace buttons' 1 px border.
+pub const PICTURE_MARGIN_PX: f32 = 10.0;
+pub const PICTURE_BORDER_PX: f32 = 1.0;
+
+/// CSS margin collapsing between siblings: the gap is the larger margin, so
+/// a box whose neighbour already left `previous` adds only the excess.
+pub fn collapsed(margin: f32, previous: f32) -> f32 {
+    (margin - previous).max(0.0)
+}
+
+/// `.docs-word-table td`: 7 px padding, 1 px collapsed borders, 60 px min.
+pub const CELL_PADDING_PX: f32 = 7.0;
+pub const CELL_MIN_PX: f32 = 60.0;
+
+/// Chromium's automatic table layout when the table is wider than its
+/// content: every column gets its max-content width (cell padding and
+/// border included, never under the cell minimum) and the spare width is
+/// shared in proportion to those widths. The result is each column's share
+/// of the table width. `content` holds each column's widest unwrapped text.
+pub fn column_fractions(content: &[f32], zoom: f32) -> Vec<f32> {
+    let widths: Vec<f32> = content
+        .iter()
+        .map(|w| (w + (2.0 * CELL_PADDING_PX + 1.0) * zoom).max(CELL_MIN_PX * zoom))
+        .collect();
+    let total: f32 = widths.iter().sum();
+    if total <= 0.0 {
+        return vec![1.0 / content.len().max(1) as f32; content.len()];
+    }
+    widths.iter().map(|w| w / total).collect()
+}
+
+/// Electron's `::-webkit-scrollbar { width: 6px }` (`globals.css`): the
+/// scroller gives up 6 px of width once its content is taller than it.
+pub const SCROLLBAR_PX: f32 = 6.0;
+
+/// Where Chromium puts the scrollbar thumb: its top and length in a track
+/// `track` tall, for a viewport over `content` scrolled down by `offset`.
+/// None when nothing overflows.
+pub fn scrollbar_thumb(viewport: f32, content: f32, offset: f32, track: f32) -> Option<(f32, f32)> {
+    if viewport <= 0.0 || content <= viewport + 0.5 {
+        return None;
+    }
+    let len = (track * viewport / content).max(SCROLLBAR_PX).min(track);
+    let range = content - viewport;
+    Some((offset.clamp(0.0, range) / range * (track - len), len))
+}
+
+/// The scroll offset that puts the thumb's top at `top`.
+pub fn scrollbar_offset(viewport: f32, content: f32, top: f32, track: f32) -> f32 {
+    let Some((_, len)) = scrollbar_thumb(viewport, content, 0.0, track) else { return 0.0 };
+    let room = (track - len).max(1.0);
+    (top / room).clamp(0.0, 1.0) * (content - viewport)
+}
+
 pub fn break_hint(doc: &RichDocument, block: &Block) -> BreakHint {
     let Block::Paragraph(id) = block else { return BreakHint::default() };
     let mut hint = BreakHint::default();
@@ -238,6 +321,54 @@ mod tests {
     fn a_break_on_the_first_block_does_not_leave_a_blank_page() {
         let pages = paginate(&[10.0], &[BreakHint { before: true, after: false }], 500.0);
         assert_eq!(pages, vec![vec![0]]);
+    }
+
+    #[test]
+    fn a_break_keeps_a_line_on_its_open_side() {
+        let opens = BreakHint { before: true, after: false };
+        let ends = BreakHint { before: false, after: true };
+        assert!(opens.empty_line_before() && !opens.empty_line_after());
+        assert!(ends.empty_line_after() && !ends.empty_line_before());
+        // Electron's sample: Georgia 12 pt at line height 1.4 is 22.4 px, so
+        // the break adds 62.4 px; without the empty line it sat 22.4 px high.
+        assert!((opens.added_px(22.4) - 62.4).abs() < 0.001);
+        assert_eq!(BreakHint::default().added_px(22.4), 0.0);
+    }
+
+    #[test]
+    fn picture_margins_collapse_with_the_paragraph_above() {
+        // 8 pt after the paragraph is 10.67 px, more than the picture's 10.
+        let after = DEFAULT_AFTER_POINTS as f32 * PX_PER_POINT;
+        assert_eq!(collapsed(PICTURE_MARGIN_PX, after), 0.0);
+        assert_eq!(collapsed(PICTURE_MARGIN_PX, 0.0), 10.0);
+        // The sample's 120 px picture with the list after it: 10.67 above,
+        // a 122 px button, 10 below; it was 4 + 120 + 4 below the paragraph.
+        let block = after + collapsed(PICTURE_MARGIN_PX, after) + 120.0 + 2.0 * PICTURE_BORDER_PX + PICTURE_MARGIN_PX;
+        assert!((block - 142.667).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_scrollbar_thumb_follows_the_viewport() {
+        // The sample page view: 704.5 px of a 1116 px page column.
+        let (top, len) = scrollbar_thumb(704.5, 1116.0, 0.0, 704.5).unwrap();
+        assert_eq!(top, 0.0);
+        assert!((len - 444.7).abs() < 0.1);
+        let (bottom, _) = scrollbar_thumb(704.5, 1116.0, 411.5, 704.5).unwrap();
+        assert!((bottom + len - 704.5).abs() < 0.01);
+        assert!(scrollbar_thumb(700.0, 700.0, 0.0, 700.0).is_none());
+        assert!((scrollbar_offset(704.5, 1116.0, bottom, 704.5) - 411.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn table_columns_share_width_by_content() {
+        let fractions = column_fractions(&[36.0, 94.0, 89.0], 1.0);
+        // Name falls back to the 60 px minimum; the others are text + 15.
+        let expected = [60.0 / 273.0, 109.0 / 273.0, 104.0 / 273.0];
+        for (got, want) in fractions.iter().zip(expected) {
+            assert!((got - want).abs() < 0.0001, "{got} vs {want}");
+        }
+        assert_eq!(column_fractions(&[0.0, 0.0], 1.0), vec![0.5, 0.5]);
+        assert!(column_fractions(&[], 1.0).is_empty());
     }
 
     #[test]

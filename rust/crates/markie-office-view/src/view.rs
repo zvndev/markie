@@ -55,6 +55,8 @@ pub enum WordViewEvent {
     ZoomReset,
     /// The toolbar's zoom buttons stepped to this zoom.
     Zoom(f32),
+    /// The toolbar's History button: the host shows the version history.
+    History,
 }
 
 /// An open toolbar list.
@@ -134,6 +136,9 @@ pub struct WordView {
     scroll: ScrollHandle,
     pub mode: ViewMode,
     pub outline: bool,
+    /// The host keeps versions of this document: the toolbar shows
+    /// Electron's History button (`onHistory`).
+    pub history: bool,
     pub zoom: f32,
     pub paper: PaperTone,
     pub(crate) tool: Option<Tool>,
@@ -150,6 +155,9 @@ pub struct WordView {
     painted: Rc<RefCell<HashMap<String, Painted>>>,
     composition: Option<Composition>,
     dragging: bool,
+    /// Where the scrollbar thumb was grabbed, while it is dragged.
+    thumb_drag: Rc<Cell<Option<f32>>>,
+    thumb_hover: Rc<Cell<bool>>,
     goal_x: Option<Pixels>,
     reveal: Rc<Cell<bool>>,
     images: HashMap<String, Arc<Image>>,
@@ -249,6 +257,7 @@ impl WordView {
             scroll: ScrollHandle::new(),
             mode,
             outline: false,
+            history: false,
             zoom: 1.0,
             paper: PaperTone::Theme,
             tool: None,
@@ -263,6 +272,8 @@ impl WordView {
             painted: Rc::new(RefCell::new(HashMap::new())),
             composition: None,
             dragging: false,
+            thumb_drag: Rc::new(Cell::new(None)),
+            thumb_hover: Rc::new(Cell::new(false)),
             goal_x: None,
             reveal: Rc::new(Cell::new(false)),
             images: HashMap::new(),
@@ -710,7 +721,8 @@ impl WordView {
 
     /// A paragraph with Electron's page-break marker inside it: the marker
     /// is a block inside the run, so a break at the end of the text leaves
-    /// the marker and then an empty line before the paragraph's space after.
+    /// the marker and then an empty line before the paragraph's space after,
+    /// and a break that opens the text leaves an empty line above the marker.
     fn paragraph_with_break(&self, paragraph: &Paragraph, colors: &PageColors, collapse: Pixels, hint: BreakHint) -> AnyElement {
         let zoom = self.zoom;
         let look = layout::paragraph_look(paragraph);
@@ -747,26 +759,32 @@ impl WordView {
                         .child(marker),
                 )
             })
-            .when(hint.before, |d| d.child(self.break_marker(colors)))
+            .when(hint.empty_line_before(), |d| d.child(div().h(line_height)).child(self.break_marker(colors)))
             .child(div().w_full().min_h(size * 1.4).child(flow))
-            .when(hint.after, |d| d.child(self.break_marker(colors)).child(div().h(line_height)))
+            .when(hint.empty_line_after(), |d| d.child(self.break_marker(colors)).child(div().h(line_height)))
             .into_any_element()
     }
 
-    fn picture_element(&self, id: &str, width_points: f64, height_points: f64, colors: &PageColors, cx: &mut Context<Self>) -> AnyElement {
+    /// Electron's picture button (`.docs-workspace .docs-word-image`): a
+    /// block that shrinks to the picture, with a 1 px border and 10 px
+    /// margins outside it. `top` is the top margin left after collapsing.
+    fn picture_element(&self, id: &str, width_points: f64, height_points: f64, top: Pixels, colors: &PageColors, cx: &mut Context<Self>) -> AnyElement {
         let zoom = self.zoom;
         let paragraph = self.editor.rich().images.iter().find(|i| i.id == id).map(|i| i.paragraph_id.clone()).unwrap_or_default();
         let selected = self.editor.focus.paragraph_id == paragraph;
         let picture = self.images.get(id).cloned();
-        div()
+        let border = px(layout::PICTURE_BORDER_PX * zoom);
+        let button = div()
             .id(SharedString::from(format!("picture-{id}")))
-            .py(px(4. * zoom))
+            .flex_none()
+            .max_w_full()
+            .border(border)
+            .border_color(if selected { colors.link } else { transparent_black() })
             .child(
                 div()
                     .w(px(width_points as f32 * PX_PER_POINT * zoom))
                     .h(px(height_points as f32 * PX_PER_POINT * zoom))
                     .max_w_full()
-                    .when(selected, |d| d.border_2().border_color(colors.link))
                     .map(|d| match picture {
                         Some(image) => d.child(img(ImageSource::Image(image)).size_full().object_fit(ObjectFit::Contain)),
                         None => d.bg(colors.rule).child("Picture"),
@@ -781,8 +799,110 @@ impl WordView {
                     cx.stop_propagation();
                     this.changed(window, cx);
                 }),
+            );
+        h_flex().w_full().pt(top).pb(px(layout::PICTURE_MARGIN_PX * zoom)).child(button).into_any_element()
+    }
+
+    /// Electron's `::-webkit-scrollbar`: a 6 px gutter beside the page
+    /// with an `--accent` thumb, rounded 3 px, `--muted` under the pointer.
+    /// Dragging the thumb scrolls; a click on the track pages toward it.
+    fn scrollbar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let (accent, hover) = (theme.accent, theme.muted_foreground);
+        let scroll = self.scroll.clone();
+        let drag = self.thumb_drag.clone();
+        let hovered = self.thumb_hover.clone();
+        div()
+            .id("word-scrollbar")
+            .flex_none()
+            .w(px(layout::SCROLLBAR_PX))
+            .h_full()
+            .bg(theme.secondary)
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let view = scroll.bounds().size.height.into();
+                        let content = view + f32::from(scroll.max_offset().y);
+                        let track: f32 = bounds.size.height.into();
+                        let Some((top, len)) = layout::scrollbar_thumb(view, content, -f32::from(scroll.offset().y), track) else { return };
+                        let thumb = Bounds::new(point(bounds.origin.x, bounds.origin.y + px(top)), size(bounds.size.width, px(len)));
+                        let lit = drag.get().is_some() || thumb.contains(&window.mouse_position());
+                        hovered.set(lit);
+                        window.paint_quad(fill(thumb, if lit { hover } else { accent }).corner_radii(px(3.)));
+                        let (scroll_down, drag_down) = (scroll.clone(), drag.clone());
+                        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                            if !phase.bubble() || event.button != MouseButton::Left || !bounds.contains(&event.position) {
+                                return;
+                            }
+                            if thumb.contains(&event.position) {
+                                drag_down.set(Some(f32::from(event.position.y - thumb.origin.y)));
+                            } else {
+                                let mut offset = scroll_down.offset();
+                                let page = px(view);
+                                offset.y = if event.position.y < thumb.origin.y { offset.y + page } else { offset.y - page };
+                                offset.y = offset.y.min(px(0.)).max(-scroll_down.max_offset().y);
+                                scroll_down.set_offset(offset);
+                            }
+                            window.refresh();
+                            cx.stop_propagation();
+                        });
+                        let (scroll_move, drag_move, hover_move) = (scroll.clone(), drag.clone(), hovered.clone());
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+                            if !phase.bubble() {
+                                return;
+                            }
+                            if let Some(grab) = drag_move.get() {
+                                if event.pressed_button != Some(MouseButton::Left) {
+                                    drag_move.set(None);
+                                } else {
+                                    let top = f32::from(event.position.y - bounds.origin.y) - grab;
+                                    let mut offset = scroll_move.offset();
+                                    offset.y = -px(layout::scrollbar_offset(view, content, top, track));
+                                    scroll_move.set_offset(offset);
+                                }
+                                window.refresh();
+                            } else if thumb.contains(&event.position) != hover_move.get() {
+                                window.refresh();
+                            }
+                        });
+                        let drag_up = drag.clone();
+                        window.on_mouse_event(move |_: &MouseUpEvent, _, window, _| {
+                            if drag_up.take().is_some() {
+                                window.refresh();
+                            }
+                        });
+                    },
+                )
+                .size_full(),
             )
             .into_any_element()
+    }
+
+    /// A paragraph's width on one unwrapped line, list indent included: the
+    /// max-content width a table cell gives it.
+    fn max_content_px(&self, paragraph: &Paragraph, colors: &PageColors, window: &Window) -> f32 {
+        let display = self.display_text(paragraph);
+        let indent = layout::paragraph_look(paragraph).indent_px * self.zoom;
+        let mut at = 0;
+        let mut widest = 0f32;
+        let mut line = 0f32;
+        for run in self.text_runs(paragraph, &display, colors) {
+            let end = (at + run.run.len).min(display.len());
+            let text = &display[at..end];
+            for (i, piece) in text.split('\n').enumerate() {
+                if i > 0 {
+                    widest = widest.max(line);
+                    line = 0.;
+                }
+                if !piece.is_empty() {
+                    let shaped = window.text_system().shape_line(piece.to_string().into(), run.size, &[TextRun { len: piece.len(), ..run.run.clone() }], None);
+                    line += f32::from(shaped.width);
+                }
+            }
+            at = end;
+        }
+        widest.max(line) + indent
     }
 
     /// The space a paragraph leaves below itself, for margin collapsing.
@@ -799,8 +919,9 @@ impl WordView {
             .border_t_1()
             .border_dashed()
             .border_color(colors.muted)
-            .text_size(px(9.))
-            .line_height(px(12.))
+            // 9 px Geist at its normal line height, scaled with the page.
+            .text_size(px(9. * self.zoom))
+            .line_height(px(10. * self.zoom))
             .text_center()
             .text_color(colors.muted)
             .child("Page break")
@@ -809,7 +930,7 @@ impl WordView {
 
     /// A block: a paragraph with its pictures and break marker, or a table.
     /// Returns the element and the space it leaves below itself.
-    fn block_element(&self, block: &Block, hint: BreakHint, collapse: Pixels, colors: &PageColors, cx: &mut Context<Self>) -> (AnyElement, Pixels) {
+    fn block_element(&self, block: &Block, hint: BreakHint, collapse: Pixels, colors: &PageColors, window: &Window, cx: &mut Context<Self>) -> (AnyElement, Pixels) {
         let zoom = self.zoom;
         let doc = self.editor.rich();
         match block {
@@ -821,30 +942,51 @@ impl WordView {
                     Vec::new()
                 };
                 let show_text = pictures.is_empty() || !paragraph.text.is_empty() || !paragraph.runs.iter().all(|r| r.page_breaks.is_empty());
-                let collapse = if pictures.is_empty() { collapse } else { px(0.) };
+                // Each picture's 10 px margins collapse with its neighbours':
+                // the first with the space the block above left, the next
+                // picture's or the text's with the 10 px below the last.
+                let margin = layout::PICTURE_MARGIN_PX * zoom;
+                let mut above = f32::from(collapse);
+                let mut elements = Vec::with_capacity(pictures.len());
+                for (pid, w, h) in &pictures {
+                    elements.push(self.picture_element(pid, *w, *h, px(layout::collapsed(margin, above)), colors, cx));
+                    above = margin;
+                }
+                let collapse = px(above);
                 let element = v_flex()
                     .w_full()
-                    .children(pictures.iter().map(|(pid, w, h)| self.picture_element(pid, *w, *h, colors, cx)))
+                    .children(elements)
                     .when(show_text, |d| d.child(self.paragraph_with_break(paragraph, colors, collapse, hint)))
                     .when(!show_text && (hint.before || hint.after), |d| d.child(self.break_marker(colors)))
                     .into_any_element();
-                let after = if show_text { self.after_px(paragraph) } else { px(0.) };
+                let after = if show_text { self.after_px(paragraph) } else { collapse };
                 (element, after)
             }
             Block::Table(id) => {
                 let Some(table) = doc.tables.iter().find(|t| &t.id == id) else { return (div().into_any_element(), collapse) };
-                let cell_pad = px(7. * zoom);
+                let cell_pad = px(layout::CELL_PADDING_PX * zoom);
+                let columns = table.rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
+                let mut content = vec![0f32; columns];
+                for row in &table.rows {
+                    for (column, cell) in row.cells.iter().enumerate() {
+                        for p in cell.paragraph_ids.iter().filter_map(|pid| doc.paragraph(pid)) {
+                            content[column] = content[column].max(self.max_content_px(p, colors, window));
+                        }
+                    }
+                }
+                let fractions = layout::column_fractions(&content, zoom);
                 let element = v_flex()
                     .w_full()
                     .border_l_1()
                     .border_t_1()
                     .border_color(colors.rule)
                     .children(table.rows.iter().map(|row| {
-                        h_flex().w_full().items_stretch().children(row.cells.iter().map(|cell| {
+                        let last = row.cells.len().saturating_sub(1);
+                        h_flex().w_full().items_stretch().children(row.cells.iter().enumerate().map(|(column, cell)| {
                             let mut previous = px(0.);
                             v_flex()
-                                .flex_1()
-                                .min_w(px(60. * zoom))
+                                .map(|d| if column == last { d.flex_1() } else { d.flex_none().w(relative(fractions.get(column).copied().unwrap_or(0.))) })
+                                .min_w(px(layout::CELL_MIN_PX * zoom))
                                 .border_r_1()
                                 .border_b_1()
                                 .border_color(colors.rule)
@@ -882,7 +1024,7 @@ impl WordView {
     /// The document on one sheet, as Electron draws it: the paper size,
     /// margins and shadow in Page view, a 960 px column in Continuous view.
     /// Explicit page breaks show as markers; the sheet is never split.
-    fn render_sheet(&self, colors: &PageColors, cx: &mut Context<Self>) -> AnyElement {
+    fn render_sheet(&self, colors: &PageColors, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let doc = self.editor.rich().clone();
         let zoom = self.zoom;
         let scale = PX_PER_POINT * zoom;
@@ -892,7 +1034,7 @@ impl WordView {
             .blocks
             .iter()
             .map(|block| {
-                let (element, after) = self.block_element(block, layout::break_hint(&doc, block), collapse, colors, cx);
+                let (element, after) = self.block_element(block, layout::break_hint(&doc, block), collapse, colors, window, cx);
                 collapse = after;
                 element
             })
@@ -1165,7 +1307,7 @@ impl WordView {
 
         // Group widths and the fitting rule from formatting-toolbar.tsx.
         let start_width = if caps.page_layout || caps.paragraph_formatting { 60.0 + 2.0 } else { 0.0 };
-        let groups: [(&str, f32); 9] = [
+        let groups: [(&str, f32); 10] = [
             ("selectors", if docx { 114.0 } else { 0.0 } + 106.0),
             ("colour", 40.0),
             ("lists", if docx { 60.0 } else { 0.0 }),
@@ -1174,6 +1316,7 @@ impl WordView {
             ("insert", if docx { 60.0 } else { 0.0 }),
             ("clear", 30.0),
             ("size", 60.0),
+            ("output", if self.history { 30.0 } else { 0.0 }),
             ("view", 100.0),
         ];
         let primary = 40.0 + 90.0;
@@ -1297,6 +1440,10 @@ impl WordView {
         let redo = editable && self.editor.can_redo();
         row.push(("history", button("word-undo", Some(icons::UNDO), None, "Undo", false, undo, menu).when(undo, |d| d.on_click(cx.listener(|this, _, window, cx| this.on_undo(&WordUndo, window, cx)))).into_any_element()));
         row.push(("history", button("word-redo", Some(icons::REDO), None, "Redo", false, redo, menu).when(redo, |d| d.on_click(cx.listener(|this, _, window, cx| this.on_redo(&WordRedo, window, cx)))).into_any_element()));
+        if self.history {
+            let menu = in_menu("output");
+            row.push(("output", button("word-history", Some(icons::HISTORY), None, "History", false, true, menu).on_click(cx.listener(|_, _, _, cx| cx.emit(WordViewEvent::History))).into_any_element()));
+        }
         if !compact {
             row.push(("history", divider().into_any_element()));
         }
@@ -1572,7 +1719,7 @@ impl WordView {
         let theme = cx.theme().clone();
         let colors = self.page_colors(cx);
         let available = available_commands(&self.editor);
-        let sheet = self.render_sheet(&colors, cx);
+        let sheet = self.render_sheet(&colors, window, cx);
         let content_width = {
             let doc = self.editor.rich();
             let page = if self.mode == ViewMode::Page { doc.page_layout.width_points as f32 * PX_PER_POINT * self.zoom } else { 0.0 };
@@ -1593,8 +1740,15 @@ impl WordView {
         // A read-only page has no caret, as Electron's non-editable paragraphs have none.
         let show_caret = focused && self.editor.can_mutate() && (self.editor.is_collapsed() || self.composition.is_some());
         let caret_color = colors.text;
+        let overflows = self.scroll.max_offset().y > px(0.5);
+        let overflow_scroll = self.scroll.clone();
         let overlay = canvas(
             move |_, window, _| {
+                // The scrollbar gutter follows the content's height, which
+                // is known only once the page is laid out.
+                if (overflow_scroll.max_offset().y > px(0.5)) != overflows {
+                    window.request_animation_frame();
+                }
                 let ready = std::mem::take(&mut *built.borrow_mut());
                 *painted.borrow_mut() = ready;
                 let caret = painted.borrow().get(&caret_paragraph).map(|p| p.layout.caret(caret_index));
@@ -1648,6 +1802,7 @@ impl WordView {
             // The sheet centers with auto margins, which never push a page
             // wider than the window past the left edge; the scroll area grows instead.
             .child(v_flex().min_w_full().min_h_full().w(content_width).p(px(30.)).child(sheet));
+        let surface = h_flex().flex_1().h_full().min_w_0().child(surface).when(overflows, |d| d.child(self.scrollbar(cx)));
 
         let editing = div()
             .key_context(CONTEXT)

@@ -90,9 +90,12 @@ Display:
 - Continuous view, one sheet up to 960 px wide. Outline view, a heading list beside the page that jumps to a heading.
 - Runs with bold, italic, underline, color, font family and size. Word's resolved styles win; headings fall back to fixed sizes when a file has no styles.
 - Paragraph alignment, spacing before and after, line spacing, bullet and numbered lists with levels.
-- Tables, with editable cells. PNG and JPEG pictures from the package bytes.
+- Tables, with editable cells. Columns share the table width the way Chromium's automatic table layout does: each column's widest unwrapped text plus padding, at least 60 px, scaled to fit (`layout::column_fractions`).
+- PNG and JPEG pictures from the package bytes, drawn as Electron's picture button: a 1 px border and 10 px margins that collapse with the paragraph above and the block below.
 - Links in the link color, opened with Cmd-click, or a plain click when the file is read-only.
-- Explicit page breaks start a new page. Continuous view marks them with a dashed rule.
+- Explicit page breaks show Electron's dashed "Page break" rule. As in Chromium, the rule keeps an empty line on its open side: above it when the break opens the paragraph, below it when the break ends it.
+- The page scrolls with Electron's 6 px scrollbar: it takes layout width once the page is taller than the view, and its `--accent` thumb can be dragged.
+- A strip under the page, Electron's `.docs-status`: "Saved", "Edited" or "Not saved to a file yet", with the hover detail, and the word count and format (`49 words · DOCX`). It follows every edit and save. The toolbar's History button opens the version history.
 - Comments and tracked changes in a margin beside each page, with Accept and Reject on each change. Paragraphs with pending changes get a change bar.
 - Light paper in dark mode by default, with a Theme paper toggle. Authored run colors are adapted to the paper on screen only, a port of `word-colors.ts`. Save keeps the authored colors.
 

@@ -2,14 +2,18 @@
 //! (`library.tsx` with `presentation="workspace"`, `cloud-view.tsx`,
 //! `library-document-filters.tsx` and `document-cloud-library.tsx`).
 //!
-//! One page, no tabs. Under the header: the area picker and the filters
-//! (search, document type, order). Then synced and shared files as one list,
-//! newest first, with a summary band, the source chips (All, Only me, Shared
-//! by me, Shared with me), and the share requests waiting for this account.
-//! Then the document snapshots, under their own heading.
+//! One page, no tabs, laid out to be calm (Markie RS's own layout; the
+//! rules and the words are Electron's). The header says the connection and
+//! the count. One toolbar row holds the name filter, whose documents (All,
+//! Only me, Shared by me, Shared with me), the area, type and order. Share
+//! requests wait in a one-line strip that opens. Then synced and shared
+//! files as cards (`doc_grid.rs`), newest first, and the document snapshots
+//! under their own heading.
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -22,9 +26,12 @@ use markie_core::formats::{self, FormatKind};
 use super::Workspace;
 use super::chrome::{icon, menu_panel};
 use super::cloud::{Scope, name};
-use super::dialog_chrome::{self, Tokens};
-use super::rail::{filter_field, format_badge, format_icon};
-use crate::themes::{self, Palette, hex, mix};
+use super::doc_grid::{self, CardEvent, DocCard, Grid, GridView, Mark, MarkTone, Section, Thumb};
+use super::doc_preview::{self, Lookup, Want};
+use super::rail::filter_field;
+use super::ui::{self, Kind, Tone};
+use crate::actions::{NewDocument, Open};
+use crate::themes::{self, Palette, mix};
 
 // ------------------------------------------------------------------ model
 
@@ -292,19 +299,6 @@ pub(super) fn band_text(total: usize, shown: usize, lists: Lists) -> String {
     }
 }
 
-/// The band beside the snapshot section (`scopedBand`).
-pub(super) fn scoped_band(total: usize, shown: usize, lists: Lists, searching: bool) -> String {
-    if total > 0 {
-        return band_text(total, shown, lists);
-    }
-    match lists {
-        Lists::Loading => "Checking file sync and sharing…".into(),
-        Lists::Incomplete => "Some synced or shared files didn't load".into(),
-        Lists::Ready if searching => "No synced or shared files match these filters.".into(),
-        Lists::Ready => "No synced or shared files yet.".into(),
-    }
-}
-
 /// `shareBadgeText`: "Shared with 2 · 1 invited".
 pub(super) fn share_badge_text(doc: &SharedByMeDoc) -> String {
     let mut bits = Vec::new();
@@ -342,7 +336,7 @@ pub(super) fn empty_copy(sources: &[Source], searching: bool) -> (String, &'stat
     if !phrases.is_empty() {
         return (format!("No documents{which} yet"), "Turn on more of the buttons above, or choose All.");
     }
-    ("Nothing in your cloud yet".into(), "Documents you sync, and docs people share with you, show up here.")
+    ("Nothing in your cloud yet".into(), "Documents you sync, and documents people share with you, show up here.")
 }
 
 /// `fileSize` in document-cloud-library.tsx.
@@ -431,53 +425,6 @@ pub(super) enum Menu {
 
 // ------------------------------------------------------------------ render
 
-/// `markie-cloud-chip` colours.
-fn chip(id: impl Into<ElementId>, on: bool, p: &Palette) -> Stateful<Div> {
-    let border = if on { mix(p.blue, hsla(0., 0., 0., 0.), 0.55) } else { mix(p.border, hsla(0., 0., 0., 0.), 0.85) };
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap(px(4.8))
-        .rounded_full()
-        .border_1()
-        .border_color(border)
-        .px(px(8.))
-        .py(px(2.56))
-        .text_size(px(10.5))
-        .line_height(rems(1.2 * 10.5 / 16.))
-        .text_color(if on { p.foreground } else { p.muted })
-        .when(on, |el| el.bg(p.blue.opacity(0.16)))
-        .hover(move |s| {
-            let s = s.text_color(p.foreground);
-            if on { s } else { s.border_color(p.foreground.opacity(0.22)) }
-        })
-        .cursor_pointer()
-}
-
-fn purple(p: &Palette) -> Hsla {
-    hex(if p.dark { "#d8b4fe" } else { "#6b21a8" })
-}
-
-/// `markie-cloud-source`.
-fn source_badge(source: Source, text: String, p: &Palette) -> Div {
-    let (color, border) = match source {
-        Source::ByMe => (p.blue, p.blue.opacity(0.45)),
-        Source::WithMe => (purple(p), purple(p).opacity(0.45)),
-        Source::OnlyMe => (p.muted, mix(p.border, hsla(0., 0., 0., 0.), 0.85)),
-    };
-    div()
-        .flex_none()
-        .rounded_full()
-        .border_1()
-        .border_color(border)
-        .px(px(5.6))
-        .text_size(px(9.5))
-        .line_height(px(9.5 * 1.45))
-        .text_color(color)
-        .child(text)
-}
-
 /// `.markie-select-button`, with an optional kicker before the value.
 pub(super) fn select_button(id: impl Into<ElementId>, kicker: Option<&str>, label: &str, open: bool, p: &Palette) -> Stateful<Div> {
     let bg = mix(p.background, p.surface2, 0.72);
@@ -502,31 +449,114 @@ pub(super) fn select_button(id: impl Into<ElementId>, kicker: Option<&str>, labe
         .child(icon("markie/select-chevron.svg", 13., if open { p.foreground } else { p.muted }))
 }
 
-fn sync_icon(state: Option<&'static str>, shared: bool, p: &Palette) -> Option<AnyElement> {
-    let (glyph, color, label) = if shared {
-        ("markie/sync-shared.svg", purple(p), "Shared")
-    } else {
-        match state? {
-            "Synced" => ("markie/sync-synced.svg", p.green, "Synced"),
-            "Not backed up" => ("markie/sync-unpushed.svg", p.yellow, "Not backed up"),
-            "Paused" => ("markie/sync-paused.svg", p.yellow, "Sync paused"),
-            "Conflict" => ("markie/sync-conflict.svg", p.red, "Conflict: review changes"),
-            "Update available" => ("markie/sync-behind.svg", p.blue, "Update available"),
-            _ => return None,
+/// What the header's chip says about the server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Connection {
+    Checking,
+    Connected,
+    /// The server could not be reached.
+    Offline,
+    /// It answered, but something did not load.
+    Problem,
+}
+
+impl Connection {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Connection::Checking => "Checking",
+            Connection::Connected => "Connected",
+            Connection::Offline => "Offline",
+            Connection::Problem => "Needs attention",
         }
+    }
+}
+
+/// `booting`: nothing has arrived yet. `error`: why the listing failed.
+pub(super) fn connection(booting: bool, error: Option<&str>) -> Connection {
+    match error {
+        Some(e) => {
+            let lower = e.to_lowercase();
+            let offline = ["reach", "connection", "offline", "network", "timed out", "fetch failed"].iter().any(|w| lower.contains(w));
+            if offline { Connection::Offline } else { Connection::Problem }
+        }
+        None if booting => Connection::Checking,
+        None => Connection::Connected,
+    }
+}
+
+/// The server's address, shown only when it is not the usual one.
+pub(super) fn server_label(origin: &str, primary: &str) -> Option<String> {
+    if origin.trim_end_matches('/') == primary.trim_end_matches('/') {
+        return None;
+    }
+    let host = origin.split_once("://").map_or(origin, |(_, rest)| rest).trim_end_matches('/');
+    Some(format!("on {host}"))
+}
+
+/// A card's quiet line: who owns it or how it is shared, then anything the
+/// row has to say about its media, then the age of a share with no listing row.
+pub(super) fn card_meta(entry: &Entry, share_list_known: bool, media: Option<&str>, age: Option<&str>) -> String {
+    let mut line = match entry.doc.as_ref().filter(|d| d.shared && (d.shared_by.is_some() || d.role.is_some())) {
+        Some(d) => {
+            let mut line = match &d.shared_by {
+                Some(by) => format!("Shared by {by}"),
+                None => "Shared with you".into(),
+            };
+            if let Some(role) = d.role {
+                line.push_str(if role == Role::Editor { " · Editor" } else { " · Viewer" });
+            }
+            line
+        }
+        None => source_badge_text(entry, share_list_known),
     };
-    Some(
-        div()
-            .id(SharedString::from(format!("sync-{label}")))
-            .flex_none()
-            .size(px(16.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx))
-            .child(icon(glyph, 13., color))
-            .into_any_element(),
-    )
+    for extra in [media, age].into_iter().flatten().filter(|s| !s.is_empty()) {
+        line.push_str(" · ");
+        line.push_str(extra);
+    }
+    line
+}
+
+/// A snapshot card's quiet line. Its type is the badge beside it.
+pub(super) fn snapshot_card_meta(row: &SnapshotMeta, now: chrono::DateTime<chrono::Local>) -> String {
+    let meta = snapshot_meta(row, now);
+    meta.split_once(" · ").map_or(meta.clone(), |(_, rest)| rest.to_string())
+}
+
+/// The cache key of a cloud document's thumbnail.
+pub(super) fn cloud_want(origin: &str, id: &str, stamp: &str) -> Want {
+    Want { key: format!("cloud:{origin}:{id}"), stamp: stamp.to_string() }
+}
+
+/// Cloud documents whose words can be drawn: the text family the sync carries.
+fn previewable(format: FormatKind) -> bool {
+    !matches!(format, FormatKind::Unsupported | FormatKind::Docx | FormatKind::Doc | FormatKind::Rtf | FormatKind::Odt)
+}
+
+#[derive(Clone)]
+enum MenuKey {
+    Path(PathBuf),
+    Cloud(super::library_rows::CloudRow),
+}
+
+/// What a card of the page is, for the grid's one handler.
+#[derive(Clone)]
+enum Target {
+    Doc { open_path: Option<PathBuf>, scope: Scope, doc: Option<DocMeta>, menu: Option<MenuKey>, manage: Option<SharedByMeDoc> },
+    Snapshot(Scope, SnapshotMeta),
+}
+
+/// The synced and shared files as the filters leave them.
+struct Files {
+    matched: Vec<Entry>,
+    shown: Vec<Entry>,
+    counts: HashMap<Source, usize>,
+    lists: Lists,
+    booting: bool,
+    by_me_error: bool,
+    cloud_error: Option<String>,
+    share_list_known: bool,
+    share_list_matters: bool,
+    share_list_loading: bool,
 }
 
 impl Workspace {
@@ -542,145 +572,365 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The signed-in Cloud page body, under the header `rail.rs` draws.
-    pub(super) fn render_cloud_library(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn set_cloud_view(&mut self, view: GridView) {
+        self.shell.cloud_grid.view = view;
+        if let Some(reg) = &self.registry {
+            let _ = reg.set_setting(super::recent_page::CLOUD_VIEW_KEY, view.as_str());
+        }
+    }
+
+    fn clear_cloud_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cloud.type_filter = None;
+        self.cloud.sort = Sort::Default;
+        self.cloud_search.update(cx, |s, cx| s.set_value("", window, cx));
+        cx.notify();
+    }
+
+    /// `CloudView`'s `matched` and `shown` memos and what is known so far.
+    fn cloud_files(&self, scope: &Scope, q: &Query) -> Files {
+        let listing = self.cloud.listing(scope);
+        let docs = listing.and_then(|l| l.docs.clone()).unwrap_or_default();
+        let by_me = listing.and_then(|l| l.shared_by_me.as_deref());
+        let by_me_error = listing.is_some_and(|l| l.shared_by_me_error);
+        let cloud_error = listing.and_then(|l| l.error.clone());
+        let local: Vec<(PathBuf, Option<String>)> = self
+            .cloud
+            .bindings
+            .iter()
+            .filter(|(path, b)| {
+                scope.matches(b)
+                    && self.cloud.remote(path).is_none()
+                    && matches!(b.record.state, markie_cloud::sync::SyncState::Unpushed | markie_cloud::sync::SyncState::Paused | markie_cloud::sync::SyncState::Conflict)
+            })
+            .map(|(path, b)| (path.clone(), b.record.cloud_doc_id.clone()))
+            .collect();
+        let all = entries(
+            &docs,
+            by_me,
+            &local,
+            |id| self.cloud.find(scope, id),
+            |path| self.registry.as_ref().and_then(|r| r.last_opened(path).ok().flatten()),
+            self.cloud.area.as_deref(),
+        );
+        let matched = query(all, q);
+        let mut counts: HashMap<Source, usize> = HashMap::new();
+        for e in &matched {
+            *counts.entry(e.source).or_default() += 1;
+        }
+        let sources = &self.cloud.sources;
+        let shown: Vec<Entry> = matched.iter().filter(|e| sources.is_empty() || sources.contains(&e.source)).cloned().collect();
+        let booting = listing.is_none();
+        let lists = if booting {
+            Lists::Loading
+        } else if by_me_error || cloud_error.is_some() {
+            Lists::Incomplete
+        } else if by_me.is_none() {
+            Lists::Loading
+        } else {
+            Lists::Ready
+        };
+        let includes = |s: Source| sources.is_empty() || sources.contains(&s);
+        let share_list_matters = includes(Source::ByMe) || includes(Source::OnlyMe);
+        Files {
+            matched,
+            shown,
+            counts,
+            lists,
+            booting,
+            by_me_error,
+            cloud_error,
+            share_list_known: by_me.is_some() && !by_me_error,
+            share_list_matters,
+            share_list_loading: by_me.is_none() && !by_me_error,
+        }
+    }
+
+    /// Ask for the thumbnails the Cloud page still lacks: each document's
+    /// text is fetched once per version, in the background, and kept on disk.
+    pub(super) fn sync_cloud_previews(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.cloud.selected_scope() else { return };
+        let file = markie_core::paths::data_dir().join("cloud-previews.json");
+        if !self.shell.cloud_previews_loaded {
+            if !std::mem::replace(&mut self.shell.cloud_previews_loading, true) {
+                cx.spawn(async move |this, cx| {
+                    let saved = cx.background_spawn(async move { std::fs::read_to_string(file).unwrap_or_default() }).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.shell.previews.load(&saved);
+                        this.shell.cloud_previews_loaded = true;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            return;
+        }
+        let Some(listing) = self.cloud.listing(&scope) else { return };
+        let origin = scope.origin().to_string();
+        let mut wants: Vec<(Want, String, FormatKind)> = Vec::new();
+        let mut listed: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for doc in listing.docs.iter().flatten() {
+            listed.insert(doc.id.as_str());
+            let format = format_of(&doc.name);
+            if previewable(format) {
+                wants.push((cloud_want(&origin, &doc.id, &format!("v{}", doc.version)), doc.id.clone(), format));
+            }
+        }
+        for share in listing.shared_by_me.iter().flatten().filter(|s| !listed.contains(s.id.as_str())) {
+            let format = format_of(&share.name);
+            if previewable(format) {
+                wants.push((cloud_want(&origin, &share.id, share.updated_at.as_deref().unwrap_or_default()), share.id.clone(), format));
+            }
+        }
+        let owed = self.shell.previews.claim(wants.iter().map(|(want, ..)| want.clone()));
+        if owed.is_empty() {
+            return;
+        }
+        let jobs: Vec<_> = wants.into_iter().filter(|(want, ..)| owed.contains(want)).collect();
+        cx.spawn(async move |this, cx| {
+            for (want, id, format) in jobs {
+                let client = scope.client.clone();
+                let text = super::cloud::network(async move { markie_cloud::docs::DocsClient::new(&client).get(&id).await.ok().map(|doc| doc.content) }).await.ok().flatten();
+                let preview = cx
+                    .background_spawn(async move {
+                        let text = text?;
+                        let mut end = text.len().min(doc_preview::HEAD_BYTES as usize);
+                        while !text.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        doc_preview::from_bytes(format, &text.as_bytes()[..end])
+                    })
+                    .await;
+                let landed = this.update(cx, |this, cx| {
+                    this.shell.previews.put(want, preview);
+                    cx.notify();
+                });
+                if landed.is_err() {
+                    return;
+                }
+            }
+            let Ok(saved) = this.update(cx, |this, _| this.shell.previews.save("cloud:")) else { return };
+            cx.background_spawn(async move {
+                let _ = std::fs::write(file, saved);
+            })
+            .await;
+        })
+        .detach();
+    }
+
+    /// The Cloud page: header, one toolbar row, then what is waiting and the
+    /// documents as cards.
+    pub(super) fn render_cloud_workspace(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = themes::palette(cx);
-        let scope = self.cloud.selected_scope();
+        let Some(scope) = self.cloud.selected_scope() else {
+            return self.render_cloud_signed_out(window, &p, cx);
+        };
         let q = self.cloud_query(cx);
+        let files = self.cloud_files(&scope, &q);
+        let width = super::recent_page::page_width(f32::from(window.viewport_size().width));
+        let state = connection(files.booting || (self.cloud.checking && files.matched.is_empty() && files.lists == Lists::Loading), files.cloud_error.as_deref());
+        let dot = match state {
+            Connection::Connected => p.green,
+            Connection::Checking => p.yellow,
+            Connection::Offline | Connection::Problem => p.red,
+        };
+        let header = ui::page_header("markie/cloud.svg", "Cloud", &p)
+            .child(ui::chip(state.label(), dot, &p))
+            .child(ui::hint(band_text(files.matched.len(), files.shown.len(), files.lists), &p))
+            .children(server_label(scope.origin(), &self.cloud.primary_origin()).map(|s| ui::hint(s, &p)))
+            .child(div().flex_1())
+            .child(ui::button("cloud-open", "Open file", None, Tone::Quiet, false, &p).on_click(|_, window, cx| window.dispatch_action(Box::new(Open), cx)))
+            .child(
+                ui::button("cloud-new", "New document", Some(IconName::Plus), Tone::Primary, false, &p)
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(NewDocument), cx)),
+            );
+
+        let retry = |id: &'static str, cx: &mut Context<Self>| ui::button(id, "Try again", None, Tone::Secondary, self.cloud.checking, &p).on_click(cx.listener(|this, _, _, cx| this.refresh_cloud(false, cx)));
+        let banners = v_flex()
+            .gap(px(8.))
+            .children(files.cloud_error.clone().map(|e| h_flex().gap(px(8.)).items_start().child(ui::banner(Kind::Error, e, &p).flex_1()).child(retry("cloud-retry", cx))))
+            .when(files.by_me_error && files.share_list_matters, |el| {
+                el.child(
+                    h_flex()
+                        .gap(px(8.))
+                        .items_start()
+                        .child(ui::banner(Kind::Error, "Couldn't load the documents you've shared. The server didn't answer. Your shares are unchanged.", &p).flex_1())
+                        .child(retry("cloud-retry-shares", cx)),
+                )
+            })
+            .children(if files.booting { None } else { self.render_share_requests(cx) });
+
+        let (cards, mut targets) = self.cloud_cards(&scope, &files, &p);
+        let filtered = q.searching() || !self.cloud.sources.is_empty();
+        let documents: AnyElement = if files.booting {
+            doc_grid::skeleton(width, doc_grid::columns(width) * 2, &p).into_any_element()
+        } else if cards.is_empty() && files.share_list_loading && files.share_list_matters {
+            doc_grid::skeleton(width, doc_grid::columns(width), &p).into_any_element()
+        } else if cards.is_empty() {
+            let (title, text) = empty_copy(&self.cloud.sources, q.searching());
+            ui::empty_state("markie/cloud.svg", title, text, &p)
+                .when(!filtered, |el| el.child(ui::hint("To sync one, open its menu in Recent and choose Sync to cloud.", &p).mt(px(2.))))
+                .child(h_flex().mt(px(16.)).gap(px(8.)).map(|row| {
+                    if filtered {
+                        row.child(ui::button("cloud-empty-all", "Show all documents", None, Tone::Secondary, false, &p).on_click(cx.listener(|this, _, window, cx| {
+                            this.set_cloud_sources(Vec::new(), cx);
+                            this.clear_cloud_filters(window, cx);
+                        })))
+                    } else {
+                        row.child(ui::button("cloud-empty-recent", "Show recent documents", None, Tone::Secondary, false, &p).on_click(cx.listener(|this, _, _, cx| this.show_recent_page(cx))))
+                    }
+                }))
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        let (snapshot_section, snapshot_targets) = self.cloud_snapshot_section(&scope, &q, &p, cx);
+        targets.extend(snapshot_targets);
+        let has_cards = !cards.is_empty();
+        let mut sections = Vec::new();
+        if has_cards {
+            sections.push(Section::new(Some("Documents"), cards));
+        }
+        sections.push(snapshot_section);
+        let targets = Rc::new(targets);
+        let grid = doc_grid::render(
+            Grid {
+                id: "cloud-grid",
+                sections,
+                width,
+                state: |this: &mut Self| &mut this.shell.cloud_grid,
+                on_event: Rc::new(move |this: &mut Self, id, event, window, cx| {
+                    if let Some(target) = targets.get(id) {
+                        this.cloud_card_event(target.clone(), event, window, cx);
+                    }
+                }),
+            },
+            &self.shell.cloud_grid,
+            window,
+            &p,
+            cx,
+        );
+
         v_flex()
-            .flex_1()
-            .min_h_0()
+            .id("cloud-page")
             .size_full()
-            .relative()
-            .child(self.render_cloud_filters(scope.as_ref(), &q, &p, cx))
+            .bg(p.background)
+            .child(header)
+            .child(self.render_cloud_toolbar(&scope, &q, &files, &p, cx))
             .child(
                 div()
                     .id("cloud-workspace-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .px(px(28.))
-                    .py(px(20.))
+                    .track_scroll(&self.shell.cloud_grid.scroll)
+                    .px(px(super::recent_page::PAGE_PAD))
+                    .pt(px(12.))
+                    .pb(px(28.))
                     .child(
                         v_flex()
                             .w_full()
-                            .max_w(px(1180.))
-                            .mx_auto()
-                            .gap(px(32.))
-                            .child(self.render_cloud_files(scope.as_ref(), &q, &p, cx))
-                            .child(self.render_cloud_snapshots(scope.as_ref(), &q, &p, cx)),
+                            .gap(px(8.))
+                            .child(banners)
+                            .when(!has_cards, |el| el.child(documents))
+                            .child(grid),
                     ),
             )
             .into_any_element()
     }
 
-    /// The area picker and `LibraryDocumentFilters` in its workspace layout.
-    fn render_cloud_filters(&self, scope: Option<&Scope>, q: &Query, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let areas = scope.and_then(|s| self.cloud.listing(s)).map(|l| l.areas.clone()).unwrap_or_default();
-        let area_label = self
-            .cloud
-            .area
-            .as_ref()
-            .and_then(|id| areas.iter().find(|a| &a.id == id))
-            .map(|a| a.label.clone())
-            .unwrap_or_else(|| "All areas".into());
+    /// Signed out, or still asking who is signed in.
+    fn render_cloud_signed_out(&self, window: &Window, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        // A session the sync has no scope for yet: the account's own page.
+        if super::account::signed_in_user(cx).is_some() {
+            return self.render_cloud_page();
+        }
+        let p = *p;
+        let checking = super::account::AccountStore::global(cx).is_some_and(|s| s.read(cx).status == super::account::AuthStatus::Checking);
+        let width = super::recent_page::page_width(f32::from(window.viewport_size().width));
+        let header = ui::page_header("markie/cloud.svg", "Cloud", &p)
+            .child(if checking { ui::chip("Checking", p.yellow, &p) } else { ui::chip("Signed out", p.muted, &p) })
+            .child(div().flex_1())
+            .child(ui::button("cloud-open", "Open file", None, Tone::Quiet, false, &p).on_click(|_, window, cx| window.dispatch_action(Box::new(Open), cx)));
+        let body = if checking {
+            div().pt(px(20.)).child(doc_grid::skeleton(width, doc_grid::columns(width), &p))
+        } else {
+            ui::empty_state("markie/cloud.svg", "Sign in to see your cloud documents", "Documents you sync, and documents people share with you, show up here.", &p).child(
+                div().mt(px(16.)).child(
+                    ui::button("cloud-sign-in", "Sign in", None, Tone::Primary, false, &p).on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx))),
+                ),
+            )
+        };
+        v_flex()
+            .id("cloud-page")
+            .size_full()
+            .bg(p.background)
+            .child(header)
+            .child(div().flex_1().min_h_0().px(px(super::recent_page::PAGE_PAD)).child(body))
+            .into_any_element()
+    }
+
+    /// One row: filter by name, whose documents, then area, type, order and
+    /// grid or list.
+    fn render_cloud_toolbar(&self, scope: &Scope, q: &Query, files: &Files, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *p;
+        let areas = self.cloud.listing(scope).map(|l| l.areas.clone()).unwrap_or_default();
+        let area_label = self.cloud.area.as_ref().and_then(|id| areas.iter().find(|a| &a.id == id)).map(|a| a.label.clone()).unwrap_or_else(|| "All areas".into());
         let type_label = TYPES.iter().find(|(f, _)| *f == q.format).map(|(_, l)| *l).unwrap_or("All types");
         let sort_label = SORTS.iter().find(|(s, _)| *s == q.sort).map(|(_, l)| *l).unwrap_or("Default order");
         let menu = self.cloud.menu;
-        let toggle = |m: Menu| move |this: &mut Self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>| {
-            this.cloud.menu = if this.cloud.menu == Some(m) { None } else { Some(m) };
-            if this.cloud.menu == Some(Menu::Area) {
-                this.ensure_area_input(window, cx);
-            }
-            cx.notify();
+        let dropdown = |which: Menu, id: &'static str, label: String, cx: &mut Context<Self>| {
+            div()
+                .relative()
+                .flex_none()
+                .w(px(140.))
+                .child(ui::select(id, label, menu == Some(which), &p).w_full().on_click(cx.listener(move |this, _, window, cx| {
+                    this.cloud.menu = if this.cloud.menu == Some(which) { None } else { Some(which) };
+                    if this.cloud.menu == Some(Menu::Area) {
+                        this.ensure_area_input(window, cx);
+                    }
+                    cx.notify();
+                })))
+                .when(menu == Some(which), |el| el.child(self.render_cloud_menu(which, Some(scope), &p, cx)))
         };
-        div().flex_none().border_b_1().border_color(p.border.opacity(0.6)).px(px(28.)).py(px(16.)).child(
-            v_flex()
-                .w_full()
-                .max_w(px(1180.))
-                .mx_auto()
-                .gap(px(12.))
-                .when(scope.is_some(), |el| {
-                    el.child(h_flex().justify_end().child(
-                        div()
-                            .relative()
-                            .w(px(300.))
-                            .child(
-                                select_button("cloud-area-picker", Some("Cloud area"), &area_label, menu == Some(Menu::Area), p)
-                                    .w_full()
-                                    .on_click(cx.listener(toggle(Menu::Area))),
-                            )
-                            .when(menu == Some(Menu::Area), |el| el.child(self.render_cloud_menu(Menu::Area, scope, p, cx))),
-                    ))
-                })
-                .child(
-                    h_flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(div().min_w(px(220.)).flex_1().child(filter_field(&self.cloud_search, 11.5, p)))
-                        .child(
-                            h_flex()
-                                .flex_wrap()
-                                .gap(px(8.))
-                                .child(
-                                    div()
-                                        .relative()
-                                        .min_w(px(154.))
-                                        .max_w(px(190.))
-                                        .flex_1()
-                                        .child(
-                                            select_button("cloud-type", None, type_label, menu == Some(Menu::Type), p)
-                                                .w_full()
-                                                .on_click(cx.listener(toggle(Menu::Type))),
-                                        )
-                                        .when(menu == Some(Menu::Type), |el| el.child(self.render_cloud_menu(Menu::Type, scope, p, cx))),
-                                )
-                                .child(
-                                    div()
-                                        .relative()
-                                        .min_w(px(154.))
-                                        .max_w(px(190.))
-                                        .flex_1()
-                                        .child(
-                                            select_button("cloud-sort", None, sort_label, menu == Some(Menu::Sort), p)
-                                                .w_full()
-                                                .on_click(cx.listener(toggle(Menu::Sort))),
-                                        )
-                                        .when(menu == Some(Menu::Sort), |el| el.child(self.render_cloud_menu(Menu::Sort, scope, p, cx))),
-                                ),
-                        )
-                        .when(q.active(), |el| {
-                            el.child(
-                                div()
-                                    .id("cloud-clear-filters")
-                                    .h(px(32.))
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(6.))
-                                    .px(px(8.))
-                                    .text_size(px(11.))
-                                    .text_color(p.muted)
-                                    .hover(|s| s.bg(p.accent.opacity(0.4)).text_color(p.foreground))
-                                    .cursor_pointer()
-                                    .child("Clear filters")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.cloud.type_filter = None;
-                                        this.cloud.sort = Sort::Default;
-                                        this.cloud_search.update(cx, |s, cx| {
-                                            s.set_value("", window, cx);
-                                            s.focus(window, cx);
-                                        });
-                                        cx.notify();
-                                    })),
-                            )
-                        }),
-                ),
-        )
+        let sources = &self.cloud.sources;
+        let mut scopes = ui::segments(&p).child(
+            ui::segment("cloud-chip-all", "All", Some(files.matched.len()), sources.is_empty(), &p).on_click(cx.listener(|this, _, _, cx| this.set_cloud_sources(Vec::new(), cx))),
+        );
+        for (source, id, label, _) in SOURCES {
+            // Each one turns on and off by itself, so two can be on at once.
+            scopes = scopes.child(
+                ui::segment(SharedString::from(format!("cloud-chip-{id}")), label, Some(files.counts.get(&source).copied().unwrap_or(0)), sources.contains(&source), &p).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        let mut next = this.cloud.sources.clone();
+                        if let Some(i) = next.iter().position(|s| *s == source) {
+                            next.remove(i);
+                        } else {
+                            next.push(source);
+                        }
+                        this.set_cloud_sources(next, cx);
+                    },
+                )),
+            );
+        }
+        ui::toolbar(&p)
+            .child(div().flex_1().min_w(px(180.)).max_w(px(300.)).child(filter_field(&self.cloud_search, 13., &p)))
+            // With nothing in the cloud there is nothing to tell apart.
+            .when(!files.booting && (!files.matched.is_empty() || q.searching()), |el| el.child(scopes))
+            .child(dropdown(Menu::Type, "cloud-type", type_label.to_string(), cx))
+            .child(dropdown(Menu::Sort, "cloud-sort", sort_label.to_string(), cx))
+            .child(dropdown(Menu::Area, "cloud-area-picker", area_label, cx))
+            .child(div().flex_1())
+            .when(q.active(), |el| {
+                el.child(ui::button("cloud-clear-filters", "Clear filters", None, Tone::Quiet, false, &p).on_click(cx.listener(|this, _, window, cx| {
+                    this.clear_cloud_filters(window, cx);
+                    this.cloud_search.update(cx, |s, cx| s.focus(window, cx));
+                })))
+            })
+            .child(doc_grid::view_toggle(self.shell.cloud_grid.view, &p, cx, |this: &mut Self, view, _| this.set_cloud_view(view)))
     }
 
-    /// A menu under its button (`top-full mt-1.5`): type, order, or the area chips.
+    /// A menu under its button: type, order, or the area chips.
     fn render_cloud_menu(&self, menu: Menu, scope: Option<&Scope>, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *p;
         let panel = |id: &'static str| menu_panel(&p).id(id).occlude().p(px(4.)).rounded(px(10.));
@@ -688,51 +938,28 @@ impl Workspace {
             this.cloud.menu = None;
             cx.notify();
         });
-        let item = |id: SharedString, label: SharedString, on: bool| {
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
-                .px(px(8.))
-                .py(px(6.))
-                .rounded(px(6.))
-                .text_size(px(11.5))
-                .text_color(p.foreground)
-                .hover(|s| s.bg(p.accent.opacity(0.4)))
-                .cursor_pointer()
-                .child(label)
-                .child(div().w(px(14.)).child(if on { "✓" } else { "" }))
-        };
         let body = match menu {
             Menu::Type => panel("cloud-type-menu")
-                .min_w(px(154.))
-                .max_w(px(230.))
+                .min_w(px(160.))
                 .children(TYPES.iter().enumerate().map(|(i, (format, label))| {
                     let format = *format;
-                    item(SharedString::from(format!("cloud-type-{i}")), (*label).into(), self.cloud.type_filter == format).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.cloud.type_filter = format;
-                            this.cloud.menu = None;
-                            cx.notify();
-                        },
-                    ))
+                    ui::menu_row(SharedString::from(format!("cloud-type-{i}")), *label, self.cloud.type_filter == format, &p).on_click(cx.listener(move |this, _, _, cx| {
+                        this.cloud.type_filter = format;
+                        this.cloud.menu = None;
+                        cx.notify();
+                    }))
                 }))
                 .on_mouse_down_out(close)
                 .into_any_element(),
             Menu::Sort => panel("cloud-sort-menu")
-                .min_w(px(154.))
-                .max_w(px(230.))
+                .min_w(px(160.))
                 .children(SORTS.iter().enumerate().map(|(i, (sort, label))| {
                     let sort = *sort;
-                    item(SharedString::from(format!("cloud-sort-{i}")), (*label).into(), self.cloud.sort == sort).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.cloud.sort = sort;
-                            this.cloud.menu = None;
-                            cx.notify();
-                        },
-                    ))
+                    ui::menu_row(SharedString::from(format!("cloud-sort-{i}")), *label, self.cloud.sort == sort, &p).on_click(cx.listener(move |this, _, _, cx| {
+                        this.cloud.sort = sort;
+                        this.cloud.menu = None;
+                        cx.notify();
+                    }))
                 }))
                 .on_mouse_down_out(close)
                 .into_any_element(),
@@ -766,17 +993,14 @@ impl Workspace {
                 panel("cloud-area-menu")
                     .w(px(300.))
                     .p(px(8.))
+                    .child(div().mb(px(6.)).text_size(px(11.)).text_color(p.muted).child("Cloud area"))
                     .child(h_flex().flex_wrap().gap(px(4.)).children(chips))
                     .children(self.render_area_create(AreaTarget::Page, &p, cx))
                     .on_mouse_down_out(close)
                     .into_any_element()
             }
         };
-        div()
-            .absolute()
-            .top(px(32. + 6.))
-            .left_0()
-            .child(deferred(anchored().snap_to_window_with_margin(px(8.)).child(body)))
+        div().absolute().top(px(32. + 6.)).left_0().child(deferred(anchored().snap_to_window_with_margin(px(8.)).child(body)))
     }
 
     /// The "New area" field under the area chips, created the first time a
@@ -906,319 +1130,112 @@ impl Workspace {
         )
     }
 
-    /// `CloudView` beside the snapshots (`alongsideSnapshots`).
-    fn render_cloud_files(&self, scope: Option<&Scope>, q: &Query, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *p;
-        let listing = scope.and_then(|s| self.cloud.listing(s));
-        let docs = listing.and_then(|l| l.docs.clone()).unwrap_or_default();
-        let by_me = listing.and_then(|l| l.shared_by_me.as_deref());
-        let by_me_error = listing.is_some_and(|l| l.shared_by_me_error);
-        let cloud_error = listing.and_then(|l| l.error.clone());
-        let local: Vec<(PathBuf, Option<String>)> = match scope {
-            Some(s) => self
-                .cloud
-                .bindings
-                .iter()
-                .filter(|(path, b)| {
-                    s.matches(b)
-                        && self.cloud.remote(path).is_none()
-                        && matches!(b.record.state, markie_cloud::sync::SyncState::Unpushed | markie_cloud::sync::SyncState::Paused | markie_cloud::sync::SyncState::Conflict)
-                })
-                .map(|(path, b)| (path.clone(), b.record.cloud_doc_id.clone()))
-                .collect(),
-            None => Vec::new(),
-        };
-        let all = match scope {
-            Some(s) => entries(
-                &docs,
-                by_me,
-                &local,
-                |id| self.cloud.find(s, id),
-                |path| self.registry.as_ref().and_then(|r| r.last_opened(path).ok().flatten()),
-                self.cloud.area.as_deref(),
-            ),
-            None => Vec::new(),
-        };
-        let matched = query(all, q);
-        let mut counts: HashMap<Source, usize> = HashMap::new();
-        for e in &matched {
-            *counts.entry(e.source).or_default() += 1;
-        }
-        let sources = self.cloud.sources.clone();
-        let shown: Vec<Entry> = matched.iter().filter(|e| sources.is_empty() || sources.contains(&e.source)).cloned().collect();
-        let booting = listing.is_none();
-        let lists = if booting {
-            Lists::Loading
-        } else if by_me_error || cloud_error.is_some() {
-            Lists::Incomplete
-        } else if by_me.is_none() {
-            Lists::Loading
-        } else {
-            Lists::Ready
-        };
-        let has_files = !matched.is_empty();
-        let band = scoped_band(matched.len(), shown.len(), lists, q.searching());
-        let condensed = !has_files;
-        let share_list_known = by_me.is_some() && !by_me_error;
-        let includes = |s: Source| sources.is_empty() || sources.contains(&s);
-        let share_list_matters = includes(Source::ByMe) || includes(Source::OnlyMe);
-        let settled = cloud_error.is_none() && (share_list_known || !share_list_matters);
-        let (empty_title, empty_body) = empty_copy(&sources, q.searching());
-
-        let chips = (!booting && !condensed).then(|| {
-            let mut row = vec![chip("cloud-chip-all", sources.is_empty(), &p)
-                .child("All")
-                .child(div().opacity(0.7).child(matched.len().to_string()))
-                .on_click(cx.listener(|this, _, _, cx| this.set_cloud_sources(Vec::new(), cx)))];
-            for (source, id, label, _) in SOURCES {
-                let on = sources.contains(&source);
-                row.push(
-                    chip(SharedString::from(format!("cloud-chip-{id}")), on, &p)
-                        .child(label)
-                        .child(div().opacity(0.7).child(counts.get(&source).copied().unwrap_or(0).to_string()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let mut next = this.cloud.sources.clone();
-                            if let Some(i) = next.iter().position(|s| *s == source) {
-                                next.remove(i);
-                            } else {
-                                next.push(source);
-                            }
-                            this.set_cloud_sources(next, cx);
-                        })),
-                );
-            }
-            h_flex().flex_none().flex_wrap().items_center().gap(px(4.)).mb(px(12.)).children(row)
-        });
-
-        // Signed out: no counts to summarize and nothing loading, just the
-        // empty state (cloud-view.tsx; its workspace body is empty).
-        if scope.is_none() {
-            return v_flex().min_h_0().child(empty_state("markie/cloud.svg", "Sign in to see synced and shared files", "", None::<(&'static str, fn(&ClickEvent, &mut Window, &mut App))>, &p));
-        }
-        let show_list = !(condensed && !by_me_error && by_me.is_some()) && !booting;
-        let rows: Vec<AnyElement> = shown.iter().map(|e| self.render_cloud_row(scope.cloned(), e, share_list_known, &p, cx)).collect();
-        v_flex()
-            .min_h_0()
-            .child(
-                div()
-                    .mb(px(12.))
-                    .flex_none()
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(p.border.opacity(0.7))
-                    .bg(p.background.opacity(0.35))
-                    .px(px(12.))
-                    .py(px(8.))
-                    .text_size(px(11.))
-                    .text_color(p.muted)
-                    .child(band),
-            )
-            .children(chips)
-            .when(!booting, |el| el.children(self.render_share_requests(cx)))
-            // Nothing has arrived yet: the skeleton stands for the whole list.
-            .when(booting, |el| el.child(skeleton(&p)))
-            .when(show_list, |el| {
-                el.child(
-                    v_flex()
-                        .min_w_0()
-                        .rounded(px(12.))
-                        .border_1()
-                        .border_color(p.border.opacity(0.75))
-                        .bg(p.surface2.opacity(0.55))
-                        .p(px(8.))
-                        .when(by_me_error && share_list_matters, |el| {
-                            el.child(empty_state(
-                                "markie/people.svg",
-                                "Couldn't load the documents you've shared",
-                                "The server didn't answer. Your shares are unchanged.",
-                                Some(("Try again", cx.listener(|this, _, _, cx| this.refresh_cloud(false, cx)))),
-                                &p,
-                            ))
-                        })
-                        .children(rows)
-                        .when(by_me.is_none() && !by_me_error && share_list_matters, |el| el.child(skeleton(&p)))
-                        .when(shown.is_empty() && settled && !condensed, |el| {
-                            el.child(empty_state("markie/cloud.svg", &empty_title, empty_body, None::<(&'static str, fn(&ClickEvent, &mut Window, &mut App))>, &p))
-                        }),
-                )
-            })
-            .when_some(cloud_error, |el, e| {
-                el.child(div().mt(px(8.)).px(px(8.)).text_size(px(11.)).text_color(p.red).child(e))
-            })
-    }
-
-    /// One document: the Library row (icon, name, type, sync state), then the
-    /// line saying how it reached this account, with Manage on rows you share.
-    fn render_cloud_row(&self, scope: Option<Scope>, e: &Entry, share_list_known: bool, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let p = *p;
-        let format = format_of(&e.name);
-        let local = e.path.clone();
-        let badge = local.as_deref().and_then(|path| self.cloud.badge(path));
-        let shared = e.doc.as_ref().is_some_and(|d| d.shared);
-        let state = if shared {
-            None
-        } else if local.is_none() {
-            None
-        } else {
-            badge
-        };
-        let media = local.as_deref().and_then(|path| self.cloud.media_note(path)).map(|m| m.trim_start_matches(" · ").to_string());
-        let doc = e.doc.clone();
-        let share = e.share.clone();
-        let entry_name = e.name.clone();
-        let open_path = local.clone().filter(|p| p.is_file());
-        let shared_line = doc.as_ref().filter(|d| d.shared && (d.shared_by.is_some() || d.role.is_some())).map(|d| {
-            let mut line = match &d.shared_by {
-                Some(by) => format!("Shared by {by}"),
-                None => "Shared with you".into(),
-            };
-            if let Some(role) = d.role {
-                line.push_str(if role == Role::Editor { " · Editor" } else { " · Viewer" });
-            }
-            line
-        });
-        let manage = share.clone().filter(|_| e.source == Source::ByMe);
-        let row_id = SharedString::from(format!("cloud-row-{}", e.key));
-        let clickable = open_path.is_some() || doc.is_some();
-        // library.tsx `fileRow`: the ⋯ Actions button and the right-click
-        // menu, keyed by `item.path ?? item.cloudId`. A row with a file here
-        // has the Library's path menu; one without is keyed by its cloud id.
-        // A shared-by-me row with no listing row (`SharedByMeRow`) has none.
-        #[derive(Clone)]
-        enum MenuKey {
-            Path(PathBuf),
-            Cloud(super::library_rows::CloudRow),
-        }
-        let menu_key = match (&local, &doc, &scope) {
-            (Some(path), _, _) => Some(MenuKey::Path(path.clone())),
-            (None, Some(d), Some(scope)) => Some(MenuKey::Cloud(super::library_rows::CloudRow { scope: scope.clone(), id: d.id.clone(), name: d.name.clone() })),
-            _ => None,
-        };
-        let menu_open = match &menu_key {
-            Some(MenuKey::Path(path)) => self.shell.row_menu.as_ref().is_some_and(|(m, _)| m == path),
-            Some(MenuKey::Cloud(row)) => self.cloud_row_menu_open(row.scope.origin(), &row.id),
-            None => false,
-        };
-        let open_menu = |this: &mut Self, key: &MenuKey, at: Point<Pixels>, cx: &mut Context<Self>| match key {
-            MenuKey::Path(path) => this.open_row_menu(path.clone(), at, cx),
-            MenuKey::Cloud(row) => this.open_cloud_row_menu(row.clone(), at, cx),
-        };
-        let hover = p.accent.opacity(0.4);
-        let (muted, fg) = (p.muted, p.foreground);
-        let more = menu_key.clone().map(|key| {
-            div()
-                .id(SharedString::from(format!("cloud-row-more-{}", e.key)))
-                .size(px(20.))
-                .flex_none()
-                .rounded(px(4.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(muted)
-                .when(menu_open, |d| d.bg(hover).text_color(fg))
-                .when(!menu_open, |d| d.opacity(0.).group_hover("cloud-row", |s| s.opacity(1.)))
-                .hover(move |s| s.text_color(fg).bg(hover))
-                .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Actions").build(window, cx))
-                .child("⋯")
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    let at = ev.position();
-                    open_menu(this, &key, point(at.x - px(10.), at.y + px(14.)), cx);
-                }))
-        });
-        // `CloudItemRow`: the Library row (`fileRow`, which alone fills on
-        // hover and opens on click), then the source line under it outside
-        // that fill (`-mt-1 pb-1 pl-7 pr-2`). Both sit in one `group`.
-        v_flex()
-            .group("cloud-row")
-            .child(
-                v_flex()
-                .id(row_id)
-                .rounded(px(6.))
-                .px(px(8.))
-                .py(px(6.))
-                .when(menu_open, |el| el.bg(hover))
-                .when(clickable && !menu_open, |el| el.hover(move |s| s.bg(hover)))
-                .when(clickable, |el| el.cursor_pointer())
-                .when_some(menu_key, |el, key| {
-                    el.on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                        this.shell.row_menu = None;
-                        this.shell.cloud_row_menu = None;
-                        open_menu(this, &key, ev.position, cx);
-                    }))
-                })
-                .child(
-                    h_flex()
-                        .gap(px(6.))
-                        .child(format_icon(format, 13., &p))
-                        .child(div().flex_1().min_w_0().truncate().text_size(px(12.5)).text_color(p.foreground).child(entry_name.clone()))
-                        .child(format_badge(format, &p))
-                        .children(sync_icon(state, shared, &p))
-                        .children(more),
-                )
-                .when(local.as_ref().is_some_and(|p| !p.exists()), |el| {
-                    el.child(div().pl(px(20.)).text_size(px(10.)).text_color(p.red).child("Missing on disk"))
-                })
-                .when_some(shared_line, |el, line| el.child(div().pl(px(20.)).truncate().text_size(px(10.)).text_color(p.muted).child(line)))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.shell.row_menu = None;
-                    this.shell.cloud_row_menu = None;
-                    if let Some(path) = open_path.clone() {
-                        this.open_path(&path, window, cx);
-                    } else if let (Some(scope), Some(doc)) = (scope.clone(), doc.clone()) {
-                        this.open_cloud_text(scope, doc.id.clone(), doc.name.clone(), window, cx);
+    /// The documents as cards, and what each card does.
+    fn cloud_cards(&self, scope: &Scope, files: &Files, _p: &Palette) -> (Vec<DocCard>, HashMap<SharedString, Target>) {
+        let mut targets = HashMap::new();
+        let origin = scope.origin();
+        let cards = files
+            .shown
+            .iter()
+            .map(|e| {
+                let format = format_of(&e.name);
+                let local = e.path.clone();
+                let on_disk = local.as_deref().is_some_and(|p| p.is_file());
+                let shared = e.doc.as_ref().is_some_and(|d| d.shared);
+                let media = local.as_deref().and_then(|path| self.cloud.media_note(path)).map(|m| m.trim_start_matches(" · ").to_string());
+                let age = (e.doc.is_none() && e.share.is_some())
+                    .then(|| e.updated_at.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok()).map(|d| super::account::short_ago_ms(d.timestamp_millis())))
+                    .flatten();
+                let menu = match (&local, &e.doc) {
+                    (Some(path), _) => Some(MenuKey::Path(path.clone())),
+                    (None, Some(d)) => Some(MenuKey::Cloud(super::library_rows::CloudRow { scope: scope.clone(), id: d.id.clone(), name: d.name.clone() })),
+                    _ => None,
+                };
+                let manage = e.share.clone().filter(|_| e.source == Source::ByMe);
+                let gone = local.is_some() && !on_disk;
+                let mut card = DocCard::new(e.key.clone(), e.name.clone(), format);
+                card.meta = if gone { format!("Missing on disk · {}", card_meta(e, files.share_list_known, None, None)) } else { card_meta(e, files.share_list_known, media.as_deref(), age.as_deref()) }.into();
+                card.missing = gone;
+                card.openable = on_disk || e.doc.is_some();
+                card.has_menu = menu.is_some();
+                card.menu_open = match &menu {
+                    Some(MenuKey::Path(path)) => self.shell.row_menu.as_ref().is_some_and(|(m, _)| m == path),
+                    Some(MenuKey::Cloud(row)) => self.cloud_row_menu_open(row.scope.origin(), &row.id),
+                    None => false,
+                };
+                card.action = manage.as_ref().map(|_| "Manage".into());
+                // The sync state of the copy on this device, then how it is shared.
+                if shared {
+                    card.marks.push(Mark::new("markie/sync-shared.svg", MarkTone::Purple, "Shared with you"));
+                } else {
+                    match local.as_deref().and_then(|path| self.cloud.badge(path)) {
+                        Some(badge) => card.marks.extend(super::recent_page::sync_mark(super::library_rows::SyncStatus::from_badge(Some(badge), false))),
+                        None if local.is_none() => card.marks.push(Mark::new("markie/cloud.svg", MarkTone::Muted, "In the cloud, not on this Mac")),
+                        None => {}
                     }
-                })),
-            )
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .gap(px(6.))
-                    .mt(px(-4.))
-                    .pb(px(4.))
-                    .pl(px(28.))
-                    .pr(px(8.))
-                    .text_size(px(10.))
-                    .text_color(p.muted)
-                    .child(source_badge(e.source, source_badge_text(e, share_list_known), &p))
-                    .when_some(media, |el, m| el.child(div().min_w_0().truncate().child(m)))
-                    .when(e.doc.is_none() && e.share.is_some(), |el| {
-                        el.children(
-                            e.updated_at
-                                .as_deref()
-                                .and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok())
-                                .map(|d| super::account::short_ago_ms(d.timestamp_millis()))
-                                .filter(|s| !s.is_empty()),
-                        )
-                    })
-                    .when_some(manage, |el, share| {
-                        el.child(
-                            div()
-                                .id(SharedString::from(format!("cloud-manage-{}", share.id)))
-                                .ml_auto()
-                                .flex_none()
-                                .invisible()
-                                .group_hover("cloud-row", |s| s.visible())
-                                .text_size(px(10.))
-                                .text_color(p.muted)
-                                .hover(|s| s.text_color(p.foreground))
-                                .cursor_pointer()
-                                .child("Manage")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.manage_cloud_share(share.id.clone(), share.name.clone(), window, cx);
-                                })),
-                        )
-                    }),
-            )
-            .into_any_element()
+                    if e.source == Source::ByMe {
+                        card.marks.push(Mark::new("markie/sync-shared.svg", MarkTone::Blue, "Shared by you"));
+                    }
+                }
+                let cloud_id = e.doc.as_ref().map(|d| (d.id.clone(), format!("v{}", d.version))).or_else(|| e.share.as_ref().map(|s| (s.id.clone(), s.updated_at.clone().unwrap_or_default())));
+                card.thumb = match cloud_id {
+                    Some((id, stamp)) if previewable(format) => match self.shell.previews.lookup(&cloud_want(origin, &id, &stamp)) {
+                        Lookup::Ready(preview) => Thumb::Page(preview),
+                        Lookup::Nothing => Thumb::Tile,
+                        Lookup::Owed => Thumb::Loading,
+                    },
+                    _ => Thumb::Tile,
+                };
+                targets.insert(
+                    card.id.clone(),
+                    Target::Doc { open_path: local.filter(|_| on_disk), scope: scope.clone(), doc: e.doc.clone(), menu, manage },
+                );
+                card
+            })
+            .collect();
+        (cards, targets)
     }
 
-    /// `DocumentCloudLibrary` in the workspace.
-    fn render_cloud_snapshots(&self, scope: Option<&Scope>, q: &Query, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn cloud_card_event(&mut self, target: Target, event: CardEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match (target, event) {
+            (Target::Snapshot(scope, meta), CardEvent::Open) => self.show_snapshot(scope, meta, window, cx),
+            (Target::Snapshot(..), _) => {}
+            (Target::Doc { open_path, scope, doc, .. }, CardEvent::Open) => {
+                self.shell.row_menu = None;
+                self.shell.cloud_row_menu = None;
+                if let Some(path) = open_path {
+                    self.open_path(&path, window, cx);
+                } else if let Some(doc) = doc {
+                    self.open_cloud_text(scope, doc.id.clone(), doc.name.clone(), window, cx);
+                }
+            }
+            (Target::Doc { menu, .. }, CardEvent::Menu(at)) => match menu {
+                Some(MenuKey::Path(path)) => {
+                    if self.shell.row_menu.as_ref().is_some_and(|(open, _)| *open != path) {
+                        self.shell.row_menu = None;
+                    }
+                    self.open_row_menu(path, at, cx);
+                }
+                Some(MenuKey::Cloud(row)) => {
+                    if !self.cloud_row_menu_open(row.scope.origin(), &row.id) {
+                        self.shell.cloud_row_menu = None;
+                    }
+                    self.open_cloud_row_menu(row, at, cx);
+                }
+                None => {}
+            },
+            (Target::Doc { manage, .. }, CardEvent::Action) => {
+                if let Some(share) = manage {
+                    self.manage_cloud_share(share.id, share.name, window, cx);
+                }
+            }
+        }
+    }
+
+    /// `DocumentCloudLibrary`: the snapshots as their own section of cards.
+    fn cloud_snapshot_section(&self, scope: &Scope, q: &Query, p: &Palette, cx: &mut Context<Self>) -> (Section, HashMap<SharedString, Target>) {
         let p = *p;
-        let listing = scope.and_then(|s| self.cloud.listing(s));
+        let listing = self.cloud.listing(scope);
         let loading = self.cloud.checking && listing.is_none();
         let error = listing.and_then(|l| l.snapshot_error.clone()).map(|e| snapshot_error(&e));
         let all: Vec<SnapshotMeta> = listing
@@ -1229,11 +1246,7 @@ impl Workspace {
             .collect();
         let total = listing.map_or(0, |l| l.snapshots.len());
         let words: Vec<String> = q.search.trim().to_lowercase().split_whitespace().map(str::to_string).collect();
-        let mut rows: Vec<SnapshotMeta> = all
-            .into_iter()
-            .filter(|r| q.format.is_none_or(|f| r.format == f))
-            .filter(|r| words.iter().all(|w| r.name.to_lowercase().contains(w)))
-            .collect();
+        let mut rows: Vec<SnapshotMeta> = all.into_iter().filter(|r| q.format.is_none_or(|f| r.format == f)).filter(|r| words.iter().all(|w| r.name.to_lowercase().contains(w))).collect();
         if q.sort != Sort::Default {
             rows.sort_by(|a, b| {
                 let primary = match q.sort {
@@ -1244,200 +1257,81 @@ impl Workspace {
                 primary.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())).then_with(|| a.id.cmp(&b.id))
             });
         }
-        let status = if listing.is_some() && !loading && error.is_none() {
-            format!("{} of {} snapshots", rows.len(), total)
-        } else if scope.is_some() {
-            "Snapshots".into()
-        } else {
-            "Account required".into()
-        };
-        let tokens = Tokens::current(&self.registry.as_ref().and_then(|r| r.setting("style_template").ok().flatten()).unwrap_or_else(|| "markie".into()), cx);
-        let refresh = |label: &'static str, cx: &mut Context<Self>| {
-            div()
-                .id(SharedString::from(format!("cloud-snapshots-{label}")))
-                .h(px(28.))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .rounded(px(6.))
-                .px(px(8.))
-                .text_size(px(11.))
-                .text_color(p.muted)
-                .when(self.cloud.checking, |el| el.opacity(0.4))
-                .hover(|s| s.bg(p.accent.opacity(0.4)).text_color(p.foreground))
-                .cursor_pointer()
-                .child(icon("markie/refresh.svg", 12., p.muted))
-                .child(label)
-                .on_click(cx.listener(|this, _, _, cx| this.refresh_cloud(false, cx)))
-        };
         let now = chrono::Local::now();
-        let body: AnyElement = if scope.is_none() {
-            state_card("Sign in to view snapshots", None, false, None, &p).into_any_element()
-        } else if let Some((title, detail)) = error {
-            state_card(&title, Some(detail), true, Some(refresh("Try again", cx).into_any_element()), &p).into_any_element()
-        } else if listing.is_none() {
-            state_card("Loading snapshots…", None, false, None, &p).into_any_element()
-        } else if rows.is_empty() {
-            if total > 0 {
-                state_card("No snapshots match these filters", None, false, None, &p).into_any_element()
-            } else {
-                state_card("No document snapshots yet", Some("Share a local document to create one.".into()), false, None, &p).into_any_element()
-            }
-        } else {
-            // `xl:grid-cols-2`: two columns at Markie's usual window width.
-            let cards: Vec<AnyElement> = rows
-                .iter()
-                .map(|row| {
-                    let meta = snapshot_meta(row, now);
-                    let target = (scope.cloned(), row.clone());
-                    div()
-                        .id(SharedString::from(format!("snapshot-{}", row.id)))
-                        .group("snapshot-card")
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .rounded(px(12.))
-                        .border_1()
-                        .border_color(p.border.opacity(0.75))
-                        .bg(p.surface2.opacity(0.65))
-                        .px(px(12.))
-                        .py(px(10.))
-                        .hover(|s| s.border_color(p.foreground.opacity(0.2)).bg(p.accent.opacity(0.45)))
-                        .cursor_pointer()
-                        .child(dialog_chrome::format_mark(format_key(row.format), "md", &tokens))
-                        .child(
-                            v_flex()
-                                .min_w_0()
-                                .flex_1()
-                                .child(div().truncate().text_size(px(14.)).text_color(p.foreground).child(row.name.clone()))
-                                .child(div().mt(px(2.)).truncate().text_size(px(11.)).text_color(p.muted).child(meta)),
-                        )
-                        .child(div().flex_none().text_size(px(14.)).text_color(p.muted).invisible().group_hover("snapshot-card", |s| s.visible()).child("Open"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if let (Some(scope), meta) = (target.0.clone(), target.1.clone()) {
-                                this.show_snapshot(scope, meta, window, cx);
-                            }
-                        }))
-                        .into_any_element()
-                })
-                .collect();
-            let mut left = Vec::new();
-            let mut right = Vec::new();
-            for (i, c) in cards.into_iter().enumerate() {
-                if i % 2 == 0 { left.push(c) } else { right.push(c) }
-            }
-            h_flex()
-                .items_start()
-                .gap(px(8.))
-                .child(v_flex().flex_1().min_w_0().gap(px(8.)).children(left))
-                .child(v_flex().flex_1().min_w_0().gap(px(8.)).children(right))
+        let mut targets = HashMap::new();
+        let cards: Vec<DocCard> = rows
+            .iter()
+            .map(|row| {
+                let mut card = DocCard::new(format!("snapshot:{}", row.id), row.name.clone(), row.format);
+                card.meta = snapshot_card_meta(row, now).into();
+                card.has_menu = false;
+                targets.insert(card.id.clone(), Target::Snapshot(scope.clone(), row.clone()));
+                card
+            })
+            .collect();
+        let note = |title: String, body: Option<String>, alert: bool| {
+            v_flex()
+                .py(px(6.))
+                .child(div().text_size(px(13.)).text_color(if alert { p.red } else { p.muted }).child(title))
+                .children(body.map(|b| ui::hint(b, &p)))
                 .into_any_element()
         };
-        v_flex()
-            .min_w_0()
-            .child(
-                h_flex()
-                    .mb(px(12.))
-                    .justify_between()
-                    .gap(px(12.))
-                    .child(div().text_size(px(11.)).text_color(p.muted).child(status))
-                    .child(refresh("Refresh", cx)),
-            )
-            .child(body)
+        let empty = if let Some((title, detail)) = error {
+            Some(note(title, Some(detail), true))
+        } else if listing.is_none() || loading {
+            Some(note("Loading snapshots…".into(), None, false))
+        } else if rows.is_empty() && total > 0 {
+            Some(note("No snapshots match these filters.".into(), None, false))
+        } else if rows.is_empty() {
+            Some(note("No document snapshots yet.".into(), Some("Share a local document to create one.".into()), false))
+        } else {
+            None
+        };
+        let mut section = Section::new(Some("Snapshots"), cards);
+        section.count = Some(if rows.len() == total { total.to_string() } else { format!("{} of {total}", rows.len()) });
+        section.empty = empty;
+        section.trailing = Some(
+            ui::button("cloud-snapshots-refresh", "Refresh", None, Tone::Quiet, self.cloud.checking, &p)
+                .h(px(26.))
+                .text_size(px(12.))
+                .on_click(cx.listener(|this, _, _, cx| this.refresh_cloud(false, cx)))
+                .into_any_element(),
+        );
+        (section, targets)
     }
 }
 
-/// `stateCard` in document-cloud-library.tsx (workspace form).
-fn state_card(title: &str, body: Option<String>, alert: bool, action: Option<AnyElement>, p: &Palette) -> Div {
-    h_flex()
-        .max_w(px(576.))
-        .items_start()
-        .gap(px(12.))
-        .rounded(px(12.))
-        .border_1()
-        .border_color(p.border.opacity(0.8))
-        .bg(p.surface2.opacity(0.7))
-        .px(px(16.))
-        .py(px(12.))
-        .child(
-            div()
-                .mt(px(2.))
-                .flex_none()
-                .size(px(28.))
-                .rounded_full()
-                .border_1()
-                .border_color(if alert { p.red.opacity(0.5) } else { p.border })
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon("markie/cloud.svg", 14., if alert { p.red } else { p.muted })),
-        )
-        .child(
-            v_flex()
-                .min_w_0()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(title.to_string()))
-                .when_some(body, |el, b| el.child(div().mt(px(2.)).text_size(px(11.)).text_color(p.muted).child(b))),
-        )
-        .when_some(action, |el, a| el.child(div().ml_auto().flex_none().child(a)))
-}
-
-/// `CloudEmptyState`.
-fn empty_state(glyph: &'static str, title: &str, body: &str, action: Option<(&'static str, impl Fn(&ClickEvent, &mut Window, &mut App) + 'static)>, p: &Palette) -> Div {
-    div().px(px(8.)).py(px(12.)).child(
-        div()
-            .rounded(px(6.))
-            .border_1()
-            .border_color(p.border.opacity(0.7))
-            .bg(p.background.opacity(0.45))
-            .px(px(10.))
-            .py(px(10.))
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap(px(8.))
-                    .child(div().mt(px(1.)).flex_none().child(icon(glyph, 15., p.muted)))
-                    .child(
-                        v_flex()
-                            .child(div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(title.to_string()))
-                            .when(!body.is_empty(), |el| el.child(div().mt(px(2.)).text_size(px(11.)).text_color(p.muted).child(body.to_string())))
-                            .when_some(action, |el, (label, on_click)| {
-                                el.child(
-                                    div()
-                                        .id("cloud-empty-action")
-                                        .mt(px(6.))
-                                        .text_size(px(11.))
-                                        .text_color(p.foreground)
-                                        .underline()
-                                        .cursor_pointer()
-                                        .child(label)
-                                        .on_click(on_click),
-                                )
-                            }),
-                    ),
-            ),
-    )
-}
-
-/// `CloudSkeleton`.
-fn skeleton(p: &Palette) -> Div {
-    v_flex().children(["68%", "52%", "76%", "44%"].map(|w| {
-        let frac = w.trim_end_matches('%').parse::<f32>().unwrap_or(50.) / 100.;
-        div().rounded(px(6.)).px(px(8.)).py(px(6.)).child(
-            h_flex()
-                .gap(px(6.))
-                .child(div().size(px(13.)).flex_none().rounded(px(4.)).bg(p.accent))
-                .child(div().h(px(10.)).flex_1().child(div().h_full().w(relative(frac)).rounded(px(4.)).bg(p.accent)))
-                .child(div().h(px(12.)).w(px(32.)).flex_none().rounded(px(4.)).bg(p.accent)),
-        )
-    }))
+#[cfg(feature = "scene")]
+impl Workspace {
+    /// Open one of the page's menus for a scene.
+    pub(super) fn scene_cloud_menu(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.cloud.menu = match which {
+            "area" => {
+                self.ensure_area_input(window, cx);
+                Some(Menu::Area)
+            }
+            "type" => Some(Menu::Type),
+            "sort" => Some(Menu::Sort),
+            _ => None,
+        };
+        if which == "row"
+            && let Some(scope) = self.cloud.selected_scope()
+        {
+            let q = self.cloud_query(cx);
+            let files = self.cloud_files(&scope, &q);
+            if let Some(path) = files.shown.iter().find_map(|e| e.path.clone()) {
+                self.open_row_menu(path, point(px(300.), px(440.)), cx);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that brings in GPUI's own `test` macro.
     use super::{
-        DocMeta, FormatKind, Lists, Query, Role, SharedByMeDoc, Sort, Source, band_text, empty_copy, entries, file_size, query,
-        scoped_band, share_badge_text, snapshot_error, source_badge_text, sources_from_setting, sources_to_setting,
+        Connection, DocMeta, FormatKind, Lists, Query, Role, SharedByMeDoc, Sort, Source, band_text, card_meta, cloud_want, connection, empty_copy, entries,
+        file_size, query, server_label, share_badge_text, snapshot_error, source_badge_text, sources_from_setting, sources_to_setting,
     };
 
     fn doc(id: &str, name: &str, updated: &str, shared: bool) -> DocMeta {
@@ -1532,14 +1426,60 @@ mod tests {
         assert_eq!(band_text(5, 5, Lists::Ready), "5 documents");
         assert_eq!(band_text(5, 2, Lists::Ready), "2 of 5 documents");
         assert_eq!(band_text(1, 1, Lists::Ready), "1 document");
-        assert_eq!(scoped_band(0, 0, Lists::Loading, false), "Checking file sync and sharing…");
-        assert_eq!(scoped_band(0, 0, Lists::Incomplete, false), "Some synced or shared files didn't load");
-        assert_eq!(scoped_band(0, 0, Lists::Ready, true), "No synced or shared files match these filters.");
-        assert_eq!(scoped_band(0, 0, Lists::Ready, false), "No synced or shared files yet.");
+        assert_eq!(band_text(0, 0, Lists::Loading), "Checking your cloud…");
+        assert_eq!(band_text(0, 0, Lists::Incomplete), "Some of your cloud didn't load");
+        assert_eq!(band_text(0, 0, Lists::Ready), "Nothing in the cloud yet");
         assert_eq!(empty_copy(&[], false).0, "Nothing in your cloud yet");
         assert_eq!(empty_copy(&[Source::ByMe, Source::WithMe], false).0, "No documents you've shared or shared with you yet");
         assert_eq!(empty_copy(&[Source::OnlyMe], true).0, "No documents only you can see match this search");
         assert_eq!(share_badge_text(&share("x", "x", 0, 0)), "Shared");
+    }
+
+    #[test]
+    fn the_header_says_how_the_server_is_doing() {
+        assert_eq!(connection(true, None), Connection::Checking);
+        assert_eq!(connection(false, None), Connection::Connected);
+        assert_eq!(connection(false, Some("The server could not be reached.")), Connection::Offline);
+        assert_eq!(connection(true, Some("Connection refused")), Connection::Offline, "an error beats still loading");
+        assert_eq!(connection(false, Some("This server sent an answer Markie could not read.")), Connection::Problem);
+        assert_eq!(Connection::Problem.label(), "Needs attention");
+        // Only a server other than the usual one is named.
+        assert_eq!(server_label("https://api.markiedocs.com", "https://api.markiedocs.com/"), None);
+        assert_eq!(server_label("http://localhost:18995", "https://api.markiedocs.com").as_deref(), Some("on localhost:18995"));
+    }
+
+    #[test]
+    fn a_card_says_who_owns_it_or_how_it_is_shared() {
+        let mut theirs = doc("b", "beta.md", "2026-11-22T10:00:00Z", true);
+        theirs.shared_by = Some("Bob Chen".into());
+        let docs = vec![doc("a", "alpha.md", "2026-11-21T10:00:00Z", false), theirs, doc("c", "gamma.md", "2026-11-19T10:00:00Z", false)];
+        let by_me = vec![share("c", "gamma.md", 2, 1), share("z", "only-shared.md", 1, 0)];
+        let rows = entries(&docs, Some(&by_me), &[], |_| None, |_| None, None);
+        let line = |name: &str, media: Option<&str>, age: Option<&str>| card_meta(rows.iter().find(|e| e.name == name).unwrap(), true, media, age);
+        assert_eq!(line("alpha.md", None, None), "Only you");
+        assert_eq!(line("beta.md", None, None), "Shared by Bob Chen · Editor");
+        assert_eq!(line("gamma.md", None, None), "Shared with 2 · 1 invited");
+        assert_eq!(line("gamma.md", Some("media pending"), None), "Shared with 2 · 1 invited · media pending");
+        assert_eq!(line("only-shared.md", None, Some("3d")), "Shared with 1 · 3d");
+        assert_eq!(line("alpha.md", Some(""), None), "Only you", "an empty note adds nothing");
+        // Before the shared list is in, a document of mine is only "Yours".
+        assert_eq!(card_meta(&rows[1], false, None, None), "Yours");
+    }
+
+    #[test]
+    fn a_cloud_thumbnail_is_kept_per_server_document_and_version() {
+        let a = cloud_want("http://localhost:1", "abc", "v3");
+        assert_eq!(a.key, "cloud:http://localhost:1:abc");
+        assert_eq!(a.stamp, "v3");
+        assert_ne!(a.key, cloud_want("http://localhost:2", "abc", "v3").key);
+    }
+
+    #[test]
+    fn user_visible_copy_has_no_em_dashes() {
+        let src = include_str!("cloud_page.rs");
+        let code = src.split("#[cfg(test)]").next().unwrap();
+        let prose: String = code.lines().filter(|l| !l.trim_start().starts_with("//")).collect();
+        assert!(!prose.contains('\u{2014}'));
     }
 
     #[test]

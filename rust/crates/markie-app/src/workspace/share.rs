@@ -1381,6 +1381,13 @@ pub struct PeopleState {
     pub busy: bool,
     pub error: Option<String>,
     pub notice: Option<String>,
+    /// The Cloud page's strip is open, showing each request.
+    pub open: bool,
+}
+
+/// The strip's one line: how many requests are waiting.
+pub(super) fn requests_line(count: usize) -> String {
+    if count == 1 { "1 share request is waiting".into() } else { format!("{count} share requests are waiting") }
 }
 
 impl Workspace {
@@ -1469,89 +1476,97 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Requests waiting for this account, with Accept, Decline and Block.
-    /// Nothing while there are none.
+    /// Requests waiting for this account: one line that says how many, which
+    /// opens to each request with Accept, Decline and Block. Nothing while
+    /// there are none.
     pub fn render_share_requests(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use super::ui::{self, Kind, Tone};
         let p = themes::palette(cx);
         let account = self.people_account().map(|(a, _)| a);
         let st = self.collab.people.as_ref().filter(|st| account.is_some() && st.account == account)?;
         if st.requests.is_empty() {
-            return st.notice.clone().map(|n| div().mb(px(8.)).px(px(8.)).text_size(px(11.)).text_color(p.muted).child(n).into_any_element());
+            return st.notice.clone().map(|n| ui::banner(Kind::Success, n, &p).into_any_element());
         }
         let busy = st.busy;
-        Some(
-            v_flex()
-                .mb(px(12.))
-                .rounded(px(8.))
-                .border_1()
-                .border_color(p.border.opacity(0.8))
-                .bg(p.surface2.opacity(0.4))
-                .px(px(10.))
+        let open = st.open;
+        let head = h_flex()
+            .id("cloud-requests-head")
+            .min_h(px(44.))
+            .gap(px(10.))
+            .pl(px(12.))
+            .pr(px(6.))
+            .cursor_pointer()
+            .child(super::chrome::icon("markie/people.svg", 15., p.blue))
+            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(requests_line(st.count)))
+            .children(st.notice.clone().filter(|_| !open).map(|n| div().min_w_0().truncate().text_size(px(12.)).text_color(p.muted).child(n)))
+            .child(div().flex_1())
+            .child(ui::button("cloud-requests-toggle", if open { "Hide" } else { "Review" }, None, Tone::Secondary, false, &p).h(px(28.)))
+            .on_click(cx.listener(|w, _, _, cx| {
+                if let Some(st) = w.collab.people.as_mut() {
+                    st.open = !st.open;
+                }
+                cx.notify();
+            }));
+        let rows = st.requests.iter().enumerate().map(|(i, r)| {
+            let who = sv::who(r.sender.name.as_deref(), &r.sender.email);
+            let (sid1, sid2, doc) = (r.sender.id.clone(), r.sender.id.clone(), r.doc_id.clone());
+            let (w1, w2, n) = (who.clone(), who.clone(), r.name.clone());
+            h_flex()
+                .flex_wrap()
+                .gap(px(8.))
                 .py(px(8.))
+                .border_t_1()
+                .border_color(p.border.opacity(0.7))
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .flex_1()
+                        .child({
+                            // One line of text, the two names medium.
+                            let line = format!("{who} wants to share {}", r.name);
+                            let medium = HighlightStyle { font_weight: Some(FontWeight::MEDIUM), ..Default::default() };
+                            let name_at = line.len() - r.name.len();
+                            div().truncate().text_size(px(13.)).text_color(p.foreground).child(StyledText::new(line.clone()).with_highlights([(0..who.len(), medium), (name_at..line.len(), medium)]))
+                        })
+                        .child(div().truncate().text_size(px(11.5)).text_color(p.muted).child(r.sender.email.clone())),
+                )
                 .child(
                     h_flex()
-                        .mb(px(6.))
-                        .gap(px(6.))
-                        .child(div().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Requests"))
-                        // `.markie-cloud-chip-count`: the whole pill at 70%.
-                        .child(div().rounded_full().border_1().border_color(p.border).px(px(6.)).text_size(px(10.)).text_color(p.foreground).opacity(0.7).child(st.count.to_string())),
+                        .gap(px(4.))
+                        .child(ui::button(SharedString::from(format!("req-accept-{i}")), "Accept", None, Tone::Secondary, busy, &p).h(px(28.)).when(!busy, |b| {
+                            b.on_click(cx.listener(move |w, _, _, cx| w.people_act("accept", sid1.clone(), format!("Accepted {w1}. What they share lands in your Markie."), "Couldn't accept. Try again.", cx)))
+                        }))
+                        .child(ui::button(SharedString::from(format!("req-decline-{i}")), "Decline", None, Tone::Quiet, busy, &p).h(px(28.)).when(!busy, |b| {
+                            b.on_click(cx.listener(move |w, _, _, cx| w.people_act("decline", doc.clone(), format!("Declined {n}."), "Couldn't decline. Try again.", cx)))
+                        }))
+                        .child(ui::button(SharedString::from(format!("req-block-{i}")), "Block", None, Tone::Danger, busy, &p).h(px(28.)).when(!busy, |b| {
+                            b.on_click(cx.listener(move |w, _, _, cx| w.people_act("block", sid2.clone(), format!("Blocked {w2}. You won't see their requests."), "Couldn't block. Try again.", cx)))
+                        })),
                 )
-                .child(div().mb(px(8.)).text_size(px(10.5)).text_color(p.muted).child(sv::REQUESTS_INTRO))
-                .children(st.requests.iter().enumerate().map(|(i, r)| {
-                    let who = sv::who(r.sender.name.as_deref(), &r.sender.email);
-                    let (sid1, sid2, doc) = (r.sender.id.clone(), r.sender.id.clone(), r.doc_id.clone());
-                    let (w1, w2, n) = (who.clone(), who.clone(), r.name.clone());
-                    h_flex()
-                        .flex_wrap()
-                        .gap(px(8.))
-                        .when(i > 0, |el| el.border_t_1().border_color(p.border.opacity(0.6)).pt(px(6.)))
-                        .child(
-                            v_flex()
-                                .min_w_0()
-                                .flex_1()
-                                .text_size(px(11.5))
-                                .child({
-                                    // One line of text, the two names medium, as the `<strong>` and
-                                    // `<span>` inside a single truncating div.
-                                    let line = format!("{who} wants to share {}", r.name);
-                                    let medium = HighlightStyle { font_weight: Some(FontWeight::MEDIUM), ..Default::default() };
-                                    let name_at = line.len() - r.name.len();
-                                    div().truncate().text_color(p.foreground).child(
-                                        StyledText::new(line.clone()).with_highlights([(0..who.len(), medium), (name_at..line.len(), medium)]),
-                                    )
-                                })
-                                .child(div().truncate().text_size(px(10.5)).text_color(p.muted).child(r.sender.email.clone())),
-                        )
-                        .child(
-                            h_flex()
-                                .gap(px(4.))
-                                .child(people_button(&format!("req-accept-{i}"), "Accept", true, busy, &p).on_click(cx.listener(move |w, _, _, cx| w.people_act("accept", sid1.clone(), format!("Accepted {w1}. What they share lands in your Markie."), "Couldn't accept. Try again.", cx))))
-                                .child(people_button(&format!("req-decline-{i}"), "Decline", false, busy, &p).on_click(cx.listener(move |w, _, _, cx| w.people_act("decline", doc.clone(), format!("Declined {n}."), "Couldn't decline. Try again.", cx))))
-                                .child(people_button(&format!("req-block-{i}"), "Block", false, busy, &p).on_click(cx.listener(move |w, _, _, cx| w.people_act("block", sid2.clone(), format!("Blocked {w2}. You won't see their requests."), "Couldn't block. Try again.", cx)))),
-                        )
-                }))
-                .when(st.count > st.requests.len(), |el| {
-                    el.child(div().mt(px(6.)).text_size(px(10.5)).text_color(p.muted).child(format!("Showing the newest {} of {}. Answer these to see the rest.", st.requests.len(), st.count)))
+        });
+        Some(
+            v_flex()
+                .rounded(px(8.))
+                .border_1()
+                .border_color(p.blue.opacity(0.28))
+                .bg(p.blue.opacity(0.06))
+                .child(head)
+                .when(open, |el| {
+                    el.child(
+                        v_flex()
+                            .px(px(12.))
+                            .pb(px(6.))
+                            .child(div().pb(px(8.)).text_size(px(12.)).line_height(px(17.)).text_color(p.muted).child(sv::REQUESTS_INTRO))
+                            .children(rows)
+                            .when(st.count > st.requests.len(), |el| {
+                                el.child(div().py(px(6.)).text_size(px(12.)).text_color(p.muted).child(format!("Showing the newest {} of {}. Answer these to see the rest.", st.requests.len(), st.count)))
+                            })
+                            .children(st.notice.clone().map(|n| div().py(px(6.)).text_size(px(12.)).text_color(p.muted).child(n))),
+                    )
                 })
-                .when_some(st.error.clone(), |el, e| el.child(div().mt(px(6.)).text_size(px(11.)).text_color(p.red).child(e)))
+                .when_some(st.error.clone(), |el, e| el.child(div().px(px(12.)).pb(px(8.)).text_size(px(12.)).text_color(p.red).child(e)))
                 .into_any_element(),
         )
     }
 }
 
-fn people_button(id: &str, label: &'static str, primary: bool, busy: bool, p: &Palette) -> Stateful<Div> {
-    div()
-        .id(SharedString::from(id.to_string()))
-        .rounded(px(6.))
-        .border_1()
-        .border_color(p.border)
-        .px(px(8.))
-        .py(px(4.))
-        .text_size(px(11.5))
-        .when(primary, |el| el.bg(p.fg(0.10)).font_weight(FontWeight::MEDIUM).text_color(p.foreground))
-        .when(!primary, |el| el.text_color(p.muted))
-        .hover(|s| s.text_color(p.foreground))
-        .when(busy, |el| el.opacity(0.4))
-        .cursor_pointer()
-        .child(label)
-}

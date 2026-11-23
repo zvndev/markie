@@ -144,33 +144,40 @@ pub fn page_header(glyph: &'static str, title: &'static str, p: &Palette) -> Div
         .gap(px(10.))
         .border_b_1()
         .border_color(p.border)
-        .px(px(24.))
+        .px(px(20.))
         .child(svg().path(glyph).size(px(18.)).flex_none().text_color(p.foreground))
-        .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).text_color(p.foreground).child(title))
+        .child(div().flex_none().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).text_color(p.foreground).child(title))
 }
 
-/// A toolbar's menu button: the current choice and a chevron.
+/// A page's toolbar row, under its header: 20 points in from each side, a
+/// hairline below, as the Browse page's.
+pub fn toolbar(p: &Palette) -> Div {
+    h_flex().flex_none().flex_wrap().gap(px(8.)).px(px(20.)).py(px(10.)).border_b_1().border_color(p.border)
+}
+
+/// A toolbar's menu button (`.markie-select-button`): the current choice
+/// and a chevron.
 pub fn select(id: impl Into<ElementId>, label: impl Into<SharedString>, open: bool, p: &Palette) -> Stateful<Div> {
-    let (fg, hover) = (p.foreground, p.fg(0.05));
+    let fg = p.foreground;
+    let bg = if p.dark { crate::themes::mix(p.background, p.surface2, 0.72) } else { p.background };
     h_flex()
         .id(id)
         .flex_none()
         .h(px(32.))
-        .gap(px(6.))
-        .pl(px(11.))
-        .pr(px(8.))
-        .items_center()
+        .justify_between()
+        .gap(px(7.))
+        .pl(px(10.4))
+        .pr(px(8.8))
         .rounded(px(7.))
         .border_1()
-        .border_color(if open { p.fg(0.3) } else { p.border })
-        .bg(p.background)
-        .text_size(px(12.5))
-        .text_color(if open { p.foreground } else { p.fg(0.78) })
-        .whitespace_nowrap()
+        .border_color(if p.dark { p.border } else { crate::themes::mix(p.foreground, p.border, 0.14) })
+        .bg(bg)
+        .text_size(px(11.5))
+        .text_color(if open { p.foreground } else { p.muted })
         .cursor_pointer()
-        .hover(move |s| s.bg(hover).text_color(fg))
-        .child(label.into())
-        .child(svg().path("markie/select-chevron.svg").size(px(13.)).flex_none().text_color(p.muted))
+        .hover(move |s| s.text_color(fg))
+        .child(div().min_w_0().truncate().child(label.into()))
+        .child(svg().path("markie/select-chevron.svg").size(px(13.)).flex_none().text_color(if open { p.foreground } else { p.muted }))
 }
 
 /// One row of a menu under a [`select`], ticked when it is the choice.
@@ -192,9 +199,10 @@ pub fn menu_row(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bo
         .child(div().w(px(14.)).flex_none().when(on, |el| el.child(svg().path("markie/check.svg").size(px(13.)).text_color(p.foreground))))
 }
 
-/// The track of a segmented control; fill it with [`segment`]s.
+/// The track of a segmented control (`.markie-segmented-control`); fill it
+/// with [`segment`]s.
 pub fn segments(p: &Palette) -> Div {
-    h_flex().flex_none().h(px(32.)).p(px(2.)).gap(px(2.)).rounded(px(7.)).border_1().border_color(p.border).bg(p.fg(0.03))
+    super::chrome::segmented(p).flex_none()
 }
 
 /// One choice of a segmented control, with an optional count after it.
@@ -202,23 +210,19 @@ pub fn segment(id: impl Into<ElementId>, label: impl Into<SharedString>, count: 
     let fg = p.foreground;
     h_flex()
         .id(id)
-        .h_full()
+        .h(px(28.))
         .gap(px(5.))
-        .px(px(9.))
+        .px(px(10.4))
         .items_center()
-        .rounded(px(5.))
-        .text_size(px(12.5))
+        .rounded(px(7.))
+        .text_size(px(11.5))
         .whitespace_nowrap()
         .cursor_pointer()
         .text_color(if on { p.foreground } else { p.muted })
-        .when(on, |el| {
-            el.bg(if p.dark { p.fg(0.12) } else { p.background })
-                .font_weight(FontWeight::MEDIUM)
-                .shadow(vec![BoxShadow { color: hsla(0., 0., 0., if p.dark { 0.3 } else { 0.10 }), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false }])
-        })
+        .when(on, |el| el.bg(super::chrome::segment_on(p)))
         .hover(move |s| s.text_color(fg))
         .child(label.into())
-        .children(count.map(|n| div().text_size(px(11.)).text_color(p.muted).child(n.to_string())))
+        .children(count.map(|n| div().text_size(px(10.5)).text_color(p.muted).child(n.to_string())))
 }
 
 /// The middle of an empty page: an icon, one line that says what is (not)
@@ -238,7 +242,9 @@ pub fn empty_state(glyph: &'static str, title: impl Into<SharedString>, body: im
                 .items_center()
                 .justify_center()
                 .rounded(px(12.))
-                .bg(p.fg(0.05))
+                .border_1()
+                .border_color(p.border)
+                .bg(p.fg(0.04))
                 .child(svg().path(glyph).size(px(20.)).text_color(p.muted)),
         )
         .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).text_color(p.foreground).text_center().child(title.into()))

@@ -32,13 +32,13 @@ use crate::themes::{self, Palette};
 pub(super) const RECENT_VIEW_KEY: &str = "recent_page_view";
 pub(super) const CLOUD_VIEW_KEY: &str = "cloud_page_view";
 
-/// The page's content never runs wider than this, as the Cloud page's.
-pub(super) const PAGE_MAX_WIDTH: f32 = 1180.;
-pub(super) const PAGE_PAD: f32 = 24.;
+/// The page's side margin, the same as its header's and the Browse page's.
+pub(super) const PAGE_PAD: f32 = 20.;
 
-/// The width a page's grid has in a window this wide.
+/// The width a page's grid has in a window this wide: all of it, so the
+/// grid lines up with the header and adds columns as the window widens.
 pub(super) fn page_width(viewport: f32) -> f32 {
-    (viewport - RAIL_WIDTH - 2. * PAGE_PAD).clamp(doc_grid::CARD_MIN, PAGE_MAX_WIDTH)
+    (viewport - RAIL_WIDTH - 2. * PAGE_PAD).max(doc_grid::CARD_MIN)
 }
 
 // ------------------------------------------------------------------ model
@@ -204,6 +204,9 @@ impl Workspace {
                 LeftView::Cloud => self.shell.cloud_grid.focus.focus(window, cx),
                 _ => {}
             }
+        }
+        if open && self.shell.view == LeftView::Cloud {
+            self.sync_cloud_previews(cx);
         }
         if open && self.shell.view == LeftView::Recent {
             let wants: Vec<(Want, PathBuf, markie_core::formats::FormatKind)> = {
@@ -377,48 +380,45 @@ impl Workspace {
                     .px(px(PAGE_PAD))
                     .pt(px(8.))
                     .pb(px(28.))
-                    .child(div().w_full().max_w(px(PAGE_MAX_WIDTH)).mx_auto().child(body)),
+                    .child(body),
             )
             .into_any_element()
     }
 
-    /// One row: filter by name, Recent or Starred, type, sort, grid or list.
+    /// One row, laid out as the Browse page's: filter by name, type, sort,
+    /// Starred, then grid or list.
     fn render_recent_toolbar(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *p;
         let recent = &self.shell.recent;
         let menu = self.shell.filter_menu;
+        let starred = recent.tab == LibraryTab::Starred;
         let type_label = recent.only_format().map_or("All types", |k| type_menu_label(Some(k)));
-        let sort_label = recent.sort.label();
-        let tab = |which: LibraryTab, id: &'static str, label: &'static str, cx: &mut Context<Self>| {
-            ui::segment(id, label, None, recent.tab == which, &p).on_click(cx.listener(move |this, _, _, cx| {
-                this.shell.recent.set_tab(which);
-                cx.notify();
-            }))
-        };
-        let dropdown = |which: FilterMenu, id: &'static str, label: &str, cx: &mut Context<Self>| {
+        let dropdown = |which: FilterMenu, id: &'static str, label: &str, width: f32, cx: &mut Context<Self>| {
             div()
                 .relative()
                 .flex_none()
-                .child(ui::select(id, label.to_string(), menu == Some(which), &p).on_click(cx.listener(move |this, _, _, cx| this.toggle_filter_menu(which, cx))))
+                .w(px(width))
+                .child(ui::select(id, label.to_string(), menu == Some(which), &p).w_full().on_click(cx.listener(move |this, _, _, cx| this.toggle_filter_menu(which, cx))))
                 .when(menu == Some(which), |el| el.child(self.render_recent_menu(which, &p, cx)))
         };
-        div().flex_none().px(px(PAGE_PAD)).py(px(12.)).child(
-            h_flex()
-                .w_full()
-                .max_w(px(PAGE_MAX_WIDTH))
-                .mx_auto()
-                .flex_wrap()
-                .gap(px(8.))
-                .child(div().flex_1().min_w(px(200.)).max_w(px(380.)).child(filter_field(&self.shell.recent_filter, 12.5, &p)))
-                .child(ui::segments(&p).child(tab(LibraryTab::Recent, "recent-tab-recent", "Recent", cx)).child(tab(LibraryTab::Starred, "recent-tab-starred", "Starred", cx)))
-                .when(recent.query_active(), |el| {
-                    el.child(ui::button("recent-clear", "Clear filters", None, Tone::Quiet, false, &p).on_click(cx.listener(|this, _, window, cx| this.clear_recent_filters(window, cx))))
-                })
-                .child(div().flex_1())
-                .child(dropdown(FilterMenu::RecentType, "recent-type", type_label, cx))
-                .child(dropdown(FilterMenu::RecentSort, "recent-sort", sort_label, cx))
-                .child(doc_grid::view_toggle(self.shell.recent_grid.view, &p, cx, |this: &mut Self, view, _| this.set_recent_view(view))),
-        )
+        ui::toolbar(&p)
+            .child(div().flex_1().min_w(px(180.)).max_w(px(460.)).child(filter_field(&self.shell.recent_filter, 13., &p)))
+            .child(dropdown(FilterMenu::RecentType, "recent-type", type_label, 150., cx))
+            .child(dropdown(FilterMenu::RecentSort, "recent-sort", recent.sort.label(), 150., cx))
+            .child(
+                ui::button("recent-starred", "Starred", Some(if starred { IconName::StarFill } else { IconName::Star }), Tone::Quiet, false, &p)
+                    .when(starred, |b| b.bg(p.fg(0.08)).text_color(p.foreground))
+                    .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(if starred { "Show every recent document" } else { "Show only starred documents" }).build(window, cx))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.shell.recent.set_tab(if starred { LibraryTab::Recent } else { LibraryTab::Starred });
+                        cx.notify();
+                    })),
+            )
+            .child(div().flex_1())
+            .when(recent.query_active(), |el| {
+                el.child(ui::button("recent-clear", "Clear filters", None, Tone::Quiet, false, &p).on_click(cx.listener(|this, _, window, cx| this.clear_recent_filters(window, cx))))
+            })
+            .child(doc_grid::view_toggle(self.shell.recent_grid.view, &p, cx, |this: &mut Self, view, _| this.set_recent_view(view)))
     }
 
     /// The type or sort menu, under its button.
@@ -456,13 +456,13 @@ impl Workspace {
                     .collect()
             }
         };
-        div().absolute().top(px(32. + 6.)).right_0().child(deferred(
-            anchored().anchor(Anchor::TopRight).snap_to_window_with_margin(px(8.)).child(
+        div().absolute().top(px(32. + 6.)).left_0().child(deferred(
+            anchored().snap_to_window_with_margin(px(8.)).child(
                 menu_panel(&p)
                     .id("recent-page-menu")
                     .occlude()
                     .p(px(4.))
-                    .min_w(px(160.))
+                    .min_w(px(150.))
                     .rounded(px(10.))
                     .children(rows)
                     .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_filter_menu(cx))),
@@ -637,8 +637,8 @@ mod tests {
 
     #[test]
     fn the_page_is_as_wide_as_the_window_allows_up_to_its_limit() {
-        assert_eq!(page_width(1280.), 1180.);
-        assert_eq!(page_width(900.), 900. - 52. - 48.);
+        assert_eq!(page_width(1280.), 1280. - 52. - 40.);
+        assert_eq!(page_width(2400.), 2400. - 52. - 40.);
         assert_eq!(page_width(100.), 188.);
     }
 

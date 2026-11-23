@@ -40,12 +40,12 @@ const THUMB_H: f32 = 138.;
 const FOOT_H: f32 = 58.;
 pub const CARD_H: f32 = THUMB_H + FOOT_H;
 const HEADER_H: f32 = 34.;
-const LIST_ROW_H: f32 = 40.;
+const LIST_ROW_H: f32 = 36.;
 const SECTION_GAP: f32 = 20.;
 
 /// How many cards fit across `width`.
 pub fn columns(width: f32) -> usize {
-    (((width + GAP) / (CARD_MIN + GAP)).floor() as usize).clamp(1, 8)
+    (((width + GAP) / (CARD_MIN + GAP)).floor() as usize).clamp(1, 12)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -776,30 +776,26 @@ pub fn view_toggle<V: 'static>(view: GridView, p: &Palette, cx: &mut Context<V>,
     let p = *p;
     const GRID: &str = "markie/view-grid.svg";
     const LIST: &str = "markie/view-list.svg";
-    h_flex().flex_none().h(px(32.)).p(px(2.)).gap(px(2.)).rounded(px(7.)).border_1().border_color(p.border).children(
-        [(GridView::Grid, GRID, "Grid"), (GridView::List, LIST, "List")].map(|(which, glyph, label)| {
-            let on = view == which;
-            let pick = on_pick.clone();
-            let fg = p.foreground;
-            div()
-                .id(SharedString::from(format!("doc-view-{label}")))
-                .w(px(28.))
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(5.))
-                .cursor_pointer()
-                .when(on, |el| el.bg(p.fg(0.09)))
-                .hover(move |s| s.text_color(fg))
-                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx))
-                .child(icon(glyph, 14., if on { p.foreground } else { p.muted }))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    pick(this, which, cx);
-                    cx.notify();
-                }))
-        }),
-    )
+    super::chrome::segmented(&p).flex_none().children([(GridView::Grid, GRID, "Grid"), (GridView::List, LIST, "List")].map(|(which, glyph, label)| {
+        let on = view == which;
+        let pick = on_pick.clone();
+        div()
+            .id(SharedString::from(format!("doc-view-{label}")))
+            .w(px(30.))
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(7.))
+            .cursor_pointer()
+            .when(on, |el| el.bg(super::chrome::segment_on(&p)))
+            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx))
+            .child(icon(glyph, 14., if on { p.foreground } else { p.muted }))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                pick(this, which, cx);
+                cx.notify();
+            }))
+    }))
 }
 
 #[cfg(test)]
@@ -839,7 +835,7 @@ mod tests {
         assert_eq!(columns(188.), 1);
         assert_eq!(columns(188. * 2. + GAP), 2);
         assert_eq!(columns(1180.), 5);
-        assert_eq!(columns(10_000.), 8);
+        assert_eq!(columns(10_000.), 12);
     }
 
     #[test]

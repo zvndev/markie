@@ -1677,10 +1677,8 @@ impl Workspace {
         if self.shell.view == LeftView::Recent {
             return self.render_recent_page(window, cx);
         }
-        // Signed out, the account's own Cloud page asks to sign in; signed in,
-        // the sync library below takes over with the same session.
-        if self.shell.view == LeftView::Cloud && self.cloud.selected_scope().is_none() {
-            return self.render_cloud_page();
+        if self.shell.view == LeftView::Cloud {
+            return self.render_cloud_workspace(window, cx);
         }
         if self.shell.view == LeftView::LiveDocs {
             return self.render_live_docs(cx);
@@ -1772,9 +1770,7 @@ impl Workspace {
                             .on_click(|_, w, cx| w.dispatch_action(Box::new(Open), cx)),
                     ),
             )
-            .child(if signed_in_cloud {
-                self.render_cloud_library(cx)
-            } else {
+            .child({
                 v_flex()
                     .flex_1()
                     .items_center()

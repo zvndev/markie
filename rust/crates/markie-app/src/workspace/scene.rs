@@ -343,7 +343,29 @@ impl Workspace {
                     return false;
                 }
                 let requests = args.get("min_requests").and_then(Value::as_u64).unwrap_or(0) as usize;
-                self.collab.people.as_ref().is_some_and(|p| p.requests.len() >= requests)
+                if !self.collab.people.as_ref().is_some_and(|p| p.requests.len() >= requests) {
+                    return false;
+                }
+                // Thumbnails: the saved ones read, the rest fetched.
+                if !self.shell.cloud_previews_loaded || self.shell.previews.busy() {
+                    return false;
+                }
+                if *step == 14 {
+                    // {requests_open?, view?: "list", sources?: ["with-me"], menu?: "area" | "type" | "sort" | "row", cursor?: n}
+                    if args.get("requests_open").and_then(Value::as_bool).unwrap_or(false)
+                        && let Some(people) = self.collab.people.as_mut()
+                    {
+                        people.open = true;
+                    }
+                    self.shell.cloud_grid.view = if arg(args, "view") == "list" { super::doc_grid::GridView::List } else { super::doc_grid::GridView::Grid };
+                    let sources: Vec<String> = args.get("sources").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                    self.cloud.sources = super::cloud_page::sources_from_setting(serde_json::to_string(&sources).ok().as_deref());
+                    self.scene_cloud_menu(arg(args, "menu"), window, cx);
+                    *step = 15;
+                    cx.notify();
+                    return false;
+                }
+                true
             }
         }
     }

@@ -752,9 +752,16 @@ fn red(s: impl Into<SharedString>) -> Div {
     div().text_size(px(12.)).line_height(relative(1.625)).text_color(rgb(0xdc2626)).child(s.into())
 }
 
-/// `.markie-overlay-section`.
-fn heading(s: &'static str) -> Div {
-    div().mt_2().text_xs().font_weight(FontWeight::SEMIBOLD).child(s)
+/// `.markie-overlay-section`: 10 px, semibold, muted, upper case with
+/// 0.08 em tracking, 6 px above what it labels.
+fn heading(s: &'static str, cx: &App) -> Div {
+    div()
+        .mt_2()
+        .mb(px(-2.))
+        .text_size(px(10.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(cx.theme().muted_foreground)
+        .child(super::dialog_chrome::spaced_caps(s))
 }
 
 /// copy-block.tsx: an upper-case label, a hint, Copy, and the text in full.
@@ -816,7 +823,9 @@ impl Render for AgentsPanel {
         v_flex().gap_2().child(header).child(
             div()
                 .id("agents-body")
-                .max_h(window.viewport_size().height * 0.86)
+                // `max-h-[86vh]` is the whole panel's: less its 20 px
+                // padding and the title row.
+                .max_h(window.viewport_size().height * 0.86 - px(70.))
                 .overflow_y_scroll()
                 .child(body),
         )
@@ -841,7 +850,7 @@ impl AgentsPanel {
             .child(paragraph("Hand your agent the documents on this computer. It can find a document by name, search inside it, read it, write a new one, and open it here in Markie: your notes and docs, Word, RTF and OpenDocument files, CSV, JSON and YAML, and your agent files too (CLAUDE.md, AGENTS.md, ~/.claude/skills, ~/.codex).", cx))
             .child(paragraph("Word, RTF, OpenDocument and HTML files stay read-only to agents. An agent reads their text and opens them here for you to edit, so their formatting is never overwritten.", cx))
             .child(div().text_size(px(12.)).line_height(relative(1.625)).mb_2().text_color(cx.theme().success).child("Runs on demand, on this computer. Nothing is uploaded unless you let an agent put a file in your Markie Cloud."))
-            .child(heading("Tools it gives your agent"))
+            .child(heading("Tools it gives your agent", cx))
             .child(v_flex().gap_1().mb_2().children(TOOLS.iter().map(|(tool, desc)| {
                 h_flex()
                     .gap_2()
@@ -849,7 +858,7 @@ impl AgentsPanel {
                     .child(div().flex_none().font_family("Menlo").text_color(cx.theme().foreground.opacity(0.9)).child(*tool))
                     .child(div().min_w_0().truncate().text_color(cx.theme().muted_foreground).child(*desc))
             })))
-            .child(heading("Markie Cloud"))
+            .child(heading("Markie Cloud", cx))
             .child(paragraph("Ask an agent for a private Markie copy of something and it puts the file in your Cloud and hands you a private link. That link opens only for you, after you sign in, on any browser or phone. Markie asks you before the first upload. A public link is only made when you ask for one, and Markie confirms it with you every time.", cx))
             .child(
                 gpui_kit::component::checkbox::Checkbox::new("agent-always")
@@ -863,10 +872,10 @@ impl AgentsPanel {
                         cx.notify();
                     })),
             )
-            .child(heading("Remote agents"))
+            .child(heading("Remote agents", cx))
             .child(paragraph("An agent that is not on this computer, such as Claude on your phone, can make documents in your Cloud with a token. Create and revoke tokens here.", cx))
             .child(div().mb_2().child(Button::new("remote-agents").small().label("Remote agents…").on_click(cx.listener(|this, _, _, cx| this.open_remote(cx)))))
-            .child(heading("It files what it writes"))
+            .child(heading("It files what it writes", cx))
             .child(paragraph("Every connected agent is handed Markie’s organization conventions when it starts, so it declares which project and block a document belongs to as it writes:", cx))
             .child(
                 div()
@@ -905,7 +914,7 @@ impl AgentsPanel {
         }
         if !self.signed_in {
             return content
-                .child(heading("Sign in first"))
+                .child(heading("Sign in first", cx))
                 .child(paragraph("Remote agents need a Markie Cloud sign-in, because the tokens belong to your account. Sign in to Markie Cloud from Settings, then open this panel again.", cx));
         }
         if self.unavailable {
@@ -920,7 +929,7 @@ impl AgentsPanel {
         let can_create = !self.creating && !self.input.read(cx).value().trim().is_empty();
         content = content
             .child(copy_block("remote-url", "MCP URL", "the hosted Markie server", url.clone(), cx))
-            .child(heading("Create a token"))
+            .child(heading("Create a token", cx))
             .child(
                 h_flex()
                     .gap_2()
@@ -961,7 +970,7 @@ impl AgentsPanel {
             );
         }
         content = content
-            .child(heading("Set up your agent"))
+            .child(heading("Set up your agent", cx))
             .child(paragraph(
                 if self.fresh.is_some() {
                     "These include the token you just made.".to_string()
@@ -972,7 +981,7 @@ impl AgentsPanel {
             ))
             .child(copy_block("remote-claude", "Claude Code", "run this in your terminal", tokens::claude(&url, secret), cx))
             .child(copy_block("remote-config", "Other MCP clients", "add to the client's MCP config", tokens::config(&url, secret), cx))
-            .child(heading("Your tokens"));
+            .child(heading("Your tokens", cx));
         content = match (&self.load_error, &self.rows) {
             (Some(error), _) => content.child(
                 h_flex().gap_1().child(red(error.clone())).child(

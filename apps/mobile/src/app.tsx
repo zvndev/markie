@@ -21,7 +21,7 @@ import {
 } from "./lib/deep-links";
 import { IncomingFileError, isIncomingFileUrl, readIncomingFile, type IncomingFile } from "./lib/incoming-file";
 import { createSessionStore, type SecureKeyValue, type StoredSession } from "./lib/session";
-import { ProviderSignInError, completeProviderSignIn, isAuthReturnLink } from "./lib/provider-sign-in";
+import { ProviderSignInError, cancelProviderSignIn, completeProviderSignIn, createSignInAttempts, isAuthReturnLink } from "./lib/provider-sign-in";
 import { createOfflineStore, platformOfflineBackend, type OfflineSession } from "./lib/offline-store";
 import { createOfflineApi, offlineOf } from "./lib/offline-api";
 import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
@@ -410,7 +410,13 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     void courtesy.signOut({ timeoutMs: SERVER_SIGN_OUT_TIMEOUT_MS }).catch(() => undefined);
   }, [endSession, transport, push]);
 
+  // Which sign-in is current. A Google or Apple answer that arrives after
+  // another sign-in succeeded, or after the server was changed, is dropped.
+  const signInAttempts = useRef(createSignInAttempts()).current;
   const signedIn = useCallback(async ({ origin, token, user }: { origin: string; token: string; user: ApiUser }) => {
+    // Whatever was waiting on the browser is over: this sign-in is the one.
+    signInAttempts.supersede();
+    void cancelProviderSignIn(secure);
     const next: StoredSession = { origin, token, email: user.email, name: user.name, userId: user.id };
     await sessionStore.save(next);
     // Another account's documents are wiped here, before this one sees a screen.
@@ -429,7 +435,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     pendingFile.current = null;
     if (file) openFile(file);
     else if (pending) openTarget(pending, { replaceStack: true });
-  }, [openFile, openTarget, sessionStore, offlineStore]);
+  }, [openFile, openTarget, sessionStore, offlineStore, signInAttempts, secure]);
 
   // Google or Apple handed back. The link carries a one-use code, never a
   // session: lib/provider-sign-in.ts trades it, with the secret this phone
@@ -439,10 +445,14 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     if (!authReturn || !sessionKnown) return;
     setAuthReturn(null);
     if (sessionRef.current) return;
-    void completeProviderSignIn(authReturn, { secure, transport })
-      .then((result) => (result ? signedIn(result) : undefined))
-      .catch((error) => setSignInNotice(error instanceof ProviderSignInError ? error.message : "Sign-in didn't finish. Try again."));
-  }, [authReturn, sessionKnown, secure, transport, signedIn]);
+    // Asked again once the server has answered: a password or code sign-in
+    // that finished in the meantime is the newer one, and stays.
+    const current = signInAttempts.begin();
+    const stillCurrent = () => current() && !sessionRef.current;
+    void completeProviderSignIn(authReturn, { secure, transport, stillCurrent })
+      .then((result) => (result && stillCurrent() ? signedIn(result) : undefined))
+      .catch((error) => { if (stillCurrent()) setSignInNotice(error instanceof ProviderSignInError ? error.message : "Sign-in didn't finish. Try again."); });
+  }, [authReturn, sessionKnown, secure, transport, signedIn, signInAttempts]);
 
   const setThemeMode = useCallback((mode: ThemeMode) => {
     saveThemeMode(mode);
@@ -477,7 +487,15 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           onReadPending={hasPending && waitingPublic ? () => openSignedOut(waitingPublic) : undefined}
           notice={signInNotice}
           onSignedIn={signedIn}
-          onOriginChange={(origin) => { setPreferredOrigin(origin); savePreferredOrigin(origin); }}
+          onOriginChange={(origin) => {
+            // A Google or Apple sign-in waiting on the old server is over.
+            if (origin !== preferredOrigin) {
+              signInAttempts.supersede();
+              void cancelProviderSignIn(secure);
+            }
+            setPreferredOrigin(origin);
+            savePreferredOrigin(origin);
+          }}
         />
         {toast ? <div className="m-toast" role="status">{toast}</div> : null}
       </>

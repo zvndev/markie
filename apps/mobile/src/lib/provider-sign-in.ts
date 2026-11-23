@@ -1,10 +1,8 @@
 // Google and Apple sign-in on the phone.
 //
 // The provider's screen opens in the phone's browser, never in a web view
-// inside the app, and the way back is a `markie-mobile://auth` link. Any web
-// page can fire that scheme and another app can register it, so the link is
-// never trusted with a session and a stolen one opens nothing
-// (server/src/mobile-auth.ts is the other half):
+// inside the app. The way back is a link, and a link is never trusted with a
+// session (server/src/mobile-auth.ts is the other half):
 //
 //   1. begin: make a random secret and a random state, and keep both in the
 //      Keychain beside the server the person chose. Open the browser with
@@ -14,10 +12,18 @@
 //   3. finish: send the code and the secret to that same server over HTTPS.
 //      The session is in the answer, never in the link.
 //
+// Two links come back. On Markie Cloud it is https://markiedocs.com/auth/
+// mobile-return, which iOS and Android hand only to this app once they have
+// checked the host's association files. From a self-hosted server, whose
+// host the app cannot claim, it is markie-mobile://auth, which any app may
+// register. Either way the link alone opens nothing: the secret never left
+// this phone, and the server only makes a code for the sign-in this phone
+// opened.
+//
 // The app never offers a provider a server has not said it supports, and it
 // never sends a hand-off anywhere but the server the sign-in started on.
 import type { ApiUser } from "./api";
-import { APP_SCHEME } from "./deep-links";
+import { APP_SCHEME, CLAIMED_HOSTS } from "./deep-links";
 import { NetworkError, type HttpTransport } from "./http";
 import type { SecureKeyValue } from "./session";
 import { normalizeServerOrigin } from "./server-origin";
@@ -35,6 +41,7 @@ export const PROVIDER_PENDING_KEY = "markie.mobile.provider-sign-in.v1";
 const PENDING_TTL_MS = 15 * 60 * 1000;
 const EXCHANGE_TIMEOUT_MS = 20_000;
 const INFO_TIMEOUT_MS = 8_000;
+const SUPERSEDED_SIGN_OUT_TIMEOUT_MS = 8_000;
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 const STATE = /^[0-9a-f]{32}$/;
@@ -138,15 +145,58 @@ export async function beginProviderSignIn(
   return `${origin}/auth/mobile-start?provider=${provider}&challenge=${challenge}&state=${pending.state}`;
 }
 
+/** The path of the verified link back (server/src/well-known.ts MOBILE_RETURN_PATH). */
+export const AUTH_RETURN_PATH = "/auth/mobile-return";
+
+/**
+ * What a link back from a provider carries, or null when the link is not one.
+ * markie-mobile://auth has it in the query. The verified https link has it in
+ * the fragment, which no server is ever sent.
+ */
+function authReturnParams(input: string): URLSearchParams | null {
+  if (typeof input !== "string" || input.length > 4096) return null;
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  if (url.username || url.password) return null;
+  if (url.protocol === `${APP_SCHEME}:`) return url.host === "auth" ? url.searchParams : null;
+  if (url.protocol !== "https:" || url.port || !CLAIMED_HOSTS.includes(url.hostname)) return null;
+  return url.pathname === AUTH_RETURN_PATH ? new URLSearchParams(url.hash.slice(1)) : null;
+}
+
 /** Whether a link is the way back from a provider, whatever it carries. */
 export function isAuthReturnLink(input: string): boolean {
-  if (typeof input !== "string" || input.length > 4096) return false;
-  try {
-    const url = new URL(input.trim());
-    return url.protocol === `${APP_SCHEME}:` && url.host === "auth";
-  } catch {
-    return false;
-  }
+  return authReturnParams(input) !== null;
+}
+
+/**
+ * Forgets a sign-in that is waiting on the browser. Called when the person
+ * picks another server or signs in some other way: the answer to the old
+ * sign-in, if it ever comes, then matches nothing and is ignored.
+ */
+export async function cancelProviderSignIn(secure: SecureKeyValue): Promise<void> {
+  await secure.remove(PROVIDER_PENDING_KEY).catch(() => undefined);
+}
+
+/**
+ * Which sign-in is the current one. Every sign-in that succeeds, and every
+ * change of server, supersedes what came before, so an answer that arrives
+ * late can tell it is no longer wanted.
+ */
+export function createSignInAttempts(): { begin(): () => boolean; supersede(): void } {
+  let generation = 0;
+  return {
+    begin() {
+      const mine = generation;
+      return () => mine === generation;
+    },
+    supersede() {
+      generation += 1;
+    },
+  };
 }
 
 const REFUSALS: Record<string, (provider: string) => string> = {
@@ -169,38 +219,47 @@ export type ProviderSignInResult = { origin: string; token: string; user: ApiUse
  * Finishes a sign-in from the link that came back.
  *
  * Returns null for a link that is not the answer to the sign-in this phone
- * is waiting on: nothing waiting, or a state that does not match. Such a
- * link is ignored and what is waiting is left alone, so a page that fires
- * `markie-mobile://auth` cannot sign anyone in or cancel a sign-in under way.
+ * is waiting on: nothing waiting, a state that does not match, a server
+ * other than the one chosen, or neither a well-formed code nor a refusal.
+ * Such a link is ignored and what is waiting is left alone, so a page or an
+ * app that fires a link, even one that has learned the state, cannot sign
+ * anyone in or cancel a sign-in under way. The secret is used up only by a
+ * link that passes all of that.
+ *
+ * `stillCurrent` is asked once the server has answered. If the person has
+ * signed in another way or changed server in the meantime, the session that
+ * came back is ended and null is returned: a late answer never replaces a
+ * newer sign-in.
+ *
  * Throws ProviderSignInError, with words for the person, when the sign-in
  * this phone started did not work out.
  */
 export async function completeProviderSignIn(
   link: string,
-  { secure, transport, now = Date.now }: { secure: SecureKeyValue; transport: HttpTransport; now?: () => number }
+  { secure, transport, now = Date.now, stillCurrent }: { secure: SecureKeyValue; transport: HttpTransport; now?: () => number; stillCurrent?: () => boolean }
 ): Promise<ProviderSignInResult | null> {
-  if (!isAuthReturnLink(link)) return null;
-  const url = new URL(link.trim());
+  const params = authReturnParams(link);
+  if (!params) return null;
   const pending = readPending(await secure.get(PROVIDER_PENDING_KEY).catch(() => null));
   if (!pending) return null;
-  const state = url.searchParams.get("state");
+  const state = params.get("state");
   if (!state || state !== pending.state) return null;
+  // The link has to name the server the sign-in started on, and carry
+  // something this app can act on. Anything else is somebody else's link.
+  const issuer = normalizeServerOrigin(params.get("iss") ?? "");
+  if (!issuer.ok || issuer.origin !== pending.origin) return null;
+  const error = params.get("error");
+  const code = params.get("code");
+  if (error === null && (!code || !CODE.test(code))) return null;
 
-  // This is the answer to our sign-in. From here the secret is used at most once.
+  // This is the answer to our sign-in. From here the secret is used at most
+  // once. Taking it is also what makes the same link, delivered twice, count
+  // once: whichever reads the record second finds nothing waiting.
   await secure.remove(PROVIDER_PENDING_KEY).catch(() => undefined);
   const name = PROVIDER_LABEL[pending.provider];
   const failed = `${name} sign-in didn't finish. Try again.`;
   if (now() - pending.at > PENDING_TTL_MS || pending.at > now() + 60_000) throw new ProviderSignInError(`${name} sign-in took too long. Try again.`);
-
-  // The link has to name the server the sign-in started on. A link from any
-  // other server is refused before anything is sent anywhere.
-  const issuer = normalizeServerOrigin(url.searchParams.get("iss") ?? "");
-  if (!issuer.ok || issuer.origin !== pending.origin) throw new ProviderSignInError(failed);
-
-  const error = url.searchParams.get("error");
-  if (error !== null) throw new ProviderSignInError(REFUSALS[error]?.(name) ?? failed);
-  const code = url.searchParams.get("code");
-  if (!code || !CODE.test(code)) throw new ProviderSignInError(failed);
+  if (error !== null || !code) throw new ProviderSignInError(REFUSALS[error ?? ""]?.(name) ?? failed);
 
   let response;
   try {
@@ -224,6 +283,18 @@ export async function completeProviderSignIn(
   const user = body?.user;
   if (typeof body?.token !== "string" || !TOKEN_SHAPE.test(body.token) || !user || typeof user.id !== "string" || !user.id || typeof user.email !== "string" || !user.email) {
     throw new ProviderSignInError(failed);
+  }
+  if (stillCurrent && !stillCurrent()) {
+    // Somebody signed in another way while the server was answering. The
+    // session just made is not kept, so it is ended, not left to expire.
+    void transport({
+      method: "POST",
+      url: `${pending.origin}/api/auth/sign-out`,
+      headers: { authorization: `Bearer ${body.token}` },
+      body: {},
+      timeoutMs: SUPERSEDED_SIGN_OUT_TIMEOUT_MS,
+    }).catch(() => undefined);
+    return null;
   }
   return {
     origin: pending.origin,

@@ -190,6 +190,53 @@ Google and Apple (`src/lib/provider-sign-in.ts`, `server/src/mobile-auth.ts`):
 - On iOS, Google shows only where Apple shows too, with Apple first (App Store guideline 4.8).
 - The provider's screen opens in the phone's browser, never in a web view inside the app.
 - The app makes a random secret and keeps it in the Keychain or Keystore. The browser is sent to
+  `/auth/mobile-start` with the secret's SHA-256 and a random state. That opens a sign-in on the
+  server, tied to that browser by a cookie and to that one trip to the provider.
+- Only that trip's own callback can finish the sign-in. A session the browser already had, or a
+  callback from another start, finishes nothing. The session the provider step makes is ended at
+  the callback and its cookie is never sent, so the browser is left signed out of nothing and
+  into nothing.
+- The server's page then shows who signed in and a "Return to Markie" button. The link carries a
+  code that lasts two minutes and works once, the state, and the server's origin as `iss`. It
+  never carries a session token.
+  - On Markie Cloud the link is `https://markiedocs.com/auth/mobile-return#code=...`, a universal
+    link on iOS and an app link on Android, so only this app can be handed it. The pieces ride the
+    fragment, which no server is sent. Android uses it once `ANDROID_APP_CERT_SHA256` is set on the
+    server, and the custom scheme until then.
+  - A self-hosted server, whose host the app cannot claim, uses
+    `markie-mobile://auth?code=...&state=...&iss=...`.
+- The app accepts the link only when the state is its own, `iss` is the server it started on, and
+  it carries a well-formed code or a refusal. It then posts the code and the secret to
+  `/auth/mobile-exchange` on that server and gets a session of its own back over HTTPS. Any other
+  link is ignored, and a sign-in under way is left alone.
+- Signing in another way, or changing the server, cancels a sign-in that is waiting on the
+  browser. An answer that arrives after that is dropped, and the session it brought is ended.
+
+A link that leaks, or that another app receives, is a code with no secret. It opens nothing, and
+trying it spends it. On the custom scheme, an app that opened the sign-in itself and got someone to
+finish it and tap the button would hold the secret too. The verified link is what closes that, which
+is why Markie Cloud uses it. The result goes through the same `signedIn` path as every other
+sign-in, so the offline store's rules for a changed account hold.
+
+In the desktop browser (`npm run dev` only), `http://localhost:5174/?link=<url>` stands in for a tapped link.
+A document the user cannot read shows the server's message and a way back to Recent.
+An https link on a Markie host that the app cannot route (a raw download) opens in the default browser.
+Any other URL another app sends is ignored.
+
+## Signing in
+
+The sign-in screen offers an emailed code, the account's password ("Use a password instead"), and
+Google and Apple where the chosen server offers them. No account is created with a password on the
+phone: a new address signs in with a code.
+
+Google and Apple (`src/lib/provider-sign-in.ts`, `server/src/mobile-auth.ts`):
+
+- The app asks the server what it supports (`GET /api/server-info`). It shows Google or Apple only
+  when the answer has `signIn.mobile: true` and names that provider. A server that does not answer,
+  or one from before the hand-off, gets neither. This holds for a self-hosted server under Advanced.
+- On iOS, Google shows only where Apple shows too, with Apple first (App Store guideline 4.8).
+- The provider's screen opens in the phone's browser, never in a web view inside the app.
+- The app makes a random secret and keeps it in the Keychain or Keystore. The browser is sent to
   `/auth/mobile-start` with the secret's SHA-256 and a random state.
 - After the provider, the server's page shows who signed in and a "Return to Markie" button. Its
   link is `markie-mobile://auth?code=...&state=...&iss=...`. The code lasts two minutes and works

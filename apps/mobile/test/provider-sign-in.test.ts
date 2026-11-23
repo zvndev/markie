@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import {
   PROVIDER_PENDING_KEY,
   beginProviderSignIn,
+  cancelProviderSignIn,
   completeProviderSignIn,
+  createSignInAttempts,
   fetchServerSignIn,
   isAuthReturnLink,
   parseServerSignIn,
@@ -120,9 +122,31 @@ describe("the link that comes back", () => {
   it("knows its own shape", () => {
     expect(isAuthReturnLink("markie-mobile://auth?code=x&state=y")).toBe(true);
     expect(isAuthReturnLink("markie-mobile://auth")).toBe(true);
-    for (const other of ["markie-mobile://d/abc", "markie://auth?token=x", "https://api.markiedocs.com/auth", "markie-mobile://authx", "not a url", ""]) {
+    // The verified link Markie Cloud sends back, on the hosts the app claims.
+    expect(isAuthReturnLink("https://markiedocs.com/auth/mobile-return#code=x&state=y")).toBe(true);
+    expect(isAuthReturnLink("https://api.markiedocs.com/auth/mobile-return")).toBe(true);
+    for (const other of [
+      "markie-mobile://d/abc", "markie://auth?token=x", "https://api.markiedocs.com/auth", "markie-mobile://authx", "not a url", "",
+      "http://markiedocs.com/auth/mobile-return#code=x", "https://markiedocs.com:444/auth/mobile-return#code=x",
+      "https://evil.example/auth/mobile-return#code=x", "https://markiedocs.com.evil.example/auth/mobile-return#code=x",
+      "https://user:pw@markiedocs.com/auth/mobile-return#code=x", "https://markiedocs.com/auth/mobile-return/more#code=x",
+      "https://markiedocs.com/auth/mobile-bridge#code=x", "https://markie.example.com/auth/mobile-return#code=x",
+    ]) {
       expect(isAuthReturnLink(other)).toBe(false);
     }
+  });
+
+  it("takes the verified https link Markie Cloud sends, reading the fragment and never the query", async () => {
+    const { secure, kept } = await started(ORIGIN);
+    const { transport, calls } = fake();
+    const carried = `code=${CODE}&state=${kept.state}&iss=${encodeURIComponent(ORIGIN)}`;
+    // The same pieces in the query are not the app's link: a server would have seen them.
+    expect(await completeProviderSignIn(`https://markiedocs.com/auth/mobile-return?${carried}`, { secure, transport })).toBeNull();
+    expect(calls).toHaveLength(0);
+    const result = await completeProviderSignIn(`https://markiedocs.com/auth/mobile-return#${carried}`, { secure, transport });
+    expect(result).toEqual({ origin: ORIGIN, token: TOKEN, user: USER });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ url: `${ORIGIN}/auth/mobile-exchange`, body: { code: CODE, verifier: kept.verifier, state: kept.state } });
   });
 
   it("trades the code and the kept secret for the session, on the server the sign-in started on", async () => {
@@ -164,10 +188,75 @@ describe("the link that comes back", () => {
     for (const iss of ["https://evil.example", "", "not a url", "https://markie.example.com.evil.example"]) {
       const { secure, back } = await started(SELF);
       const { transport, calls } = fake();
-      await expect(completeProviderSignIn(back({ iss }), { secure, transport })).rejects.toBeInstanceOf(ProviderSignInError);
+      expect(await completeProviderSignIn(back({ iss }), { secure, transport })).toBeNull();
       expect(calls).toHaveLength(0);
-      expect(await secure.get(PROVIDER_PENDING_KEY)).toBeNull();
     }
+  });
+
+  it("a foreign link that knows the state does not use up or cancel the sign-in that is waiting", async () => {
+    const { secure, kept, back } = await started(SELF);
+    const { transport, calls } = fake();
+    const waiting = await secure.get(PROVIDER_PENDING_KEY);
+    const malformed = new URL(back());
+    malformed.searchParams.set("code", "short");
+    const foreign = [
+      // The right state, from another server, with a code or with a refusal.
+      back({ iss: "https://evil.example" }),
+      back({ iss: "https://evil.example", code: "", error: "failed" }),
+      back({ iss: "" }),
+      // The right state and server, and nothing this app can act on.
+      back({ code: "" }),
+      malformed.href,
+      `https://markiedocs.com/auth/mobile-return#state=${kept.state}&iss=https%3A%2F%2Fevil.example&code=${CODE}`,
+    ];
+    for (const link of foreign) {
+      expect(await completeProviderSignIn(link, { secure, transport })).toBeNull();
+      expect(await secure.get(PROVIDER_PENDING_KEY)).toBe(waiting);
+    }
+    expect(calls).toHaveLength(0);
+    // The real answer still finishes the sign-in afterwards.
+    expect(await completeProviderSignIn(back(), { secure, transport })).toMatchObject({ origin: SELF, token: TOKEN });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a late answer does not replace a newer sign-in: its session is ended and nothing is returned", async () => {
+    const { secure, back } = await started(SELF);
+    const attempts = createSignInAttempts();
+    const current = attempts.begin();
+    const calls: HttpRequest[] = [];
+    const transport: HttpTransport = async (req) => {
+      calls.push(req);
+      // While the server is answering, the person signs in with a password.
+      if (req.url.endsWith("/auth/mobile-exchange")) attempts.supersede();
+      return { status: 200, headers: {}, text: JSON.stringify({ token: TOKEN, user: USER }) };
+    };
+    expect(current()).toBe(true);
+    expect(await completeProviderSignIn(back(), { secure, transport, stillCurrent: current })).toBeNull();
+    expect(current()).toBe(false);
+    // The session the server just made is not left behind.
+    expect(calls.map((call) => call.url)).toEqual([`${SELF}/auth/mobile-exchange`, `${SELF}/api/auth/sign-out`]);
+    expect(calls[1]).toMatchObject({ method: "POST", headers: { authorization: `Bearer ${TOKEN}` } });
+    // An attempt begun after that is its own.
+    expect(attempts.begin()()).toBe(true);
+  });
+
+  it("a sign-in that is still the current one is kept", async () => {
+    const { secure, back } = await started(SELF);
+    const { transport, calls } = fake();
+    const current = createSignInAttempts().begin();
+    expect(await completeProviderSignIn(back(), { secure, transport, stillCurrent: current })).toMatchObject({ token: TOKEN });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("is cancelled by another sign-in or a change of server: the link that then comes back is ignored", async () => {
+    const { secure, back } = await started(SELF);
+    const { transport, calls } = fake();
+    await cancelProviderSignIn(secure);
+    expect(await secure.get(PROVIDER_PENDING_KEY)).toBeNull();
+    expect(await completeProviderSignIn(back(), { secure, transport })).toBeNull();
+    expect(calls).toHaveLength(0);
+    // Cancelling with nothing waiting is not an error.
+    await cancelProviderSignIn(memoryKeyValue());
   });
 
   it("never takes a session from the link itself", async () => {
@@ -178,13 +267,13 @@ describe("the link that comes back", () => {
     expect(JSON.stringify(calls[0].body)).not.toContain(TOKEN);
   });
 
-  it("refuses a malformed code without asking the server", async () => {
+  it("ignores a malformed code without asking the server", async () => {
     for (const code of ["", "short", `${CODE}x`, "has space"]) {
       const { secure, back } = await started();
       const { transport, calls } = fake();
       const link = new URL(back());
       link.searchParams.set("code", code);
-      await expect(completeProviderSignIn(link.href, { secure, transport })).rejects.toBeInstanceOf(ProviderSignInError);
+      expect(await completeProviderSignIn(link.href, { secure, transport })).toBeNull();
       expect(calls).toHaveLength(0);
     }
   });

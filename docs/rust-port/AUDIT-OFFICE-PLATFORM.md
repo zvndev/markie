@@ -1,7 +1,7 @@
 # Markie RS Office and platform parity audit
 
-macOS score: **91.80% (56 PASS ÷ 61 eligible)**, after the native print work, both capture passes, the editor fixes pass, the Word view spacing pass and the cloud and vault pass on 2026-11-22. 105 rows: 56 PASS, 2 FAIL,
-39 EXCLUDED, 5 EXCLUDED-PLATFORM, 0 NEEDS-CAPTURE, and 3 NEEDS-KIRBY.
+macOS score: **94.92% (56 PASS ÷ 59 eligible)**, rescored on 2026-11-22 after Kirby excluded the crash report format rows (27.427, 27.431). 105 rows: 56 PASS, 0 FAIL,
+41 EXCLUDED, 5 EXCLUDED-PLATFORM, 0 NEEDS-CAPTURE, and 3 NEEDS-KIRBY (Touch ID, checked by Kirby in person).
 All 93 inventory bullets are represented. Both exclusion classes stay out of the denominator.
 
 Baseline: Rust `3b6f6c0`, Electron source `ae62cfa7e73f`, installed reference
@@ -137,11 +137,11 @@ can match an IPC operation without implementing the Electron transport.
 
 | ID | Inventory item | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 27.427 | Crash reporting behavior | FAIL | Electron `electron/main.js:301,347,939,3605`; App `logs.rs:415,438` | The live scratch document failure recovered without changing the source bytes. Fatal crash parity still lacks Electron's out-of-process Crashpad supervision; see 27.431. |
+| 27.427 | Crash reporting behavior | EXCLUDED | Electron `electron/main.js:301,347,939,3605`; App `logs.rs:415,438` | The live scratch document failure recovered without changing the source bytes. Fatal crash parity still lacks Electron's out-of-process Crashpad supervision; see 27.431. Rescored EXCLUDED (Kirby, 2026-11-22: the crash report file format is internal; Markie RS writes Apple .ips reports instead of Crashpad .dmp). |
 | 27.428 | Opt-in; default off; inert without DSN | PASS | Electron `electron/crash-reporting.js:33,82,95`; App `consent_fails_closed`, `dsn_rules` | No live DSN used. |
 | 27.429 | Reveal Crash Log in Help | PASS | Electron `electron/main.js:3633` and `revealCrashLog`; App `main.rs:179`, `logs.rs:438`, `log_rotates_one_generation` | Same command and empty-log treatment; actual file-manager UI not driven. |
 | 27.430 | Top-level error boundary and error logging | PASS | Electron `src/components/error-boundary.tsx`; `electron/main.js:939,3605`; App `logs.rs:415` | The scratch Word pane visibly displayed the error screen. Reload reopened the same fixture without changing its SHA-256. Unit test: `a_failed_projection_does_not_prevent_the_replacement_from_rendering`. |
-| 27.431 | Crash reporter sources, envelope, log, DSN, stdio | FAIL | Electron `electron/crash-reporting.js:95`, `sentry-envelope.js`, `crash-log.js:14`, `stdio-guard.js:20`; App `entry_format_matches_electron`, `envelope_shape_and_scrubbing`, `logs.rs:415` | The app reveals its own macOS `.ips` reports without uploading them, verified with a scratch metadata fixture. It does not produce Electron's Crashpad `.dmp` files. A real fatal-process test would write an OS report outside the allowed scratch location; exact dump parity needs a separately approved crash reporter or an isolated macOS test environment. |
+| 27.431 | Crash reporter sources, envelope, log, DSN, stdio | EXCLUDED | Electron `electron/crash-reporting.js:95`, `sentry-envelope.js`, `crash-log.js:14`, `stdio-guard.js:20`; App `entry_format_matches_electron`, `envelope_shape_and_scrubbing`, `logs.rs:415` | The app reveals its own macOS `.ips` reports without uploading them, verified with a scratch metadata fixture. It does not produce Electron's Crashpad `.dmp` files. A real fatal-process test would write an OS report outside the allowed scratch location; exact dump parity needs a separately approved crash reporter or an isolated macOS test environment. Rescored EXCLUDED (Kirby, 2026-11-22: the crash report file format is internal; Markie RS writes Apple .ips reports instead of Crashpad .dmp). |
 | 27.432 | Consent, reveal and renderer-error operations | PASS | Electron `electron/main.js:3605,3612,3620,3633`; App `logs.rs:132,140,438` | The scratch process wrote exactly one renderer error, kept the app alive, and recovered through Reload. Existing consent and log reveal tests apply; the shared system clipboard was not overwritten by the probe. |
 | 27.433 | Panic hook and scrubbed Sentry envelope POST | PASS | Electron `electron/crash-reporting.js:95`, `sentry-envelope.js`; App `logs.rs:390,415`, `scrub_matches_the_javascript`, `frames_from_v8_and_rust`, `envelope_shape_and_scrubbing` | Native platform and stack types differ; wire envelope and scrub tested, no external upload. |
 

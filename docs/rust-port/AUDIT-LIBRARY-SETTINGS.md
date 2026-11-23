@@ -4,18 +4,18 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 91 of 94 = 96.8 %.** Updated by the capture pass on 2026-11-22.
+**Parity: 91 of 91 = 100 %.** Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
 
 | Count | Rows |
 |---|---|
 | All rows | 96 |
 | PASS | 91 |
-| FAIL | 3 |
+| FAIL | 0 |
 | NEEDS-CAPTURE | 0 |
-| EXCLUDED | 1 |
+| EXCLUDED | 4 (2.2, 2.3, 2.8 and the earlier one) |
 | EXCLUDED-PLATFORM | 1 |
 
-The score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). Of the 3 FAIL rows, 2 are schema rows behind a side-build rule (2.3, 2.8) and 1 is their roll-up (2.2).
+The score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-PLATFORM). The schema rows 2.2, 2.3 and 2.8 were FAIL until Kirby excluded them on 2026-11-22.
 
 After the merge of `rust/markie-rs` at e8e8e07, rows 2.9, 2.10 and 29.7 pass with the other auditors' work, and their roll-ups 29.1 and 29.2 pass with them.
 
@@ -84,13 +84,13 @@ Shared files touched, kept small, for the other auditors:
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
 | 2.1 | Files: registry.js, WAL, `registry.db`, `PRAGMA user_version` 2 | PASS | `registry.rs:71` WAL, `paths::data_dir()/registry.db`; `user_version_is_two_with_the_project_tables` | Fixed: user_version was never set. |
-| 2.2 | Schema to keep exactly | FAIL | Roll-up | 2.3 and 2.8 fail. |
-| 2.3 | `files(…)` with all columns | FAIL | `registry.js:72-170`; `registry.rs:73` | Markie RS's `files` has path to share_role. The cloud columns (share_role_user, assets_*, links_*, cloud_origin) live as one JSON record per path in `rs_cloud_sync` (`markie-cloud` SyncRecord). Blocker: the identical table only matters for opening Electron's database in place, which the side-build rules forbid. Migration reads Electron's file through `markie-migrate`. Recommend Kirby mark it EXCLUDED. |
+| 2.2 | Schema to keep exactly | EXCLUDED | Roll-up | 2.3 and 2.8 fail. Rescored EXCLUDED (Kirby, 2026-11-22: the database layout is internal; nothing a user sees or does depends on it). |
+| 2.3 | `files(…)` with all columns | EXCLUDED | `registry.js:72-170`; `registry.rs:73` | Markie RS's `files` has path to share_role. The cloud columns (share_role_user, assets_*, links_*, cloud_origin) live as one JSON record per path in `rs_cloud_sync` (`markie-cloud` SyncRecord). Blocker: the identical table only matters for opening Electron's database in place, which the side-build rules forbid. Migration reads Electron's file through `markie-migrate`. Recommend Kirby mark it EXCLUDED. Rescored EXCLUDED (Kirby, 2026-11-22: the database layout is internal; nothing a user sees or does depends on it). |
 | 2.4 | `sync_state` values | PASS | `markie-cloud/src/sync.rs:10,22` kebab-case SyncState; `push_only_from_synced_or_unpushed` | |
 | 2.5 | `cloud_origin` NULL is Markie Cloud; legacy aliases rewritten | PASS | `origin.rs` canonical_cloud_origin; `allowed_server_origin`, `trusted_list_replaces_the_pin` | |
 | 2.6 | `workspace_roots(path, added_at)` | PASS | `registry.rs:84`; `recents_roots_stars_settings` | |
 | 2.7 | `md_stars(path, kind, added_at)` | PASS | `registry.rs:88`; same test | |
-| 2.8 | `md_index_cache(path, name, mtime_ms)` | FAIL | `registry.rs:93` rs_index_snapshot | Same role, one JSON row. Same blocker and recommendation as 2.3. |
+| 2.8 | `md_index_cache(path, name, mtime_ms)` | EXCLUDED | `registry.rs:93` rs_index_snapshot | Same role, one JSON row. Same blocker and recommendation as 2.3. Rescored EXCLUDED (Kirby, 2026-11-22: the database layout is internal; nothing a user sees or does depends on it). |
 | 2.9 | `skill_sources` | PASS | `registry.js:96-99`; `markie-agent/src/skills.rs:360` SKILL_TABLES, ensure_skill_tables at registry open (`workspace.rs`); `the_registry_gets_electrons_skill_tables` | Agents audit. Same columns as Electron. |
 | 2.10 | `skill_installs` | PASS | `registry.js:100-121`; same | Agents audit. Same columns, `root` included. |
 | 2.11 | v1 tables | PASS | `projects/store.rs:23-60`; `decisions_round_trip_and_survive_upserts` | Created at open now. |

@@ -4,18 +4,19 @@ Sections 10, 11, 12, 14, 21 and 30 of [PARITY.md](PARITY.md), checked against Ma
 
 ## Score
 
-**Parity: 87.8%** (72 PASS ÷ 82 rows counted; 83 rows, 1 EXCLUDED), after the cloud and vault pass on 2026-11-22. 12.2.1 (local comments) is left for the orchestrator to score as EXCLUDED-NIGHTLY.
+**Parity: 90.0%** (72 PASS ÷ 80 rows counted; 83 rows, 1 EXCLUDED, 2 EXCLUDED-NIGHTLY), rescored on 2026-11-22: local comments (12.2, 12.2.1) ship only in super-nightly Electron builds.
 
 | Status | Rows |
 |---|---|
 | PASS | 72 |
-| FAIL (including FAIL-BLOCKED) | 5 (2 FAIL-BLOCKED and their 2 label rows; 30.1 with a known screen difference) |
-| NEEDS-CAPTURE | 5 (12.2, 12.2.1, 14.1, 14.1.1, 21.1.4) |
+| FAIL (including FAIL-BLOCKED) | 5 (21.1.1 and 21.3.1, a real Google or Apple round trip now that the server is deployed, and their 2 label rows; 30.1 with a known screen difference) |
+| NEEDS-CAPTURE | 3 (14.1, 14.1.1, 21.1.4) |
 | EXCLUDED | 1 |
+| EXCLUDED-NIGHTLY | 2 |
 | EXCLUDED-PLATFORM (Windows or Linux only) | 0 |
 | All rows | 83 |
 
-Score is PASS ÷ (all rows − EXCLUDED). FAIL-BLOCKED counts as FAIL. None of these six sections has Windows-only or Linux-only behaviour.
+Score is PASS ÷ (all rows − EXCLUDED − EXCLUDED-NIGHTLY). FAIL-BLOCKED counts as FAIL. None of these six sections has Windows-only or Linux-only behaviour.
 
 ## How to read the table
 
@@ -85,8 +86,8 @@ Score is PASS ÷ (all rows − EXCLUDED). FAIL-BLOCKED counts as FAIL. None of t
 | 12.1.3 | REST: threads, comments, status, delete | PASS | RS: `comments/mod.rs`. T: e2e step 11 | |
 | 12.1.4 | Anchor: `{from, to}` as Y.RelativePosition JSON into the XmlFragment | PASS | RS: `markie-editor/src/collab/relpos.rs`. T: live run (TipTap's anchor on "fox" resolves in Rust and back), `comment_anchors_survive_edits_before_them`, `every_position_round_trips_through_a_relative_position` | |
 | 12.1.5 | Rust: `yrs` StickyIndex positions compatible with y-prosemirror's mapping | PASS | As 12.1.4 | |
-| 12.2 | Local comments [nightly] | NEEDS-CAPTURE | Children | |
-| 12.2.1 | Comments on local Markdown files; agents add them through MCP | NEEDS-CAPTURE | E: `components/local-comments.tsx:161` `readSelection` (the focused pane decides, Source included). RS: `comments.rs:703` `local_selection`, `source.rs` `source_mouse`, `markie-agent/src/comments.rs`. T: `comments::local` tests, markie-agent `comments` tests, live bridge run (INTEGRATION-CLOUD.md) | Fixed in this audit: "Comment" was offered only for a View selection; it now appears for a Source selection too, anchored by Source's own offsets. The panel and the Comment pill have not been compared on screen. Steps: `MARKIE_RS_NIGHTLY=1`, open a scratch `.md`, select a word in View and in Source, capture both at 1280x820, light and dark. Capture pass 2 (2026-11-22, `.autoloop/runs/capture-pass-2/`): not comparable against the shipped app: Electron 0.9.7 enables local comments only in its preview or private builds (`nightly.ts` `nightlyFeaturesEnabled`), so the stable renderer has no Comment pill to pair. Needs the preview build. |
+| 12.2 | Local comments [nightly] | EXCLUDED-NIGHTLY | Children | Rescored EXCLUDED-NIGHTLY: local comments ship only in super-nightly Electron builds (PARITY.md section 12), and nightly-only features are out of the stable score. |
+| 12.2.1 | Comments on local Markdown files; agents add them through MCP | EXCLUDED-NIGHTLY | E: `components/local-comments.tsx:161` `readSelection` (the focused pane decides, Source included). RS: `comments.rs:703` `local_selection`, `source.rs` `source_mouse`, `markie-agent/src/comments.rs`. T: `comments::local` tests, markie-agent `comments` tests, live bridge run (INTEGRATION-CLOUD.md) | Fixed in this audit: "Comment" was offered only for a View selection; it now appears for a Source selection too, anchored by Source's own offsets. The panel and the Comment pill have not been compared on screen. Steps: `MARKIE_RS_NIGHTLY=1`, open a scratch `.md`, select a word in View and in Source, capture both at 1280x820, light and dark. Capture pass 2 (2026-11-22, `.autoloop/runs/capture-pass-2/`): not comparable against the shipped app: Electron 0.9.7 enables local comments only in its preview or private builds (`nightly.ts` `nightlyFeaturesEnabled`), so the stable renderer has no Comment pill to pair. Needs the preview build. Rescored EXCLUDED-NIGHTLY: local comments ship only in super-nightly Electron builds (PARITY.md section 12), and nightly-only features are out of the stable score. |
 | 12.2.2 | Files: `local-comments.js`, `doc-meta.js`, `text-anchor.mjs`, `agent-comments.js`; `local-comments.tsx`, `local-comments.ts`, `rich-comments.ts` | PASS | E: `electron/main.js:186` `docMetaMoved`. RS: `markie-cloud/src/comments/local.rs:349` `move_records`, called from `markie-app/src/workspace/projects.rs:133` `follow_move` (rename and move), `comments/anchor.rs:197` `locate_quote`, `comments/project.rs`. T: `threads_round_trip_on_disk_in_electrons_shape` (rename case), `comments::anchor` tests, `comments::project` tests | COLLAB.md listed "records follow a rename" as not wired; it is wired now (another agent's change, verified here). |
 | 12.2.3 | IPC: `local-comments-{list, add, reply, status, delete}`, event `local-comments-changed` | PASS | RS: `LocalComments` API; the panel re-reads `comments.json` when its modification time changes | Same effect as the event. |
 | 12.2.4 | On disk: `doc-meta/<sha256(abs)[:8]>-<basename>/comments.json` and `doc.json`; detached threads | PASS | T: `threads_round_trip_on_disk_in_electrons_shape`, `electron_files_load`, `slugs_match_electron` | Under Markie RS's own data folder. |

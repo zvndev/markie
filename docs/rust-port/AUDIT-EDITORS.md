@@ -4,18 +4,19 @@ Date: 2026-11-22. Branch: `t3/markie-rs-editor-parity-1`, from `rust/markie-rs` 
 
 ## Score
 
-**Parity: 46 PASS of 53 scored rows (86.8%).** Updated on 2026-11-22 by the editor fixes pass (7.5 PASS) and capture pass 2 (8.5 PASS).
+**Parity: 48 of 53 scored rows (90.6%): 47 PASS and 1 IMPROVEMENT.** Rescored on 2026-11-22 with Kirby's rulings: 8.13 is an IMPROVEMENT, so its group 8.11 passes.
 
 | Status | Rows |
 |---|---|
-| PASS | 46 |
-| FAIL | 5 (two leaf rows, 7.4 and 8.13, and the three groups above them) |
-| NEEDS-CAPTURE | 2 |
+| PASS | 47 |
+| IMPROVEMENT | 1 (8.13: no TipTap rewrites of untouched text) |
+| FAIL | 2 (7.4, kept at 36 languages by Kirby's choice, and its group 7.0) |
+| NEEDS-CAPTURE | 3 (7.9, the 50 MB timing; 8.6, a real trackpad pinch; their group 8.0) |
 | EXCLUDED | 0 |
 | EXCLUDED-PLATFORM | 0 |
 | Total | 53 |
 
-Score = PASS ÷ (all rows − EXCLUDED) = 45 ÷ 53. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
+Score = (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED) = 48 ÷ 53. IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron (Kirby, 2026-11-22); it counts as meeting parity. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
 
 The screen was locked for the whole run (`IOConsoleLocked = Yes`). No captures were taken and no app was launched. Visual and live-gesture rows are NEEDS-CAPTURE, with their steps below.
 
@@ -82,7 +83,7 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 
 | # | Bullet | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 8.0 | What the user can do (group) | FAIL | children | Follows 8.13 through 8.11; 8.6 needs captures. |
+| 8.0 | What the user can do (group) | NEEDS-CAPTURE | children | Follows 8.13 through 8.11; 8.6 needs captures. Rescored: 8.13 is an IMPROVEMENT, so only 8.6 (a real trackpad pinch) keeps this group open. |
 | 8.1 | WYSIWYG: headings, aligned blocks, lists, task lists, aligned tables, sized pictures, video cards | PASS | `rich-extensions.ts` / `markie-rich` `tests/editor.rs` (`lists_split_exit_indent_outdent`, `tables_tab_and_align`, `images_alignment_and_find`), interop 34/34, `video::tests` | |
 | 8.2 | Math, inline and block (KaTeX) | PASS | `rich-math.ts` / `markie-math` (MATH.md: 98 of 98 Markie formulas) | Drawn by typst, not KaTeX; glyphs differ slightly (VISUAL-EDITOR.md). |
 | 8.3 | Highlight, colour, font family, size, underline as inline HTML | PASS | `rich-extensions.ts` / `markie-rich/src/html.rs`, `marks_and_tiptap_html_marks`, interop | |
@@ -93,9 +94,9 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 | 8.8 | Byte-for-byte preservation | PASS | `rich-block-preserve.ts` / `markie-rich` `zero_edit_and_undo_are_byte_exact`, `editing_one_paragraph_of_a_400_line_document_leaves_every_other_line_identical`, fuzz 900 of 900, the TipTap corpus above | |
 | 8.9 | Files: components | PASS | each has a port in `markie-editor` (`render.rs`, `chrome.rs`, `format_rail.rs`, `rail.rs`, `lightbox.rs`, `video.rs`) and `panels.rs` | `rich-guard.tsx` and `rich-pane-error.tsx` gate documents TipTap cannot rebuild; Markie RS reconstructs every document exactly (corpus), so it never needs the gate. |
 | 8.10 | Files: libs | PASS | `markie-rich` (model, parse, serialize, html, embed, editor), `markie-core` (`outline.rs`, `stats.rs`), `markie-editor` (`media.rs`, `attach.rs`, `style.rs`) | |
-| 8.11 | Compatibility (group) | FAIL | children | Follows 8.13. |
+| 8.11 | Compatibility (group) | PASS | children | Follows 8.13. Rescored PASS: its only non-PASS child, 8.13, is an IMPROVEMENT. |
 | 8.12 | Node and mark names (Yjs XML) | PASS | `rich-extensions.ts` / `markie-rich/src/room.rs`; interop 34/34 both ways | |
-| 8.13 | tiptap-markdown with `html`, `linkify`, `tightLists` | FAIL | TipTap corpus above; `markie-rich/src/serialize.rs` | Unedited blocks and every document Electron reconstructs: byte-identical. Edited blocks: 97.0% identical after the line-start fix. Blocker for the other 3%: each is TipTap rewriting text the user did not touch in a way that changes what it says or how it reads back (table above). Copying them would make Markie RS damage text exactly as TipTap does. Needs Kirby's decision: accept these as deliberate differences, or have Markie RS copy them. |
+| 8.13 | tiptap-markdown with `html`, `linkify`, `tightLists` | IMPROVEMENT | TipTap corpus above; `markie-rich/src/serialize.rs` | Unedited blocks and every document Electron reconstructs: byte-identical. Edited blocks: 97.0% identical after the line-start fix. Blocker for the other 3%: each is TipTap rewriting text the user did not touch in a way that changes what it says or how it reads back (table above). Copying them would make Markie RS damage text exactly as TipTap does. Needs Kirby's decision: accept these as deliberate differences, or have Markie RS copy them. Rescored IMPROVEMENT (Kirby, 2026-11-22: not copying TipTap rewriting text the user did not touch is a deliberate fix; it counts as meeting parity). |
 | 8.14 | `$…$` / `$$…$$` kept as written | PASS | `rich-math.ts` / `math_input_rule_makes_a_formula`, `unicode_and_math_atoms` | |
 | 8.15 | A width is written as `<img width>` | PASS | `rich-media-html.ts` / `html.rs`, `marks_and_tiptap_html_marks` | |
 | 8.16 | Rust port note (group) | PASS | children | |

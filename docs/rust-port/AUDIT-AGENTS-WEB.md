@@ -6,12 +6,12 @@ Sections: PARITY.md 15, 16, 18, 19 and 23.
 
 ## Score
 
-Parity score: **52 / 53 = 98.1%**. That is PASS over all 67 rows less the 14 excluded ones (13 nightly, 1 Windows). No row needed plain EXCLUDED: nothing in these sections is the updater, the terminal, the Recovered list, sign-in moving, file-type claims or the private-release gate.
+Parity score: **53 / 53 = 100%**. That is PASS over all 67 rows less the 14 excluded ones (13 nightly, 1 Windows). No row needed plain EXCLUDED: nothing in these sections is the updater, the terminal, the Recovered list, sign-in moving, file-type claims or the private-release gate.
 
 | Status | Rows |
 |---|---|
-| PASS | 52 |
-| FAIL | 1 |
+| PASS | 53 |
+| FAIL | 0 |
 | NEEDS-CAPTURE | 0 |
 | EXCLUDED | 0 |
 | EXCLUDED-NIGHTLY | 13 |
@@ -21,6 +21,8 @@ Parity score: **52 / 53 = 98.1%**. That is PASS over all 67 rows less the 14 exc
 The screen was locked for the whole run (`IOConsoleLocked = Yes`), so no window could be captured or driven. Visual rows are NEEDS-CAPTURE with steps at the end. Exported PDFs need no window, so they were compared page by page and measured (row 23.1).
 
 Follow-up on 2026-11-22, branch `t3/markie-rs-native-print` (no web views, Kirby's decision): rows 23.1 and 23.3 were reworked natively and re-measured against Electron's own `printToPDF` output. 23.1 is now PASS; 23.3 stays FAIL for math only. Evidence: `.autoloop/runs/native-print/` (see its README).
+
+Follow-up on 2026-11-23, branch `t3/markie-rs-katex-look` (Kirby decided 23.3 should match Electron): 23.3 is PASS. Export HTML math is now KaTeX's own HTML from katex-rs with Electron's embedded KaTeX stylesheet and fonts, and headless Chromium draws both apps' pages pixel for pixel the same. Evidence: `.autoloop/runs/katex-look/` (see its README).
 
 ## How rows were checked
 
@@ -119,7 +121,7 @@ All of section 19 is super-nightly in 0.9.7: `liveDocsAreaAvailable` and `liveDo
 |---|---|---|---|---|
 | 23.1 | Export PDF in dark or light; ⇧⌘E is dark | PASS | `line_baselines_match_chromium` (all 5 fixtures, both themes, every line on Electron's page within 2 pt; worst 0.96 pt); `layout_rules_measured_from_chromium`; `.autoloop/runs/native-print/` (`pdf/`, `before/`, `after/`, `measure/summary.txt`, `sbs-*.png`); commit c0f65c8 | Was FAIL: lines drifted up to 23.9 pt on everything.md and 121.9 pt on long.md, where 45 lines fell on another page. The Typst projection now follows Chromium's CSS box model, worked out in Rust: line boxes from CoreText ascent and descent with the leading split around them, margins collapsed through parents, borders and padding taking space, table half-borders, sub and sup shifts, kbd at full size, orphans and widows of 2 with Chromium's three-line exception, a breaking code block slicing its padding, greedy line breaks with no hanging punctuation, and TeX's subscript drop under big operators as KaTeX uses. Max offset after: 0.96 pt (everything), 0.78 pt (long, 11 pages, same breaks), 0.62 to 0.77 pt (prices, prices-edge, plain). Earlier fixes kept: palette entries, disc, quote inset. Math glyphs and the video player chrome still draw differently; positions match. |
 | 23.2 | Print (⌘P) | PASS | `key_tests::cmd_p_prints`; same PDF as 23.1 on the macOS print sheet | The sheet is in V5. It prints 23.1's PDF, so it now has Electron's line positions and page breaks. |
-| 23.3 | Standalone HTML with local images inlined | FAIL | `code_colours_match_highlight_js` (13 code blocks, 11 languages, every character's stylesheet colour equal to highlight.js's); `render_golden`; `assets::tests`; `.autoloop/runs/native-print/html/` (both apps' pages and full-page captures); commit 9048776 | Code now passes: token classes follow highlight.js's grammar per language, and the code page captures are the same height with only anti-aliasing pixels apart. Display math was left-aligned because the page lacked KaTeX's wrapper rules; it is now centred with KaTeX's line height. Open, math only: markie-math's SVG glyphs draw visibly lighter than KaTeX's font glyphs, and a display formula with a big operator is about 3 CSS px taller (the integral's subscript sits a little lower). Self-contained SVG math needs no 240 KB font stylesheet; Kirby may count that as an improvement and close the row. |
+| 23.3 | Standalone HTML with local images inlined | PASS | `math_matches_electron_katex` (44 formulas and 2 errors: KaTeX's HTML as Electron's export carries it); `export_page_matches_electron` (page and `KATEX_CSS` byte for byte, light and dark); `code_colours_match_highlight_js` (13 code blocks, 11 languages); `render_golden`; `assets::tests`; `.autoloop/runs/katex-look/` (headless Chromium, both apps' pages, light and dark); commits 9048776, 41653c9 | Was FAIL for math: markie-math's SVG glyphs drew lighter than KaTeX's font glyphs, display formula boxes differed by up to 17 CSS px, and a fenced `math` block stayed a code block. Math is now KaTeX's own HTML (katex-rs, a Rust port of KaTeX), sanitized as Electron sanitizes it, with Electron's `KATEX_CSS` (KaTeX's stylesheet and 12 fonts as data: URIs) first in the page. Headless Chromium 158, 1280×820 at 2x: 0 of 7,843,840 pixels differ in light and in dark, same page height, all 46 formula boxes identical. Before the change, 45 of 46 formulas moved or differed. Still different outside the fixture: katex-rs ports KaTeX 0.18.5 and Electron runs 0.19.1, so `\stackrel` sits about 0.13 em lower, `\mapsfrom` and `\reflectbox` are errors, and some error tooltips are worded as KaTeX 0.18 did. Code passed already: token classes follow highlight.js's grammar per language. |
 | 23.4 | Converted copy as DOCX, RTF, ODT, TXT or MD | PASS | `convert_golden` `bytes_match_electron` (5 fixtures, byte for byte) | |
 | 23.5 | In RTF and ODT, tables become tab-separated rows | PASS | `convert_golden` (everything and prices fixtures hold tables) | |
 | 23.6 | Word documents get their own PDF and print path | PASS | `office_pdf::tests`; commit b984e09 | Was FAIL: RS offered Export PDF… for every Word, RTF and ODT file, never asked about review comments, suggested "<name>.pdf" and said nothing on success. Now only for a document `canPrintDocx` accepts, with Electron's comment question, "document.pdf", and its notices ("Exported PDF to … The Word file was not changed.", "Sent the supported document view to the printer."). The 26 TypeScript print cases are not ported one by one (WEB-EXPORT.md item 5). |
@@ -127,7 +129,7 @@ All of section 19 is super-nightly in 0.9.7: `liveDocsAreaAvailable` and `liveDo
 | 23.8 | IPC `export-pdf`, `export-html`, `export-document` | PASS | `workspace/export.rs`: same save names, extension fixing, busy guard and wording | `one_export_at_a_time`. |
 | 23.9 | Menu events `menu-export-pdf`, `menu-print` | PASS | `main.rs` File > Print… and Export > PDF (Dark)…, PDF (Light)…, HTML… | |
 | 23.10 | Sanitize schema shared with `server/src/render.ts` | PASS | `markie-export/src/sanitize.rs`; `render_golden` | |
-| 23.11 | PDF and print through a hidden web view or native layout; HTML is string generation | PASS | Typst for PDF, strings for HTML | The choice itself, kept native (no web views). Typst is driven with Chromium's box model (23.1); the one open difference is 23.3's math. |
+| 23.11 | PDF and print through a hidden web view or native layout; HTML is string generation | PASS | Typst for PDF, strings for HTML | The choice itself, kept native (no web views). Typst is driven with Chromium's box model (23.1). HTML math is KaTeX's HTML from katex-rs, drawn by the reader's browser (23.3). |
 
 ## Fixes made
 
@@ -142,6 +144,7 @@ All of section 19 is super-nightly in 0.9.7: `liveDocsAreaAvailable` and `liveDo
 | 3bf9747 | 23.1 | PDF disc, sub/sup, heading half-leading, box spacing, quote inset |
 | c0f65c8 | 23.1, 23.2 | PDF laid out with Chromium's CSS box model; Chromium baseline goldens and test |
 | 9048776 | 23.3 | Code coloured as highlight.js does in 11 languages; display math centred with KaTeX's wrapper rules |
+| 41653c9 | 23.3 | HTML export math as KaTeX's HTML from katex-rs, with Electron's embedded KaTeX stylesheet; foreign `xmlns` and empty SVG elements written as hast does |
 
 Shared files touched, each minimally:
 
@@ -155,7 +158,7 @@ Shared files touched, each minimally:
 
 ## FAIL rows left
 
-- **23.3 HTML export math.** Code passes. Math is markie-math SVG: positions and centring match Electron, but the glyphs draw lighter than KaTeX's font glyphs and a display formula with a big operator is about 3 CSS px taller. Closing it natively would mean matching KaTeX's glyph rendering; Kirby may instead accept self-contained SVG math as an improvement.
+None. 23.3 was closed on `t3/markie-rs-katex-look`.
 
 ## NEEDS-CAPTURE steps
 
@@ -179,6 +182,7 @@ Screen locked. When unlocked, launch both apps per SCREEN.md, with `env -u CLAUD
 - Goldens rerun from the reference source: export and Darkmown unchanged.
 - PDFs: 8 fixture PDFs per app, page counts equal, pixel measurements in `.autoloop/runs/audit-agents-web/pdf/`.
 - Follow-up (`t3/markie-rs-native-print`): `cargo test --workspace` 1,080 passed, 0 failed, 5 ignored. New tests: markie-export `line_baselines_match_chromium`, `word_pagination_matches_electron`, `code_colours_match_highlight_js`; `layout_rules_measured_from_chromium` rewritten for the box model.
+- KaTeX look (`t3/markie-rs-katex-look`): `cargo test --workspace` 1,134 passed, 0 failed, 6 ignored, 69 suites. New tests: markie-export `math_matches_electron_katex`, `export_page_matches_electron`, `math_is_katex_html`, `math_errors_are_written_as_rehype_katex_does`; `render_matches_electron` now compares math exactly.
 - Shell fixes (`t3/markie-rs-shell-fixes`): `cargo test --workspace` 1,090 passed, 0 failed, 5 ignored, 68 suites. New tests: markie-app `doc_toolbar::tests::*` (word count, save status, `wrap`, `setSourceStyle`), `watchdog::tests::*`, `themes::tests::each_tone_paints_its_own_editor_background`; markie-web `island::tests::an_island_is_only_moved_when_its_place_changes`.
 
 ## Capture pass, 2026-11-22

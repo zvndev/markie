@@ -1,17 +1,17 @@
 # Markie RS parity score
 
-The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison).
+The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX).
 
 ## Overall
 
 | Audit | Counted | Meets parity | Score |
 |---|---|---|---|
-| [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 53 | 52 | 98.1% |
+| [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 53 | 53 | 100% |
 | [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 80 | 76 | 95.0% |
 | [Editors, autosave, history](AUDIT-EDITORS.md) | 53 | 48 | 90.6% |
 | [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 91 | 91 | 100% |
 | [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 59 | 56 | 94.9% |
-| **Total** | **336** | **323** | **96.1%** |
+| **Total** | **336** | **324** | **96.4%** |
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -30,7 +30,7 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
 
 Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 
-## What is still open (13 rows)
+## What is still open (12 rows)
 
 | Rows | What closes them |
 |---|---|
@@ -39,6 +39,5 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Editors 8.6 and group 8.0 | One real trackpad pinch by Kirby |
 | Editors 7.9 | The 50 MB timing, run with the speed comparison on a quiet Mac |
 | Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
-| Agents 23.3 | Math in HTML export draws slightly lighter than KaTeX. Kirby has not decided whether to match it. |
 
-If every row above closes except the last three, the score is 333 of 336, which is 99.1%.
+If every row above closes except the last two, the score is 334 of 336, which is 99.4%.

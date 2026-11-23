@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -271,6 +272,8 @@ struct Walker<'a> {
     dirs: usize,
     stopped: Option<Truncation>,
     depth_capped: bool,
+    /// Documents found so far, for whoever is watching the walk.
+    found: Option<&'a AtomicUsize>,
 }
 
 impl Walker<'_> {
@@ -339,6 +342,9 @@ impl Walker<'_> {
                 path: full,
             });
         }
+        if let Some(found) = self.found {
+            found.store(self.out.len(), Ordering::Relaxed);
+        }
         if self.started.elapsed() > self.opts.budget.max_time {
             self.stopped = Some(Truncation::Time);
             return;
@@ -377,6 +383,12 @@ fn scan_targets(opts: &ScanOptions) -> Vec<PathBuf> {
 
 /// One bounded scan. Runs on the calling thread; call it from a background task.
 pub fn scan(opts: &ScanOptions) -> IndexSnapshot {
+    scan_counting(opts, None)
+}
+
+/// [`scan`], storing the number of documents found so far in `found` after
+/// each folder, so a view can show the walk moving.
+pub fn scan_counting(opts: &ScanOptions, found: Option<&AtomicUsize>) -> IndexSnapshot {
     let roots: Vec<PathBuf> = opts.roots.clone();
     let mut walker = Walker {
         opts,
@@ -391,6 +403,7 @@ pub fn scan(opts: &ScanOptions) -> IndexSnapshot {
         dirs: 0,
         stopped: None,
         depth_capped: false,
+        found,
     };
     for target in scan_targets(opts) {
         if walker.stopped.is_some() {
@@ -442,6 +455,19 @@ mod tests {
         assert_eq!(plan.snippet.as_deref(), Some("# Plan\nship it"));
         let docx = snap.files.iter().find(|f| f.name == "letter.docx").unwrap();
         assert!(docx.snippet.is_none(), "office bytes never become a snippet");
+    }
+
+    #[test]
+    fn the_walk_reports_what_it_has_found() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path();
+        touch(&h.join("a/one.md"), "1");
+        touch(&h.join("b/two.md"), "2");
+        touch(&h.join("b/c/three.txt"), "3");
+        let found = AtomicUsize::new(0);
+        let snap = scan_counting(&ScanOptions::for_home(h), Some(&found));
+        assert_eq!(snap.files.len(), 3);
+        assert_eq!(found.load(Ordering::Relaxed), 3);
     }
 
     #[test]

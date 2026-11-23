@@ -15,10 +15,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
-use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme, Icon, Sizable as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::input::{EditorState, InputEvent, InputState};
 use gpui_kit::*;
 
 use markie_core::formats::{self, Newline, Representation, TextEncoding};
@@ -26,13 +23,16 @@ use markie_office::model::{Format, TextEdit};
 use markie_office::rich_document::{OfficeDocument, export_rich_document, open_rich_document, replace_rich_text};
 use markie_vault::backup::{VAULT_BACKUP_FILE_NAME, VAULT_BACKUP_MAX_CHARACTERS, parse_vault_backup, vault_backup_text};
 use markie_vault::clipboard::{CLEAR_AFTER, SecretClipboard, ThreadScheduler};
-use markie_vault::device::{Biometric, DeviceKeeper, KeychainSecretStore, PromptDeclined, TouchIdKeeper, TouchIdStatus};
+use markie_vault::device::{Biometric, DeviceKeeper, KeychainSecretStore, PromptDeclined, SecretStore, TouchIdKeeper, TouchIdStatus};
 use markie_vault::dotenv::{self, DotenvDocument, LineKind};
 use markie_vault::envelope::{VaultDocumentMetadata, limits};
-use markie_vault::passphrase::{StrengthLevel, passphrase_strength, suggest_passphrase, SUGGESTED_PASSPHRASE_WORDS};
+use markie_vault::passphrase::{suggest_passphrase, SUGGESTED_PASSPHRASE_WORDS};
 use markie_vault::{DeviceFailure, FileVaultStorage, StorageErrorCode, VaultEntry, VaultError, VaultErrorCode, VaultRepository};
 
 use super::Workspace;
+
+mod ui;
+use ui::{CopyFeedback, Escape, EscapeState, Shortcut, escape_target, shows_search};
 
 pub const IDLE_LOCK: Duration = Duration::from_secs(5 * 60);
 pub const CHECKPOINT: Duration = Duration::from_secs(2);
@@ -44,7 +44,6 @@ fn should_auto_lock(locked: bool, shielded: bool, hidden: bool, idle: Duration) 
 }
 const MASK: &str = "••••••••••••";
 const ENV_MEDIA_TYPE: &str = "text/plain";
-const COPY_NOTE: &str = "It is now on the clipboard, outside the vault. Markie clears it after 30 seconds if it is still there.";
 /// Where "Not now" on the Touch ID offer is remembered. Electron keeps it in localStorage.
 const TOUCH_ID_OFFER_FILE: &str = "vault-touch-id-offer";
 
@@ -76,7 +75,41 @@ fn biometric() -> Bio {
     NoBiometric
 }
 
-type Keeper = TouchIdKeeper<Bio, KeychainSecretStore>;
+/// What the page asks of Touch ID. One trait object, so a scene build can
+/// swap in an in-memory double and never touch the Keychain.
+pub(crate) trait PageKeeper: DeviceKeeper {
+    fn status(&self, vault_id: &str) -> TouchIdStatus;
+    fn confirm(&self, vault_id: &str, action: &str, label: &str) -> Result<(), DeviceFailure>;
+}
+
+impl<B: Biometric, S: SecretStore> PageKeeper for TouchIdKeeper<B, S> {
+    fn status(&self, vault_id: &str) -> TouchIdStatus {
+        TouchIdKeeper::<B, S>::status(self, vault_id)
+    }
+    fn confirm(&self, vault_id: &str, action: &str, label: &str) -> Result<(), DeviceFailure> {
+        TouchIdKeeper::<B, S>::confirm(self, vault_id, action, label)
+    }
+}
+
+type Keeper = dyn PageKeeper;
+
+/// Scene mode (`--features scene` and `MARKIE_RS_SCENE`): Touch ID and the
+/// clipboard are in-memory doubles, and the hidden window counts as shown.
+fn scene_mode() -> bool {
+    cfg!(feature = "scene") && std::env::var_os("MARKIE_RS_SCENE").is_some()
+}
+
+fn page_keeper() -> Arc<Keeper> {
+    if scene_mode() {
+        return Arc::new(TouchIdKeeper::new(markie_vault::device::FakeBiometric::default(), markie_vault::device::MemorySecretStore::default()));
+    }
+    Arc::new(TouchIdKeeper::new(biometric(), KeychainSecretStore::new(keychain_service())))
+}
+
+/// The window is hidden, so the vault must lock. A scene's window is never shown.
+fn window_hidden(window: &Window) -> bool {
+    !window.is_visible() && !scene_mode()
+}
 
 #[allow(dead_code)]
 fn _assert_biometric_impl(b: &Bio) -> &dyn Biometric {
@@ -266,7 +299,7 @@ enum Pending {
     Open(VaultEntry),
     Reveal(Vec<usize>),
     RevealRaw,
-    Copy { value: zeroize::Zeroizing<String>, message: String },
+    Copy { value: zeroize::Zeroizing<String>, label: String, row: Option<usize> },
 }
 
 struct EnvRow {
@@ -311,6 +344,12 @@ pub struct VaultPage {
     suggested: Option<zeroize::Zeroizing<String>>,
     offer_touch_id: bool,
     gate: Option<(String, Pending)>,
+    /// Touch ID is set up, but the passphrase field was asked for.
+    use_passphrase: bool,
+    /// The field to focus at the next render.
+    focus_next: Option<Entity<InputState>>,
+    /// The last secret copied, for the line that counts down its clearing.
+    copied: Option<CopyFeedback>,
     gate_busy: bool,
     pending_confirm: Option<Pending>,
     operation: u64,
@@ -340,7 +379,7 @@ fn masked_input(window: &mut Window, cx: &mut App) -> Entity<InputState> {
 impl VaultPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let repo = Arc::new(Mutex::new(VaultRepository::new(FileVaultStorage::new(vault_path()))));
-        let keeper = Arc::new(TouchIdKeeper::new(biometric(), KeychainSecretStore::new(keychain_service())));
+        let keeper = page_keeper();
         let clipboard = SecretClipboard::new(secret_pasteboard(), Arc::new(ThreadScheduler), CLEAR_AFTER);
         let passphrase = masked_input(window, cx);
         let confirmation = masked_input(window, cx);
@@ -355,7 +394,7 @@ impl VaultPage {
         let page = cx.weak_entity();
         let subscriptions = vec![
             window.observe_window_visibility(move |visibility, window, cx| {
-                if !visibility.is_visible() {
+                if !visibility.is_visible() && !scene_mode() {
                     let _ = page.update(cx, |page, cx| page.maybe_auto_lock(true, window, cx));
                 }
             }),
@@ -436,6 +475,9 @@ impl VaultPage {
             suggested: None,
             offer_touch_id: false,
             gate: None,
+            use_passphrase: false,
+            focus_next: None,
+            copied: None,
             gate_busy: false,
             pending_confirm: None,
             operation: 0,
@@ -470,8 +512,23 @@ enum Submit {
     Gate,
 }
 
+/// A clipboard that keeps nothing: for platforms without a concealed writer,
+/// and for scenes, which must never write Kirby's pasteboard.
+#[allow(dead_code)]
+struct Nowhere;
+impl markie_vault::clipboard::Clipboard for Nowhere {
+    fn read_text(&self) -> Option<String> {
+        None
+    }
+    fn write_secret(&self, _text: &str) {}
+    fn clear(&self) {}
+}
+
 #[cfg(target_os = "macos")]
 fn secret_pasteboard() -> Box<dyn markie_vault::clipboard::Clipboard> {
+    if scene_mode() {
+        return Box::new(Nowhere);
+    }
     Box::new(markie_vault::clipboard::MacPasteboard)
 }
 
@@ -479,14 +536,6 @@ fn secret_pasteboard() -> Box<dyn markie_vault::clipboard::Clipboard> {
 /// copy goes nowhere rather than into a clipboard history.
 #[cfg(not(target_os = "macos"))]
 fn secret_pasteboard() -> Box<dyn markie_vault::clipboard::Clipboard> {
-    struct Nowhere;
-    impl markie_vault::clipboard::Clipboard for Nowhere {
-        fn read_text(&self) -> Option<String> {
-            None
-        }
-        fn write_secret(&self, _text: &str) {}
-        fn clear(&self) {}
-    }
     Box::new(Nowhere)
 }
 
@@ -530,12 +579,13 @@ impl VaultPage {
         let ticket = self.operation;
         self.busy = true;
         self.error = None;
+        self.notice.clear();
         cx.notify();
         let repo = self.repo.clone();
         let keeper = self.keeper.clone();
         let work = cx.background_executor().spawn(async move {
             let mut guard = repo.lock().unwrap_or_else(|p| p.into_inner());
-            job(&mut guard, &keeper)
+            job(&mut guard, &*keeper)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = work.await;
@@ -556,7 +606,8 @@ impl VaultPage {
         self.run(window, cx, |repo, _| repo.inspect(), |this, result, window, cx| match result {
             Ok(exists) => {
                 this.has_vault = Some(exists);
-                this.notice = if exists { "Your vault is locked.".into() } else { "Create an encrypted vault on this device.".into() };
+                this.notice.clear();
+                this.focus_next = Some(this.passphrase.clone());
                 this.refresh_touch_id(window, cx);
             }
             Err(e) => this.error = Some(failure_copy(&e).into()),
@@ -616,6 +667,9 @@ impl VaultPage {
         self.gate = None;
         self.gate_busy = false;
         self.pending_confirm = None;
+        self.copied = None;
+        self.use_passphrase = false;
+        self.focus_next = Some(self.passphrase.clone());
         // A key copied out a moment ago should not outlive the vault it came from.
         self.clipboard.clear_now();
         self.opened = None;
@@ -654,7 +708,7 @@ impl VaultPage {
         match listed {
             Ok(entries) => {
                 self.has_vault = Some(true);
-                if !window.is_visible() {
+                if window_hidden(window) {
                     self.lock_now("Vault locked because this page is hidden.", window, cx);
                     return;
                 }
@@ -705,7 +759,7 @@ impl VaultPage {
             },
             |this, result, window, cx| match result {
                 Ok(()) => {
-                    this.enter_vault("Unlocked.", window, cx);
+                    this.enter_vault("", window, cx);
                     // After a passphrase unlock, offer Touch ID once where the Mac supports it.
                     if !this.locked && !touch_id_offer_dismissed() {
                         this.offer_touch_id = true;
@@ -729,7 +783,7 @@ impl VaultPage {
                 r
             },
             |this, result, window, cx| match result {
-                Ok(()) => this.enter_vault("Unlocked.", window, cx),
+                Ok(()) => this.enter_vault("", window, cx),
                 Err(VaultError::Device(reason)) => {
                     // Fall back to the passphrase quietly; a missing or stale secret hides the button.
                     if matches!(reason, DeviceFailure::Missing | DeviceFailure::Stale) {
@@ -760,7 +814,7 @@ impl VaultPage {
                 Ok(()) => {
                     this.enrolling = false;
                     this.offer_touch_id = false;
-                    this.notice = "Touch ID unlock is on. Opening or copying an item asks for Touch ID too.".into();
+                    this.notice = "Touch ID is on. Opening, showing or copying an item asks for it too.".into();
                     this.refresh_touch_id(window, cx);
                 }
                 Err(VaultError::Device(DeviceFailure::Cancelled)) => this.notice = "Touch ID was not turned on.".into(),
@@ -802,7 +856,7 @@ impl VaultPage {
     fn copy_suggestion(&mut self, cx: &mut Context<Self>) {
         let Some(s) = &self.suggested else { return };
         match self.clipboard.copy(s) {
-            Ok(_) => self.notice = "Copied. Paste it into your password manager now; Markie clears the clipboard in 30 seconds.".into(),
+            Ok(_) => self.notice = "Copied. Paste it into your password manager now. Markie clears the clipboard in 30 seconds.".into(),
             Err(_) => self.error = Some("Could not copy. Select the words and copy them yourself.".into()),
         }
         cx.notify();
@@ -851,7 +905,6 @@ impl VaultPage {
                 match parsed {
                     Ok(text) => {
                         this.restore_file = Some((text, name));
-                        this.notice = "Enter the passphrase for this backup.".into();
                     }
                     Err(e) => this.error = Some(failure_copy(&e).into()),
                 }
@@ -952,6 +1005,7 @@ impl VaultPage {
                         }
                         this.clear_input(&this.gate_passphrase.clone(), window, cx);
                         this.gate = Some((format!("Touch ID is not available right now. Enter your passphrase to {action} {label}."), then));
+                        this.focus_next = Some(this.gate_passphrase.clone());
                     }
                 }
                 cx.notify();
@@ -1006,8 +1060,11 @@ impl VaultPage {
                 let text = self.opened.as_ref().and_then(|d| d.text().map(str::to_string)).unwrap_or_default();
                 self.set_editor_text(&self.raw_editor.clone(), &text, window, cx);
             }
-            Pending::Copy { value, message } => match self.clipboard.copy(&value) {
-                Ok(_) => self.notice = format!("{message} {COPY_NOTE}"),
+            Pending::Copy { value, label, row } => match self.clipboard.copy(&value) {
+                Ok(_) => {
+                    self.notice.clear();
+                    self.copied = Some(CopyFeedback { label, row, at: Instant::now() });
+                }
                 Err(_) => self.error = Some("Clipboard access is unavailable. Nothing was copied.".into()),
             },
         }
@@ -1057,7 +1114,7 @@ impl VaultPage {
                     this.notice = if dirty {
                         "Recovered unsaved encrypted edits. Save encrypted changes to make them durable.".into()
                     } else {
-                        "Decrypted only inside this vault page.".into()
+                        String::new()
                     };
                 }
                 Err(e) => this.error = Some(failure_copy(&e).into()),
@@ -1417,6 +1474,12 @@ impl VaultPage {
                         this.sync_env_masks(window, cx);
                         cx.notify();
                     }
+                    if let Some(copied) = &this.copied {
+                        if copied.remaining(Instant::now(), CLEAR_AFTER).is_none() {
+                            this.copied = None;
+                        }
+                        cx.notify();
+                    }
                     this.maybe_auto_lock(false, window, cx);
                 }) else {
                     break;
@@ -1477,6 +1540,69 @@ impl VaultPage {
         .detach();
     }
 
+    fn cancel_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_file = None;
+        self.notice.clear();
+        self.clear_input(&self.restore_passphrase.clone(), window, cx);
+        cx.notify();
+    }
+
+    fn cancel_enroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.enrolling = false;
+        self.clear_input(&self.enroll_passphrase.clone(), window, cx);
+        cx.notify();
+    }
+
+    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_open = false;
+        self.notice.clear();
+        self.cancel_enroll(window, cx);
+    }
+
+    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_input(&self.query.clone(), window, cx);
+        cx.notify();
+    }
+
+    /// ⌘S, ⌘F and Escape on the page. True when the key was used.
+    fn handle_shortcut(&mut self, action: Shortcut, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let unlocked = !self.locked && !self.shielded;
+        match action {
+            Shortcut::Save if unlocked => {
+                self.save(window, cx);
+                true
+            }
+            Shortcut::Search if unlocked && shows_search(self.entries.len()) => {
+                self.settings_open = false;
+                self.query.update(cx, |s, cx| s.focus(window, cx));
+                cx.notify();
+                true
+            }
+            Shortcut::Escape => {
+                let state = EscapeState {
+                    gate: unlocked && self.gate.is_some() && !self.gate_busy,
+                    restore: self.restore_file.is_some() && !self.busy,
+                    enrolling: unlocked && self.enrolling && !self.busy,
+                    settings: unlocked && self.settings_open,
+                    query: unlocked && !self.query.read(cx).value().is_empty(),
+                    error: self.error.is_some(),
+                };
+                let Some(target) = escape_target(&state) else { return false };
+                match target {
+                    Escape::Gate => self.gate = None,
+                    Escape::Restore => self.cancel_restore(window, cx),
+                    Escape::Enroll => self.cancel_enroll(window, cx),
+                    Escape::Error => self.error = None,
+                    Escape::Settings => self.close_settings(window, cx),
+                    Escape::Search => self.clear_search(window, cx),
+                }
+                cx.notify();
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn dismiss_touch_id_offer(&mut self, cx: &mut Context<Self>) {
         self.offer_touch_id = false;
         let _ = std::fs::write(markie_core::paths::data_dir().join(TOUCH_ID_OFFER_FILE), "dismissed");
@@ -1496,633 +1622,7 @@ async fn confirm(this: &WeakEntity<VaultPage>, cx: &mut AsyncWindowContext, mess
     rx.await.ok() == Some(0)
 }
 
-// ── Rendering ──
-
-fn strength_color(level: StrengthLevel) -> Hsla {
-    match level {
-        StrengthLevel::TooShort | StrengthLevel::Weak => rgb(0xef4444).into(),
-        StrengthLevel::Fair => rgb(0xf59e0b).into(),
-        StrengthLevel::Strong => rgb(0x10b981).into(),
-        StrengthLevel::VeryStrong => rgb(0x059669).into(),
-    }
-}
-
-fn group_title(text: &'static str, cx: &App) -> Div {
-    div().px_2().pt_1().pb_1().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(cx.theme().muted_foreground).child(text.to_uppercase())
-}
-
-/// A button as Electron 0.9.7 paints every vault button. The page sits in
-/// `.docs-workspace`, whose unlayered `button` rule outranks the Tailwind
-/// classes vault-panel.tsx writes (those live in `@layer utilities`): no
-/// fill, a transparent 1 px border, `6px 9px`, 6 px corners, the inherited
-/// 13 px type on 19.5 px lines, the accent on hover and while pressed
-/// (`[aria-pressed=true]`), 45% when disabled. Primary, quiet and bordered
-/// buttons all reach the screen this way.
-fn docs_button(id: impl Into<ElementId>, label: impl Into<SharedString>, disabled: bool, pressed: bool, cx: &App) -> Stateful<Div> {
-    docs_button_sized(id, label, disabled, pressed, 13., 19.5, cx)
-}
-
-/// The same button under a parent that sets its own type: the env table's
-/// `text-sm` rows give their Show, Copy and × buttons 14 px on 20 px lines.
-fn docs_button_sized(id: impl Into<ElementId>, label: impl Into<SharedString>, disabled: bool, pressed: bool, size: f32, line: f32, cx: &App) -> Stateful<Div> {
-    let theme = cx.theme();
-    let accent = theme.accent;
-    div()
-        .id(id)
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .whitespace_nowrap()
-        .text_size(px(size))
-        .line_height(px(line))
-        .text_color(theme.foreground)
-        .px(px(9.))
-        .py(px(6.))
-        .border_1()
-        .border_color(transparent_black())
-        .rounded(px(6.))
-        .when(pressed, |el| el.bg(accent))
-        .when(disabled, |el| el.opacity(0.45))
-        .when(!disabled, |el| el.cursor_pointer().hover(move |s| s.bg(accent)))
-        .child(label.into())
-}
-
-/// `.docs-workspace input`: 7 px by 9 px inside a 1 px border, 6 px corners,
-/// the type and line height of its parent. Under a `text-sm` label that is
-/// 14 px on 20 px lines, 36 px in all.
-fn docs_input(input: &Entity<InputState>, disabled: bool, size: f32, line: f32, cx: &App) -> Input {
-    let theme = cx.theme();
-    // `Input::h` sizes only a multi-line field; the frame's own height comes
-    // through `Styled`.
-    Styled::h(Input::new(input).disabled(disabled), px(line + 16.))
-        .px(px(9.))
-        .text_size(px(size))
-        .rounded(px(6.))
-        .bg(theme.background)
-        .border_1()
-        .border_color(theme.border)
-}
-
-impl VaultPage {
-    fn field_label(&self, label: &'static str, input: &Entity<InputState>, disabled: bool, cx: &App) -> Div {
-        v_flex().gap_2().text_sm().line_height(px(20.)).child(label).child(docs_input(input, disabled, 14., 20., cx))
-    }
-
-    fn render_locked(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let busy = self.busy;
-        let creating = self.has_vault == Some(false);
-        let touch_ready = self.has_vault == Some(true) && self.touch_id.available && self.touch_id.enrolled;
-        let pass = self.passphrase.read(cx).value().to_string();
-        let conf_empty = self.confirmation.read(cx).value().is_empty();
-        let strength = (creating && !pass.is_empty()).then(|| passphrase_strength(&pass));
-        let suggested_shown = creating && self.suggested.as_ref().is_some_and(|s| **s == pass);
-        let mut card = v_flex()
-            .w_full()
-            .max_w(px(448.))
-            .gap_4()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            // `bg-surface`, as Electron paints the card.
-            .bg(crate::themes::palette(cx).surface)
-            .p_6()
-            // `tracking-widest uppercase`.
-            .child(div().text_xs().line_height(px(16.)).text_color(theme.muted_foreground).child(super::dialog_chrome::spaced_caps("Private on this device")));
-
-        let restoring_first = creating && self.restore_file.is_some();
-        if !self.shielded && restoring_first {
-            card = card.child(self.render_restore_form(cx));
-        }
-        if !self.shielded && self.has_vault.is_some() && !restoring_first {
-            if touch_ready {
-                card = card.child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            docs_button("vault-touch-id", "Unlock with Touch ID", busy, false, cx).w_full().when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.unlock_with_touch_id(window, cx)))),
-                        )
-                        .child(div().text_center().text_xs().line_height(px(16.)).text_color(theme.muted_foreground).child("or use your passphrase")),
-                );
-            }
-            card = card.child(self.field_label("Vault passphrase", &self.passphrase, busy, cx));
-            if let Some(s) = &strength {
-                let pct = s.bits.clamp(6, 100) as f32 / 100.0;
-                card = card.child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            div()
-                                .h(px(6.))
-                                .w_full()
-                                .rounded_full()
-                                .overflow_hidden()
-                                .bg(theme.border)
-                                .child(div().h_full().w(relative(pct)).bg(strength_color(s.level))),
-                        )
-                        .child(div().text_xs().line_height(px(16.)).text_color(theme.muted_foreground).child(format!("{} · about {} bits", s.label, s.bits))),
-                );
-            }
-            if creating {
-                card = card.child(self.field_label("Confirm passphrase", &self.confirmation, busy, cx));
-            }
-            if suggested_shown {
-                let words = self.suggested.as_ref().map(|s| s.to_string()).unwrap_or_default();
-                card = card.child(
-                    h_flex()
-                        .gap_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .p_2()
-                        .child(div().flex_1().min_w_0().text_sm().line_height(px(20.)).font_family("Menlo").child(words))
-                        .child(docs_button("vault-copy-suggestion", "Copy", false, false, cx).on_click(cx.listener(|this, _, _, cx| this.copy_suggestion(cx)))),
-                );
-            }
-            let submit_label = if busy {
-                "Working locally…"
-            } else if creating {
-                "Create encrypted vault"
-            } else {
-                "Unlock vault"
-            };
-            let submit_disabled = busy || pass.is_empty() || (creating && conf_empty);
-            let submit = if touch_ready {
-                docs_button("vault-submit", submit_label, submit_disabled, false, cx).when(!(submit_disabled), |b| b.on_click(cx.listener(|this, _, window, cx| this.authenticate(window, cx))))
-                    .into_any_element()
-            } else {
-                docs_button("vault-submit", submit_label, submit_disabled, false, cx)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if !submit_disabled {
-                            this.authenticate(window, cx)
-                        }
-                    }))
-                    .into_any_element()
-            };
-            card = card.child(h_flex().gap_3().items_center().child(submit).when(creating, |el| {
-                el.child(docs_button("vault-suggest", "Suggest a passphrase", busy, false, cx).on_click(cx.listener(move |this, _, window, cx| {
-                    if !busy {
-                        this.suggest(window, cx)
-                    }
-                })))
-            }));
-            if creating {
-                card = card
-                    .child(div().text_xs().line_height(px(16.)).text_color(theme.muted_foreground).child("Only you can unlock this vault. Save the passphrase in your password manager; there is no reset."))
-                    .child(h_flex().child(docs_button("vault-restore-first", "Restore from backup…", busy, false, cx).on_click(cx.listener(move |this, _, window, cx| {
-                        if !busy {
-                            this.choose_backup(window, cx)
-                        }
-                    }))));
-            }
-        }
-        div().flex_1().min_h_0().p_7().child(h_flex().justify_center().pt(px(48.)).child(card)).into_any_element()
-    }
-
-    fn render_restore_form(&self, cx: &mut Context<Self>) -> AnyElement {
-        let name = self.restore_file.as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
-        let busy = self.busy;
-        let empty = self.restore_passphrase.read(cx).value().is_empty();
-        v_flex()
-            .gap_3()
-            .child(div().text_sm().line_height(px(20.)).child(format!("Restore from {name}")))
-            .child(self.field_label("Backup passphrase", &self.restore_passphrase, busy, cx))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        docs_button("vault-restore", if busy { "Checking backup…" } else { "Restore vault" }, busy || empty, false, cx).when(!(busy || empty), |b| b.on_click(cx.listener(|this, _, window, cx| this.restore_backup(window, cx)))),
-                    )
-                    .child(docs_button("vault-restore-cancel", "Cancel", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| {
-                        this.restore_file = None;
-                        this.clear_input(&this.restore_passphrase.clone(), window, cx);
-                        cx.notify();
-                    })))),
-            )
-            .into_any_element()
-    }
-
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let busy = self.busy;
-        let query = self.query.read(cx).value().to_lowercase();
-        let visible: Vec<&VaultEntry> = self.entries.iter().filter(|e| e.name.to_lowercase().contains(&query)).collect();
-        let mut nav = v_flex().flex_1().min_h_0().overflow_y_scrollbar().p_2();
-        if visible.is_empty() {
-            nav = nav.child(
-                div()
-                    .px_2()
-                    .py_3()
-                    .text_sm().line_height(px(20.))
-                    .text_color(theme.muted_foreground)
-                    .child(if self.entries.is_empty() { "No encrypted files yet." } else { "No matching files." }),
-            );
-        }
-        for (label, env) in [("Environment keys", true), ("Files", false)] {
-            let items: Vec<&&VaultEntry> = visible.iter().filter(|e| dotenv::is_env_file_name(&e.name) == env).collect();
-            if items.is_empty() {
-                continue;
-            }
-            let mut group = v_flex().mb_3().child(group_title(label, cx));
-            for entry in items {
-                let entry = (*entry).clone();
-                let icon = if env { gpui_kit::assets::IconName::Key } else { gpui_kit::assets::IconName::File };
-                let sub = format!("{} bytes{}", group_digits(entry.bytes), if entry.recovery { " · unsaved encrypted recovery" } else { "" });
-                let id = SharedString::from(format!("vault-entry-{}", entry.id));
-                group = group.child(
-                    // `.docs-workspace button` again: its `6px 9px`, the
-                    // transparent border and the inherited 13 px type win
-                    // over `px-2 py-1.5 text-sm`, and the stylesheet has no
-                    // `.bg-accent`, so the open item is not filled; hover is.
-                    h_flex()
-                        .id(id)
-                        .items_start()
-                        .gap_2()
-                        .rounded(px(6.))
-                        .border_1()
-                        .border_color(transparent_black())
-                        .px(px(9.))
-                        .py(px(6.))
-                        .text_size(px(13.))
-                        .line_height(px(19.5))
-                        .when(!busy, |el| el.cursor_pointer().hover(|s| s.bg(theme.accent)))
-                        .child(div().mt(px(2.)).text_color(theme.muted_foreground).child(Icon::new(icon).small()))
-                        .child(v_flex().min_w_0().child(div().child(entry.name.clone())).child(div().text_xs().line_height(px(16.)).text_color(theme.muted_foreground).child(sub)))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if !this.busy {
-                                this.choose(entry.clone(), window, cx);
-                            }
-                        })),
-                );
-            }
-            nav = nav.child(group);
-        }
-        v_flex()
-            .w(px(256.))
-            .flex_none()
-            .h_full()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(crate::themes::palette(cx).surface)
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(
-                        v_flex()
-                            .gap(px(6.))
-                            .child(docs_button("vault-new-env", "New environment keys", busy, false, cx).w_full().when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.create_untitled("Untitled.env", window, cx)))))
-                            .child(docs_button("vault-new-note", "New private note", busy, false, cx).w_full().when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.create_untitled("Untitled.txt", window, cx)))))
-                            .child(docs_button("vault-import", "Import encrypted copy", busy, false, cx).w_full().when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.import_file(window, cx))))),
-                    )
-                    .child(docs_input(&self.query, busy, 13., 19.5, cx)),
-            )
-            .child(nav)
-            .into_any_element()
-    }
-
-    fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let busy = self.busy;
-        let muted = theme.muted_foreground;
-        let mut section = v_flex().w_full().max_w(px(576.)).gap_6().child(div().text_base().line_height(px(24.)).font_weight(FontWeight::SEMIBOLD).child("Settings"));
-        if self.touch_id.available {
-            let mut block = v_flex().gap_2().child(div().text_sm().line_height(px(20.)).font_weight(FontWeight::MEDIUM).child("Touch ID"));
-            block = if self.touch_id.enrolled {
-                block.child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_3()
-                        // A paragraph wider than the column wraps inside it on a line of its
-                        // own (`flex-wrap`), and the button wraps below it.
-                        .child(div().w_full().text_sm().line_height(px(20.)).text_color(muted).child("Touch ID unlocks this vault on this Mac and is asked again before an item is opened, shown or copied."))
-                        .child(docs_button("vault-touch-off", "Turn off Touch ID", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.disable_touch_id(window, cx))))),
-                )
-            } else if self.enrolling {
-                let empty = self.enroll_passphrase.read(cx).value().is_empty();
-                block.child(self.field_label("Confirm with your passphrase", &self.enroll_passphrase, busy, cx)).child(
-                    h_flex()
-                        .gap_2()
-                        .child(docs_button("vault-touch-on", "Turn on Touch ID", busy || empty, false, cx).when(!(busy || empty), |b| b.on_click(cx.listener(|this, _, window, cx| this.enroll_touch_id(window, cx)))))
-                        .child(docs_button("vault-touch-cancel", "Cancel", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| {
-                            this.enrolling = false;
-                            this.clear_input(&this.enroll_passphrase.clone(), window, cx);
-                            cx.notify();
-                        })))),
-                )
-            } else {
-                block.child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_3()
-                        // A paragraph wider than the column wraps inside it on a line of its
-                        // own (`flex-wrap`), and the button wraps below it.
-                        .child(div().w_full().text_sm().line_height(px(20.)).text_color(muted).child("Unlock with your fingerprint, and confirm with it before an item is opened, shown or copied. Your passphrase still works."))
-                        .child(docs_button("vault-touch-start", "Turn on Touch ID…", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, _, cx| {
-                            this.enrolling = true;
-                            cx.notify();
-                        })))),
-                )
-            };
-            section = section.child(block);
-        }
-        let mut backup = v_flex()
-            .gap_2()
-            .child(div().text_sm().line_height(px(20.)).font_weight(FontWeight::MEDIUM).child("Backup"))
-            .child(div().text_sm().line_height(px(20.)).text_color(muted).child("One encrypted file. It opens only with your passphrase."));
-        backup = if self.restore_file.is_some() {
-            backup.child(self.render_restore_form(cx))
-        } else {
-            backup.child(
-                h_flex()
-                    .gap_2()
-                    .child(docs_button("vault-backup", "Back up vault…", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.back_up(window, cx)))))
-                    .child(docs_button("vault-restore-choose", "Restore from backup…", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.choose_backup(window, cx))))),
-            )
-        };
-        section.child(backup).child(div().text_xs().line_height(px(16.)).text_color(muted).child("Locks after 5 minutes idle.")).into_any_element()
-    }
-
-    fn render_env(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let muted = theme.muted_foreground;
-        let busy = self.busy;
-        let Some(doc) = self.opened.as_ref() else { return div().into_any_element() };
-        let text = doc.text().unwrap_or("").to_string();
-        let mixed = matches!(doc.body, Body::Text { newline: Newline::Mixed, .. });
-        // Any outside change (the Raw view) re-parses and masks everything again.
-        if self.env.text != text || self.env.parsed.is_none() {
-            self.rebuild_env(window, cx);
-        }
-        let parsed = self.env.parsed.clone().unwrap_or_else(|| dotenv::parse_dotenv(""));
-        let duplicates = dotenv::duplicate_dotenv_keys(&parsed);
-        let parked: HashMap<usize, String> = parsed
-            .lines
-            .iter()
-            .filter_map(|l| match &l.kind {
-                LineKind::Comment { .. } => parked_key(&l.raw).map(|k| (l.id, k)),
-                _ => None,
-            })
-            .collect();
-        let maskable: Vec<usize> = parsed
-            .lines
-            .iter()
-            .filter(|l| matches!(l.kind, LineKind::Entry(_) | LineKind::Malformed { .. }) || parked.contains_key(&l.id))
-            .map(|l| l.id)
-            .collect();
-        let key_count = parsed.lines.iter().filter(|l| matches!(l.kind, LineKind::Entry(_))).count();
-        let all_revealed = !maskable.is_empty() && maskable.iter().all(|id| self.env.revealed.contains(id));
-        let raw = self.env.raw;
-        // vault-env-editor.tsx's buttons all reach the screen through
-        // `.docs-workspace button` (see `docs_button`); Show and Hide carry
-        // `aria-pressed`, so a revealed row's button is filled.
-        let quiet = |id: SharedString, label: &str, pressed: bool, disabled: bool, cx: &App| docs_button_sized(id, label.to_string(), disabled, pressed, 14., 20., cx);
-
-        let toolbar = h_flex()
-            .gap_2()
-            .items_center()
-            .child(
-                h_flex()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .p(px(2.))
-                    .child(docs_button("env-keys", "Keys", false, !raw, cx).on_click(cx.listener(|this, _, _, cx| {
-                        this.env.raw = false;
-                        cx.notify();
-                    })))
-                    .child(docs_button("env-raw", "Raw", false, raw, cx).on_click(cx.listener(move |this, _, window, cx| {
-                        if !this.env.raw {
-                            let label = this.opened.as_ref().map(|d| d.name.clone()).unwrap_or_default();
-                            this.confirm_item("reveal", label, Pending::RevealRaw, window, cx);
-                        }
-                    }))),
-            )
-            .child(div().text_xs().line_height(px(16.)).text_color(muted).child(if key_count == 1 { "1 key".to_string() } else { format!("{key_count} keys") }))
-            .child(div().flex_1())
-            .when(!raw, |el| {
-                let ids = maskable.clone();
-                let none = maskable.is_empty();
-                el.child(docs_button("env-reveal-all", if all_revealed { "Hide all" } else { "Reveal all" }, none, all_revealed, cx).when(!none, |b| b.on_click(cx.listener(
-                    move |this, _, window, cx| {
-                        if all_revealed {
-                            this.env.revealed.clear();
-                            this.sync_env_masks(window, cx);
-                            cx.notify();
-                        } else {
-                            let label = this.opened.as_ref().map(|d| d.name.clone()).unwrap_or_default();
-                            this.confirm_item("reveal", label, Pending::Reveal(ids.clone()), window, cx);
-                        }
-                    },
-                ))))
-            })
-            .child(docs_button("env-copy-all", "Copy as .env", busy || text.is_empty(), false, cx).when(!(busy || text.is_empty()), |b| b.on_click(cx.listener(move |this, _, window, cx| {
-                let Some(doc) = this.opened.as_ref() else { return };
-                let value = zeroize::Zeroizing::new(doc.text().unwrap_or("").to_string());
-                let label = doc.name.clone();
-                this.confirm_item("copy", label, Pending::Copy { value, message: "Copied the whole file as .env text.".into() }, window, cx);
-            }))));
-
-        let mut body = v_flex().gap_3().child(toolbar);
-        if raw {
-            body = body.child(div().h(px(320.)).rounded_md().border_1().border_color(theme.border).child(Editor::new(&self.raw_editor).h_full()));
-            if mixed {
-                body = body.child(div().text_xs().text_color(muted).child("Mixed line endings are preserved read-only here. Switch to Keys to edit values."));
-            }
-            return body.into_any_element();
-        }
-        if parsed.lines.is_empty() {
-            body = body.child(div().py_4().text_sm().line_height(px(20.)).text_color(muted).child("No keys yet. Add one, or paste a .env file into Raw."));
-        }
-        let has_lines = !parsed.lines.is_empty();
-        let mut table = v_flex().gap_1();
-        if !parsed.lines.is_empty() {
-            table = table.child(
-                h_flex()
-                    .text_xs()
-                    .line_height(px(16.))
-                    .text_color(muted)
-                    .child(div().w(relative(0.36)).px_1().child("Key"))
-                    .child(div().flex_1().px_1().child("Value"))
-                    .child(div().w(px(120.))),
-            );
-        }
-        for (index, line) in parsed.lines.iter().enumerate() {
-            let row = index + 1;
-            let shown = self.env.revealed.contains(&line.id);
-            let id = line.id;
-            match &line.kind {
-                LineKind::Blank => {}
-                LineKind::Comment { .. } => {
-                    let key = parked.get(&id).cloned();
-                    let text = match &key {
-                        Some(k) if !shown => format!("# {k}={MASK}"),
-                        _ => line.raw.trim().to_string(),
-                    };
-                    table = table.child(
-                        h_flex()
-                            .pt_2()
-                            .child(div().flex_1().px_1().text_xs().italic().font_family("Menlo").text_color(muted).child(text))
-                            .when_some(key, |el, k| {
-                                el.child(div().w(px(120.)).child(quiet(SharedString::from(format!("env-park-{id}")), if shown { "Hide" } else { "Show" }, shown, false, cx).on_click(cx.listener(
-                                    move |this, _, window, cx| this.toggle_row(id, format!("commented {k}"), window, cx),
-                                ))))
-                            }),
-                    );
-                }
-                LineKind::Malformed { reason } => {
-                    let reason = *reason;
-                    table = table.child(
-                        h_flex()
-                            .items_start()
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .px_1()
-                                    .child(div().rounded_md().border_1().border_dashed().border_color(theme.border).px(px(10.)).py(px(6.)).font_family("Menlo").text_size(px(13.)).text_color(muted).child(if shown { line.raw.clone() } else { MASK.to_string() }))
-                                    .child(div().mt_1().text_xs().text_color(muted).child(format!("{reason} Kept exactly as written. Edit it in Raw."))),
-                            )
-                            .child(div().w(px(120.)).child(quiet(SharedString::from(format!("env-bad-{id}")), if shown { "Hide" } else { "Show" }, shown, false, cx).on_click(cx.listener(
-                                move |this, _, window, cx| this.toggle_row(id, format!("line {row}"), window, cx),
-                            )))),
-                    );
-                }
-                LineKind::Entry(entry) => {
-                    let Some(inputs) = self.env.rows.get(&id) else { continue };
-                    let label = if entry.key.is_empty() { format!("row {row}") } else { entry.key.clone() };
-                    let problem = key_problem(&entry.key, &duplicates);
-                    let value_cell = match &inputs.value {
-                        EnvValue::Single(input) => docs_input(input, busy, 14., 20., cx).into_any_element(),
-                        EnvValue::Multi(editor) if shown => div().h(px(110.)).rounded_md()
-                            .border_1().border_color(theme.border)
-                            .child(Editor::new(editor).h_full()).into_any_element(),
-                        EnvValue::Multi(_) => div().rounded_md().border_1().border_color(theme.border)
-                            .px(px(10.)).py(px(6.)).font_family("Menlo").text_size(px(13.)).text_color(muted)
-                            .child(format!("{MASK} {} lines", entry.value.lines().count())).into_any_element(),
-                    };
-                    let copy_label = label.clone();
-                    let toggle_label = label.clone();
-                    let value = entry.value.clone();
-                    table = table.child(
-                        h_flex()
-                            .items_start()
-                            .child(
-                                v_flex()
-                                    .w(relative(0.36))
-                                    .px_1()
-                                    .child(h_flex().gap(px(6.)).child(div().text_color(muted).child(Icon::new(gpui_kit::assets::IconName::Key).small())).child(docs_input(&inputs.key, busy, 14., 20., cx)))
-                                    .children(problem.map(|p| div().mt_1().pl_5().text_xs().text_color(theme.danger).child(p))),
-                            )
-                            .child(div().flex_1().px_1().child(value_cell))
-                            .child(
-                                h_flex()
-                                    .w(px(120.))
-                                    .px_1()
-                                    .child(quiet(SharedString::from(format!("env-show-{id}")), if shown { "Hide" } else { "Show" }, shown, false, cx).on_click(cx.listener(move |this, _, window, cx| {
-                                        this.toggle_row(id, toggle_label.clone(), window, cx)
-                                    })))
-                                    .child(quiet(SharedString::from(format!("env-copy-{id}")), "Copy", false, busy, cx).when(!busy, |b| b.on_click(cx.listener(move |this, _, window, cx| {
-                                        let message = format!("Copied the value of {copy_label}.");
-                                        this.confirm_item("copy", copy_label.clone(), Pending::Copy { value: zeroize::Zeroizing::new(value.clone()), message }, window, cx);
-                                    }))))
-                                    .child(quiet(SharedString::from(format!("env-remove-{id}")), "×", false, busy, cx).when(!busy, |b| b.on_click(cx.listener(move |this, _, _, cx| {
-                                        this.commit_env(|doc| dotenv::remove_dotenv_line(doc, id), cx);
-                                    })))),
-                            ),
-                    );
-                }
-            }
-        }
-        // No `<table>` at all while there are no lines, so no gap for one.
-        body.when(has_lines, |b| b.child(table))
-            // A button in a block keeps its own width (`inline-block`).
-            .child(h_flex().child(docs_button("env-add", "Add key", busy, false, cx).when(!busy, |b| b.on_click(cx.listener(|this, _, window, cx| {
-                this.commit_env(|doc| dotenv::add_dotenv_entry(doc, "", ""), cx);
-                if let Some(parsed) = this.env.parsed.clone() {
-                    this.env_rows(&parsed, window, cx);
-                }
-            })))))
-            .into_any_element()
-    }
-
-    fn toggle_row(&mut self, id: usize, label: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.env.revealed.remove(&id) {
-            self.sync_env_masks(window, cx);
-            cx.notify();
-            return;
-        }
-        let file = self.opened.as_ref().map(|d| d.name.clone()).unwrap_or_default();
-        self.confirm_item("reveal", format!("{label} in {file}"), Pending::Reveal(vec![id]), window, cx);
-    }
-
-    fn render_opened(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let muted = theme.muted_foreground;
-        let busy = self.busy;
-        let Some(doc) = self.opened.as_ref() else { return div().into_any_element() };
-        let dirty = doc.dirty;
-        let has_id = doc.id.is_some();
-        let is_env = doc.is_env();
-        let is_text = matches!(doc.body, Body::Text { .. });
-        let mixed = matches!(doc.body, Body::Text { newline: Newline::Mixed, .. });
-        let head = h_flex()
-            .flex_wrap()
-            .items_end()
-            .gap_3()
-            .child(v_flex().min_w(px(224.)).flex_1().gap_2().text_sm().line_height(px(20.)).child("Private filename").child(docs_input(&self.filename, busy, 14., 20., cx)))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(docs_button("vault-save", "Save encrypted changes", busy || !dirty, false, cx).when(!(busy || !dirty), |b| b.on_click(cx.listener(|this, _, window, cx| this.save(window, cx)))))
-                    .child(docs_button("vault-export", "Save unencrypted copy…", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.export_decrypted(window, cx)))))
-                    .when(has_id, |el| {
-                        el.child(docs_button("vault-delete", "Delete encrypted copy", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, window, cx| this.delete_opened(window, cx)))))
-                    }),
-            );
-        let body = if is_env {
-            self.render_env(window, cx)
-        } else if is_text {
-            v_flex()
-                .gap_2()
-                .text_sm().line_height(px(20.))
-                .child("Private text")
-                .child(div().h(px(320.)).rounded_md().border_1().border_color(theme.border).child(Editor::new(&self.text_editor).h_full()))
-                .when(mixed, |el| el.child(div().text_sm().line_height(px(20.)).text_color(muted).child("Mixed line endings are preserved read-only.")))
-                .into_any_element()
-        } else if let Body::Docx(office) = &doc.body {
-            v_flex().gap_3()
-                .child(div().text_sm().line_height(px(20.)).text_color(muted).child(if office.can_edit {
-                    "Original-engine text editing. Page layout is not reproduced here."
-                } else {
-                    "This DOCX is preserved read-only because it contains unsupported features."
-                }))
-                .children(self.private_runs.iter().map(|run| {
-                    v_flex().gap_2().text_sm().line_height(px(20.)).child(run.label.clone())
-                        .child(docs_input(&run.input, busy || run.read_only, 14., 20., cx))
-                }))
-                .into_any_element()
-        } else {
-            div()
-                .text_sm().line_height(px(20.))
-                .text_color(muted)
-                .child("This file is stored encrypted. Editing and preview are unavailable; an explicitly decrypted copy keeps its original bytes.")
-                .into_any_element()
-        };
-        v_flex()
-            .w_full()
-            .max_w(px(896.))
-            .gap_4()
-            .child(head)
-            .child(body)
-            .child(div().text_xs().line_height(px(16.)).text_color(muted).child(if dirty { "Unsaved private edits" } else { "Encrypted saved copy" }))
-            .into_any_element()
-    }
-}
-
+#[cfg(test)]
 fn group_digits(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
@@ -2148,142 +1648,10 @@ impl Render for VaultPage {
         if self.pending_text.take().is_some() && self.opened.as_ref().is_some_and(|d| d.is_env()) && !self.env.raw {
             self.rebuild_env(window, cx);
         }
-        let theme = cx.theme().clone();
-        let muted = theme.muted_foreground;
-        let unlocked = !self.locked && !self.shielded;
-        let busy = self.busy;
-        let header = h_flex()
-            .items_start()
-            .gap_3()
-            .border_b_1()
-            .border_color(theme.border)
-            .px_7()
-            .py_4()
-            .child(
-                div()
-                    .mt(px(2.))
-                    .size(px(32.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .text_color(muted)
-                    .child(Icon::new(gpui_kit::assets::IconName::Lock).small()),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    // `text-lg leading-tight` over `text-sm` (20 px lines).
-                    .child(div().text_lg().line_height(px(22.5)).font_weight(FontWeight::SEMIBOLD).child("Vault"))
-                    .child(div().mt(px(2.)).text_sm().line_height(px(20.)).text_color(muted).child(if self.shielded { "Securing last edits and locking…".to_string() } else { self.notice.clone() })),
-            )
-            .when(unlocked, |el| {
-                el.child(docs_button("vault-settings", "Settings", false, self.settings_open, cx).on_click(cx.listener(|this, _, window, cx| {
-                    this.settings_open = !this.settings_open;
-                    this.enrolling = false;
-                    this.clear_input(&this.enroll_passphrase.clone(), window, cx);
-                    cx.notify();
-                })))
-                .child(docs_button("vault-lock", "Lock vault", false, false, cx).on_click(cx.listener(|this, _, window, cx| {
-                    let dirty = this.opened.as_ref().is_some_and(|d| d.dirty);
-                    cx.spawn_in(window, async move |this, cx| {
-                        if dirty && !confirm(&this, cx, "Discard unsaved private edits? Save encrypted changes first to keep them.").await {
-                            return;
-                        }
-                        this.update_in(cx, |this, window, cx| this.lock_now("Vault locked.", window, cx)).ok();
-                    })
-                    .detach();
-                })))
-            });
-
-        let mut page = v_flex()
-            .id("vault-page")
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, _| this.touched()))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                this.touched();
-                let k = &event.keystroke;
-                if k.modifiers.platform && k.key == "s" && !this.locked {
-                    this.save(window, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(header);
-        if let Some(error) = &self.error {
-            page = page.child(div().mx_7().mt_4().rounded_md().border_1().border_color(theme.border).p_3().text_sm().line_height(px(20.)).child(error.clone()));
+        if let Some(input) = self.focus_next.take() {
+            input.update(cx, |s, cx| s.focus(window, cx));
         }
-        if unlocked && let Some((prompt, _)) = &self.gate {
-            let empty = self.gate_passphrase.read(cx).value().is_empty();
-            let gate_busy = self.gate_busy;
-            page = page.child(
-                v_flex()
-                    .mx_7()
-                    .mt_4()
-                    .gap_3()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(crate::themes::palette(cx).surface)
-                    .p_3()
-                    .child(div().text_sm().line_height(px(20.)).child(prompt.clone()))
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(div().flex_1().min_w(px(224.)).child(docs_input(&self.gate_passphrase, gate_busy, 13., 19.5, cx)))
-                            .child(docs_button("vault-gate-ok", if gate_busy { "Checking…" } else { "Confirm" }, gate_busy || empty, false, cx).when(!(gate_busy || empty), |b| b.on_click(cx.listener(|this, _, window, cx| this.submit_gate(window, cx)))))
-                            .child(docs_button("vault-gate-cancel", "Cancel", gate_busy, false, cx).when(!(gate_busy), |b| b.on_click(cx.listener(|this, _, _, cx| {
-                                this.gate = None;
-                                cx.notify();
-                            })))),
-                    ),
-            );
-        }
-        if self.offer_touch_id && self.touch_id.available && !self.touch_id.enrolled && unlocked && !self.settings_open {
-            page = page.child(
-                h_flex()
-                    .mx_7()
-                    .mt_4()
-                    .gap_3()
-                    .flex_wrap()
-                    .items_center()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(crate::themes::palette(cx).surface)
-                    .p_3()
-                    .child(div().flex_1().min_w_0().text_sm().line_height(px(20.)).child("Use Touch ID to unlock this vault and to open or copy its items. Your passphrase still works."))
-                    .child(docs_button("vault-offer-yes", "Use Touch ID…", busy, false, cx).when(!(busy), |b| b.on_click(cx.listener(|this, _, _, cx| {
-                        this.offer_touch_id = false;
-                        this.settings_open = true;
-                        this.enrolling = true;
-                        cx.notify();
-                    }))))
-                    .child(docs_button("vault-offer-no", "Not now", false, false, cx).on_click(cx.listener(|this, _, _, cx| this.dismiss_touch_id_offer(cx)))),
-            );
-        }
-        if !unlocked {
-            return page.child(self.render_locked(cx));
-        }
-        let content = if self.settings_open {
-            self.render_settings(cx)
-        } else if self.opened.is_some() {
-            self.render_opened(window, cx)
-        } else {
-            div().max_w(px(448.)).py_16().text_center().text_sm().line_height(px(20.)).text_color(muted).child("Choose an item, or create environment keys or a private note.").into_any_element()
-        };
-        page.child(
-            h_flex()
-                .flex_1()
-                .min_h_0()
-                .child(self.render_sidebar(cx))
-                .child(div().id("vault-content").flex_1().min_w_0().h_full().overflow_y_scroll().p_7().child(h_flex().justify_center().child(content))),
-        )
+        self.render_page(window, cx)
     }
 }
 
@@ -2314,7 +1682,7 @@ impl Workspace {
             && !page.read(cx).is_locked()
             && !page.read(cx).has_unsaved()
         {
-            page.update(cx, |p, cx| p.lock_now("Vault locked.", window, cx));
+            page.update(cx, |p, cx| p.lock_now("", window, cx));
         }
     }
 
@@ -2344,7 +1712,7 @@ impl Workspace {
             }
             this.update_in(cx, |this, window, cx| {
                 if let Some(page) = page {
-                    page.update(cx, |p, cx| p.lock_now("Vault locked.", window, cx));
+                    page.update(cx, |p, cx| p.lock_now("", window, cx));
                 }
                 this.select_view(super::rail::LeftView::Library, cx);
             })
@@ -2367,6 +1735,181 @@ impl Workspace {
 }
 
 actions!(markie_vault_page, [ToggleVault]);
+
+// ── Scenes (`--features scene`, docs/rust-port/SCREEN.md) ──
+
+/// The scratch passphrase every vault scene uses. Synthetic, never a real one.
+#[cfg(feature = "scene")]
+const SCENE_PASSPHRASE: &str = "synthetic scene passphrase only";
+
+#[cfg(feature = "scene")]
+impl VaultPage {
+    /// Synthetic items: two env files, notes and an opaque file.
+    fn scene_items(state: &str) -> Vec<(&'static str, &'static str, Vec<u8>)> {
+        let mut items = vec![
+            ("production.env", ENV_MEDIA_TYPE, b"# Payments\nSTRIPE_SECRET_KEY=sk_test_fixture_0000000000\nDATABASE_URL=postgres://app:fixture@localhost:5432/app\n# OLD_TOKEN=retired_fixture_value\nSENTRY_DSN=https://fixture@example.invalid/1\n".to_vec()),
+            ("Server notes.txt", "text/plain", b"Staging box: ssh deploy@staging.example.invalid\nRotate the API keys every quarter.\nBackup codes are in Recovery codes.txt.\n".to_vec()),
+            ("Recovery codes.txt", "text/plain", b"1. 4821-0093\n2. 7710-5521\n3. 0098-1123\n".to_vec()),
+        ];
+        if state != "few" {
+            items.extend([
+                ("staging.env", ENV_MEDIA_TYPE, b"API_URL=https://staging.example.invalid\nAPI_TOKEN=fixture_staging_token\n".to_vec()),
+                ("local.env", ENV_MEDIA_TYPE, b"PORT=3000\nDEBUG=true\n".to_vec()),
+                ("Wi-Fi.txt", "text/plain", b"Office: fixture-network / fixture-password\n".to_vec()),
+                ("signed-lease.pdf", "application/pdf", b"%PDF-1.4\n% synthetic fixture, not a real document\n".to_vec()),
+            ]);
+        }
+        items
+    }
+
+    /// One step of a vault scene. `stage` counts the steps already done.
+    /// Args: `state` (see `scene_states`), `touch_id` (bool).
+    pub fn scene_step(&mut self, args: &serde_json::Value, stage: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let state = args.get("state").and_then(serde_json::Value::as_str).unwrap_or("locked").to_string();
+        let touch = args.get("touch_id").and_then(serde_json::Value::as_bool).unwrap_or(false)
+            || matches!(state.as_str(), "locked-touch" | "settings-touch" | "gate");
+        if *stage >= 9 {
+            return true;
+        }
+        if self.busy && *stage != 2 {
+            return false;
+        }
+        match *stage {
+            0 => {
+                if self.has_vault.is_none() {
+                    return false;
+                }
+                let fresh = matches!(state.as_str(), "none" | "create" | "create-error");
+                if !fresh {
+                    let empty = state == "empty";
+                    let mut repo = self.repo.lock().unwrap_or_else(|p| p.into_inner());
+                    repo.create(SCENE_PASSPHRASE).expect("scene vault");
+                    if !empty {
+                        for (name, media, bytes) in Self::scene_items(&state) {
+                            repo.save(None, &bytes, &VaultDocumentMetadata { name: name.into(), media_type: media.into() }).expect("scene item");
+                        }
+                    }
+                    if touch {
+                        repo.enroll_device(SCENE_PASSPHRASE, &*self.keeper as &dyn DeviceKeeper).expect("scene Touch ID");
+                    }
+                    repo.lock();
+                    drop(repo);
+                    self.has_vault = Some(true);
+                    self.notice.clear();
+                    self.refresh_touch_id(window, cx);
+                }
+                *stage = 1;
+                false
+            }
+            1 => {
+                let typed = |this: &mut Self, input: Entity<InputState>, text: &str, window: &mut Window, cx: &mut Context<Self>| {
+                    this.writing = true;
+                    input.update(cx, |s, cx| s.set_value(text.to_string(), window, cx));
+                    this.writing = false;
+                };
+                match state.as_str() {
+                    "none" | "locked" | "locked-touch" => {}
+                    "create" => self.suggest(window, cx),
+                    "create-error" => {
+                        typed(self, self.passphrase.clone(), "correct horse battery", window, cx);
+                        typed(self, self.confirmation.clone(), "correct horse batery", window, cx);
+                        self.authenticate(window, cx);
+                    }
+                    "locked-error" => {
+                        typed(self, self.passphrase.clone(), "not the right passphrase", window, cx);
+                        self.authenticate(window, cx);
+                    }
+                    "unlocking" => {
+                        typed(self, self.passphrase.clone(), SCENE_PASSPHRASE, window, cx);
+                        // Held busy, as it is while the key is derived.
+                        self.busy = true;
+                        *stage = 9;
+                        return false;
+                    }
+                    _ => {
+                        typed(self, self.passphrase.clone(), SCENE_PASSPHRASE, window, cx);
+                        self.authenticate(window, cx);
+                    }
+                }
+                *stage = 2;
+                false
+            }
+            2 => {
+                if self.busy {
+                    return false;
+                }
+                let open = |this: &mut Self, name: &str, window: &mut Window, cx: &mut Context<Self>| {
+                    if let Some(entry) = this.entries.iter().find(|e| e.name == name).cloned() {
+                        this.read_entry(entry, window, cx);
+                    }
+                };
+                match state.as_str() {
+                    "note" => open(self, "Server notes.txt", window, cx),
+                    "env" | "env-copied" | "env-revealed" | "gate" => open(self, "production.env", window, cx),
+                    "file" => open(self, "signed-lease.pdf", window, cx),
+                    "settings" | "settings-touch" => self.settings_open = true,
+                    "restore" => {
+                        let backup = self.repo.lock().unwrap_or_else(|p| p.into_inner()).backup().expect("scene backup");
+                        self.settings_open = true;
+                        self.restore_file = Some((backup, VAULT_BACKUP_FILE_NAME.to_string()));
+                    }
+                    "search" => {
+                        self.writing = true;
+                        self.query.update(cx, |s, cx| s.set_value("env", window, cx));
+                        self.writing = false;
+                    }
+                    _ => {}
+                }
+                *stage = 3;
+                false
+            }
+            3 => {
+                if self.busy {
+                    return false;
+                }
+                let first_key = || self.env.parsed.as_ref().and_then(|p| p.lines.iter().find(|l| matches!(l.kind, LineKind::Entry(_))).map(|l| (l.id, match &l.kind { LineKind::Entry(e) => (e.key.clone(), e.value.clone()), _ => unreachable!() })));
+                match state.as_str() {
+                    "env-revealed" => {
+                        if let Some((id, _)) = first_key() {
+                            self.perform(Pending::Reveal(vec![id]), window, cx);
+                        }
+                    }
+                    "env-copied" => {
+                        if let Some((_, (key, value))) = first_key() {
+                            let row = self.env.parsed.as_ref().and_then(|p| p.lines.iter().find(|l| matches!(&l.kind, LineKind::Entry(e) if e.key == key)).map(|l| l.id));
+                            self.perform(Pending::Copy { value: zeroize::Zeroizing::new(value), label: key, row }, window, cx);
+                        }
+                    }
+                    "gate" => {
+                        let label = self.opened.as_ref().map(|d| d.name.clone()).unwrap_or_default();
+                        self.gate = Some((format!("Touch ID is not available right now. Enter your passphrase to reveal {label}."), Pending::RevealRaw));
+                    }
+                    _ => {}
+                }
+                *stage = 4;
+                false
+            }
+            _ => true,
+        }
+    }
+}
+
+#[cfg(feature = "scene")]
+impl Workspace {
+    /// The vault page in a named state, reached through the page's own calls.
+    pub(super) fn scene_vault(&mut self, args: &serde_json::Value, step: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if *step == 0 {
+            self.open_vault(window, cx);
+            *step = 1;
+            return false;
+        }
+        let Some(page) = self.vault.clone() else { return false };
+        let mut stage = *step - 1;
+        let done = page.update(cx, |p, cx| p.scene_step(args, &mut stage, window, cx));
+        *step = stage + 1;
+        done
+    }
+}
 
 #[cfg(test)]
 mod tests {

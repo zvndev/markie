@@ -33,7 +33,7 @@ test("this suite really runs on an aliased deployment: browser pages on the othe
   assert.equal(res.status, 308);
 });
 
-test("apple-app-site-association claims /d/* and /s/* but nothing under them, on every name, as JSON", async () => {
+test("apple-app-site-association claims /d/* and /s/* but nothing under them, and the sign-in return path, on every name, as JSON", async () => {
   for (const host of HOSTS) {
     const res = await fetchAs(host, "/.well-known/apple-app-site-association");
     assert.equal(res.status, 200, host);
@@ -48,6 +48,8 @@ test("apple-app-site-association claims /d/* and /s/* but nothing under them, on
           { "/": "/s/*/*", exclude: true },
           { "/": "/d/*" },
           { "/": "/s/*" },
+          // The way back from Google or Apple sign-in (mobile-auth.ts).
+          { "/": "/auth/mobile-return" },
         ] }],
       },
     });

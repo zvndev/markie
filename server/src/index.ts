@@ -18,7 +18,7 @@ import { docView } from "./doc-view.ts";
 import { agentTokens } from "./agent-tokens.ts";
 import { agentDocsApi, restAgentAuth } from "./agent-docs.ts";
 import { mcpApi, mcpAuth } from "./mcp-server.ts";
-import { createWellKnown } from "./well-known.ts";
+import { androidLinksVerified, createWellKnown, verifiedReturnOrigin } from "./well-known.ts";
 import { createWebSignIn } from "./web-signin.ts";
 import { createWebApp, isReadViewPath, isWebAppPath } from "./web-app.ts";
 import { docsHostConfig, redirectToDocsHost } from "./docs-host.ts";
@@ -343,7 +343,10 @@ app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const denied = await guardAccountAuthRequest(request);
   if (denied) return denied;
   const run = () => auth.handler(request);
-  return accountPlatform ? accountPlatform.runAuthRequest(request, run) : run();
+  const response = await (accountPlatform ? accountPlatform.runAuthRequest(request, run) : run());
+  // A phone sign-in's callback: its session is ended and its cookie is never
+  // passed on (mobile-auth.ts settle). Every other answer is left as it is.
+  return mobileAuth ? mobileAuth.settle(request, response) : response;
 });
 
 // Desktop Google and Apple sign-in must run entirely in the browser, or
@@ -477,10 +480,16 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
 });
 
 // The phone app's Google and Apple sign-in. Its own routes and its own link
-// (markie-mobile://auth, a one-use code and never a token); mobile-auth.ts.
-if (googleConfigured || appleConfigured) {
-  app.route("/", createMobileAuth({ authBase: AUTH_BASE, issuer: AUTH_ISSUER, google: googleConfigured, apple: appleConfigured }));
-}
+// back (a one-use code and never a token); mobile-auth.ts. On Markie Cloud
+// the link is an https one the operating system hands only to the real app.
+const MOBILE_RETURN_ORIGIN = verifiedReturnOrigin(DEPLOYMENT);
+const mobileAuth = googleConfigured || appleConfigured
+  ? createMobileAuth({
+      authBase: AUTH_BASE, issuer: AUTH_ISSUER, google: googleConfigured, apple: appleConfigured,
+      verifiedReturn: MOBILE_RETURN_ORIGIN ? { origin: MOBILE_RETURN_ORIGIN, android: androidLinksVerified() } : null,
+    })
+  : null;
+if (mobileAuth) app.route("/", mobileAuth.app);
 
 app.route("/api/docs", docs);
 app.route("/api/document-platform", createDocumentPlatform({

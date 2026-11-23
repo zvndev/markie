@@ -446,7 +446,8 @@ const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "authorization, content-type",
   "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "access-control-expose-headers": "set-auth-token, content-disposition",
+  // content-range: a browser reads a picture's full size from it (src/lib/api.ts asset).
+  "access-control-expose-headers": "set-auth-token, content-disposition, content-range",
 };
 
 const server = createServer(async (req, res) => {

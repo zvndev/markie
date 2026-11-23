@@ -7,7 +7,8 @@ import { DocumentFormatMark } from "@/components/document-format-mark";
 import type { ApiClient } from "../lib/api";
 import { classifyDocumentLink, type LinkTarget, type PinnedPublicTarget } from "../lib/deep-links";
 import { markFormat, type CloudDoc } from "../lib/docs";
-import { openExternal, openSystemUrl, shareLink } from "../lib/native";
+import { openExternal, openSystemUrl } from "../lib/native";
+import { docExportSource } from "../lib/export";
 import { publicLinkErrorCopy } from "../lib/public-link";
 import { displayName } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
@@ -15,6 +16,7 @@ import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, ShareIcon } from "../components/icons";
+import { ExportSheet } from "../components/share-sheet";
 
 interface PublicDocProps {
   /** A client with no token, on the server the link names. */
@@ -34,6 +36,7 @@ type State =
 export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicDocProps) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [notice, setNotice] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
   const run = useRef(0);
 
   const load = useCallback(async () => {
@@ -83,7 +86,7 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
           title={doc ? displayName(doc.name) : "Document"}
           back={{ label: "Sign in", onBack: onSignIn }}
           actions={doc ? (
-            <button type="button" className="m-nav-icon" aria-label="Share link" onClick={() => void shareLink(displayName(doc.name), doc.privateLink)}>
+            <button type="button" className="m-nav-icon" aria-label="Share" onClick={() => setSharing(true)}>
               <ShareIcon size={23} />
             </button>
           ) : null}
@@ -125,6 +128,8 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
             </>
           ) : null}
           {notice ? <div className="m-toast" role="status">{notice}</div> : null}
+          {/* The link, and what this reader can already read as a file. Nothing here needs an account. */}
+          {sharing && doc ? <ExportSheet title={doc.name} link={doc.privateLink} source={docExportSource(doc, loadAsset)} onClose={() => setSharing(false)} /> : null}
         </Screen>
       </div>
       {doc ? (

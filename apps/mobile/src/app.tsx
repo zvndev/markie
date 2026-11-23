@@ -38,6 +38,8 @@ import { OfficeScreen } from "./screens/office";
 import type { NewDocType } from "./lib/docs";
 import { IncomingScreen } from "./screens/incoming";
 import { RequestsScreen } from "./screens/requests";
+import { createLocalFiles, LocalFileError, NativeLocalFiles } from "./lib/local-files";
+import { isLocalRoute, localEntry, type LocalHost, type LocalRoute } from "./screens/local";
 
 type Route =
   | { key: string; kind: "recent" }
@@ -47,7 +49,9 @@ type Route =
   | { key: string; kind: "new"; type: NewDocType }
   | { key: string; kind: "office"; id: string; name?: string; startEditing?: boolean }
   | { key: string; kind: "edit"; draft: EditorDraft }
-  | { key: string; kind: "file"; file: IncomingFile };
+  | { key: string; kind: "file"; file: IncomingFile }
+  // Files on this phone (screens/local.tsx). The same routes make up the signed-out stack.
+  | LocalRoute;
 
 /**
  * What a signed-out person can have open besides the sign-in screen: one
@@ -57,6 +61,8 @@ type Route =
 type SignedOutRoute = { kind: "public"; target: PinnedPublicTarget };
 
 const ROOT: Route = { key: "recent", kind: "recent" };
+const LOCAL_HOME: LocalRoute = { key: "local-home", kind: "local-home" };
+const NOBODY = { id: "", name: "", email: "" };
 const SERVER_SIGN_OUT_TIMEOUT_MS = 3_000;
 let routeSeq = 0;
 const nextKey = (prefix: string) => `${prefix}-${++routeSeq}`;
@@ -114,6 +120,13 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const chooserRef = useRef(false);
   chooserRef.current = chooser;
   const tone = resolveTone(themeMode, systemDark);
+  // Local mode: files and folders on this phone, with or without an account.
+  // Only a device has them; in a desktop browser the entries are not shown.
+  const localFiles = useMemo(() => (native ? createLocalFiles(NativeLocalFiles) : null), [native]);
+  // The signed-out stack: empty, or "On this phone" and what was opened from it.
+  const [guestStack, setGuestStack] = useState<LocalRoute[]>([]);
+  const guestStackRef = useRef(guestStack);
+  guestStackRef.current = guestStack;
 
   // Theme: the desktop's Markie tokens, light or dark, and the status bar to match.
   useEffect(() => {
@@ -209,6 +222,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     const destination = signedOutDestination(target, preferredOriginRef.current);
     setWaitingPublic(target.kind === "public" ? target : null);
     setSignedOutRoute(destination ? { kind: "public", target: destination } : null);
+    setGuestStack([]);
   }, []);
 
   // A file from Mail, AirDrop or Files. Before sign-in it waits in memory
@@ -217,16 +231,37 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
   const openFile = useCallback((file: IncomingFile) => {
     setRoutes([ROOT, { key: nextKey("file"), kind: "file", file }]);
   }, []);
+  /** Puts a local route on whichever stack is showing: the signed-in one, or the signed-out one. */
+  const pushLocal = useCallback((route: LocalRoute, { fromOutside = false }: { fromOutside?: boolean } = {}) => {
+    if (sessionRef.current) { setRoutes((stack) => (fromOutside ? [ROOT, route] : [...stack, route])); return; }
+    setSignedOutRoute(null);
+    setGuestStack((stack) => (fromOutside || stack.length === 0 ? [LOCAL_HOME, route] : [...stack, route]));
+  }, []);
   const receiveFile = useCallback(async (url: string) => {
     try {
-      const file = await readIncomingFile(url, fetchFileBytes);
+      // A file the other app lets Markie change opens where it is and saves
+      // back there, account or not. Anything else is a copy, as before.
+      const adopted = localFiles ? await localFiles.adopt(url) : { grant: null, name: null };
+      let file: IncomingFile;
+      if (adopted.grant && localFiles) {
+        const doc = await localFiles.open({ grantId: adopted.grant.id, entry: null });
+        if (doc.shape) { pushLocal({ key: nextKey("local-doc"), kind: "local-doc", doc }, { fromOutside: true }); return; }
+        // A converted or read-only file has nothing to save back to.
+        void localFiles.forget(adopted.grant.id).catch(() => undefined);
+        file = { name: doc.cloudName, format: doc.format, content: doc.content, convertedFrom: doc.convertedFrom };
+      } else {
+        file = await readIncomingFile(url, fetchFileBytes, adopted.name);
+      }
       if (sessionRef.current) { openFile(file); return; }
+      // Signed out: it opens to read now, and waits in memory (never on
+      // disk) to be saved to Markie Cloud after sign-in.
       pendingFile.current = file;
-      setSignInNotice(`Sign in to open "${file.name}" and save it to Markie Cloud.`);
+      setSignInNotice(`Sign in to save "${file.name}" to Markie Cloud.`);
+      pushLocal({ key: nextKey("local-copy"), kind: "local-copy", file }, { fromOutside: true });
     } catch (error) {
-      showToast(error instanceof IncomingFileError ? error.message : "Markie couldn't open that file.");
+      showToast(error instanceof IncomingFileError || error instanceof LocalFileError ? error.message : "Markie couldn't open that file.");
     }
-  }, [openFile, showToast]);
+  }, [localFiles, openFile, pushLocal, showToast]);
 
   // Links from outside: universal links, app links and markie-mobile://.
   const lastUrl = useRef<{ url: string; at: number } | null>(null);
@@ -328,7 +363,15 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     void CapApp.addListener("backButton", () => {
       const top = routesRef.current[routesRef.current.length - 1];
       if (chooserRef.current) { setChooser(false); return; }
-      if (top.kind === "edit" && backGuard.current) { backGuard.current(); return; }
+      if ((top.kind === "edit" || top.kind === "local-edit") && sessionRef.current && backGuard.current) { backGuard.current(); return; }
+      // Signed out with files from this phone open: back walks that stack,
+      // asking the editor first, and ends at the sign-in screen.
+      if (!sessionRef.current && guestStackRef.current.length > 0) {
+        const guestTop = guestStackRef.current[guestStackRef.current.length - 1];
+        if (guestTop.kind === "local-edit" && backGuard.current) { backGuard.current(); return; }
+        setGuestStack((stack) => stack.slice(0, -1));
+        return;
+      }
       // Signed out and reading a public share: back is the sign-in screen.
       if (!sessionRef.current && signedOutRouteRef.current) { setSignedOutRoute(null); return; }
       if (routesRef.current.length > 1 && sessionRef.current) pop();
@@ -393,6 +436,7 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     setSignInNotice(null);
     setRoutes([ROOT]);
     setSignedOutRoute(null);
+    setGuestStack([]);
     setWaitingPublic(null);
     const storage = pendingStorage();
     const pending = storage ? takePendingLink(storage) : null;
@@ -408,9 +452,40 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     setThemeModeState(mode);
   }, []);
 
+  // A client with no token, for the editor's props when nobody is signed in.
+  // A local file never calls it.
+  const noAccountApi = useMemo(() => createApiClient({ origin: preferredOrigin, transport }), [preferredOrigin, transport]);
+
   if (session === undefined) return <div className="m-boot" aria-busy="true" />;
 
   if (!session || !api) {
+    if (guestStack.length > 0 && localFiles) {
+      const popGuest = () => setGuestStack((stack) => stack.slice(0, -1));
+      const host: LocalHost = {
+        files: localFiles,
+        tone,
+        api: null,
+        editorApi: noAccountApi,
+        me: NOBODY,
+        backGuard,
+        nextKey,
+        push: pushLocal,
+        pop: popGuest,
+        update: (change) => setGuestStack((stack) => stack.flatMap((route) => change(route) ?? [])),
+        onSignIn: () => setGuestStack([]),
+        onCloudCopy: null,
+        onUnauthorized: () => undefined,
+      };
+      return (
+        <>
+          <Navigator
+            entries={guestStack.map((route, index) => localEntry(route, { host, backLabel: index > 0 ? labelFor(guestStack[index - 1]) : "Sign in", active: index === guestStack.length - 1 }))}
+            onPop={popGuest}
+          />
+          {toast ? <div className="m-toast" role="status">{toast}</div> : null}
+        </>
+      );
+    }
     if (signedOutRoute && guestApi) {
       return (
         <>
@@ -436,14 +511,38 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           notice={signInNotice}
           onSignedIn={signedIn}
           onOriginChange={(origin) => { setPreferredOrigin(origin); savePreferredOrigin(origin); }}
+          onLocalFiles={localFiles ? () => setGuestStack([LOCAL_HOME]) : undefined}
         />
         {toast ? <div className="m-toast" role="status">{toast}</div> : null}
       </>
     );
   }
 
+  const localHost: LocalHost | null = localFiles ? {
+    files: localFiles,
+    tone,
+    api,
+    editorApi: api,
+    me: { id: session.userId, name: session.name, email: session.email },
+    backGuard,
+    nextKey,
+    push: pushLocal,
+    pop,
+    update: (change) => setRoutes((stack) => stack.flatMap((route) => (isLocalRoute(route) ? change(route) ?? [] : route))),
+    onSignIn: null,
+    onCloudCopy: ({ id, name }) => {
+      setRefreshKey((value) => value + 1);
+      setRoutes((stack) => [...stack, { key: nextKey("doc"), kind: "doc", target: { kind: "doc", id, origin: api.origin }, name }]);
+    },
+    onUnauthorized,
+  } : null;
+
   const entries: StackEntry[] = routes.map((route, index) => {
     const backLabel = index > 0 ? labelFor(routes[index - 1]) : "";
+    if (isLocalRoute(route)) {
+      // Only a device puts these on the stack, and a device always has the host.
+      return localHost ? localEntry(route, { host: localHost, backLabel, active: index === routes.length - 1 }) : { key: route.key, node: null };
+    }
     if (route.kind === "recent") {
       return {
         key: route.key,
@@ -590,6 +689,11 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
           onClose={() => setChooser(false)}
           onChoose={(type) => { setChooser(false); setRoutes((stack) => [...stack, { key: nextKey("new"), kind: "new", type }]); }}
           onOpenFile={(file) => { setChooser(false); setRoutes((stack) => [...stack, { key: nextKey("file"), kind: "file", file }]); }}
+          local={localFiles ? {
+            files: localFiles,
+            onOpened: (doc) => { setChooser(false); pushLocal({ key: nextKey("local-doc"), kind: "local-doc", doc }); },
+            onBrowse: () => { setChooser(false); pushLocal({ ...LOCAL_HOME, key: nextKey("local-home") }); },
+          } : undefined}
         />
       ) : null}
       {toast ? <div className="m-toast" role="status">{toast}</div> : null}
@@ -605,5 +709,7 @@ function sameTarget(a: LinkTarget, b: LinkTarget): boolean {
 function labelFor(route: Route): string {
   if (route.kind === "recent") return "Recent";
   if (route.kind === "settings") return "Settings";
+  if (route.kind === "local-home") return "On this phone";
+  if (route.kind === "local-folder") return route.name;
   return "Back";
 }

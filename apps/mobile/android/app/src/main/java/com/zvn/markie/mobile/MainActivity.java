@@ -8,6 +8,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Files on this device, opened and saved in place. Registered before
+        // the bridge starts, which is when it reads the list of plugins.
+        registerPlugin(LocalFilesPlugin.class);
         super.onCreate(savedInstanceState);
         // The page scrolls inside its own screens and draws no scrollbar there
         // (src/styles.css). The web view's overlay bar would sit over the nav

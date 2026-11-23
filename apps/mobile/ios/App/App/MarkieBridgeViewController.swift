@@ -26,6 +26,8 @@ class MarkieBridgeViewController: CAPBridgeViewController {
         URLCache.shared.removeAllCachedResponses()
         URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0, directory: nil)
         super.capacitorDidLoad()
+        // Files on this device, opened and saved in place (LocalFilesStore.swift).
+        bridge?.registerPluginInstance(MarkieLocalFilesPlugin())
         guard let handler = (bridge as? CapacitorBridge)?.webViewDelegationHandler else { return }
         let controller = handler.contentController
         controller.removeScriptMessageHandler(forName: "bridge")

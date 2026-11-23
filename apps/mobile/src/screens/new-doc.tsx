@@ -12,16 +12,19 @@ import { decodeIncomingFile, IncomingFileError, type IncomingFile } from "../lib
 import { haptics } from "../lib/native";
 import { ApiError, type ApiClient } from "../lib/api";
 import { Screen } from "../components/screen";
-import { ChevronRight, InboxIcon } from "../components/icons";
+import { ChevronRight, FolderIcon, InboxIcon } from "../components/icons";
+import { LocalFileError, type LocalDocument, type LocalFiles } from "../lib/local-files";
 
 // What the Files picker offers: the text kinds, and the documents Markie turns into text.
 const OPENABLE = ".md,.markdown,.mdx,.wd,.txt,.text,.log,.csv,.tsv,.json,.yaml,.yml,.xml,.toml,.ini,.docx,.rtf,.odt,.html,.htm,text/*";
 
 /** The desktop's chooser, over whatever screen asked for it, with the phone's own "Open a file" under the formats. */
-export function NewDocChooser({ onChoose, onClose, onOpenFile }: {
+export function NewDocChooser({ onChoose, onClose, onOpenFile, local }: {
   onChoose: (type: NewDocType) => void;
   onClose: () => void;
   onOpenFile: (file: IncomingFile) => void;
+  /** On a device: the file is opened where it is and saved back there, not copied. */
+  local?: { files: LocalFiles; onOpened: (doc: LocalDocument) => void; onBrowse: () => void };
 }) {
   const picker = useRef<HTMLInputElement>(null);
   const [opening, setOpening] = useState(false);
@@ -41,6 +44,28 @@ export function NewDocChooser({ onChoose, onClose, onOpenFile }: {
     }
   };
 
+  /** The system's picker, for a file to edit in place. A converted file's permission isn't kept. */
+  const pickInPlace = async () => {
+    if (!local || opening) return;
+    setOpening(true);
+    setOpenError(null);
+    try {
+      const grant = await local.files.pickDocument();
+      if (!grant) { setOpening(false); return; }
+      try {
+        const doc = await local.files.open({ grantId: grant.id, entry: null });
+        if (doc.readOnly === "converted") await local.files.forget(grant.id).catch(() => undefined);
+        local.onOpened(doc);
+      } catch (error) {
+        if (error instanceof LocalFileError && error.code === "not-text") await local.files.forget(grant.id).catch(() => undefined);
+        throw error;
+      }
+    } catch (error) {
+      setOpenError(error instanceof LocalFileError ? error.message : "Markie couldn't open that file.");
+      setOpening(false);
+    }
+  };
+
   return (
     <div className="m-chooser">
       <NewDocumentModal
@@ -49,11 +74,18 @@ export function NewDocChooser({ onChoose, onClose, onOpenFile }: {
         footer={
           <div className="m-chooser-footer">
             <h3 className="mb-2.5 mt-6 text-[13px] font-semibold text-foreground">From your phone</h3>
-            <button type="button" className="m-chooser-open" onClick={() => picker.current?.click()} disabled={opening}>
+            <button type="button" className="m-chooser-open" onClick={() => (local ? void pickInPlace() : picker.current?.click())} disabled={opening}>
               <InboxIcon size={20} />
               <span>{opening ? "Opening…" : "Open a file from your phone"}</span>
               <ChevronRight size={16} className="m-row-chevron" />
             </button>
+            {local ? (
+              <button type="button" className="m-chooser-open m-chooser-open-second" onClick={local.onBrowse} disabled={opening}>
+                <FolderIcon size={20} />
+                <span>Files and folders on this phone</span>
+                <ChevronRight size={16} className="m-row-chevron" />
+              </button>
+            ) : null}
             {openError ? <p className="m-form-error" role="alert">{openError}</p> : null}
             <input ref={picker} type="file" accept={OPENABLE} hidden onChange={(event) => void picked(event.target.files)} />
           </div>

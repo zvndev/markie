@@ -36,3 +36,5 @@ export const CheckIcon = (p: IconProps) => <Icon {...p}><path d="M5 12.5l4.5 4.5
 export const CommentIcon = (p: IconProps) => <Icon {...p}><path d="M20 15.5a2 2 0 0 1-2 2H8l-4 3.5V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2Z" /><path d="M8.5 9h7M8.5 12.5h4.5" /></Icon>;
 export const UserPlusIcon = (p: IconProps) => <Icon {...p}><circle cx="10" cy="8.5" r="3.4" /><path d="M3.8 19.5c.7-3.2 3.1-5.1 6.2-5.1 1.4 0 2.7.4 3.7 1.1" /><path d="M18 13v7M14.5 16.5h7" /></Icon>;
 export const InboxIcon =(p: IconProps) => <Icon {...p}><path d="M4 13.5 6.5 5h11l2.5 8.5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19Z" /><path d="M4 13.5h4.5l1 2.5h5l1-2.5H20" /></Icon>;
+export const FolderIcon = (p: IconProps) => <Icon {...p}><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" /></Icon>;
+export const PhoneIcon = (p: IconProps) => <Icon {...p}><rect x="6.5" y="2.5" width="11" height="19" rx="2.6" /><path d="M10.5 18.3h3" /></Icon>;

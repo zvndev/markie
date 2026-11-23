@@ -28,6 +28,8 @@ class MarkieBridgeViewController: CAPBridgeViewController {
         super.capacitorDidLoad()
         // Files on this device, opened and saved in place (LocalFilesStore.swift).
         bridge?.registerPluginInstance(MarkieLocalFilesPlugin())
+        // The app's own plugin: a document printed to a PDF file (MarkiePdfPlugin.swift).
+        bridge?.registerPluginInstance(MarkiePdfPlugin())
         guard let handler = (bridge as? CapacitorBridge)?.webViewDelegationHandler else { return }
         let controller = handler.contentController
         controller.removeScriptMessageHandler(forName: "bridge")

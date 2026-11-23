@@ -12,7 +12,7 @@ import { quoteOf, type Quote } from "@/lib/quote-anchor";
 import { ApiError, documentErrorCopy, type ApiClient, type AssetSource } from "../lib/api";
 import { classifyDocumentLink, type LinkTarget } from "../lib/deep-links";
 import { canEditDoc, markFormat, originLabel, type CloudDoc } from "../lib/docs";
-import { openExternal, openSystemUrl, shareLink } from "../lib/native";
+import { openExternal, openSystemUrl } from "../lib/native";
 import { serverLabel } from "../lib/server-origin";
 import { displayName, timeLabel } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
@@ -21,7 +21,8 @@ import { MarkdownView, showThreadMark, type MarkdownComments, type ThreadQuote }
 import { ACCESS_LOST_BODY, ACCESS_LOST_TITLE, ReadingCommentsSheet, useThreads, type ReadingDraft } from "../components/comments-sheet";
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
-import { ShareSheet } from "../components/share-sheet";
+import { ExportSheet, ShareSheet } from "../components/share-sheet";
+import { docExportSource } from "../lib/export";
 import { COMMENTS_OFFLINE_NOTE, OfflineNote, useOffline } from "../components/offline-note";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
@@ -153,6 +154,16 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
     setFocusThread(id);
     setCommentsOpen(true);
   }, []);
+  // A tapped notification names its thread (?thread=<id>, lib/push.ts): the
+  // sheet opens on it, once, when the threads have loaded. An id that is not
+  // one of this document's threads (deleted since, or made up) opens nothing.
+  const linkedThread = target.kind === "doc" ? target.thread ?? null : null;
+  const linkedShown = useRef<string | null>(null);
+  useEffect(() => {
+    if (!linkedThread || !threads || lost || linkedShown.current === linkedThread) return;
+    linkedShown.current = linkedThread;
+    if (threads.some((thread) => thread.id === linkedThread)) onThread(linkedThread);
+  }, [linkedThread, threads, lost, onThread]);
   const markdownComments = useMemo<MarkdownComments | undefined>(
     () => (commentable ? { threads: threadQuotes, onPlaced, onThread, onSelect: setPicked } : undefined),
     [commentable, threadQuotes, onPlaced, onThread],
@@ -203,7 +214,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
         </button>
       ) : null}
       {doc.publicToken ? (
-        <button type="button" className="m-nav-icon" aria-label="Share link" onClick={() => void shareLink(displayName(doc.name), doc.privateLink)}>
+        <button type="button" className="m-nav-icon" aria-label="Share" onClick={() => setSharing(true)}>
           <ShareIcon size={23} />
         </button>
       ) : (
@@ -292,6 +303,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           owner={owner ? null : sharedBy}
           me={me}
           link={doc.privateLink}
+          exportSource={docExportSource(doc, loadAsset)}
           onClose={() => setSharing(false)}
           onUnauthorized={onUnauthorized}
           onChanged={() => {
@@ -300,6 +312,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           }}
         />
       ) : null}
+      {sharing && doc && target.kind !== "doc" ? <ExportSheet title={doc.name} link={doc.privateLink} source={docExportSource(doc, loadAsset)} onClose={() => setSharing(false)} /> : null}
     </Screen>
   );
 }

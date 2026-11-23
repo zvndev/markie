@@ -9,6 +9,9 @@
 //
 // Anything else is not a document link. A query string (an invite's ?k=) is
 // ignored: the app reads through the signed-in account, never a link token.
+// The one exception is ?thread=<id> on a /d link, which a push notification
+// uses to name the comment thread it is about (src/lib/push.ts). It grants
+// nothing: it is only where to scroll once the server has let the reader in.
 //
 // With no account, a /s link opens to read (a public share needs no session
 // anywhere) and a /d link waits for sign-in. See signedOutDestination.
@@ -20,14 +23,19 @@ export const APP_SCHEME = "markie-mobile";
 export const CLAIMED_HOSTS = ["api.markiedocs.com", "markiedocs.com", "www.markiedocs.com"];
 
 export type LinkTarget =
-  | { kind: "doc"; id: string; origin: string | null }
+  // thread: the comment thread a push notification was about (?thread=<id>).
+  // The reading screen may open it; a screen that does not know it ignores it.
+  | { kind: "doc"; id: string; origin: string | null; thread?: string }
   | { kind: "public"; token: string; origin: string | null };
 
 export type PublicTarget = Extract<LinkTarget, { kind: "public" }>;
 /** A public share on a known server: what the signed-out reader shows. */
 export type PinnedPublicTarget = PublicTarget & { origin: string };
 
-function routeFromPath(path: string, origin: string | null): LinkTarget | null {
+// A comment thread's id is a UUID (server/src/comments.ts).
+const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function routeFromPath(path: string, origin: string | null, query: URLSearchParams | null = null): LinkTarget | null {
   const match = /^\/([ds])\/([^/]+)\/?$/.exec(path);
   if (!match) return null;
   let value: string;
@@ -36,7 +44,11 @@ function routeFromPath(path: string, origin: string | null): LinkTarget | null {
   } catch {
     return null;
   }
-  if (match[1] === "d") return DOC_ID.test(value) ? { kind: "doc", id: value, origin } : null;
+  if (match[1] === "d") {
+    if (!DOC_ID.test(value)) return null;
+    const thread = query?.get("thread") ?? "";
+    return THREAD_ID.test(thread) ? { kind: "doc", id: value, origin, thread: thread.toLowerCase() } : { kind: "doc", id: value, origin };
+  }
   return PUBLIC_TOKEN.test(value) ? { kind: "public", token: value, origin } : null;
 }
 
@@ -55,15 +67,15 @@ export function parseMarkieLink(input: string, serverOrigin: string | null = nul
     // markie-mobile://d/<id> parses with "d" as the host; markie-mobile:///d/<id>
     // with an empty host. Both mean the same route, on the signed-in server.
     if (url.username || url.password || url.port) return null;
-    return routeFromPath(`${url.host ? `/${url.host}` : ""}${url.pathname}`, null);
+    return routeFromPath(`${url.host ? `/${url.host}` : ""}${url.pathname}`, null, url.searchParams);
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (url.username || url.password) return null;
   if (url.protocol === "https:" && !url.port && CLAIMED_HOSTS.includes(url.hostname)) {
     // markiedocs.com proxies /d and /s to Markie Cloud's API host.
-    return routeFromPath(url.pathname, CLOUD_ORIGIN);
+    return routeFromPath(url.pathname, CLOUD_ORIGIN, url.searchParams);
   }
-  if (serverOrigin && url.origin === serverOrigin) return routeFromPath(url.pathname, serverOrigin);
+  if (serverOrigin && url.origin === serverOrigin) return routeFromPath(url.pathname, serverOrigin, url.searchParams);
   return null;
 }
 
@@ -114,7 +126,8 @@ export function signedOutDestination(target: LinkTarget, preferredOrigin: string
 
 /** The app-scheme form of a target, for the in-app route and for tests. */
 export function appLinkFor(target: LinkTarget): string {
-  return target.kind === "doc" ? `${APP_SCHEME}://d/${encodeURIComponent(target.id)}` : `${APP_SCHEME}://s/${encodeURIComponent(target.token)}`;
+  if (target.kind === "public") return `${APP_SCHEME}://s/${encodeURIComponent(target.token)}`;
+  return `${APP_SCHEME}://d/${encodeURIComponent(target.id)}${target.thread ? `?thread=${encodeURIComponent(target.thread)}` : ""}`;
 }
 
 // A link tapped before sign-in waits for it. Kept across an app restart (iOS

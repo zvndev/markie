@@ -68,3 +68,71 @@ export function releaseCommit(env: Env = process.env): string | undefined {
   }
   return undefined;
 }
+
+/** Apple Push Notification service, token auth. All five values, as given. */
+export interface ApnsSettings {
+  /** The .p8 key's text. Literal `\n` escapes are already turned into newlines. */
+  key: string;
+  keyId: string;
+  teamId: string;
+  /** The app's bundle ID, sent as the apns-topic. */
+  bundleId: string;
+  /** Which of Apple's two services holds this app's device tokens. */
+  environment: "production" | "development";
+}
+
+/** Firebase Cloud Messaging: the service account file's JSON, as text. */
+export interface FcmSettings {
+  serviceAccount: string;
+}
+
+export interface PushSettings {
+  apns: ApnsSettings | null;
+  fcm: FcmSettings | null;
+  /** Settings that are half filled in, by variable name. Never a value. */
+  incomplete: string[];
+}
+
+const APNS_NAMES = ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "APNS_BUNDLE_ID"] as const;
+
+/**
+ * Push notifications to the phone app (push.ts). Each platform is on only
+ * when its own secrets are all present, and off otherwise, so a deployment
+ * that sets none of them sends nothing and behaves exactly as it did.
+ *
+ *   iOS      APNS_KEY (the .p8 file's text), APNS_KEY_ID, APNS_TEAM_ID,
+ *            APNS_BUNDLE_ID, and optionally APNS_ENV: `production` (the
+ *            default; TestFlight and the App Store) or `development` (a
+ *            build run from Xcode).
+ *   Android  FCM_SERVICE_ACCOUNT, the Firebase service account JSON, either
+ *            as it is or base64-encoded so it fits one line.
+ *
+ * Nothing here throws. Some of the APNs values without the rest is a
+ * half-finished setup: it stays off and is named in `incomplete`.
+ */
+export function pushSettings(env: Env = process.env): PushSettings {
+  const incomplete: string[] = [];
+  const values = APNS_NAMES.map((name) => env[name]?.trim() ?? "");
+  const missing = APNS_NAMES.filter((_, i) => !values[i]);
+  let apns: ApnsSettings | null = null;
+  if (missing.length === 0) {
+    const [key, keyId, teamId, bundleId] = values;
+    const environment = env.APNS_ENV?.trim().toLowerCase();
+    apns = {
+      // A .p8 pasted into one line of an env file arrives with literal "\n".
+      key: key.includes("\\n") ? key.replace(/\\n/g, "\n") : key,
+      keyId,
+      teamId,
+      bundleId,
+      environment: environment === "development" || environment === "sandbox" ? "development" : "production",
+    };
+  } else if (missing.length < APNS_NAMES.length) {
+    incomplete.push(...missing);
+  }
+  const account = env.FCM_SERVICE_ACCOUNT?.trim() ?? "";
+  let fcm: FcmSettings | null = null;
+  if (account) {
+    fcm = { serviceAccount: account.startsWith("{") ? account : Buffer.from(account, "base64").toString("utf8") };
+  }
+  return { apns, fcm, incomplete };
+}

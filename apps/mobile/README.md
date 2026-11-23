@@ -6,8 +6,8 @@ It follows `docs/mobile/AGENT-LINKS-CONTRACT.md` ("Mobile app" and "Link contrac
 
 - Bundle ID and Android package: `com.zvn.markie.mobile`. Display name: Markie. Apple team: `3VU8SG5TD9`.
 - Screens: Sign in (email code), Recent (search, "Shared with you", "Shared by me" and type filters), Document (markdown, text,
-  Darkmown), Word/RTF/OpenDocument, Editor (rich, source, live), Comments, Share, New document, an
-  incoming file, On this phone (files and folders, signed in or not), Settings.
+  Darkmown), Word/RTF/OpenDocument, Editor (rich, source, live), Comments, Share (with export as a file,
+  HTML or PDF), New document, an incoming file, On this phone (files and folders, signed in or not), Settings.
 - The session token is stored in the iOS Keychain or, on Android, encrypted with an Android Keystore key
   (`@aparajita/capacitor-secure-storage`, wrapped by `src/lib/secure-store.ts`). It is never written to
   `localStorage`, Preferences or a cookie jar, and no response is kept in an HTTP cache: requests send
@@ -132,7 +132,7 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./android/gradlew -p android assembleDebu
 ## Test
 
 ```sh
-npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, mock server, CSP,
+npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, export, mock server, CSP, push,
                             # the phone's store: the wipe, the cap, the edit queue, the conflict choices,
                             # and local files with the native plugin faked (test/local-files.test.ts)
 npm run typecheck
@@ -326,6 +326,36 @@ your phone" on the New document screen does the same through the system file pic
 Try it on a simulator: copy a file into the app's data container under `Documents/Inbox`, then
 `xcrun simctl openurl booted "file://<container>/Documents/Inbox/<name>"`.
 
+## Export
+
+The share sheet on a document has an Export group (`src/lib/export.ts`, `ExportSection` in
+`src/components/share-sheet.tsx`). Each row makes a real file and hands it to the system share sheet, so
+it can be saved to Files, AirDropped or mailed. A signed-out reader of a public link gets the same rows.
+
+| Document | Copy of the file | HTML | PDF |
+| --- | --- | --- | --- |
+| Markdown, text and data files | Its own text, under its own name | The desktop's export page, pictures folded in | Light and dark |
+| Live Doc (`.wd`) | Its source | A still copy: the controls are there and don't run | A still copy, light and dark |
+| Word, RTF, OpenDocument | The original bytes | Not offered | Only when the desktop's print view supports the file, on its own page setup |
+| Old Word (`.doc`) | The original bytes | Not offered | Not offered |
+
+- HTML and PDF are built by the desktop's exporters through the `@` alias: `@/lib/markdown-html` and
+  `@/lib/pdf-styles` for Markdown and text, `@/lib/darkmown/preview` (not trusted, so scriptless) for a
+  Live Doc, `@/lib/office/docx-print` for Word. Nothing renders a second way.
+- A document's own pictures are fetched from its asset route and folded into the page as `data:` URIs.
+  One the phone can't fetch becomes a line naming it. A picture on the web keeps its address.
+- PDF is printed off screen by the app's own plugin, `MarkiePdf`, with each platform's web view printing:
+  `ios/App/App/MarkiePdfPlugin.swift` (a `WKWebView` behind the window, `UIPrintPageRenderer`) and
+  `android/app/src/main/java/com/zvn/markie/mobile/MarkiePdfPlugin.java` (a `WebView` that is never
+  attached, `createPrintDocumentAdapter`; `android/print/MarkiePdfWriter.java` exists only because the
+  adapter's callbacks can be made only from that package). Android prints the desktop's page as it is.
+  iOS keeps the same inset as real margins and paints the paper itself (`printJobFor`).
+- Files are written to `shared/` in the app's cache, the one folder the Android FileProvider may hand
+  out, and never backed up. A file is removed when the share sheet is done with it (on Android, five
+  minutes after a successful share, since the chosen app may still be reading it), and the whole folder
+  is cleared at every launch (`sweepShareFiles`).
+- In the desktop browser the file and HTML rows download, and PDF opens the page in a print window.
+
 ## Links and pictures inside a document
 
 - Markie document links open in the app. Other web links open in the device's default browser, not an
@@ -335,6 +365,21 @@ Try it on a simulator: copy a file into the app's data container under `Document
   shown as a `blob:` URL. A public share's pictures come from
   the share's own asset route. Video and audio beside the document are not fetched on a phone.
 
+## Push notifications
+
+The app is told when somebody comments on a document: `src/lib/push.ts` on the phone,
+`server/src/devices.ts` and `server/src/push.ts` on the server. What is sent, the server's
+settings, and where each secret comes from are in `docs/mobile/PUSH.md`.
+
+- Permission is asked once, after a first comment, reply or share, never at launch. Settings has
+  the switch after that.
+- A tapped notification's link goes through the same entry point as any other link (`openPushLink`
+  in `src/app.tsx`), and carries the thread as `?thread=<id>`.
+- Push is off until the server has its keys. The Android app builds and runs with no
+  `android/app/google-services.json`, and never calls Firebase without it
+  (`PushAvailabilityPlugin.java`).
+- In a desktop browser every push call does nothing.
+
 ## Ship checklist (owner)
 
 Each step needs a person with the account. Current status, and what is still left, is in
@@ -343,7 +388,8 @@ Each step needs a person with the account. Current status, and what is still lef
 Signing and identity:
 
 1. In the Apple Developer account for team `3VU8SG5TD9`, register the App ID `com.zvn.markie.mobile`
-   with the Associated Domains capability.
+   with the Associated Domains and Push Notifications capabilities. The build carries the
+   `aps-environment` entitlement, so signing fails without the second one.
 2. In Xcode, open `ios/App/App.xcodeproj`, choose the team, and let Xcode manage signing.
    Set the version and build number.
 3. Create an Android upload keystore and keep it out of the repo. Configure release signing
@@ -371,8 +417,9 @@ Store setup:
 
 9. Create the App Store Connect record and the Play Console app. See `docs/mobile/STORE-SETUP.md`.
 10. Privacy: the app collects an email address for sign-in and stores a session token on the device.
-    It also keeps the documents the person opens on the device, for reading offline, until they sign
-    out. It has no analytics and no tracking.
+    If the person turns notifications on, the server also keeps the phone's push token until they
+    sign out or turn them off. It also keeps the documents the person opens on the device, for
+    reading offline, until they sign out. It has no analytics and no tracking.
 11. Screenshots for the listings can start from `screenshots/`, retaken on the required device sizes.
 12. Upload to TestFlight and an internal Play track first. Test sign-in, a universal link,
     an app link and a Darkmown document on real phones before any public release.

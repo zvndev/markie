@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Push notifications (src/lib/push.ts). Xcode signs a build for the App
+	     Store or TestFlight with "production" in place of this value. -->
+	<key>aps-environment</key>
+	<string>development</string>
 	<!-- Universal links for /d/* and /s/*, once each host serves
 	     /.well-known/apple-app-site-association naming 3VU8SG5TD9.com.zvn.markie.mobile. -->
 	<key>com.apple.developer.associated-domains</key>

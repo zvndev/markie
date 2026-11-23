@@ -38,6 +38,7 @@ mod collab;
 mod comments;
 mod share;
 mod dialog_chrome;
+mod doc_toolbar;
 mod edit_menu;
 mod document_failure;
 mod file_ops;
@@ -677,7 +678,8 @@ impl Workspace {
                         let language = if doc.format == FormatKind::Csv { "markdown" } else { doc.format.editor_language() };
                         // Electron shows literal text formats in a plain field:
                         // no syntax colors and no line numbers.
-                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Darkmown | FormatKind::Csv) && !large;
+                        // A .wd source is a plain textarea too.
+                        let literal = !matches!(doc.format, FormatKind::Markdown | FormatKind::Csv) && !large;
                         self.editor.update(cx, |state, cx| {
                             // Soft wrap measures every line of the file with the
                             // text system before the first frame (gpui-kit has
@@ -686,6 +688,7 @@ impl Workspace {
                             state.set_soft_wrap(!large, window, cx);
                             state.set_highlighter(if literal { "text" } else { language }, cx);
                             state.set_line_number(!literal, window, cx);
+                            state.set_folding(!literal, window, cx);
                             state.set_value(text.clone(), window, cx);
                         });
                         // No set_preview here: the CSV rows and the rich editor are

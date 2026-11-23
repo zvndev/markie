@@ -24,6 +24,7 @@ import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
 import { desktopAuthApp, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
+import { createMobileAuth } from "./mobile-auth.ts";
 import { withoutAppleUserEmail } from "./apple-sign-in.ts";
 import { applicationOrigins } from "./application-origins.ts";
 import { canonicalHostRedirect } from "./canonical-host.ts";
@@ -261,7 +262,13 @@ app.get(SERVER_INFO_PATH, (c) => {
     origin: DEPLOYMENT.origin,
     // apple appears only when it is on, so a server without Apple's keys
     // answers exactly what it did before Apple existed.
-    signIn: { email: EMAIL_SIGN_IN, google: googleConfigured, ...(appleConfigured ? { apple: true } : {}), signup: SIGNUP },
+    // mobile says this server can hand a Google or Apple sign-in back to the
+    // phone app (mobile-auth.ts). The phone offers neither without it, so a
+    // server from before the hand-off is never sent one.
+    signIn: {
+      email: EMAIL_SIGN_IN, google: googleConfigured, ...(appleConfigured ? { apple: true } : {}), signup: SIGNUP,
+      ...(googleConfigured || appleConfigured ? { mobile: true } : {}),
+    },
   });
 });
 
@@ -466,6 +473,12 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
     desktopAuthDeepLink(token, state, AUTH_ISSUER, desktopApp)
   );
 });
+
+// The phone app's Google and Apple sign-in. Its own routes and its own link
+// (markie-mobile://auth, a one-use code and never a token); mobile-auth.ts.
+if (googleConfigured || appleConfigured) {
+  app.route("/", createMobileAuth({ authBase: AUTH_BASE, issuer: AUTH_ISSUER, google: googleConfigured, apple: appleConfigured }));
+}
 
 app.route("/api/docs", docs);
 app.route("/api/document-platform", createDocumentPlatform({

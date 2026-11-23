@@ -195,7 +195,11 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     const route: Route = { key: nextKey("doc"), kind: "doc", target: resolved.target, name, sharedBy };
     setRoutes((stack) => {
       const top = stack[stack.length - 1];
-      if (top.kind === "doc" && sameTarget(top.target, resolved.target)) return stack;
+      if (top.kind === "doc" && sameTarget(top.target, resolved.target)) {
+        // Already open. A notification about another thread still shows it.
+        const thread = threadOf(resolved.target);
+        return thread && thread !== threadOf(top.target) ? [...stack.slice(0, -1), { ...top, target: resolved.target }] : stack;
+      }
       return replaceStack ? [ROOT, route] : [...stack, route];
     });
   }, [showToast]);
@@ -613,6 +617,10 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
 function sameTarget(a: LinkTarget, b: LinkTarget): boolean {
   if (a.kind !== b.kind || a.origin !== b.origin) return false;
   return a.kind === "doc" ? a.id === (b as typeof a).id : a.token === (b as typeof a).token;
+}
+
+function threadOf(target: LinkTarget): string | null {
+  return target.kind === "doc" ? target.thread ?? null : null;
 }
 
 function labelFor(route: Route): string {

@@ -277,12 +277,12 @@ function fakeApi(seat: Seat) {
   return { api, state };
 }
 
-async function screen(seat: Seat, me = { email: "carol@example.com", name: "Carol" }) {
+async function screen(seat: Seat, me = { email: "carol@example.com", name: "Carol" }, linkedThread?: string) {
   const { DocumentScreen } = await import("../src/screens/document");
   const fake = fakeApi(seat);
   const onRecent = vi.fn();
   const page = await mount(createElement(DocumentScreen, {
-    api: fake.api as never, target: { kind: "doc", id: "doc-1", origin: "https://api.markiedocs.com" } as never,
+    api: fake.api as never, target: { kind: "doc", id: "doc-1", origin: "https://api.markiedocs.com", ...(linkedThread ? { thread: linkedThread } : {}) } as never,
     backLabel: "Recent", tone: "light" as never, onBack: () => {}, onRecent, onOpen: () => {}, onEdit: () => {},
     me, onUnauthorized: () => {},
   }));
@@ -469,5 +469,40 @@ describe("the reading screen", () => {
     expect(alone.page.querySelector('button[aria-label^="Comments"]')).toBeNull();
     await selectWords(alone.page, "Hosting doubled");
     expect(alone.page.querySelector(".m-select-comment")).toBeNull();
+  });
+});
+
+describe("a tapped notification's thread", () => {
+  const seat = (): Seat => {
+    const seed = article();
+    const threads = [
+      thread("t1", anchorFor(seed, "The budget is tight", 1), "Is this still true?"),
+      thread("t2", anchorFor(seed, "Fix the importer"), "Done last week.", "resolved"),
+    ];
+    seed.remove();
+    return { role: "viewer", threads };
+  };
+
+  it("opens the Comments sheet on that thread", async () => {
+    await screen(seat(), undefined, "t1");
+    expect(sheet()).not.toBeNull();
+    expect(sheet()!.querySelector('[data-thread="t1"]')?.classList.contains("is-shown")).toBe(true);
+  });
+
+  it("shows a thread that was resolved since, instead of hiding it", async () => {
+    await screen(seat(), undefined, "t2");
+    await settle();
+    expect(sheet()!.querySelector('[data-thread="t2"]')?.textContent).toContain("Done last week.");
+  });
+
+  it("opens the document and nothing else when the thread is not one of its own", async () => {
+    const { page } = await screen(seat(), undefined, "no-such-thread");
+    expect(sheet()).toBeNull();
+    expect(page.querySelector(".markdown-body")?.textContent).toContain("The budget is tight");
+  });
+
+  it("opens nothing without a thread in the link", async () => {
+    await screen(seat());
+    expect(sheet()).toBeNull();
   });
 });

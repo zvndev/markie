@@ -295,13 +295,17 @@ function ThreadsSheet({ api, docId, located, loaded, error, refresh, meId, meEma
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!focusThreadId || !loaded) return;
+    // A notification can be about a thread resolved since: show those first.
+    if (!showResolved && located.some((item) => item.thread.id === focusThreadId && item.thread.status === "resolved")) { setShowResolved(true); return; }
     const card = Array.from(body.current?.querySelectorAll<HTMLElement>("[data-thread]") ?? []).find((el) => el.dataset.thread === focusThreadId);
     if (!card) return;
     card.scrollIntoView?.({ block: "center" });
     card.classList.add("is-shown");
     const timer = setTimeout(() => card.classList.remove("is-shown"), 1600);
     return () => clearTimeout(timer);
-  }, [focusThreadId, loaded]);
+    // Not `located`: a refresh must not scroll the sheet back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusThreadId, loaded, showResolved]);
 
   const card = (item: Located) => (
     <ThreadCard key={item.thread.id} item={item} meId={meId} meEmail={meEmail} busy={busy} canResolve={canResolve} canModerate={canModerate} canComment={canComment}

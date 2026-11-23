@@ -124,3 +124,115 @@ fn math_is_svg_from_markie_math() {
     assert!(html.contains("<span class=\"katex\"><span class=\"katex-mathml\" hidden>x^2</span><svg"), "{html}");
     assert!(html.contains("<span class=\"katex-display\"><span class=\"katex\">"), "{html}");
 }
+
+/// The colour group the export stylesheet gives a highlight.js class (the
+/// same groups in light and dark): keyword, string, title, built-in, comment,
+/// number, params. Other classes take their parent's colour.
+fn colour_of(class: &str) -> Option<char> {
+    class.split_whitespace().find_map(|c| match c {
+        "hljs-keyword" => Some('k'),
+        "hljs-string" => Some('s'),
+        "hljs-title" | "hljs-function" => Some('t'),
+        "hljs-built_in" | "hljs-type" | "hljs-variable" => Some('b'),
+        "hljs-comment" => Some('c'),
+        "hljs-number" | "hljs-attr" | "hljs-literal" => Some('n'),
+        "hljs-params" | "hljs-subst" => Some('p'),
+        _ => None,
+    })
+}
+
+/// Each code block as (language, text, colour group per character).
+fn code_colours(html: &str) -> Vec<(String, Vec<char>, Vec<char>)> {
+    let mut blocks = Vec::new();
+    let mut rest = html;
+    while let Some(at) = rest.find("<pre><code class=\"") {
+        let open = &rest[at + 18..];
+        let class_end = open.find('"').unwrap();
+        let lang = open[..class_end].split_whitespace().find_map(|c| c.strip_prefix("language-")).unwrap_or("").to_string();
+        let body_start = open.find('>').unwrap() + 1;
+        let body_end = open.find("</code></pre>").unwrap();
+        let body = &open[body_start..body_end];
+        let (mut text, mut colours, mut stack) = (Vec::new(), Vec::new(), vec!['-']);
+        let mut i = 0;
+        while i < body.len() {
+            let s = &body[i..];
+            if let Some(tag) = s.strip_prefix("<span class=\"") {
+                let end = tag.find('"').unwrap();
+                let top = *stack.last().unwrap();
+                stack.push(colour_of(&tag[..end]).unwrap_or(top));
+                i += 13 + end + 2;
+            } else if s.starts_with("</span>") {
+                stack.pop();
+                i += 7;
+            } else if s.starts_with('&') {
+                let end = s.find(';').unwrap();
+                let c = match &s[1..end] {
+                    "lt" | "#x3C" => '<',
+                    "gt" | "#x3E" => '>',
+                    "amp" | "#x26" => '&',
+                    "quot" | "#x22" => '"',
+                    "#x27" | "#39" => '\'',
+                    e => panic!("entity {e}"),
+                };
+                text.push(c);
+                colours.push(*stack.last().unwrap());
+                i += end + 1;
+            } else {
+                let c = s.chars().next().unwrap();
+                text.push(c);
+                colours.push(if c.is_whitespace() { ' ' } else { *stack.last().unwrap() });
+                i += c.len_utf8();
+            }
+        }
+        blocks.push((lang, text, colours));
+        rest = &open[body_end..];
+    }
+    blocks
+}
+
+/// Code in the export gets the colour Electron's highlight.js gives it,
+/// character by character, through the same stylesheet.
+#[test]
+fn code_colours_match_highlight_js() {
+    let mut report = Vec::new();
+    for name in ["everything", "code"] {
+        let text = std::fs::read_to_string(dir("fixtures").join(format!("{name}.md"))).unwrap();
+        let golden = code_colours(&std::fs::read_to_string(dir("goldens").join(format!("{name}.render.html"))).unwrap());
+        let ours = code_colours(&markie_export::render_markdown_html(&text));
+        assert_eq!(golden.len(), ours.len(), "{name}: code blocks");
+        for ((lang, gt, gc), (_, ot, oc)) in golden.iter().zip(&ours) {
+            assert_eq!(gt, ot, "{name} {lang}: code text");
+            let mut line = String::new();
+            for (i, ((t, g), o)) in gt.iter().zip(gc).zip(oc).enumerate() {
+                if g != o && !t.is_whitespace() {
+                    let from = gt[..i].iter().rposition(|c| *c == '\n').map_or(0, |p| p + 1);
+                    let to = gt[i..].iter().position(|c| *c == '\n').map_or(gt.len(), |p| i + p);
+                    let l: String = gt[from..to].iter().collect();
+                    if l != line {
+                        let gl: String = gc[from..to].iter().collect();
+                        let ol: String = oc[from..to].iter().collect();
+                        report.push(format!("{name} {lang}:\n  {l}\n  {gl}  (highlight.js)\n  {ol}  (here)"));
+                        line = l;
+                    }
+                }
+            }
+        }
+    }
+    assert!(report.is_empty(), "{} lines differ:\n{}", report.len(), report.join("\n"));
+}
+
+/// Writes Markie RS's HTML export of each fixture (the page Export HTML
+/// saves) to .autoloop/runs/native-print/html, for screenshots next to
+/// Electron's.
+#[test]
+#[ignore]
+fn write_html_exports() {
+    let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.autoloop/runs/native-print/html");
+    std::fs::create_dir_all(&out).unwrap();
+    for name in ["everything", "prices", "prices-edge", "code"] {
+        let text = std::fs::read_to_string(dir("fixtures").join(format!("{name}.md"))).unwrap();
+        let html = markie_export::build_pdf_html(&markie_export::render_markdown_html(&text), markie_export::Theme::Light);
+        let html = markie_export::assets::inline_local_images(&html, Some(&dir("fixtures")), &Default::default());
+        std::fs::write(out.join(format!("{name}.rs.html")), html).unwrap();
+    }
+}

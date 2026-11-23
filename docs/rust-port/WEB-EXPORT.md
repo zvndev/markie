@@ -13,7 +13,7 @@ Exports are byte-identical to Electron where Electron's output is bytes, and lai
 | Export HTML markup | Matches Electron's `renderMarkdownHTML` for every fixture, math and highlight tokens aside |
 | Word, RTF, ODT, text, Markdown copies | Byte-identical to Electron's `convertForExport` for every fixture |
 | Darkmown preview document | Byte-identical srcdoc and warnings for 29 fixtures in 5 frame variants |
-| PDF | Typst, styled from `pdf-styles.ts`; same page geometry, fonts, word widths and page flow as Chromium |
+| PDF | Typst driven with Chromium's CSS box model; every fixture line within 1 pt of Electron's, on the same page |
 | Print | The macOS print sheet over the same PDF |
 | Live Docs | Projects, tree, read and write with revisions, and the dev server, ported; no in-app panel yet |
 
@@ -60,16 +60,16 @@ Shell files changed, each minimally: `chrome.rs` (its `export()` calls `export_d
 |---|---|---|---|
 | Markdown to export HTML | Matches | remark, GFM, strict math, rehype-raw, media, embeds, highlight, sanitize, contain-styles in Electron's order. Dollars pair by remark's strict rule, ported as a source pre-pass. | `render_golden` (all fixtures equal after normalising math and token spans) |
 | Math | Differs by design | markie-math SVG (the editor's renderer, MATH.md) in KaTeX's wrappers, instead of KaTeX HTML and its 240 KB font CSS. Bad TeX shows red, as KaTeX does. | `math_is_svg_from_markie_math`, `bad_math_is_red_text_not_a_failure` |
-| Code highlighting | Differs slightly | syntect scopes mapped to the 14 highlight.js classes the stylesheet colours. Token boundaries can differ (a Python docstring is a string in highlight.js, a comment in some syntaxes). | `code_blocks_get_the_hljs_class` |
+| Code highlighting | Matches on the corpus | syntect scopes mapped to highlight.js classes with highlight.js's per-language choices and cross-token modes (parameters, arrow functions, class references, keys). Every character of 13 blocks in 11 languages gets Electron's colour. Other languages can still differ. | `code_colours_match_highlight_js`, `code_blocks_get_the_hljs_class` |
 | Export HTML file | Matches | `buildPDFHTML` light page, CSS and fit script extracted verbatim; local pictures inlined by `inline-images.js`'s rules and limits. | `assets::tests` |
-| PDF (Dark) and PDF (Light) | Matches closely | Typst. A4, the 2 cm × 2.2 cm inset as page margin, dark page to the edges, SF Pro with CoreText's `trak` tracking (word widths equal Chromium's to 0.01 pt), Menlo for code, Lucida Grande for ✓ and ↩, blocks over half a page may break, table headers repeat. Same page count and flow on the fixtures. | `pdf.rs` tests; side by side below |
+| PDF (Dark) and PDF (Light) | Matches | Typst laid out with Chromium's CSS box model, computed in Rust: line boxes from CoreText ascent and descent with the leading split around them, collapsed margins, borders and padding, table half-borders, orphans and widows of 2 with the three-line exception. A4, the 2 cm × 2.2 cm inset as page margin, dark page to the edges, SF Pro with CoreText's `trak` tracking, Menlo for code. Every line of every fixture lands on Electron's page within 1 pt (`.autoloop/runs/native-print/`). | `line_baselines_match_chromium`, `layout_rules_measured_from_chromium` |
 | PDF: a picture that cannot load stops the export | Matches | Same message. Remote pictures load with an 8 s deadline. | `a_missing_picture_stops_the_export` |
-| PDF: in-paragraph line boxes | Differs slightly | Chromium grows a line that holds inline code or a superscript by about 1.8 pt; Typst does not. | |
+| PDF: in-paragraph line boxes | Matches | A line holding a superscript, subscript or inline code grows as Chromium's does: each inline box's edges are given to Typst. | `line_baselines_match_chromium` |
 | Video and audio in PDF | Differs | Drawn as a black 300 × 150 px box and a grey audio pill, where Chromium draws its player chrome. | |
 | Print (⌘P) | Matches | Same PDF in the app's current tone on the macOS print sheet (PDFKit). Cancelling is not an error. | not yet seen in a window (see Evidence) |
 | One export at a time, Electron's wording | Matches | `EXPORT_BUSY`, `Couldn't export this document as …`. 30 s layout deadline. | `one_export_at_a_time` |
 | Word, RTF, ODT, text, Markdown copies | Matches | Byte for byte. | `convert_golden` |
-| Word documents' own PDF and print | Matches the gate | `docx-print.ts` ported to Typst: `canPrintDocx` rule for rule, page size and margins, Georgia 12 pt, spacing, lists, tables, pictures, page breaks. The 26 TypeScript print cases are not ported one by one. | `office_pdf::tests` |
+| Word documents' own PDF and print | Matches | `docx-print.ts` ported to Typst with Chromium's layout rules: `canPrintDocx` rule for rule, page size and margins, Georgia 12 pt line boxes, min-height 1.4em, collapsed margins, unsplittable table rows, explicit and blank-page breaks. Same pages as Electron on 7 Electron-built fixtures. The 26 TypeScript print cases are not ported one by one. | `office_pdf::tests`, `word_pagination_matches_electron` |
 
 ## Things that need web content
 
@@ -117,4 +117,4 @@ node --import ./rust/scripts/ts-run/register.mjs rust/crates/markie-export/scrip
 3. Hooking `VideoPlayer` to the rich editor's embed card.
 4. GPUI overlays other than title-bar menus can sit under a web island.
 5. Port the 26 `docx-print.ts` cases one by one.
-6. Line-box growth around inline code and superscripts in PDF.
+6. Math in the HTML export draws lighter than KaTeX's font glyphs (AUDIT-AGENTS-WEB.md row 23.3).

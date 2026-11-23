@@ -254,6 +254,110 @@ fn px(n: f64) -> f64 {
     n * 0.75
 }
 
+/// A length in CSS px as a Typst length in points.
+fn pt(n: f64) -> String {
+    format!("{:.3}pt", n * 0.75)
+}
+
+// ── Chromium's box model ────────────────────────────────────────────────
+//
+// Chromium lays the export out with CSS: every line box is `line-height`
+// tall, made of the block's strut and each inline box on the line (its
+// font's ascent and descent with half the leading above and half below,
+// raised or lowered by `vertical-align`); block margins collapse between
+// siblings and through parents without padding or borders; borders and
+// padding take space. Typst stacks frames instead, so the walk below works
+// out the CSS numbers here and hands Typst explicit text edges (so a Typst
+// line is exactly the CSS line box) and explicit spacing (so blocks land
+// where CSS margins put them). Measured against Electron's PDFs and its
+// layout of the same HTML.
+
+/// Ascent and descent per em as CoreText reports them, which Chromium uses.
+const SF_ASC: f64 = 0.966796875;
+const SF_DESC: f64 = 0.2109375;
+const MONO_ASC: f64 = 0.92822265625;
+const MONO_DESC: f64 = 0.23583984375;
+
+/// The body text: 14px with `line-height: 1.75`.
+const BODY: f64 = 14.0;
+const LINE: f64 = 1.75;
+
+/// One inline box's extent above and below its baseline, in px: the
+/// line-height around the font's ascent and descent, half the leading on
+/// each side.
+fn edges(mono: bool, size: f64, line: f64) -> (f64, f64) {
+    let (asc, desc) = if mono { (MONO_ASC, MONO_DESC) } else { (SF_ASC, SF_DESC) };
+    let top = (line - (asc + desc) * size) / 2.0 + asc * size;
+    (top, line - top)
+}
+
+/// What text inherits: its size and the line edges every line gets from the
+/// block's strut and the inline boxes it sits in.
+#[derive(Clone, Copy, Debug)]
+struct Inh {
+    size: f64,
+    top: f64,
+    bot: f64,
+    /// Inside sub or sup: Typst moves a box there by the shift a second time.
+    shifted: bool,
+}
+
+impl Inh {
+    /// A block's strut.
+    fn block(size: f64, mono: bool) -> Self {
+        let (top, bot) = edges(mono, size, size * LINE);
+        Self { size, top, bot, shifted: false }
+    }
+
+    /// An inline box of another font or size, raised by `shift` px.
+    fn inner(self, size: f64, mono: bool, shift: f64) -> Self {
+        let (t, b) = edges(mono, size, size * LINE);
+        Self { size, top: self.top.max(t + shift), bot: self.bot.max(b - shift), shifted: self.shifted || shift != 0.0 }
+    }
+
+    /// The Typst text arguments that make a line this tall.
+    fn args(&self) -> String {
+        format!("top-edge: {}, bottom-edge: {}", pt(self.top), pt(-self.bot))
+    }
+}
+
+/// A block with its CSS margins, already collapsed with its first and last
+/// children where CSS collapses them.
+struct Blk {
+    mt: f64,
+    mb: f64,
+    code: String,
+    sticky: bool,
+}
+
+impl Blk {
+    fn new(mt: f64, mb: f64, code: String) -> Self {
+        Self { mt, mb, code, sticky: false }
+    }
+}
+
+/// Blocks in a flow. Typst keeps the larger of two adjacent spacings, as CSS
+/// keeps the larger of two adjoining margins, and drops spacing at the start
+/// and end of a container, where CSS has already moved it to the container.
+fn seq(blks: &[Blk]) -> String {
+    if blks.is_empty() {
+        return "[]".into();
+    }
+    let parts: Vec<String> = blks
+        .iter()
+        .map(|b| format!("block(width: 100%, above: {}, below: {}{}, {})", pt(b.mt), pt(b.mb), if b.sticky { ", sticky: true" } else { "" }, b.code))
+        .collect();
+    format!("{{ {} }}", parts.join("\n"))
+}
+
+fn first_mt(blks: &[Blk]) -> f64 {
+    blks.first().map_or(0.0, |b| b.mt)
+}
+
+fn last_mb(blks: &[Blk]) -> f64 {
+    blks.last().map_or(0.0, |b| b.mb)
+}
+
 struct Ctx<'a, 'b> {
     p: Palette,
     opts: &'a PdfOptions<'b>,
@@ -262,6 +366,8 @@ struct Ctx<'a, 'b> {
     error: Option<String>,
     /// Width of the column the current content sits in, in points.
     column: f64,
+    /// Inside a blockquote, where paragraphs take 0.25em margins.
+    quote: bool,
 }
 
 /// Content width: A4 (595.28pt) less 2.2cm a side.
@@ -322,13 +428,22 @@ fn collapse(s: &str) -> String {
     out
 }
 
+/// The only meaningful child of an element, ignoring white space.
+fn only_child(e: &Element) -> Option<&Element> {
+    let meaningful: Vec<&Node> = e.children.iter().filter(|n| !matches!(n, Node::Text(t) if t.trim().is_empty())).collect();
+    match meaningful.as_slice() {
+        [Node::Element(c)] => Some(c),
+        _ => None,
+    }
+}
+
 impl Ctx<'_, '_> {
     /// A run of inline nodes as one Typst content expression, or None when it
     /// holds only white space.
-    fn inline_run(&mut self, nodes: &[Node]) -> Option<String> {
+    fn inline_run(&mut self, nodes: &[Node], inh: Inh) -> Option<String> {
         let mut parts = Vec::new();
         let mut prev_space = true;
-        self.inlines(nodes, &mut parts, &mut prev_space);
+        self.inlines(nodes, &mut parts, &mut prev_space, inh);
         // Trim the white space at the run's end.
         while let Some(last) = parts.last() {
             if last == "\" \"" {
@@ -350,7 +465,7 @@ impl Ctx<'_, '_> {
         Some(format!("{{ {} }}", parts.join("; ")))
     }
 
-    fn inlines(&mut self, nodes: &[Node], out: &mut Vec<String>, prev_space: &mut bool) {
+    fn inlines(&mut self, nodes: &[Node], out: &mut Vec<String>, prev_space: &mut bool, inh: Inh) {
         for node in nodes {
             match node {
                 Node::Text(t) => {
@@ -365,7 +480,7 @@ impl Ctx<'_, '_> {
                     out.push(lit(&c));
                 }
                 Node::Element(e) => {
-                    if let Some(code) = self.inline_element(e, prev_space) {
+                    if let Some(code) = self.inline_element(e, prev_space, inh) {
                         out.push(code);
                     }
                 }
@@ -374,9 +489,9 @@ impl Ctx<'_, '_> {
         }
     }
 
-    fn body(&mut self, e: &Element, prev_space: &mut bool) -> String {
+    fn body(&mut self, e: &Element, prev_space: &mut bool, inh: Inh) -> String {
         let mut parts = Vec::new();
-        self.inlines(&e.children, &mut parts, prev_space);
+        self.inlines(&e.children, &mut parts, prev_space, inh);
         if parts.is_empty() { "[]".into() } else { format!("{{ {} }}", parts.join("; ")) }
     }
 
@@ -387,7 +502,7 @@ impl Ctx<'_, '_> {
         }
     }
 
-    fn inline_element(&mut self, e: &Element, prev_space: &mut bool) -> Option<String> {
+    fn inline_element(&mut self, e: &Element, prev_space: &mut bool, inh: Inh) -> Option<String> {
         let anchor = self.anchor(e);
         let wrap = |s: String| Some(format!("{{ {anchor}{s} }}"));
         match e.tag.as_str() {
@@ -397,59 +512,73 @@ impl Ctx<'_, '_> {
             }
             "wbr" => None,
             "strong" | "b" => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 wrap(format!("text(weight: 600, fill: c-strong, {b})"))
             }
             "em" | "i" | "cite" | "dfn" | "var" => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 wrap(format!("text(style: \"italic\", {b})"))
             }
             "del" | "s" | "strike" => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 let fill = if e.tag == "del" { "text(fill: c-del, " } else { "text(" };
                 wrap(format!("strike({fill}{b}))"))
             }
             "u" | "ins" => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 wrap(format!("underline({b})"))
             }
-            "sup" => {
-                let b = self.body(e, prev_space);
-                // Chromium: `vertical-align: super` raises by size / 3 + 1px, `sub` lowers by size / 5 + 1px.
-                wrap(format!("super(size: 0.75em, typographic: false, baseline: -0.405em, {b})"))
-            }
-            "sub" => {
-                let b = self.body(e, prev_space);
-                wrap(format!("sub(size: 0.75em, typographic: false, baseline: 0.27em, {b})"))
+            "sup" | "sub" => {
+                // `vertical-align: super` raises by the parent's size / 3 + 1px,
+                // `sub` lowers by size / 5 + 1px, and the raised box can make the
+                // line taller, as in Chromium.
+                let size = inh.size * 0.75;
+                let shift = if e.tag == "sup" { inh.size / 3.0 + 1.0 } else { -(inh.size / 5.0 + 1.0) };
+                let i = inh.inner(size, false, shift);
+                let b = self.body(e, prev_space, i);
+                wrap(format!("text(size: {}, baseline: {}, {}, {b})", pt(size), pt(-shift), i.args()))
             }
             "small" => {
-                let b = self.body(e, prev_space);
-                wrap(format!("text(size: 0.833em, {b})"))
+                let size = inh.size / 1.2;
+                let i = inh.inner(size, false, 0.0);
+                let b = self.body(e, prev_space, i);
+                wrap(format!("text(size: {}, {}, {b})", pt(size), i.args()))
             }
             "q" => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 wrap(format!("{{ \"\u{201c}\"; {b}; \"\u{201d}\" }}"))
             }
             "mark" => {
                 let fill = style_decls(e).into_iter().find(|(k, _)| k == "background-color" || k == "background").and_then(|(_, v)| css_color(&v)).unwrap_or_else(|| "rgb(\"#ffff00\")".into());
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 wrap(format!("highlight(fill: {fill}, top-edge: \"ascender\", bottom-edge: \"descender\", text(fill: rgb(\"#000000\"), {b}))"))
             }
             "code" if e.has_class("language-math") && e.has_class("math-inline") => {
                 *prev_space = false;
                 wrap(self.math(&e.text(), false))
             }
-            "code" | "kbd" | "samp" | "tt" => {
+            "code" => {
                 *prev_space = false;
                 let text = collapse(&e.text());
-                if e.tag == "code" {
-                    wrap(format!("mk-code({})", lit(&text)))
-                } else {
-                    wrap(format!("text(font: mono, size: 0.875em, raw({}))", lit(&text)))
-                }
+                // 0.88em Menlo with 0.15em × 0.35em padding and a 1px border.
+                // The background covers the font's ascent and descent plus the
+                // padding; the line box is the strut's or the code's, whichever
+                // reaches further.
+                let size = inh.size * 0.88;
+                let i = inh.inner(size, true, 0.0);
+                let up = size * MONO_ASC + size * 0.15 + 1.0;
+                let down = size * MONO_DESC + size * 0.15 + 1.0;
+                wrap(format!("mk-code({}, {}, {}, {}, {}, {})", lit(&text), pt(size), pt(i.top), pt(-i.bot), pt(up - i.top), pt(down - i.bot)))
+            }
+            "kbd" | "samp" | "tt" => {
+                // `font-family: monospace` at the inherited size.
+                *prev_space = false;
+                let text = collapse(&e.text());
+                let i = inh.inner(inh.size, true, 0.0);
+                wrap(format!("text(size: {}, {}, raw({}))", pt(inh.size), i.args(), lit(&text)))
             }
             "a" => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 let href = e.get("href").unwrap_or("");
                 let dest = if let Some(frag) = href.strip_prefix('#') {
                     if self.ids.contains(frag) { Some(format!("label({})", lit(frag))) } else { None }
@@ -461,7 +590,7 @@ impl Ctx<'_, '_> {
                 // Chromium breaks a link only where the text has a break
                 // opportunity; Typst also breaks URLs at punctuation.
                 let text = e.text();
-                let b = if !text.is_empty() && !text.contains(char::is_whitespace) && text.chars().count() <= 60 { format!("box({b})") } else { b };
+                let b = if !inh.shifted && !text.is_empty() && !text.contains(char::is_whitespace) && text.chars().count() <= 60 { format!("box({b})") } else { b };
                 match dest {
                     Some(d) => wrap(format!("link({d}, text(fill: c-link, {b}))")),
                     // An anchor with no usable target is text in the link colour
@@ -471,7 +600,9 @@ impl Ctx<'_, '_> {
             }
             "img" => {
                 *prev_space = false;
-                self.image(e, false).map(|s| format!("{{ {anchor}{s} }}"))
+                // An inline picture sits on the baseline with its 1em margins.
+                let image = self.image(e)?;
+                Some(format!("{{ {anchor}box(inset: (y: {}), {image}) }}", pt(BODY)))
             }
             "input" => {
                 *prev_space = false;
@@ -482,14 +613,14 @@ impl Ctx<'_, '_> {
                 Some(if e.tag == "video" { "mk-video()".into() } else { "mk-audio()".into() })
             }
             "span" => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 if e.has_class("katex-error") {
                     return wrap(format!("text(fill: rgb(\"#cc0000\"), {b})"));
                 }
                 wrap(self.styled(e, b))
             }
             _ => {
-                let b = self.body(e, prev_space);
+                let b = self.body(e, prev_space, inh);
                 wrap(self.styled(e, b))
             }
         }
@@ -538,17 +669,25 @@ impl Ctx<'_, '_> {
         // A formula Typst cannot set alone would fail the whole document, so
         // it is tried by itself first (cached; the editor draws it the same way).
         let alone = markie_math::render_cached(tex, display, &markie_math::MathStyle::default());
-        if alone.is_err() {
-            return format!("text(fill: rgb(\"#cc0000\"), {})", lit(tex));
+        // KaTeX shows the source in red, white space collapsed as HTML does.
+        if alone.is_err() || crate::math_html::katex_rejects(tex).is_some() {
+            return format!("text(fill: rgb(\"#cc0000\"), {})", lit(&collapse(tex)));
         }
         match markie_math::to_typst(tex) {
             Ok(code) => format!("mk-math({}, {display})", lit(&code)),
-            Err(_) => format!("text(fill: rgb(\"#cc0000\"), {})", lit(tex)),
+            Err(_) => format!("text(fill: rgb(\"#cc0000\"), {})", lit(&collapse(tex))),
         }
     }
 
-    /// Loads a picture into the world and returns the Typst code drawing it.
-    fn image(&mut self, e: &Element, block: bool) -> Option<String> {
+    /// Loads a picture into the world and returns the Typst code drawing it
+    /// at its CSS size (natural size, then the attributes, then max-width 100%).
+    fn image(&mut self, e: &Element) -> Option<String> {
+        let (code, _) = self.image_sized(e)?;
+        Some(code)
+    }
+
+    /// The picture's code and its height in points, when known.
+    fn image_sized(&mut self, e: &Element) -> Option<(String, Option<f64>)> {
         let src = e.get("src").unwrap_or("").trim().to_string();
         let bytes = match self.load(&src) {
             Some(b) => b,
@@ -559,7 +698,6 @@ impl Ctx<'_, '_> {
         };
         let svg = bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") || src.to_ascii_lowercase().ends_with(".svg") || src.starts_with("data:image/svg");
         let path = format!("/images/{}.{}", self.files.len(), if svg { "svg" } else { "img" });
-        // Natural size in CSS px, then the attributes, then the column.
         let natural = if svg { None } else { imagesize::blob_size(&bytes).ok().map(|s| (s.width as f64, s.height as f64)) };
         if !svg && natural.is_none() {
             self.error.get_or_insert_with(|| IMAGE_ERROR.to_string());
@@ -591,11 +729,10 @@ impl Ctx<'_, '_> {
         let size = match (w, h) {
             (Some(w), Some(h)) => format!("width: {w:.2}pt, height: {h:.2}pt"),
             (Some(w), None) => format!("width: {w:.2}pt"),
-            _ => format!("width: auto"),
+            _ => "width: auto".to_string(),
         };
         let image = format!("image({}, {size})", lit(&path));
-        let rounded = format!("box(clip: true, radius: 6pt, {image})");
-        Some(if block { rounded } else { format!("box(baseline: 0pt, {rounded})") })
+        Some((format!("box(clip: true, radius: 6pt, {image})"), h))
     }
 
     fn load(&self, src: &str) -> Option<Vec<u8>> {
@@ -621,78 +758,87 @@ impl Ctx<'_, '_> {
 
     // ── Blocks ───────────────────────────────────────────────────────────
 
-    /// A container's children as Typst block statements.
-    fn blocks(&mut self, nodes: &[Node], quote: bool) -> Vec<String> {
+    /// A paragraph's lines. Chromium keeps two lines together at either end
+    /// of a page (orphans and widows 2), except that a three-line paragraph
+    /// may leave its last line alone rather than move whole; `mk-p` asks
+    /// Typst for the same.
+    fn par(&self, body: &str, inh: Inh) -> String {
+        format!("mk-p({body}, {:.3}pt, {})", self.column, pt(inh.top + inh.bot))
+    }
+
+    /// A container's children as blocks: inline runs become anonymous
+    /// blocks with no margins, as in CSS.
+    fn flow(&mut self, nodes: &[Node], inh: Inh) -> Vec<Blk> {
         let mut out = Vec::new();
         let mut run: Vec<Node> = Vec::new();
-        let flush = |this: &mut Self, run: &mut Vec<Node>, out: &mut Vec<String>| {
-            if run.is_empty() {
-                return;
-            }
-            let nodes = std::mem::take(run);
-            if let Some(body) = this.inline_run(&nodes) {
-                out.push(format!("mk-par({body}, {quote})"));
-            }
-        };
+        let mut seen_element = false;
         for node in nodes {
             if is_inline(node) {
+                if matches!(node, Node::Element(_)) {
+                    seen_element = true;
+                }
                 run.push(node.clone());
                 continue;
             }
-            flush(self, &mut run, &mut out);
-            if let Node::Element(e) = node
-                && let Some(code) = self.block(e, quote)
-            {
-                out.push(code);
+            self.flush(&mut run, &mut out, inh);
+            if let Node::Element(e) = node {
+                let first = !seen_element;
+                seen_element = true;
+                if let Some(b) = self.block(e, inh, first) {
+                    out.push(b);
+                }
             }
         }
-        flush(self, &mut run, &mut out);
+        self.flush(&mut run, &mut out, inh);
         out
     }
 
-    fn joined(&mut self, nodes: &[Node], quote: bool) -> String {
-        let blocks = self.blocks(nodes, quote);
-        if blocks.is_empty() { "[]".into() } else { format!("{{ {} }}", blocks.join("\n")) }
+    fn flush(&mut self, run: &mut Vec<Node>, out: &mut Vec<Blk>, inh: Inh) {
+        if run.is_empty() {
+            return;
+        }
+        let nodes = std::mem::take(run);
+        if let Some(body) = self.inline_run(&nodes, inh) {
+            out.push(Blk::new(0.0, 0.0, self.par(&body, inh)));
+        }
     }
 
-    fn block(&mut self, e: &Element, quote: bool) -> Option<String> {
+    /// A container without padding or border: its margins collapse with its
+    /// first and last children's.
+    fn through(&mut self, e: &Element, inh: Inh, mt: f64, mb: f64, wrap: impl FnOnce(&Self, String) -> String) -> Blk {
+        let inner = self.flow(&e.children, inh);
+        let (top, bottom) = (mt.max(first_mt(&inner)), mb.max(last_mb(&inner)));
+        let code = wrap(self, seq(&inner));
+        Blk::new(top, bottom, code)
+    }
+
+    fn block(&mut self, e: &Element, inh: Inh, first: bool) -> Option<Blk> {
         let anchor = self.anchor(e);
-        let code = match e.tag.as_str() {
-            "p" => {
-                if e.has_class("markie-embed") {
-                    return self.embed(e);
-                }
-                // A paragraph that is one picture: the picture as a block.
-                let meaningful: Vec<&Node> = e.children.iter().filter(|n| !matches!(n, Node::Text(t) if t.trim().is_empty())).collect();
-                if let [Node::Element(img)] = meaningful.as_slice()
-                    && img.tag == "img"
-                {
-                    let image = self.image(img, true)?;
-                    return Some(format!("{anchor}mk-figure({image})"));
-                }
-                let al = text_align(e).unwrap_or("left");
-                let body = self.inline_run(&e.children)?;
-                let body = self.styled(e, body);
-                format!("align({al}, mk-par({body}, {quote}))")
-            }
+        let mut blk = match e.tag.as_str() {
+            "p" => self.paragraph(e, inh)?,
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 let level = e.tag[1..].parse::<usize>().unwrap_or(1);
-                let al = text_align(e).unwrap_or("left");
-                let body = self.inline_run(&e.children).unwrap_or_else(|| "[]".into());
-                let body = self.styled(e, body);
-                format!("align({al}, mk-h{level}({body}))")
+                self.heading(e, level, first)
             }
-            "hr" => "mk-hr()".into(),
+            "hr" => Blk::new(25.2, 25.2, "block(width: 100%, height: 0.75pt, fill: c-border)".into()),
             "blockquote" => {
-                let inner = self.joined(&e.children, true);
-                format!("mk-quote({inner})")
+                // margin 1em 0, padding 0.5em 1em, a 3px bar: the children's
+                // margins stay inside the padding.
+                let (quote, column) = (self.quote, self.column);
+                self.quote = true;
+                self.column -= px(31.0);
+                let inner = self.flow(&e.children, inh);
+                (self.quote, self.column) = (quote, column);
+                let (top, bottom) = (7.0 + first_mt(&inner), 7.0 + last_mb(&inner));
+                Blk::new(14.0, 14.0, format!("mk-quote({}, {}, {})", pt(top), pt(bottom), seq(&inner)))
             }
-            "ul" | "ol" => self.list(e, quote),
+            "ul" | "ol" => self.list(e, inh),
             "pre" => {
                 if let Some(Node::Element(code)) = e.children.iter().find(|c| matches!(c, Node::Element(_)))
                     && code.has_class("math-display")
                 {
-                    return Some(format!("mk-display({})", self.math(&code.text(), true)));
+                    // `.katex-display`: margin 1em 0, one centred line.
+                    return Some(Blk::new(14.0, 14.0, format!("{anchor}mk-display({})", self.math(&code.text(), true))));
                 }
                 let code_el = e.children.iter().find_map(|c| match c {
                     Node::Element(c) if c.tag == "code" => Some(c),
@@ -704,40 +850,114 @@ impl Ctx<'_, '_> {
                     .and_then(|c| c.classes().iter().find_map(|k| k.strip_prefix("language-").map(str::to_string)))
                     .filter(|l| code_el.is_some_and(|c| c.has_class("hljs")) && crate::highlight::syntax_for(l).is_some());
                 let lang = lang.map(|l| format!(", lang: {}", lit(typst_lang(&l)))).unwrap_or_default();
-                format!("mk-pre(raw(block: true{lang}, {}))", lit(&text))
+                // The <pre>'s own strut is Menlo at 14px and 1.75; the code
+                // inside is 0.85em at 1.55, so the strut sets the pitch.
+                let i = Inh::block(BODY, true).inner(BODY * 0.85, true, 0.0);
+                Blk::new(14.0, 14.0, format!("mk-pre(raw(block: true{lang}, {}), {})", lit(&text), i.args()))
             }
-            "table" => self.table(e)?,
+            "table" => {
+                let t = self.table(e)?;
+                Blk::new(12.6, 12.6, t)
+            }
             "img" => {
-                let image = self.image(e, true)?;
-                format!("mk-figure({image})")
+                let image = self.image(e)?;
+                Blk::new(14.0, 14.0, format!("block({image})"))
             }
-            "video" => "mk-par(mk-video(), false)".into(),
-            "audio" => "mk-par(mk-audio(), false)".into(),
-            "dl" => {
-                let inner = self.joined(&e.children, quote);
-                format!("block(above: 10.5pt, below: 10.5pt, {inner})")
-            }
-            "dd" => {
-                let inner = self.joined(&e.children, quote);
-                format!("pad(left: 30pt, {inner})")
-            }
+            "video" | "audio" => self.replaced(e.tag == "video", 0.0, inh),
+            "dl" => self.through(e, inh, 14.0, 14.0, |_, s| s),
+            "dd" => self.through(e, inh, 0.0, 0.0, |_, s| format!("pad(left: {}, {s})", pt(40.0))),
             "details" | "summary" | "div" | "section" | "article" | "figure" | "figcaption" | "dt" | "picture" | "header" | "footer" | "main" | "nav" | "aside" => {
-                let inner = self.joined(&e.children, quote);
-                let inner = self.styled(e, inner);
-                match text_align(e) {
-                    Some(al) => format!("align({al}, {inner})"),
-                    None => inner,
-                }
+                self.through(e, inh, 0.0, 0.0, |this, inner| {
+                    let inner = this.styled(e, inner);
+                    match text_align(e) {
+                        Some(al) => format!("align({al}, {inner})"),
+                        None => inner,
+                    }
+                })
             }
-            _ => self.joined(&e.children, quote),
+            _ => self.through(e, inh, 0.0, 0.0, |_, s| s),
         };
-        Some(format!("{anchor}{code}"))
+        if !anchor.is_empty() {
+            blk.code = format!("{{ {anchor}{} }}", blk.code);
+        }
+        Some(blk)
     }
 
-    fn list(&mut self, e: &Element, quote: bool) -> String {
+    fn paragraph(&mut self, e: &Element, inh: Inh) -> Option<Blk> {
+        let m = if self.quote { BODY * 0.25 } else { BODY * 0.7 };
+        if e.has_class("markie-embed") {
+            return self.embed(e);
+        }
+        if let Some(only) = only_child(e) {
+            match only.tag.as_str() {
+                // One picture: its line holds the picture and its 1em margins
+                // on the baseline, and the strut's descent under it.
+                "img" => {
+                    let anchor = self.anchor(only);
+                    let (image, h) = self.image_sized(only)?;
+                    let h = h.map(|h| h / 0.75).unwrap_or(0.0);
+                    let above = (h + 28.0).max(inh.top) - h - 14.0;
+                    return Some(Blk::new(m, m, format!("{{ {anchor}block(width: 100%, inset: (top: {}, bottom: {}), {image}) }}", pt(above), pt(14.0 + inh.bot))));
+                }
+                "video" | "audio" => return Some(self.replaced(only.tag == "video", m, inh)),
+                _ => {}
+            }
+        }
+        let al = text_align(e).unwrap_or("left");
+        let body = self.inline_run(&e.children, inh)?;
+        let body = self.styled(e, body);
+        Some(Blk::new(m, m, format!("align({al}, {})", self.par(&body, inh))))
+    }
+
+    /// A video (300 × 150) or audio (300 × 54) player on the baseline, with
+    /// the strut's descent under it.
+    fn replaced(&self, video: bool, m: f64, inh: Inh) -> Blk {
+        let (code, h) = if video { ("mk-video()", 150.0) } else { ("mk-audio()", 54.0) };
+        let above = f64::max(h, inh.top) - h;
+        Blk::new(m, m, format!("block(inset: (top: {}, bottom: {}), {code})", pt(above), pt(inh.bot)))
+    }
+
+    fn heading(&mut self, e: &Element, level: usize, first: bool) -> Blk {
+        // `.markdown-body hN`: size, top and bottom margin, padding-bottom,
+        // in em of the heading's own size, and whether it has a 1px rule.
+        let (em, top, bottom, pad, rule, weight) = match level {
+            1 => (2.0, 1.2, 0.5, 0.3, true, 700),
+            2 => (1.5, 1.3, 0.45, 0.25, true, 600),
+            3 => (1.25, 1.2, 0.4, 0.0, false, 600),
+            4 => (1.1, 1.1, 0.35, 0.0, false, 600),
+            _ => (1.0, 1.0, 0.3, 0.0, false, 600),
+        };
+        let size = BODY * em;
+        let inh = Inh::block(size, false);
+        let track = match level {
+            1 => sf_tracking(28.0) - 0.025,
+            2 => sf_tracking(21.0) - 0.02,
+            3 => sf_tracking(17.5),
+            4 => sf_tracking(15.4),
+            _ => sf_tracking(14.0),
+        };
+        let al = text_align(e).unwrap_or("left");
+        let body = self.inline_run(&e.children, inh).unwrap_or_else(|| "[]".into());
+        let body = self.styled(e, body);
+        let border = if rule { 1.0 } else { 0.0 };
+        let color = lit(self.p.h[level - 1]);
+        // `h1:first-child` has no top margin.
+        let mt = if level == 1 && first { 0.0 } else { size * top };
+        let code = format!(
+            "align({al}, mk-heading({}, {weight}, {}, {rule}, rgb({color}), {track:.5}em, {}, {body}))",
+            pt(size),
+            pt(size * pad + border),
+            inh.args(),
+        );
+        Blk { mt, mb: size * bottom, code, sticky: true }
+    }
+
+    fn list(&mut self, e: &Element, inh: Inh) -> Blk {
+        // ul, ol: margin 0.6em 0 and padding-left 1.8em; li: margin 0.25em 0.
         let ordered = e.tag == "ol";
         let mut number: i64 = e.get("start").and_then(|s| s.trim().parse().ok()).unwrap_or(1);
         let mut items = Vec::new();
+        let column = self.column;
         for child in &e.children {
             let Node::Element(li) = child else { continue };
             if li.tag != "li" {
@@ -745,21 +965,23 @@ impl Ctx<'_, '_> {
             }
             let anchor = self.anchor(li);
             let task = li.has_class("task-list-item");
-            let body = self.joined(&li.children, quote);
-            let marker = if task {
-                "none".to_string()
-            } else if ordered {
-                lit(&format!("{number}."))
+            // A task item has no marker and pulls back 1.5em.
+            let indent = if task { 25.2 - 21.0 } else { 25.2 };
+            self.column = column - px(indent);
+            let body = self.flow(&li.children, inh);
+            self.column = column;
+            let (mt, mb) = (f64::max(3.5, first_mt(&body)), f64::max(3.5, last_mb(&body)));
+            let body = seq(&body);
+            let code = if task {
+                format!("pad(left: {}, {body})", pt(indent))
             } else {
-                "mk-disc".to_string()
+                let marker = if ordered { format!("mk-num({})", lit(&format!("{number}."))) } else { "mk-disc".to_string() };
+                format!("grid(columns: ({}, 1fr), {marker}, {body})", pt(indent))
             };
-            // A loose item's paragraph margins collapse through the <li>.
-            let loose = li.children.iter().any(|c| matches!(c, Node::Element(p) if p.tag == "p"));
-            let gap = if loose { "7.35pt" } else { "2.625pt" };
-            items.push(format!("{anchor}mk-li({marker}, {gap}, {body})"));
+            items.push(Blk::new(mt, mb, format!("{{ {anchor}{code} }}")));
             number += 1;
         }
-        format!("mk-list({{ {} }})", items.join("\n"))
+        Blk::new(f64::max(8.4, first_mt(&items)), f64::max(8.4, last_mb(&items)), seq(&items))
     }
 
     fn table(&mut self, e: &Element) -> Option<String> {
@@ -779,36 +1001,59 @@ impl Ctx<'_, '_> {
         if columns == 0 {
             return None;
         }
+        // The table is 0.9em; a header cell 0.85em of that.
+        let td = Inh::block(BODY * 0.9, false);
+        let th = Inh::block(BODY * 0.9 * 0.85, false);
         let mut cells = Vec::new();
         let mut header = Vec::new();
         for r in &head {
             for c in r.children.iter().filter_map(cell) {
                 let al = text_align(c).unwrap_or("left");
-                let content = self.inline_run(&c.children).unwrap_or_else(|| "[]".into());
-                header.push(format!("mk-th(align({al}, {content}))"));
+                let content = self.inline_run(&c.children, th).unwrap_or_else(|| "[]".into());
+                header.push(format!("mk-th({}, align({al}, {content}))", th.args()));
             }
             header.extend((r.children.iter().filter_map(cell).count()..columns).map(|_| "[]".to_string()));
         }
-        let rows = body.len();
         for (ri, r) in body.iter().enumerate() {
             let n = r.children.iter().filter_map(cell).count();
             for c in r.children.iter().filter_map(cell) {
                 let al = text_align(c).unwrap_or("left");
-                let content = self.inline_run(&c.children).unwrap_or_else(|| "[]".into());
+                let content = self.inline_run(&c.children, td).unwrap_or_else(|| "[]".into());
                 let strong = c.tag == "th";
                 let content = if strong { format!("text(weight: 600, {content})") } else { content };
                 cells.push(format!("mk-td(align({al}, {content}))"));
             }
             cells.extend((n..columns).map(|_| "mk-td([])".to_string()));
-            if ri + 1 < rows || rows > 0 {
-                cells.push(format!("table.hline(y: {}, stroke: 0.75pt + c-border)", ri + 1 + usize::from(!head.is_empty())));
-            }
+            cells.push(format!("table.hline(y: {}, stroke: 0.75pt + c-border)", ri + 1 + usize::from(!head.is_empty())));
         }
-        let header = if header.is_empty() { String::new() } else { format!("table.header({}), table.hline(stroke: 1.5pt + c-border), ", header.join(", ")) };
-        Some(format!("mk-table({columns}, ({header}{}))", if cells.is_empty() { String::new() } else { format!("{},", cells.join(", ")) }))
+        let has_head = !head.is_empty();
+        let header = if header.is_empty() { String::new() } else { format!("table.header({}), table.hline(y: 1, stroke: 1.5pt + c-border), ", header.join(", ")) };
+        // Collapsed borders: each row carries half of the rule above and
+        // below it (the header's 2px rule, 1px between body rows), and the
+        // table half of its last rule.
+        let inset = format!(
+            "(x, y) => if {has_head} and y == 0 {{ (x: {}, top: {}, bottom: {}) }} else if {has_head} and y == 1 {{ (x: {}, top: {}, bottom: {}) }} else if y == 0 {{ (x: {}, top: {}, bottom: {}) }} else {{ (x: {}, top: {}, bottom: {}) }}",
+            pt(BODY * 0.9 * 0.85 * 0.8),
+            pt(BODY * 0.9 * 0.85 * 0.55),
+            pt(BODY * 0.9 * 0.85 * 0.55 + 1.0),
+            pt(BODY * 0.9 * 0.8),
+            pt(BODY * 0.9 * 0.5 + 1.0),
+            pt(BODY * 0.9 * 0.5 + 0.5),
+            pt(BODY * 0.9 * 0.8),
+            pt(BODY * 0.9 * 0.5),
+            pt(BODY * 0.9 * 0.5 + 0.5),
+            pt(BODY * 0.9 * 0.8),
+            pt(BODY * 0.9 * 0.5 + 0.5),
+            pt(BODY * 0.9 * 0.5 + 0.5),
+        );
+        Some(format!(
+            "mk-table({columns}, {inset}, {has_head}, {}, ({header}{}))",
+            td.args(),
+            if cells.is_empty() { String::new() } else { format!("{},", cells.join(", ")) }
+        ))
     }
 
-    fn embed(&mut self, e: &Element) -> Option<String> {
+    fn embed(&mut self, e: &Element) -> Option<Blk> {
         let a = e.children.iter().find_map(|c| match c {
             Node::Element(a) if a.tag == "a" => Some(a),
             _ => None,
@@ -825,7 +1070,9 @@ impl Ctx<'_, '_> {
         let path = format!("/images/{}.img", self.files.len());
         self.files.push((path.clone(), bytes));
         let href = a.get("href").unwrap_or("");
-        Some(format!("mk-embed({}, {})", lit(&path), lit(href)))
+        // The picture is a block inside the paragraph: its 1em margins
+        // collapse through the paragraph's.
+        Some(Blk::new(14.0, 14.0, format!("mk-embed({}, {})", lit(&path), lit(href))))
     }
 }
 
@@ -894,8 +1141,10 @@ pub fn sf_tracking(px: f64) -> f64 {
     units / 2048.0
 }
 
-/// The Typst prelude: the stylesheet's rules as Typst functions.
+/// The Typst prelude: the stylesheet's rules as Typst functions. Lengths
+/// come from the CSS in px (×0.75 for points).
 fn prelude(p: &Palette) -> String {
+    let body = Inh::block(BODY, false);
     format!(
         r##"#import "/markie/scope.typ": markie-scope
 #let c-fg = rgb("{fg}")
@@ -908,55 +1157,58 @@ fn prelude(p: &Palette) -> String {
 #let mono = ("Menlo", "DejaVu Sans Mono")
 #set document(title: none)
 #set page(paper: "a4", margin: (x: 2.2cm, y: 2cm), fill: rgb("{bg}"))
-#set text(font: sans, size: 10.5pt, fill: c-fg, top-edge: "ascender", bottom-edge: "descender", hyphenate: false, lang: "en", tracking: {t_body:.5}em)
-#set par(leading: 0.557em, spacing: 13.2pt, justify: false)
+#set text(font: sans, size: 10.5pt, fill: c-fg, {edges}, hyphenate: false, overhang: false, lang: "en", tracking: {t_body:.5}em)
+// CSS breaks lines greedily and never shrinks a space to fit a word.
+#set par(leading: 0pt, spacing: 0pt, justify: false, linebreaks: "simple", justification-limits: (spacing: (min: 100%, max: 100%)))
+#set block(above: 0pt, below: 0pt)
+#set table.cell(breakable: false)
 #show raw: set text(font: mono, tracking: 0em, size: 1.25em)
-#show raw.where(block: true): set par(leading: 18.375pt - 8.925pt * 1.164)
 #set raw(theme: "/markie/hljs.tmTheme")
-#let L = 5.85pt
 #let col = {col:.2}pt
-#let half = 128.5mm
+// The export's fit script lets a block that avoids breaking break after all
+// when it is over half the page's content height.
+#let half = 364.25pt
 #let avoid(body) = context {{
   let h = measure(width: col, body).height
   block(breakable: h > half, width: 100%, body)
 }}
-#let mk-par(body, quote) = block(above: (if quote {{ 2.625pt }} else {{ 7.35pt }}) + L, below: (if quote {{ 2.625pt }} else {{ 7.35pt }}) + L, width: 100%, par(body))
-// CSS gives a heading its own half-leading, (1.75 - 1.193) / 2 of its size,
-// above and below the text, where L carries the body's 2.925pt on each side.
-#let mk-heading(size, weight, top, bottom, pad, rule, color, track, body) = block(above: top, below: bottom - 2.925pt, width: 100%, sticky: true, inset: (top: size * 0.2785 - 2.925pt, bottom: pad + size * 0.2785), stroke: if rule {{ (bottom: 0.75pt + c-border) }} else {{ none }}, text(size: size, weight: weight, fill: rgb(color), tracking: track, par(leading: 0.557em, body)))
-#let mk-h1(body) = mk-heading(21pt, 700, 25.2pt + L, 10.5pt + L, 6.3pt, true, "{h1}", {t_h1:.5}em, body)
-#let mk-h2(body) = mk-heading(15.75pt, 600, 20.475pt + L, 7.0875pt + L, 3.94pt, true, "{h2}", {t_h2:.5}em, body)
-#let mk-h3(body) = mk-heading(13.125pt, 600, 15.75pt + L, 5.25pt + L, 0pt, false, "{h3}", {t_h3:.5}em, body)
-#let mk-h4(body) = mk-heading(11.55pt, 600, 12.7pt + L, 4.04pt + L, 0pt, false, "{h4}", {t_h4:.5}em, body)
-#let mk-h5(body) = mk-heading(10.5pt, 600, 10.5pt + L, 3.15pt + L, 0pt, false, "{h5}", {t_body:.5}em, body)
-#let mk-h6(body) = mk-heading(10.5pt, 600, 10.5pt + L, 3.15pt + L, 0pt, false, "{h6}", {t_body:.5}em, body)
-// A rule, a quote, code, a table or a picture is a box: CSS puts only the
-// neighbour's half-leading (L / 2) next to its edge, not a second one.
-#let mk-hr() = block(above: 18.9pt + L / 2, below: 18.9pt + L / 2, line(length: 100%, stroke: 0.75pt + c-border))
-#let mk-quote(body) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, width: 100%, fill: rgb("{quote_bg}"), stroke: (left: 2.25pt + rgb("{quote_bar}")), outset: (left: -1.125pt), radius: (right: 4.5pt), inset: (left: 12.75pt, right: 10.5pt, y: 5.25pt), {{ set text(fill: rgb("{quote_fg}")); body }})
-#let mk-code(s) = box(fill: rgb("{code_bg}"), stroke: 0.75pt + rgb("{code_border}"), radius: 3pt, inset: (x: 0.35em * 0.88), outset: (y: 0.2em), text(size: 0.88em, fill: rgb("{code_fg}"), raw(s)))
-#let mk-pre(body) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, width: 100%, avoid(block(width: 100%, fill: rgb("{pre_bg}"), stroke: 0.75pt + c-border, radius: 6pt, inset: (x: 12.6pt, y: 10.5pt + (18.375pt - 8.925pt * 1.164) / 2), {{ set text(size: 8.925pt, fill: rgb("{pre_fg}"), top-edge: "ascender", bottom-edge: "descender"); set par(leading: 18.375pt - 8.925pt * 1.164); body }})))
-#let mk-list(items) = block(above: 6.3pt + L, below: 6.3pt + L, width: 100%, items)
+// Orphans and widows 2, and Chromium's exception: a three-line paragraph
+// may leave one line behind rather than move whole.
+#let mk-p(body, w, lh) = context {{
+  let n = calc.round(measure(width: w, par(body)).height / lh)
+  if n == 3 {{ set text(costs: (widow: 0%)); par(body) }} else {{ par(body) }}
+}}
+#let mk-heading(size, weight, pad, rule, color, track, top-edge: 0pt, bottom-edge: 0pt, body) = block(width: 100%, inset: (bottom: pad), stroke: if rule {{ (bottom: 0.75pt + c-border) }} else {{ none }}, outset: (bottom: -0.375pt), text(size: size, weight: weight, fill: color, tracking: track, top-edge: top-edge, bottom-edge: bottom-edge, par(body)))
+#let mk-quote(top, bottom, body) = block(width: 100%, fill: rgb("{quote_bg}"), stroke: (left: 2.25pt + rgb("{quote_bar}")), outset: (left: -1.125pt), radius: (right: 4.5pt), inset: (left: 12.75pt, right: 10.5pt, top: top, bottom: bottom), {{ set text(fill: rgb("{quote_fg}")); body }})
+// Inline code: padding 0.15em 0.35em and a 1px border inside the box; the
+// background covers the font's ascent and descent plus the padding.
+#let mk-code(s, size, top, bot, ot, ob) = box(fill: rgb("{code_bg}"), stroke: 0.75pt + rgb("{code_border}"), radius: 3pt, inset: (x: size * 0.35 + 0.75pt), outset: (top: ot, bottom: ob, x: -0.375pt), text(size: size, top-edge: top, bottom-edge: bot, fill: rgb("{code_fg}"), raw(s)))
+// <pre>: margin 1em 0, padding 1em 1.2em inside a 1px border, 0.85em code.
+// The padding is spacing, not inset, so a block that breaks across pages
+// slices it as CSS does: none at the break. Its lines keep CSS's initial
+// orphans and widows of 2, which are Typst's too.
+#let mk-pre(body, top-edge: 0pt, bottom-edge: 0pt) = avoid(block(width: 100%, fill: rgb("{pre_bg}"), stroke: 0.75pt + c-border, outset: -0.375pt, radius: 6pt, inset: (x: 13.35pt), {{ set text(size: 8.925pt, fill: rgb("{pre_fg}"), top-edge: top-edge, bottom-edge: bottom-edge); v(11.25pt); body; v(11.25pt) }}))
 // Chromium's `list-style-type: disc`: a 3.72pt disc centred 3.42pt above the
 // baseline, its right edge 9.24pt before the text (measured from Electron's PDF).
-#let mk-disc = box(move(dy: 4.92pt, circle(radius: 1.86pt, fill: c-marker, stroke: none))) + h(8.52pt - 0.45em)
-#let mk-li(marker, gap, body) = block(above: gap + L, below: gap + L, width: 100%, if marker == none {{ pad(left: 0.3em, body) }} else {{ grid(columns: (1.8em, 1fr), align(right, text(fill: c-marker, marker) + h(0.45em)), body) }})
+#let mk-disc = align(right, "\u{{200b}}" + box(move(dy: -1.56pt, circle(radius: 1.86pt, fill: c-marker, stroke: none))) + h(9.24pt))
+// `::marker` uses tabular digits.
+#let mk-num(s) = align(right, text(fill: c-marker, number-width: "tabular", s) + h(3.04pt))
 #let mk-box(on) = box(baseline: 15%, width: 10.5pt, height: 10.5pt, stroke: 1.5pt + (if on {{ rgb("{box_on}") }} else {{ rgb("{box_border}") }}), radius: 2.25pt, fill: if on {{ rgb("{box_on}") }} else {{ none }}, if on {{ align(center + horizon, text(size: 7.5pt, weight: 700, fill: rgb("{box_tick}"), "✓")) }}) + h(3.75pt)
-#let mk-figure(img) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, img)
-#let mk-embed(path, url) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, link(url, box(clip: true, radius: 6pt, width: calc.min(col, 480pt), height: calc.min(col, 480pt) * 9 / 16, image(path, width: 100%, height: 100%, fit: "cover"))))
+#let mk-embed(path, url) = link(url, box(clip: true, radius: 6pt, width: calc.min(col, 480pt), height: calc.min(col, 480pt) * 9 / 16, image(path, width: 100%, height: 100%, fit: "cover")))
 #let mk-video() = box(width: 225pt, height: 112.5pt, fill: rgb("#000000"), radius: 0pt)
 #let mk-audio() = box(width: 225pt, height: 40.5pt, fill: rgb("#f1f3f4"), radius: 20pt)
 #let mk-math(code, display) = {{
   let eq = eval(code, mode: "math", scope: markie-scope)
-  text(size: 1.05em, font: ("New Computer Modern Math", "New Computer Modern"), math.equation(block: display, eq))
+  box(text(size: 1.05em, font: ("New Computer Modern Math", "New Computer Modern"), math.equation(block: false, if display {{ math.display(eq) }} else {{ eq }})))
 }}
-#let mk-display(eq) = block(above: 10.5pt + L, below: 10.5pt + L, width: 100%, avoid(align(center, eq)))
-#let mk-th(body) = text(size: 0.85em, weight: 600, fill: rgb("{th_fg}"), tracking: {t_th:.5}em, upper(body))
+// `.katex-display`: the formula is one centred line box with the strut.
+#let mk-display(eq) = avoid(align(center, par("\u{{200b}}" + eq)))
+#let mk-th(top-edge: 0pt, bottom-edge: 0pt, body) = text(size: 8.0325pt, weight: 600, fill: rgb("{th_fg}"), tracking: {t_th:.5}em, top-edge: top-edge, bottom-edge: bottom-edge, upper(body))
 #let mk-td(body) = body
-#let mk-table(n, cells) = block(above: 10.5pt + L / 2, below: 10.5pt + L / 2, avoid({{
-  set text(size: 0.9em, tracking: {t_td:.5}em)
-  table(columns: n, stroke: none, inset: (x: 0.8em, y: 0.5em + 0.28em), fill: (x, y) => if y == 0 {{ rgb("{th_bg}") }} else {{ none }}, ..cells)
-}}))
+#let mk-table(n, inset, head, top-edge: 0pt, bottom-edge: 0pt, cells) = block(inset: (bottom: 0.375pt), {{
+  set text(size: 9.45pt, tracking: {t_td:.5}em, top-edge: top-edge, bottom-edge: bottom-edge)
+  table(columns: n, stroke: none, inset: inset, align: horizon, fill: (x, y) => if head and y == 0 {{ rgb("{th_bg}") }} else {{ none }}, ..cells)
+}})
 "##,
         fg = p.fg,
         bg = p.bg,
@@ -965,12 +1217,6 @@ fn prelude(p: &Palette) -> String {
         strong = p.strong,
         del = p.del,
         marker = p.marker,
-        h1 = p.h[0],
-        h2 = p.h[1],
-        h3 = p.h[2],
-        h4 = p.h[3],
-        h5 = p.h[4],
-        h6 = p.h[5],
         quote_bg = p.quote_bg,
         quote_bar = p.quote_bar,
         quote_fg = p.quote_fg,
@@ -985,11 +1231,8 @@ fn prelude(p: &Palette) -> String {
         th_bg = p.th_bg,
         th_fg = p.th_fg,
         col = COLUMN,
+        edges = body.args(),
         t_body = sf_tracking(14.0),
-        t_h1 = sf_tracking(28.0) - 0.025,
-        t_h2 = sf_tracking(21.0) - 0.02,
-        t_h3 = sf_tracking(17.5),
-        t_h4 = sf_tracking(15.4),
         t_th = sf_tracking(14.0 * 0.9 * 0.85) + 0.04,
         t_td = sf_tracking(12.6),
     )
@@ -1006,34 +1249,26 @@ pub fn tree_source(tree: &[Node], opts: &PdfOptions) -> Result<(String, Vec<(Str
     let theme = tm_theme(&p);
     let mut ids = HashSet::new();
     collect_ids(tree, &mut ids);
-    let mut ctx = Ctx { p, opts, files: vec![("/markie/hljs.tmTheme".into(), theme.into_bytes())], ids, error: None, column: COLUMN };
-    let blocks = ctx.blocks(tree, false);
+    let mut ctx = Ctx { p, opts, files: vec![("/markie/hljs.tmTheme".into(), theme.into_bytes())], ids, error: None, column: COLUMN, quote: false };
+    let blocks = ctx.flow(tree, Inh::block(BODY, false));
     if let Some(e) = ctx.error {
         return Err(e);
     }
-    // The first heading sits at the top of the page (h1:first-child).
     let mut source = prelude(&ctx.p);
-    source.push_str("#{\n");
-    // CSS keeps the first block's top margin under the body padding (only an
-    // h1 that is the first child drops it); Typst drops spacing at a page top
+    // CSS keeps the first block's top margin under the body padding (an h1
+    // that is the first child has none); Typst drops spacing at a page top
     // unless something precedes it.
-    let first_h1 = matches!(tree.iter().find(|n| matches!(n, Node::Element(_))), Some(Node::Element(e)) if e.tag == "h1");
-    if !first_h1 {
-        source.push_str("block(height: 0pt, above: 0pt, below: 0pt)\n");
-    }
-    for b in &blocks {
-        source.push_str(b);
-        source.push('\n');
-    }
-    source.push_str("}\n");
+    source.push_str("#block(height: 0pt)\n#");
+    source.push_str(&seq(&blocks));
+    source.push('\n');
     Ok((source, ctx.files))
 }
 
-/// Compiles Typst source to a PDF.
-pub fn compile(source: String, files: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, String> {
+/// Lays Typst source out into pages.
+pub fn layout(source: String, files: Vec<(String, Vec<u8>)>) -> Result<PagedDocument, String> {
     let world = crate::pdf_world::PdfWorld::new(source, files);
     let warned = typst::compile::<PagedDocument>(&world);
-    let doc = warned.output.map_err(|errors| {
+    warned.output.map_err(|errors| {
         let image = errors.iter().any(|d| d.message.contains("image") || d.message.contains("decode"));
         if image {
             IMAGE_ERROR.to_string()
@@ -1041,7 +1276,12 @@ pub fn compile(source: String, files: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>,
             let msgs: Vec<String> = errors.iter().map(|d| d.message.to_string()).collect();
             format!("The PDF could not be laid out: {}", msgs.join("; "))
         }
-    })?;
+    })
+}
+
+/// Compiles Typst source to a PDF.
+pub fn compile(source: String, files: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, String> {
+    let doc = layout(source, files)?;
     let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).map_err(|errors| {
         let msgs: Vec<String> = errors.iter().map(|d| d.message.to_string()).collect();
         format!("The PDF could not be written: {}", msgs.join("; "))
@@ -1060,4 +1300,50 @@ pub fn export_pdf(markdown: &str, opts: &PdfOptions) -> Result<Vec<u8>, String> 
 pub fn ensure_extension(path: &Path, ext: &str) -> PathBuf {
     let s = path.to_string_lossy();
     if s.to_ascii_lowercase().ends_with(&ext.to_ascii_lowercase()) { path.to_path_buf() } else { PathBuf::from(format!("{s}{ext}")) }
+}
+
+/// One line of text as laid out: its page (from 1), baseline and left edge
+/// in points from the page's top left, and its text. Spans on one baseline
+/// (within 1pt) are one line; a raised superscript is its own.
+#[derive(Debug, Clone)]
+pub struct TextLine {
+    pub page: usize,
+    pub y: f64,
+    pub x: f64,
+    pub text: String,
+}
+
+/// The text lines of a laid-out document, for measuring it against
+/// Chromium's PDF (`scripts/pdf-lines.py` reads a PDF the same way).
+pub fn text_lines(doc: &PagedDocument) -> Vec<TextLine> {
+    use typst::layout::{Frame, FrameItem, Point};
+    fn walk(frame: &Frame, at: Point, out: &mut Vec<(f64, f64, String, f64)>) {
+        for (pos, item) in frame.items() {
+            let p = at + *pos;
+            match item {
+                FrameItem::Group(g) => walk(&g.frame, p + Point::new(g.transform.tx, g.transform.ty), out),
+                FrameItem::Text(t) if !t.text.trim().is_empty() => out.push((p.y.to_pt(), p.x.to_pt(), t.text.to_string(), t.size.to_pt())),
+                _ => {}
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    for (i, page) in doc.pages().iter().enumerate() {
+        let mut spans = Vec::new();
+        walk(&page.frame, Point::zero(), &mut spans);
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        let mut rows: Vec<(f64, Vec<(f64, String)>)> = Vec::new();
+        for (y, x, text, size) in spans {
+            match rows.last_mut() {
+                Some((ry, parts)) if (*ry - y).abs() <= 1.0 && size > 6.0 => parts.push((x, text)),
+                _ => rows.push((y, vec![(x, text)])),
+            }
+        }
+        for (y, mut parts) in rows {
+            parts.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let x = parts[0].0;
+            lines.push(TextLine { page: i + 1, y, x, text: parts.into_iter().map(|(_, t)| t).collect() });
+        }
+    }
+    lines
 }

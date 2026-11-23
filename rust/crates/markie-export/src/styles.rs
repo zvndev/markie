@@ -23,13 +23,19 @@ pub const LIGHT_CSS: &str = include_str!("assets/pdf-light.css");
 pub const MATH_CSS: &str = include_str!("assets/pdf-math.css");
 pub const FIT_SCRIPT: &str = include_str!("assets/fit-script.js");
 
-/// The `<style>` element, without KaTeX's stylesheet: math is SVG here.
+/// The layout rules of KaTeX's stylesheet that apply to the wrappers Markie
+/// RS keeps around its SVG math (copied from `katex.min.css`): a formula's
+/// line height, and a display formula as its own centred line. The rest of
+/// that stylesheet styles KaTeX's HTML and fonts, which SVG math has no use for.
+pub const KATEX_LAYOUT_CSS: &str = ".katex{font:normal 1.21em KaTeX_Main,math,Times New Roman,serif;line-height:1.2;position:relative;text-indent:0;text-rendering:auto}\n.katex-display{display:block;margin:1em 0;text-align:center}\n.katex-display>.katex{display:block;text-align:center;white-space:nowrap}";
+
+/// The `<style>` element, without KaTeX's fonts: math is SVG here.
 pub fn pdf_styles(theme: Theme) -> String {
     let body = match theme {
         Theme::Dark => DARK_CSS,
         Theme::Light => LIGHT_CSS,
     };
-    format!("<style>{SHARED_CSS}\n{body}\n{MATH_CSS}</style>")
+    format!("<style>{SHARED_CSS}\n{body}\n{KATEX_LAYOUT_CSS}\n{MATH_CSS}</style>")
 }
 
 /// `neutralizeBodyBreakouts`: a template-integrity guard, not a sanitizer.

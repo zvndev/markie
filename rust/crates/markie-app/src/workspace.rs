@@ -1495,7 +1495,7 @@ impl Workspace {
                 .justify_center()
                 .gap_3()
                 .bg(theme.background)
-                .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Markie RS"))
+                .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(paths::APP_NAME))
                 .child(
                     div()
                         .text_sm()

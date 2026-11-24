@@ -4,8 +4,9 @@
 //! Insert, Layout, Review), View, Window and Help, in that order, with
 //! Electron's labels, separators and shortcuts.
 //!
-//! Left out on purpose: Check for Updates… (Markie RS has no updater) and
-//! the developer tools item. Commands Markie RS has that Electron keeps
+//! Left out on purpose: the developer tools item, and Check for Updates… in
+//! every build but an installed Markie Nightly (updates.rs), the only one
+//! with an updater. Commands Markie RS has that Electron keeps
 //! elsewhere (Rename, Move, Trash, Copy Path, Cloud, Vault, Rescan) stay in
 //! the command palette and their shortcuts, not in the menu bar.
 
@@ -24,6 +25,9 @@ pub struct MenuState {
     /// A Word, RTF or ODT document is open: document-menu.js labels the
     /// Export submenu's light PDF "Export PDF…" for it.
     pub word: bool,
+    /// This build updates itself (Markie Nightly, installed): the app menu
+    /// has Check for Updates…. `install` sets it; callers leave it alone.
+    pub updates: bool,
 }
 
 fn item(label: &str, action: impl Action) -> MenuItem {
@@ -31,20 +35,24 @@ fn item(label: &str, action: impl Action) -> MenuItem {
 }
 
 pub fn build(state: MenuState) -> Vec<Menu> {
+    // Electron's app menu has Check for Updates… right under About.
+    let mut about = vec![item(&format!("About {}", markie_core::paths::APP_NAME), ShowAbout)];
+    if state.updates {
+        about.push(item("Check for Updates…", crate::updates::CheckForUpdates));
+    }
     let app = Menu {
         name: markie_core::paths::APP_NAME.into(),
-        items: vec![
-            item("About Markie RS", ShowAbout),
+        items: about.into_iter().chain([
             MenuItem::separator(),
             item("Settings…", OpenSettings),
             item("Default Apps for File Types…", DefaultApps),
             MenuItem::separator(),
-            item("Hide Markie RS", HideApp),
+            item(&format!("Hide {}", markie_core::paths::APP_NAME), HideApp),
             item("Hide Others", HideOthers),
             item("Show All", ShowAll),
             MenuItem::separator(),
-            item("Quit Markie RS", Quit),
-        ],
+            item(&format!("Quit {}", markie_core::paths::APP_NAME), Quit),
+        ]).collect(),
         disabled: false,
     };
 
@@ -159,6 +167,7 @@ pub fn is_installed() -> bool {
 
 /// Sets the menu bar, only when what it depends on changed.
 pub fn install(state: MenuState, cx: &mut App) {
+    let state = MenuState { updates: crate::updates::active(), ..state };
     if INSTALLED.with(|s| s.get()) == Some(state) {
         return;
     }
@@ -208,6 +217,15 @@ mod tests {
 
     fn menu<'a>(menus: &'a [Menu], name: &str) -> &'a Menu {
         menus.iter().find(|m| m.name.as_ref() == name).unwrap_or_else(|| panic!("no {name} menu"))
+    }
+
+    #[test]
+    fn check_for_updates_sits_under_about_only_in_a_build_that_updates() {
+        let without = build(MenuState::default());
+        assert!(!labels(&without[0].items).contains(&"Check for Updates…".to_string()));
+        let with = build(MenuState { updates: true, ..Default::default() });
+        assert_eq!(labels(&with[0].items)[..3], ["About Markie RS", "Check for Updates…", "-"]);
+        assert_eq!(labels(&with[0].items).len(), labels(&without[0].items).len() + 1);
     }
 
     #[test]

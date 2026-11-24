@@ -35,11 +35,12 @@ use markie_core::registry::Registry;
 use super::Workspace;
 use crate::actions::{Open, OpenAccount, OpenSettings, ShowCloud};
 
-/// The Keychain service Markie RS keeps its session under. Never "Markie".
-pub const KEYCHAIN_SERVICE: &str = "Markie RS";
+/// The Keychain service this build keeps its session under: "Markie RS", or
+/// "Markie Nightly" for the nightly. Never "Markie".
+pub const KEYCHAIN_SERVICE: &str = markie_core::paths::APP_NAME;
 /// The service used while the app talks to a local test server, so test
 /// sessions can never be mistaken for Kirby's real one.
-pub const TEST_KEYCHAIN_SERVICE: &str = "Markie RS Test";
+pub const TEST_KEYCHAIN_SERVICE: &str = if markie_core::paths::NIGHTLY { "Markie Nightly Test" } else { "Markie RS Test" };
 /// The registry setting that turns on Google and Apple. Off until Markie Cloud
 /// answers `app=markie-rs` with a `markie-rs://` link (zvndev/markie#136).
 pub const BROWSER_SIGN_IN_SETTING: &str = "cloud_browser_sign_in";

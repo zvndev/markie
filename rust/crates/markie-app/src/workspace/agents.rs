@@ -884,9 +884,10 @@ impl AgentsPanel {
         // `markie` entry an agent keeps for Electron Markie. The path has a
         // space in it ("Markie RS.app"), so the shell needs it quoted.
         let quoted = format!("'{}'", p.replace('\'', "'\\''"));
-        let claude = format!("claude mcp add markie-rs -- node {quoted}");
+        let name = markie_core::paths::URL_SCHEME;
+        let claude = format!("claude mcp add {name} -- node {quoted}");
         let codex = format!(
-            "[mcp_servers.markie-rs]\ncommand = \"node\"\nargs = [{}]",
+            "[mcp_servers.{name}]\ncommand = \"node\"\nargs = [{}]",
             serde_json::to_string(&p).expect("path")
         );
         let always = permissions::sync_always(&self.data);

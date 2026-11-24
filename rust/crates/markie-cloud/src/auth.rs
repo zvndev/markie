@@ -224,10 +224,10 @@ impl<'a> AuthClient<'a> {
 
 /// The URL scheme Markie RS registers for the Google and Apple hand-back. It is
 /// never `markie`: that scheme belongs to the Electron app.
-pub const HAND_BACK_SCHEME: &str = "markie-rs";
+pub const HAND_BACK_SCHEME: &str = markie_core::paths::URL_SCHEME;
 
 /// The `app` value that asks the server's desktop bridge for `markie-rs://`.
-pub const HAND_BACK_APP: &str = "markie-rs";
+pub const HAND_BACK_APP: &str = markie_core::paths::URL_SCHEME;
 
 /// Whether a URL macOS handed the app is a sign-in hand-back for it.
 pub fn is_hand_back_link(link: &str) -> bool {

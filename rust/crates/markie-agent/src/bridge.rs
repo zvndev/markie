@@ -81,7 +81,7 @@ impl Bridge {
                 &mut file,
                 &json!({
                     "socket": socket, "token": token, "pid": std::process::id(),
-                    "app": "Markie RS", "version": env!("CARGO_PKG_VERSION"),
+                    "app": markie_core::paths::APP_NAME, "version": markie_core::paths::APP_VERSION,
                     "startedAt": chrono::Utc::now().to_rfc3339(),
                 }),
             )?;

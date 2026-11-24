@@ -26,7 +26,7 @@ impl Workspace {
         let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else {
             return;
         };
-        let root = landing_base().join("Markie RS").join("Cloud");
+        let root = landing_base().join(paths::APP_NAME).join("Cloud");
         let restricted =
             path.starts_with(&root) || root.canonicalize().is_ok_and(|real| path.starts_with(real));
         self.rich.update(cx, |view, cx| {

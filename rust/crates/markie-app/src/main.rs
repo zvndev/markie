@@ -1,7 +1,10 @@
 //! Markie RS: the native Rust build of the Markie desktop app.
 //!
-//! A side build. It has its own name, bundle id and data folder, no updater,
-//! and nothing in the Electron release pipeline knows it exists.
+//! A side build. It has its own name, bundle id and data folder, and nothing
+//! in the Electron release pipeline knows it exists. The dev build "Markie RS"
+//! has no updater; the private "Markie Nightly" variant (the `nightly`
+//! feature, docs/rust-port/NIGHTLY.md) updates itself from the private
+//! gateway (updates.rs).
 
 mod actions;
 mod deeplinks;
@@ -15,6 +18,7 @@ mod menus;
 mod open_urls;
 mod perf;
 mod themes;
+mod updates;
 mod watchdog;
 mod workspace;
 
@@ -148,6 +152,13 @@ fn set_menus(cx: &mut App) {
 fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(doc_worker::ARG)) {
         std::process::exit(if doc_worker::serve() { 0 } else { 1 });
+    }
+    // `--version`: which build this is, without opening a window. The nightly
+    // release script reads it back to check what it just built.
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        use markie_core::paths::{APP_NAME, APP_VERSION, BUILD_COMMIT, BUNDLE_ID};
+        println!("{APP_NAME} {APP_VERSION} ({BUNDLE_ID}) {BUILD_COMMIT}");
+        return;
     }
     logs::install_panic_hook();
     let args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
@@ -297,6 +308,9 @@ fn main() {
             }
             watchdog::start(cx);
             watchdog::trace_appkit_input();
+            // Markie Nightly only: the launch check, the one every few hours
+            // and App › Check for Updates…. A no-op in every other build.
+            updates::start(window_handle, cx);
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {
                 let _ = window_handle.update(cx, |_, window, cx| logs::reveal_crash_log(window, cx));
             });

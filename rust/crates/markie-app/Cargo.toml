@@ -14,6 +14,7 @@ path = "src/main.rs"
 markie-core.workspace = true
 markie-agent = { path = "../markie-agent" }
 markie-cloud = { path = "../markie-cloud" }
+markie-update = { path = "../markie-update" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 markie-office = { path = "../markie-office" }
 markie-office-view = { path = "../markie-office-view" }
@@ -59,6 +60,9 @@ gpui-kit = { version = "=0.10.0", features = [
 gpui-scene = { package = "gpui-pre", version = "=0.3.12", optional = true, default-features = false, features = ["test-support"] }
 
 [features]
+# The private "Markie Nightly" build: identity in markie-core, updater on.
+# Built by scripts/nightly-release.sh, never by default.
+nightly = ["markie-core/nightly"]
 scene = ["dep:gpui-scene", "dep:gpui-scene-macos"]
 
 [dev-dependencies]

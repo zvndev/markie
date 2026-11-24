@@ -43,6 +43,6 @@ impl Workspace {
         };
         let nightly = super::comments::nightly(self.registry.as_deref());
         let word = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_)));
-        crate::menus::install(crate::menus::MenuState { has_history, nightly, word }, cx);
+        crate::menus::install(crate::menus::MenuState { has_history, nightly, word, ..Default::default() }, cx);
     }
 }

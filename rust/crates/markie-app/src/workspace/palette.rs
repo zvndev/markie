@@ -149,7 +149,7 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         cmd("Rescan Documents", "File", Some("⌘R"), "index refresh", action(Rescan)),
         cmd("Import Recents and Stars from Markie", "File", None, "electron migrate", action(ImportFromMarkie)),
         cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
-        cmd("About Markie RS", "Help", None, "version", action(ShowAbout)),
+        cmd(&format!("About {}", markie_core::paths::APP_NAME), "Help", None, "version", action(ShowAbout)),
     ]);
     // The filter at the end of Electron's memo.
     const HIDDEN_FOR_DOCUMENTS: [&str; 10] =

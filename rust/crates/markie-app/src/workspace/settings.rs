@@ -178,7 +178,7 @@ impl Workspace {
                     .text_size(px(11.))
                     .text_color(t.muted)
                     .mt(px(4.))
-                    .child(format!("You are running Markie RS {}.", env!("CARGO_PKG_VERSION"))),
+                    .child(format!("You are running {} {}.", markie_core::paths::APP_NAME, markie_core::paths::APP_VERSION)),
             ))
             .child(self.link_preview_setting(t, cx))
             // The working switch from logs.rs; absent, as in Electron, when no

@@ -324,7 +324,7 @@ pub fn crash_record(kind: &str, detail: &str) -> CrashRecord {
         source: "main".into(),
         message,
         stack: (!detail.is_empty()).then(|| detail.to_string()),
-        version: env!("CARGO_PKG_VERSION").into(),
+        version: markie_core::paths::APP_VERSION.into(),
         platform: format!("{}/{}", node_platform(), node_arch()),
     }
 }
@@ -444,7 +444,7 @@ pub fn reveal_crash_log(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
         let _ = window.prompt(
             gpui_kit::PromptLevel::Info,
             "No crashes have been recorded yet.",
-            Some("If Markie RS does crash, this is where the report will be."),
+            Some(&format!("If {} does crash, this is where the report will be.", markie_core::paths::APP_NAME)),
             &["OK"],
             cx,
         );
@@ -472,7 +472,7 @@ fn latest_native_report(dir: &Path) -> Option<PathBuf> {
         let id = metadata.get("bundleID").and_then(Value::as_str);
         let process = metadata.get("name").and_then(Value::as_str);
         if metadata.get("bug_type").and_then(Value::as_str) != Some("309")
-            || (id != Some("com.zvn.markie.rs") && !(id.is_none() && process == Some("markie-rs")))
+            || (id != Some(markie_core::paths::BUNDLE_ID) && !(id.is_none() && process == Some("markie-rs")))
         {
             return None;
         }

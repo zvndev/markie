@@ -5485,6 +5485,7 @@ dependencies = [
  "markie-office",
  "markie-office-view",
  "markie-rich",
+ "markie-update",
  "markie-vault",
  "markie-web",
  "objc2 0.6.5",
@@ -5664,6 +5665,20 @@ dependencies = [
  "serde_json",
  "unicode-segmentation",
  "yrs",
+]
+
+[[package]]
+name = "markie-update"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "libc",
+ "reqwest",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

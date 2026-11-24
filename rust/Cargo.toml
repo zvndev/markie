@@ -14,6 +14,7 @@ members = [
   "crates/markie-agent",
   "crates/markie-export",
   "crates/markie-web",
+  "crates/markie-update",
 ]
 
 [workspace.package]

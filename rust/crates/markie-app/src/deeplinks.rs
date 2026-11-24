@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use markie_cloud::origin::Trust;
 
-pub const SCHEME: &str = "markie-rs://";
+pub const SCHEME: &str = markie_core::paths::URL_SCHEME_PREFIX;
 /// The same ceiling a document opened from disk has (`doc-tiers.js`).
 pub const MAX_DOC_BYTES: usize = 100_000_000;
 /// The whole exchange, answer and body.

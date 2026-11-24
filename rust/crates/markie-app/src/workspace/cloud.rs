@@ -455,7 +455,7 @@ pub(super) fn landing_dir() -> std::io::Result<PathBuf> {
 }
 
 fn landing_dir_at(mut dir: PathBuf) -> std::io::Result<PathBuf> {
-    for segment in ["Markie RS", "Cloud"] {
+    for segment in [paths::APP_NAME, "Cloud"] {
         dir.push(segment);
         match std::fs::create_dir(&dir) {
             Ok(()) => {}

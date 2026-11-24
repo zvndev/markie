@@ -123,9 +123,13 @@ import {
 import {
   pullCloudThemes,
   pushCloudThemes,
-  getDocTheme,
+  getDocLook,
+  type DocLook,
 } from "@/lib/theme-sync";
 import type { ThemeTokens } from "@/lib/theme";
+import { activeMarkdownStyle, applyMarkdownStyle, markdownStyleStoreOf, MARKDOWN_STYLE_PRESETS } from "@/lib/markdown-style";
+import { applyMarkdownStyleChoice } from "@/lib/markdown-style-store";
+import { pinnedLookTokens } from "@/lib/pinned-look";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -386,7 +390,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const [liveUnavailable, setLiveUnavailable] = useState(false);
   const liveUnavailableRef = useRef(false);
   // Owner-pinned theme on the open shared doc (non-owners only)
-  const [enforcedTheme, setEnforcedTheme] = useState<ThemeTokens | null>(null);
+  // The look is the theme tokens and the Markdown style beside them.
+  const [enforcedLook, setEnforcedLook] = useState<DocLook | null>(null);
+  const enforcedTheme: ThemeTokens | null = enforcedLook?.tokens ?? null;
 
   useEffect(() => {
     leftViewRef.current = leftView;
@@ -471,7 +477,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           setRoleState("local");
           setSharedBy(null);
           setCollabCfg(null);
-          setEnforcedTheme(null);
+          setEnforcedLook(null);
           return;
         }
         // There is a cloud copy, so the server owns the answer to "may I edit
@@ -500,11 +506,11 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         // the owner always keeps their own live theme. Pinned themes live on
         // Markie Cloud only.
         if (!server && members?.some((m) => m.user_id === me?.id)) {
-          getDocTheme(cid).then((theme) => {
-            if (!superseded()) setEnforcedTheme(theme);
+          getDocLook(cid).then((look) => {
+            if (!superseded()) setEnforcedLook(look);
           });
         } else {
-          setEnforcedTheme(null);
+          setEnforcedLook(null);
         }
         // Only a viewer sees the banner, so only a viewer needs the name on it.
         if (isReadOnlyShare(role)) {
@@ -581,7 +587,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         }
         setSharedBy(null);
         setCollabCfg(null);
-        setEnforcedTheme(null);
+        setEnforcedLook(null);
       });
   }, [filePath]);
 
@@ -838,7 +844,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     // reached the editor, A's markdown kept arriving through onChange, and the
     // next save wrote A into B's path.
     setCollabCfg(null);
-    setEnforcedTheme(null);
+    setEnforcedLook(null);
     setPeers([]);
     // The conflict dialog is about one document's divergence from its cloud
     // copy. Left standing across a swap it described the previous file — and
@@ -1950,14 +1956,18 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
   // Owner-pinned themes override the local choice while the doc is open
   useEffect(() => {
-    if (enforcedTheme && !documentsOpen) {
-      applyTheme(enforcedTheme);
+    if (enforcedLook && !documentsOpen) {
+      // One set of tokens for the whole look: the owner's colours and spacing
+      // in the faces their style and theme settle on (pinned-look.ts).
+      applyTheme(pinnedLookTokens(enforcedLook) ?? enforcedLook.tokens);
+      applyMarkdownStyle(enforcedLook.style);
       return () => {
         const store = loadThemeStore();
         applyTheme(findTheme(store, store.activeId).tokens);
+        applyMarkdownStyle(activeMarkdownStyle(markdownStyleStoreOf(store)));
       };
     }
-  }, [enforcedTheme, documentsOpen]);
+  }, [enforcedLook, documentsOpen]);
 
   // Boot: decide the first painted document — the OS-opened file, the one-time
   // welcome document, or a blank one — before rendering anything, so the wrong
@@ -2200,6 +2210,18 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         keywords: `template style color font typography ${t.description}`,
         run: () => {
           applyTemplate(t.id);
+          pushCloudThemes();
+        },
+      })),
+      // One command per Markdown style preset: how headings, lists, tables
+      // and the rest are drawn, whatever the colours.
+      ...MARKDOWN_STYLE_PRESETS.map((preset) => ({
+        id: `markdown-style-${preset.id}`,
+        title: `Markdown Style: ${preset.name}`,
+        group: "Theme" as const,
+        keywords: `markdown style look headings lists tables spacing ${preset.description}`,
+        run: () => {
+          applyMarkdownStyleChoice(preset.id);
           pushCloudThemes();
         },
       })),

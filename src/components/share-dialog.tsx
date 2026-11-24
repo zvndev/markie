@@ -12,6 +12,7 @@ import { colorForName, initials } from "@/lib/collab";
 import { shareMembersEmptyLine } from "@/lib/share-access-view";
 import { LIVE_DOC_PRIVATE_LINE, LIVE_DOC_PUBLIC_LEFTOVER_LINE, isLiveDocName, roleDescription } from "@/lib/general-access";
 import { getElectronAPI } from "@/lib/electron";
+import { ShareLook } from "./share-look";
 
 // Shaped after Google Docs' share dialog, because that is the one people
 // already know: add people at the top, who has access in the middle, general
@@ -650,6 +651,11 @@ export function ShareDialog({
           )}
         </div>
         )}
+
+        {/* Owner only, on the desktop (where a look is chosen) and on Markie
+            Cloud (where a pinned look lives). Never for a Live Doc, which is
+            not Markdown. */}
+        {canManage && !server && !isLiveDoc && getElectronAPI() ? <ShareLook docId={docId} /> : null}
 
         <div className="markie-share-foot">
           <button

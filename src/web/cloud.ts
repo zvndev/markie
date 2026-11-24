@@ -11,6 +11,7 @@
 // Every write names the version it started from. The server refuses a write
 // over someone else's newer version (409), and so does this module: a
 // conflict is reported, never merged over.
+import { pinnedLookFrom, type PinnedLook } from "@/lib/pinned-look";
 import { getAuthToken, getServerURL } from "@/lib/auth-client";
 import { classifyDocumentFormat, decodeTextDocument } from "@/lib/document-formats";
 import { DocumentCloudClient, DocumentCloudError } from "@/lib/document-cloud";
@@ -207,10 +208,25 @@ export async function loadDocLinks(id: string, fetcher: Fetch = fetch): Promise<
 }
 
 /**
- * The look its owner pinned to a text document (server/src/themes.ts GET
- * /docs/:id/theme), as the server stored it, or null when there is none or
- * the server could not say. It is another account's data: view-theme.ts
- * decides what of it is used.
+ * The look the owner pinned to a document (server/src/themes.ts), checked:
+ * the theme and the Markdown style beside it. Null when nothing is pinned,
+ * the server predates it, or it could not say: the page then keeps its own
+ * look. This is what the read view paints.
+ */
+export async function loadDocLook(id: string, fetcher: Fetch = fetch): Promise<PinnedLook | null> {
+  if (!DOC_ID.test(id)) return null;
+  try {
+    const { status, data } = await request(`/api/docs/${encodeURIComponent(id)}/theme`, {}, fetcher);
+    return status === 200 ? pinnedLookFrom(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The pinned theme's tokens alone, as the server stored them, or null when
+ * there is none or the server could not say. It is another account's data:
+ * view-theme.ts decides what of it is used.
  */
 export async function loadDocTheme(id: string, fetcher: Fetch = fetch): Promise<unknown> {
   if (!DOC_ID.test(id)) return null;

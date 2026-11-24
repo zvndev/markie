@@ -1,6 +1,8 @@
 // Standalone CSS for PDF export — completely self-contained, no external deps
 // Two themes: dark (matches app preview) and light (clean print-friendly)
 
+import { markdownStyleCss } from "./markdown-style";
+
 const shared = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -313,6 +315,38 @@ const lightTheme = `
 
 export type PDFTheme = "dark" | "light";
 
+/** What an export may be asked for beyond its theme. */
+export interface PDFOptions {
+  /**
+   * The Markdown style to draw the document in (markdown-style.ts): the one
+   * on screen, or the one pinned to a shared document. Any value; it is
+   * cleaned before a rule is written. Absent or Spacious adds nothing, so
+   * such an export is the same bytes it always was.
+   */
+  markdownStyle?: unknown;
+  /**
+   * The stylesheet src/lib/fonts/export-fonts.ts makes: the bundled faces the
+   * document uses, inside the sheet, and the rules that apply them.
+   */
+  fontCss?: string;
+}
+
+// A style's rules read the app's theme variables. An exported page has none,
+// so each export theme names its own colours for them.
+const STYLE_VARS: Record<PDFTheme, string> = {
+  dark: "--background: #09090b; --foreground: #fafafa; --muted: #a1a1aa; --surface: #18181b; --doc-rule: #27272a; --accent: #3f3f46; --blue: #60a5fa; --purple: #c084fc; --status-yellow: #fb923c;",
+  light: "--background: #fff; --foreground: #1a1a2e; --muted: #71717a; --surface: #f4f4f5; --doc-rule: #e4e4e7; --accent: #e4e4e7; --blue: #2563eb; --purple: #8b5cf6; --status-yellow: #c2410c;",
+};
+
+/** The rules that turn the export's own look into `style`. Empty for Spacious. */
+function markdownStyleBlock(theme: PDFTheme, style: unknown): string {
+  const css = markdownStyleCss(style, ".markdown-body");
+  // Generated from ids and numbers only, but this lands inside a <style>
+  // element, so the one sequence that could end it is refused outright.
+  if (!css || /<\/style/i.test(css)) return "";
+  return `\n  /* Markdown style */\n  .markdown-body { ${STYLE_VARS[theme]} }\n${css}\n`;
+}
+
 // The export pipeline runs rehype-katex, so the exported document needs the
 // KaTeX stylesheet too or math renders as garbled inline spans. There is no
 // bundler or network in the print window, so it is inlined from a generated
@@ -327,19 +361,19 @@ const mathTheme = `
 // The KaTeX stylesheet is ~240 KB of embedded font data. Imported at module
 // scope it rode into the app's main chunk for every launch, to be used only by
 // an export. Loaded on demand it lands in a chunk of its own.
-export async function getPDFStyles(theme: PDFTheme): Promise<string> {
+export async function getPDFStyles(theme: PDFTheme, options: PDFOptions = {}): Promise<string> {
   const { KATEX_CSS } = await import("./katex-css.generated");
-  return `<style>${KATEX_CSS}\n${styleBody(theme)}</style>`;
+  return `<style>${KATEX_CSS}\n${styleBody(theme, options)}</style>`;
 }
 
 // Same stylesheet without KaTeX, for callers that cannot await (and for tests
 // that only care about the theme rules). Math renders unstyled.
-export function getPDFStylesSync(theme: PDFTheme): string {
-  return `<style>${styleBody(theme)}</style>`;
+export function getPDFStylesSync(theme: PDFTheme, options: PDFOptions = {}): string {
+  return `<style>${styleBody(theme, options)}</style>`;
 }
 
-function styleBody(theme: PDFTheme): string {
-  return `${shared}\n${theme === "dark" ? darkTheme : lightTheme}\n${mathTheme}`;
+function styleBody(theme: PDFTheme, options: PDFOptions): string {
+  return `${shared}\n${theme === "dark" ? darkTheme : lightTheme}\n${mathTheme}${markdownStyleBlock(theme, options.markdownStyle)}`;
 }
 
 // Runs inside the print window once the page has loaded and fonts are ready,
@@ -407,18 +441,29 @@ function neutralizeBodyBreakouts(html: string): string {
 // fonts the document uses, inside the file, and the rules that apply them. It
 // comes after the theme's own rules so it wins, and it is CSS Markie wrote
 // from registry ids, never a document's text.
+/** The options an export was asked for. A bare string is the font stylesheet, as callers passed it before options existed. */
+function pdfOptions(extra: PDFOptions | string): PDFOptions {
+  return typeof extra === "string" ? { fontCss: extra } : extra;
+}
+
+/** The font stylesheet in a style element of its own, after the page's, or "" for none. */
+function fontBlock(options: PDFOptions): string {
+  return options.fontCss ? `\n<style>${options.fontCss.replace(/<\/(style)/gi, "<\\/$1")}</style>` : "";
+}
+
 export async function buildPDFHTML(
   markdownHTML: string,
   theme: PDFTheme,
-  fontCss = ""
+  extra: PDFOptions | string = {}
 ): Promise<string> {
-  const fonts = fontCss ? `\n<style>${fontCss.replace(/<\/(style)/gi, "<\\/$1")}</style>` : "";
-  return pdfDocument(`${await getPDFStyles(theme)}${fonts}`, markdownHTML);
+  const options = pdfOptions(extra);
+  return pdfDocument(`${await getPDFStyles(theme, options)}${fontBlock(options)}`, markdownHTML);
 }
 
 // The KaTeX-less variant. Same document, same guards.
-export function buildPDFHTMLSync(markdownHTML: string, theme: PDFTheme): string {
-  return pdfDocument(getPDFStylesSync(theme), markdownHTML);
+export function buildPDFHTMLSync(markdownHTML: string, theme: PDFTheme, extra: PDFOptions | string = {}): string {
+  const options = pdfOptions(extra);
+  return pdfDocument(`${getPDFStylesSync(theme, options)}${fontBlock(options)}`, markdownHTML);
 }
 
 function pdfDocument(styles: string, markdownHTML: string): string {

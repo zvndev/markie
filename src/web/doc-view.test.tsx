@@ -7,8 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const loadDoc = vi.fn();
 vi.mock("./web-document", () => ({ loadDoc: (id: string) => loadDoc(id) }));
 const loadDocLinks = vi.fn();
-const loadDocTheme = vi.fn();
-vi.mock("./cloud", async (original) => ({ ...(await original<typeof import("./cloud")>()), loadDocLinks: (id: string) => loadDocLinks(id), loadDocTheme: (id: string) => loadDocTheme(id) }));
+const loadDocLook = vi.fn();
+vi.mock("./cloud", async (original) => ({
+  ...(await original<typeof import("./cloud")>()),
+  loadDocLinks: (id: string) => loadDocLinks(id),
+  loadDocLook: (id: string) => loadDocLook(id),
+}));
 
 const { DocView } = await import("./doc-view");
 
@@ -26,8 +30,8 @@ beforeEach(() => {
   loadDoc.mockReset();
   loadDocLinks.mockReset();
   loadDocLinks.mockResolvedValue(new Map());
-  loadDocTheme.mockReset();
-  loadDocTheme.mockResolvedValue(null);
+  loadDocLook.mockReset();
+  loadDocLook.mockResolvedValue(null);
   document.head.innerHTML = "";
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -75,13 +79,63 @@ describe("the read view", () => {
     vi.stubGlobal("fetch", fetcher);
     render(<DocView route={{ kind: "public", token: TOKEN }} apiOrigin={API} user={null} onEdit={() => {}} />);
     await screen.findByRole("heading", { name: "Plan" });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    // The text, where its links lead, and the look pinned to it: each read
+    // with the link alone, never with the browser's session.
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(fetcher.mock.calls[0][0]).toBe(`${API}/s/${TOKEN}/raw`);
     expect(fetcher.mock.calls[0][1]?.credentials).toBe("omit");
-    expect(fetcher.mock.calls[1][0]).toBe(`${API}/s/${TOKEN}/links`);
+    expect(fetcher.mock.calls.map((call) => call[0]).slice(1).sort()).toEqual([`${API}/s/${TOKEN}/links`, `${API}/s/${TOKEN}/theme`]);
     expect(fetcher.mock.calls[1][1]?.credentials).toBe("omit");
+    expect(fetcher.mock.calls[2][1]?.credentials).toBe("omit");
+    // The stand-in answered the look with Markdown, which is not a look: the
+    // page keeps its own.
+    expect(document.querySelector("[data-web-view]")?.hasAttribute("data-pinned-look")).toBe(false);
     expect(document.querySelector("[data-web-edit]")).toBeNull();
     expect(document.querySelector("[data-web-sign-in-to-edit]")).toBeNull();
+  });
+
+  const PINNED_TOKENS = { background: "#fbf8f1", surface: "#f2ede2", surface2: "#e9e2d3", foreground: "#2b2620", muted: "#5f564a", border: "#d9cfbc", accent: "#efe1c4", link: "#9a3b12" };
+
+  it("draws a public link in the look its owner pinned, and puts the reader's own back after", async () => {
+    document.head.innerHTML = '<meta name="markie-doc-name" content="Plan.md"><meta name="markie-doc-format" content="markdown">';
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url.endsWith("/theme")
+        ? new Response(JSON.stringify({ tokens: PINNED_TOKENS, style: { base: "minimal", choices: { tableStyle: "zebra", bulletStyle: "} body { display: none" }, numbers: { imageRadius: 1e9 } } }), { status: 200 })
+        : url.endsWith("/links") ? new Response(JSON.stringify({ links: [] }), { status: 200 }) : new Response(MD, { status: 200 })));
+    const view = render(<DocView route={{ kind: "public", token: TOKEN }} apiOrigin={API} user={null} onEdit={() => {}} />);
+    await screen.findByRole("heading", { name: "Plan" });
+    await waitFor(() => expect(document.querySelector("[data-web-view]")?.getAttribute("data-pinned-look")).toBe("colors"));
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("#fbf8f1");
+    // The style is drawn from a scoped stylesheet written by lookup: the
+    // known choices are there, the hostile one is not, and the huge number
+    // was brought into range.
+    const css = document.querySelector("style[data-markie-markdown-style-scope]")?.textContent ?? "";
+    expect(css).toContain("tr:nth-child(even)");
+    expect(css).toContain("border-radius: 24px");
+    expect(css).not.toContain("display: none");
+    expect(css).not.toContain("1e9");
+    view.unmount();
+    expect(document.documentElement.style.getPropertyValue("--background")).not.toBe("#fbf8f1");
+  });
+
+  it("keeps a pinned style but not colours that are not plain colours", async () => {
+    loadDoc.mockResolvedValue(doc("viewer"));
+    const { pinnedLookFrom } = await import("@/lib/pinned-look");
+    loadDocLook.mockResolvedValue(pinnedLookFrom({ tokens: { ...PINNED_TOKENS, background: "url(https://evil.test/x.png)" }, style: { base: "compact" } }));
+    const before = document.documentElement.style.getPropertyValue("--background");
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByRole("heading", { name: "Plan" });
+    expect(document.querySelector("[data-web-view]")?.getAttribute("data-pinned-look")).toBe("style");
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe(before);
+    expect(document.querySelector("style[data-markie-markdown-style-scope]")?.textContent).toContain("font-size: 1.6em");
+  });
+
+  it("leaves the hosted page's own look when nothing is pinned", async () => {
+    loadDoc.mockResolvedValue(doc("viewer"));
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByRole("heading", { name: "Plan" });
+    expect(document.querySelector("[data-web-view]")?.hasAttribute("data-pinned-look")).toBe(false);
+    expect(document.querySelector("style[data-markie-markdown-style-scope]")).toBeNull();
   });
 
   it("draws a member's CSV as a read-only table", async () => {
@@ -179,10 +233,12 @@ describe("the read view", () => {
 
   it("sets a document in the fonts of the look its owner pinned, bundled faces included", async () => {
     loadDoc.mockResolvedValue(doc("viewer"));
-    loadDocTheme.mockResolvedValue({ background: "#fff", bodyFont: "atkinson", headingFont: "fraunces", lineHeight: 1.9, paragraphGap: 1.1, fontSize: 99 });
+    // A look whose colours cannot be used (most are missing) still gives its type.
+    const { pinnedLookFrom } = await import("@/lib/pinned-look");
+    loadDocLook.mockResolvedValue(pinnedLookFrom({ tokens: { background: "#fff", bodyFont: "atkinson", headingFont: "fraunces", lineHeight: 1.9, paragraphGap: 1.1, fontSize: 99 } }));
     render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
     await screen.findByText("Ship it.");
-    expect(loadDocTheme).toHaveBeenCalledWith("doc-1");
+    expect(loadDocLook).toHaveBeenCalledWith("doc-1");
     const article = document.querySelector<HTMLElement>("[data-web-view-content]")!;
     expect(article.style.getPropertyValue("--doc-font-family")).toMatch(/^'Atkinson Hyperlegible Next', system-ui/);
     expect(article.style.getPropertyValue("--doc-heading-family")).toMatch(/^'Fraunces', Georgia/);
@@ -192,16 +248,56 @@ describe("the read view", () => {
     expect(article.getAttribute("style")).not.toMatch(/background|--doc-font-size|--doc-width/);
   });
 
+  it("paints a whole pinned look by one path: colours, bundled faces and the style's code face together", async () => {
+    loadDoc.mockResolvedValue(doc("viewer"));
+    const { pinnedLookFrom } = await import("@/lib/pinned-look");
+    const { THEME_APPLIED_EVENT } = await import("@/lib/theme");
+    loadDocLook.mockResolvedValue(pinnedLookFrom({
+      tokens: { ...PINNED_TOKENS, bodyFont: "literata", headingFont: "eb-garamond" },
+      style: { base: "technical", choices: { codeFont: "fira-code" } },
+    }));
+    const painted: Array<Record<string, unknown>> = [];
+    const seen = (event: Event) => painted.push((event as CustomEvent<{ tokens: Record<string, unknown> }>).detail.tokens);
+    window.addEventListener(THEME_APPLIED_EVENT, seen);
+    const view = render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByText("Ship it.");
+    await waitFor(() => expect(document.querySelector("[data-web-view]")?.getAttribute("data-pinned-look")).toBe("colors"));
+    const root = document.documentElement.style;
+    expect(root.getPropertyValue("--background")).toBe("#fbf8f1");
+    // The pinned tokens' own faces are what the owner had on screen, so they
+    // stand; the style supplies the code face, which only it carries.
+    expect(root.getPropertyValue("--doc-font-family")).toMatch(/^'Literata', Georgia/);
+    expect(root.getPropertyValue("--doc-heading-family")).toMatch(/^'EB Garamond', Georgia/);
+    expect(painted.at(-1)).toMatchObject({ bodyFont: "literata", headingFont: "eb-garamond", codeFont: "fira-code" });
+    // Nothing is set on the document itself: the page's theme is the one path.
+    expect(document.querySelector<HTMLElement>("[data-web-view-content]")!.getAttribute("style")).toBeNull();
+    expect(document.querySelector("style[data-markie-markdown-style-scope]")?.textContent).not.toContain("font-family");
+    window.removeEventListener(THEME_APPLIED_EVENT, seen);
+    view.unmount();
+  });
+
+  it("takes a style's faces when the pinned tokens name none", async () => {
+    loadDoc.mockResolvedValue(doc("viewer"));
+    const { pinnedLookFrom } = await import("@/lib/pinned-look");
+    loadDocLook.mockResolvedValue(pinnedLookFrom({ tokens: PINNED_TOKENS, style: { base: "editorial" } }));
+    const view = render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByText("Ship it.");
+    await waitFor(() => expect(document.documentElement.style.getPropertyValue("--doc-heading-family")).toMatch(/^'Playfair Display'/));
+    expect(document.documentElement.style.getPropertyValue("--doc-font-family")).toMatch(/^'Source Serif 4'/);
+    view.unmount();
+  });
+
   it("paints nothing from a pinned look whose font is not a font id, and nothing when there is none", async () => {
     loadDoc.mockResolvedValue(doc("viewer"));
-    loadDocTheme.mockResolvedValue({ bodyFont: "x'; } body { display: none", headingFont: "local:nope:Futura", lineHeight: "url(//evil.example)" });
+    const { pinnedLookFrom } = await import("@/lib/pinned-look");
+    loadDocLook.mockResolvedValue(pinnedLookFrom({ tokens: { bodyFont: "x'; } body { display: none", headingFont: "local:nope:Futura", lineHeight: "url(//evil.example)" } }));
     const first = render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
     await screen.findByText("Ship it.");
     const style = document.querySelector<HTMLElement>("[data-web-view-content]")!.getAttribute("style") ?? "";
     expect(style).not.toMatch(/evil|display|nope|Futura/);
     expect(document.querySelector<HTMLElement>("[data-web-view-content]")!.style.getPropertyValue("--doc-font-family")).toBe("var(--font-geist-sans)");
     first.unmount();
-    loadDocTheme.mockResolvedValue(null);
+    loadDocLook.mockResolvedValue(null);
     render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
     await screen.findByText("Ship it.");
     expect(document.querySelector<HTMLElement>("[data-web-view-content]")!.getAttribute("style")).toBeNull();

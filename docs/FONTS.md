@@ -100,3 +100,22 @@ Saving keeps them in the file exactly as they arrived.
 A build declares every face and downloads none: a browser reads a font file
 only when some text is set in it. An exported HTML file or PDF carries, inside
 itself, only the families that document uses.
+
+## Fonts in a Markdown style
+
+A Markdown style (`src/lib/markdown-style.ts`) can name a face for text, for
+headings and for code. Each built-in style but Spacious does. They are
+defaults: a font chosen in Typography, or a code font chosen in Settings, is
+used instead (`findTheme` in `src/lib/theme.ts` lays them in that order).
+
+The ids a style may hold are written out in `src/lib/markdown-style-schema.ts`,
+because the server checks a pinned style against a copy of that file. A test
+holds the list to the registry. After adding or removing a family here, add or
+remove its id there and run `(cd server && npm run markdown-style:sync)`.
+
+A font from one computer (`local:` id) is never stored in a style. The bundled
+face it names is stored in its place.
+
+A pinned look carries its faces twice: the text and heading faces in the theme
+tokens, as before, and all three in the style. A public link reads the code
+face from the style, since it is handed no token outside a checked list.

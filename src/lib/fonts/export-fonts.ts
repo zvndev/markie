@@ -10,7 +10,7 @@
 import { HEADING_SAME_AS_BODY, loadThemeStore, findTheme, typefaceStack, typographyOf, THEME_APPLIED_EVENT, type ThemeTokens } from "@/lib/theme";
 import { BUNDLED_FAMILIES, bundledFamiliesUsed, type BundledFamily } from "./registry";
 import { inlineFontFaceRules } from "./bundled-fonts";
-import { codeFontStack, loadCodeFont } from "./code-font";
+import { cleanCodeFont, codeFontStack, loadCodeFont } from "./code-font";
 
 // The tokens on screen right now: the person's own theme, or the look an owner
 // pinned to the open document.
@@ -66,7 +66,13 @@ export function exportFontRules(choice: ExportFontChoice): string {
  * every bundled face the theme or the document's own text uses, and the rules
  * that apply the theme's faces. Empty when there is nothing to add.
  */
-export async function exportFontCss(html = "", tokens: Partial<ThemeTokens> = paintedThemeTokens(), codeFont: string = loadCodeFont()): Promise<string> {
+export async function exportFontCss(
+  html = "",
+  tokens: Partial<ThemeTokens> = paintedThemeTokens(),
+  // The code face on screen: the one the painted tokens name (a Markdown
+  // style's, or a pinned look's), or else this computer's own choice.
+  codeFont: string = cleanCodeFont(tokens.codeFont) || loadCodeFont()
+): Promise<string> {
   const type = typographyOf(tokens);
   const choice: ExportFontChoice = { bodyFont: type.bodyFont, headingFont: type.headingFont, codeFont };
   const used = new Set([...bundledFamiliesUsed([choice.bodyFont, choice.headingFont, choice.codeFont]), ...bundledFamiliesInHtml(html)]);

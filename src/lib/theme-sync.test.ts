@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  docLookState,
+  getDocLook,
   getDocTheme,
   pullCloudThemes,
   pushCloudThemes,
+  setDocLook,
   setDocTheme,
 } from "./theme-sync";
 
@@ -146,5 +149,42 @@ describe("doc themes", () => {
   it("setDocTheme reports failure when the server rejects", async () => {
     mockFetch(() => json({ ok: false }, false));
     await expect(setDocTheme("doc1", null)).resolves.toBe(false);
+  });
+});
+
+describe("doc looks", () => {
+  const tokens = { background: "#000" } as never;
+
+  it("getDocLook returns the tokens with the style beside them, cleaned", async () => {
+    mockFetch(() => json({ tokens, style: { base: "technical", choices: { tableStyle: "zebra", linkStyle: "} body {" }, numbers: { blockGap: 99 }, extra: 1 } }));
+    await expect(getDocLook("doc1")).resolves.toEqual({ tokens, style: { base: "technical", choices: { tableStyle: "zebra" }, numbers: { blockGap: 2 } } });
+  });
+
+  it("getDocLook reads a server that predates styles as a look with no style", async () => {
+    mockFetch(() => json({ tokens }));
+    await expect(getDocLook("doc1")).resolves.toEqual({ tokens, style: null });
+  });
+
+  it("getDocLook is null when nothing is pinned, even if a style is named", async () => {
+    mockFetch(() => json({ tokens: null, style: { base: "compact" } }));
+    await expect(getDocLook("doc1")).resolves.toBeNull();
+  });
+
+  it("setDocLook sends the tokens and the style, and null for both to unpin", async () => {
+    const fetchMock = mockFetch(() => json({ ok: true }));
+    await expect(setDocLook("doc/1", { tokens, style: { base: "classic" } })).resolves.toBe(true);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${SERVER}/api/docs/doc%2F1/theme`);
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({ tokens, style: { base: "classic" } });
+    await expect(setDocLook("doc1", null)).resolves.toBe(true);
+    expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toEqual({ tokens: null, style: null });
+  });
+
+  it("docLookState tells pinned from not pinned from could not ask", async () => {
+    mockFetch(() => json({ tokens, style: null }));
+    await expect(docLookState("doc1")).resolves.toEqual({ pinned: true, look: { tokens, style: null } });
+    mockFetch(() => json({ tokens: null }));
+    await expect(docLookState("doc1")).resolves.toEqual({ pinned: false, look: null });
+    mockFetch(() => json({}, false));
+    await expect(docLookState("doc1")).resolves.toBe("unknown");
   });
 });

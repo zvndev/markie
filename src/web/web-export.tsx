@@ -20,6 +20,7 @@ import {
   type ExportFormatId,
 } from "@/lib/export-formats";
 import { useDismissibleLayer } from "@/lib/use-dismissible-layer";
+import { MarkdownStyleScope } from "@/components/markdown-style-scope";
 
 /** What the open document is, for which exports make sense. */
 export type WebExportSource = "markdown" | "text" | "darkmown" | "office";
@@ -34,6 +35,8 @@ export interface WebExportProps {
   html?: () => string;
   /** The original file's bytes, when they are not just the text (Word, RTF, ODT). */
   original?: () => Promise<Uint8Array>;
+  /** The Markdown style the document is drawn in here, so the HTML and the PDF are drawn the same. */
+  markdownStyle?: unknown;
   /** Class names for the menu button, so it sits in either bar. */
   buttonClassName?: string;
   /** Where the menu opens from. */
@@ -84,7 +87,7 @@ export function originalFileName(name: string, source: WebExportSource): string 
  * Prints `html` alone. The print layer is a portal that only print styles
  * show; it is removed once the print sheet closes.
  */
-function usePrintLayer() {
+function usePrintLayer(markdownStyle: unknown) {
   const [html, setHtml] = useState<string | null>(null);
   useEffect(() => {
     if (html === null) return;
@@ -97,7 +100,11 @@ function usePrintLayer() {
     return () => { cancelAnimationFrame(frame); window.removeEventListener("afterprint", done); root.classList.remove("markie-printing"); };
   }, [html]);
   const layer = html === null ? null : createPortal(
-    <div className="markie-print-layer" aria-hidden="true"><div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} /></div>,
+    // A pinned Markdown style is drawn on paper too. The scope also keeps the
+    // print layer clear of any style the app itself is using.
+    <MarkdownStyleScope style={markdownStyle} className="markie-print-layer" aria-hidden="true" data-print-style={markdownStyle ? "pinned" : undefined}>
+      <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
+    </MarkdownStyleScope>,
     document.body,
   );
   return { print: (next: string) => setHtml(next), layer };
@@ -105,13 +112,13 @@ function usePrintLayer() {
 
 const ICON = { width: 13, height: 13, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true, className: "shrink-0" };
 
-export function WebExportMenu({ name, source, read, html, original, buttonClassName, align = "right" }: WebExportProps) {
+export function WebExportMenu({ name, source, read, html, original, markdownStyle, buttonClassName, align = "right" }: WebExportProps) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const labelId = useId();
-  const { print, layer } = usePrintLayer();
+  const { print, layer } = usePrintLayer(markdownStyle);
   useDismissibleLayer(open, root, () => setOpen(false));
 
   const formats = webExportFormats(source, name);
@@ -145,7 +152,7 @@ export function WebExportMenu({ name, source, read, html, original, buttonClassN
   const downloadHtml = () => run("HTML", async () => {
     if (!html) return;
     const { buildPDFHTML } = await import("@/lib/pdf-styles");
-    downloadBytes(await buildPDFHTML(html(), "light"), exportFileName(name, "md").replace(/\.md$/, ".html"), "text/html;charset=utf-8");
+    downloadBytes(await buildPDFHTML(html(), "light", { markdownStyle }), exportFileName(name, "md").replace(/\.md$/, ".html"), "text/html;charset=utf-8");
   });
   const printPdf = () => run("PDF", () => { if (html) print(html()); });
 

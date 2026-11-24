@@ -43,6 +43,8 @@ export interface ExportSource {
   bytes?: Uint8Array | null;
   /** One of the document's own pictures, by the ref it wrote. */
   loadAsset?: (ref: string) => Promise<Blob | null>;
+  /** The Markdown style pinned to the document, as the server sent it; the export is drawn in it. */
+  markdownStyle?: unknown;
 }
 
 export interface ExportOption {
@@ -135,8 +137,8 @@ export function exportOffer(source: ExportSource): ExportOffer {
 }
 
 /** The source for a document from the Markdown and text store. */
-export function docExportSource(doc: Pick<CloudDoc, "name" | "format" | "content">, loadAsset?: ExportSource["loadAsset"]): ExportSource {
-  return { name: doc.name, body: { kind: doc.format, text: doc.content }, loadAsset };
+export function docExportSource(doc: Pick<CloudDoc, "name" | "format" | "content">, loadAsset?: ExportSource["loadAsset"], markdownStyle?: unknown): ExportSource {
+  return { name: doc.name, body: { kind: doc.format, text: doc.content }, loadAsset, ...(markdownStyle ? { markdownStyle } : {}) };
 }
 
 /**
@@ -266,7 +268,9 @@ export async function buildExportHtml(source: ExportSource, theme: PDFTheme): Pr
   } else {
     content = `<pre class="markie-text">${escapeHtml(body.text)}</pre>`;
   }
-  return addTitle(addCss(await buildPDFHTML(content, theme), PHONE_EXPORT_CSS), splitName(source.name).base);
+  // A pinned style is for Markdown; a text file is drawn as text whatever is pinned.
+  const options = body.kind === "markdown" ? { markdownStyle: source.markdownStyle } : {};
+  return addTitle(addCss(await buildPDFHTML(content, theme, options), PHONE_EXPORT_CSS), splitName(source.name).base);
 }
 
 // ── The PDF ──────────────────────────────────────────────────────────────

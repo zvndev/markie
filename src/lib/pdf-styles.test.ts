@@ -111,3 +111,38 @@ describe("print layout", () => {
     expect(FIT_SCRIPT).toContain('breakInside = "auto"');
   });
 });
+
+describe("a Markdown style in an export", () => {
+  const body = "<h1>Title</h1><table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>";
+
+  it("leaves the page byte for byte as it was for Spacious and for no style", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const plain = buildPDFHTMLSync(body, theme);
+      expect(buildPDFHTMLSync(body, theme, {})).toBe(plain);
+      expect(buildPDFHTMLSync(body, theme, { markdownStyle: null })).toBe(plain);
+      expect(buildPDFHTMLSync(body, theme, { markdownStyle: { base: "spacious" } })).toBe(plain);
+      expect(buildPDFHTMLSync(body, theme, { markdownStyle: { base: "</style><script>alert(1)</script>" } })).toBe(plain);
+    }
+  });
+
+  it("adds the style's rules after the page's own, with the theme's colours for them to read", () => {
+    const light = buildPDFHTMLSync(body, "light", { markdownStyle: { base: "technical" } });
+    const dark = buildPDFHTMLSync(body, "dark", { markdownStyle: { base: "technical" } });
+    expect(light).toContain(".markdown-body thead th, .markdown-body tbody th, .markdown-body tbody td { border: 1px solid var(--doc-rule); }");
+    expect(light).toContain("--doc-rule: #e4e4e7;");
+    expect(dark).toContain("--doc-rule: #27272a;");
+    // After the base rule it overrides, inside the one style block.
+    expect(light.indexOf("Markdown style")).toBeGreaterThan(light.indexOf(".markdown-body tbody td {"));
+    expect(light.indexOf("Markdown style")).toBeLessThan(light.indexOf("</style>"));
+    expect(light.match(/<style>/g)).toHaveLength(1);
+  });
+
+  it("draws only listed choices, whatever else the style holds", async () => {
+    const html = await buildPDFHTML(body, "light", {
+      markdownStyle: { base: "compact", choices: { tableStyle: "zebra", linkStyle: "} body { display: none }" }, numbers: { imageRadius: "0; } </style><script>alert(1)</script>" } },
+    });
+    expect(html).toContain("tr:nth-child(even)");
+    expect(html).not.toContain("display: none }");
+    expect(html.match(/<script>/g)).toHaveLength(1);
+  });
+});

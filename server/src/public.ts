@@ -30,6 +30,7 @@ import { auth } from "./auth.ts";
 import { accessLevel, canEditLevel } from "./shares.ts";
 import { privateShell, webAppAvailable, webAppShell } from "./web-app.ts";
 import { redirectToDocsHost } from "./docs-host.ts";
+import { pinnedLookForPublic } from "./themes.ts";
 
 const db = openDatabase();
 const DEPLOYMENT = deployment();
@@ -310,6 +311,18 @@ publicShare.get("/s/:token/links", (c) => {
     return answer && "href" in answer ? { ref, href: answer.href } : { ref, muted: true };
   });
   return c.json({ links });
+});
+
+// The look the owner pinned to the document, for the read view and the phone:
+// the theme tokens and the Markdown style (themes.ts). Read with the link
+// alone, like /raw. Both are cleaned here, so a public page is only ever
+// handed plain colours, numbers and ids from closed lists.
+publicShare.get("/s/:token/theme", (c) => {
+  c.header("Cache-Control", "private, no-store");
+  const doc = docForToken(c.req.param("token"));
+  if (!doc) return c.json({ error: "not found" }, 404);
+  const look = pinnedLookForPublic(doc.doc_id);
+  return c.json({ tokens: look?.tokens ?? null, style: look?.style ?? null });
 });
 
 publicShare.get("/s/:token/assets", (c) => {

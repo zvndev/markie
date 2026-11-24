@@ -3,7 +3,7 @@
 // only in the phone's own tone, and nothing that is not a plain colour.
 import { describe, expect, it } from "vitest";
 import { MARKIE_DARK, MARKIE_LIGHT } from "@/lib/theme";
-import { docThemeStyle, plainColor } from "../src/lib/doc-theme";
+import { DOC_STYLE_SCOPE, docLookTokens, docStyleCss, docThemeStyle, plainColor } from "../src/lib/doc-theme";
 import { createApiClient } from "../src/lib/api";
 import type { HttpRequest, HttpResponse } from "../src/lib/http";
 
@@ -87,6 +87,72 @@ describe("reading the pinned theme from the server", () => {
   });
 });
 
+describe("a pinned Markdown style on the reading screen", () => {
+  it("writes nothing for no style, for Spacious, or for something that is not a style", () => {
+    for (const none of [null, undefined, "compact", 4, [], {}, { base: "spacious" }, { base: "from-the-future" }]) expect(docStyleCss(none)).toBe("");
+  });
+
+  it("writes the style's rules for the themed article only", () => {
+    const css = docStyleCss({ base: "technical" });
+    expect(css).toContain(`${DOC_STYLE_SCOPE} thead th`);
+    for (const line of css.split("\n")) expect(line.startsWith(DOC_STYLE_SCOPE)).toBe(true);
+  });
+
+  it("draws only listed choices and numbers in range, whatever the server sent", () => {
+    const attack = "} body { display: none } .x { background: url(https://evil.example/x)";
+    const css = docStyleCss({
+      base: "compact",
+      choices: { tableStyle: "zebra", linkStyle: attack, bulletStyle: attack, futureChoice: "futureOption" },
+      numbers: { imageRadius: 1e9, blockGap: attack, leading: Number.NaN },
+      css: attack,
+    });
+    expect(css).toContain("tr:nth-child(even)");
+    expect(css).toContain("border-radius: 24px");
+    expect(css).not.toContain("evil");
+    expect(css).not.toContain("display: none");
+    expect(css).not.toContain("NaN");
+  });
+});
+
+describe("reading the pinned look from the server", () => {
+  const client = (answer: (request: HttpRequest) => HttpResponse | Promise<HttpResponse>) => {
+    const seen: HttpRequest[] = [];
+    const api = createApiClient({ origin: "https://api.markiedocs.com", getToken: () => "t".repeat(32), transport: async (request) => { seen.push(request); return answer(request); } });
+    return { api, seen };
+  };
+  const TOKEN = "b".repeat(64);
+
+  it("reads a member's look with the session, tokens and style together", async () => {
+    const { api, seen } = client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: { background: "#fff" }, style: { base: "classic" } }) }));
+    expect(await api.docLook("doc-1")).toEqual({ tokens: { background: "#fff" }, style: { base: "classic" } });
+    expect(seen[0].url).toBe("https://api.markiedocs.com/api/docs/doc-1/theme");
+    expect(seen[0].headers?.authorization).toMatch(/^Bearer /);
+  });
+
+  it("reads a server that predates styles as a look with no style", async () => {
+    const { api } = client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: { background: "#fff" } }) }));
+    expect(await api.docLook("doc-1")).toEqual({ tokens: { background: "#fff" }, style: null });
+  });
+
+  it("reads a public link's look with the link alone, never the session", async () => {
+    const { api, seen } = client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: { background: "#fff" }, style: { base: "minimal" } }) }));
+    expect(await api.publicLook(TOKEN)).toEqual({ tokens: { background: "#fff" }, style: { base: "minimal" } });
+    expect(seen[0].url).toBe(`https://api.markiedocs.com/s/${TOKEN}/theme`);
+    expect(seen[0].headers?.authorization).toBeUndefined();
+  });
+
+  it("answers null, never an error, for nothing pinned, an older server, a refusal or no network", async () => {
+    for (const read of [(api: ReturnType<typeof client>["api"]) => api.docLook("doc-1"), (api: ReturnType<typeof client>["api"]) => api.publicLook(TOKEN)]) {
+      expect(await read(client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: null, style: null }) })).api)).toBeNull();
+      expect(await read(client(() => ({ status: 404, headers: {}, text: "Not Found" })).api)).toBeNull();
+      expect(await read(client(() => ({ status: 403, headers: {}, text: "{}" })).api)).toBeNull();
+      expect(await read(client(() => ({ status: 200, headers: {}, text: "# not json" })).api)).toBeNull();
+      expect(await read(client(() => { throw new Error("offline"); }).api)).toBeNull();
+    }
+    expect(await client(() => ({ status: 200, headers: {}, text: "{}" })).api.publicLook("short")).toBeNull();
+  });
+});
+
 // The phone bundles the same font files as the desktop (src/assets/fonts,
 // declared by installBundledFonts in main.tsx), so a pinned look set in one
 // paints in it here too.
@@ -107,5 +173,36 @@ describe("a pinned look set in a bundled or a local font", () => {
       const style = docThemeStyle({ bodyFont }, "light");
       expect(style?.vars["--doc-font-family"] ?? "").not.toMatch(/evil|display|nope/);
     }
+  });
+});
+
+describe("the typefaces of a pinned look on the reading screen", () => {
+  // A theme's colours with no face named, as a hand-made or cut-down pin has.
+  const COLOURS = Object.fromEntries(Object.entries(MARKIE_LIGHT.tokens).filter(([key]) => key !== "bodyFont" && key !== "headingFont"));
+
+  it("keeps the pinned tokens' own faces and takes the rest from the style", () => {
+    const tokens = docLookTokens({ ...COLOURS, bodyFont: "lora" }, { base: "editorial" }) as Record<string, unknown>;
+    expect(tokens).toMatchObject({ bodyFont: "lora", headingFont: "playfair", codeFont: "fira-code", background: MARKIE_LIGHT.tokens.background });
+    const style = docThemeStyle(tokens, "light")!;
+    expect(style.vars["--doc-font-family"]).toMatch(/^'Lora', Georgia/);
+    expect(style.vars["--doc-heading-family"]).toMatch(/^'Playfair Display', Georgia/);
+  });
+
+  it("takes every face from the style when the tokens name none", () => {
+    const style = docThemeStyle(docLookTokens(COLOURS, { base: "classic" }), "light")!;
+    expect(style.vars["--doc-font-family"]).toMatch(/^'Literata', Georgia/);
+    expect(style.vars["--doc-heading-family"]).toMatch(/^'EB Garamond', Georgia/);
+  });
+
+  it("sets the code face by a rule for the themed article, from the registry's own stack", () => {
+    const css = docStyleCss({ base: "spacious", choices: { codeFont: "jetbrains-mono" } });
+    expect(css).toBe(`${DOC_STYLE_SCOPE} :is(code, pre, kbd, samp) { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }`);
+    expect(docStyleCss({ choices: { codeFont: "literata" } })).toBe("");
+    expect(docStyleCss({ choices: { codeFont: "x'; } body { display: none" } })).toBe("");
+  });
+
+  it("leaves tokens that are not a token set as they came, and a look with no style as it was", () => {
+    for (const none of [null, undefined, "dark", 4]) expect(docLookTokens(none, { base: "compact" })).toBe(none);
+    expect(docLookTokens({ background: "#fff" }, null)).toEqual({ background: "#fff" });
   });
 });

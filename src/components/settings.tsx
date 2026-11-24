@@ -53,6 +53,7 @@ import { LinkedIdentities } from "./linked-identities";
 import { SharePeopleSettings } from "./share-people";
 import { DefaultAppsSection } from "./default-apps-section";
 import { SelectChevron } from "./select-chevron";
+import { MarkdownStyleSection } from "./markdown-style-settings";
 import { FontLibraryControls } from "./font-library";
 
 export type SettingsSection = "account" | "appearance" | "files" | "advanced";
@@ -518,6 +519,8 @@ function AppearanceSection() {
           </div>
         </div>
       )}
+
+      <MarkdownStyleSection />
 
       <section className="markie-settings-group mb-4" aria-labelledby="markie-typography-title">
         <div className="flex items-center justify-between mb-3">

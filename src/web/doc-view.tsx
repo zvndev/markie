@@ -18,7 +18,11 @@ import { getAuthToken } from "@/lib/auth-client";
 import { compileDarkmownPreview } from "@/lib/darkmown/preview";
 import { darkmownFrameSandbox, projectDarkmownTheme } from "@/lib/darkmown/frame";
 import { exportRichDocument, type RichDocument } from "@/lib/office/rich-document";
-import { THEME_APPLIED_EVENT } from "@/lib/theme";
+import { applyTheme, THEME_APPLIED_EVENT } from "@/lib/theme";
+import { applyColorMode, COLOR_MODE_CHANGED_EVENT, getColorMode } from "@/lib/color-mode";
+import { pinnedLookFrom, pinnedLookTokens, pinnedLookType, type PinnedLook } from "@/lib/pinned-look";
+import type { ThemeTokens } from "@/lib/theme";
+import { MarkdownStyleScope } from "@/components/markdown-style-scope";
 import { MarkieLogo } from "@/components/markie-logo";
 import { CopyAllButton } from "@/components/copy-all-button";
 import { CsvTable } from "@/components/csv-table/csv-table";
@@ -27,7 +31,7 @@ import { ImageLightbox } from "@/components/image-lightbox";
 import { HtmlSectionRail } from "@/components/section-rail";
 import { HideBarButton, ShowBarButton } from "./bar-controls";
 import { useBarVisibility } from "./bar-visibility";
-import { loadDocLinks, loadDocTheme, SessionEndedError, type EditorKind } from "./cloud";
+import { loadDocLinks, loadDocLook, SessionEndedError, type EditorKind } from "./cloud";
 import { pinnedTypeVars } from "./view-theme";
 import { viewSignInHref, type ViewRoute } from "./routes";
 import type { WebSessionUser } from "./session";
@@ -46,10 +50,10 @@ export interface ViewDoc {
   /** The id the editor opens, when this account may edit. */
   editId: string | null;
   assetUrl: AssetUrl | null;
-  /** The type of the look its owner pinned, as custom properties (view-theme.ts). */
-  type?: Record<string, string> | null;
   /** Where its links to other documents lead for this reader; null mutes them all. */
   links: ViewLinks | null;
+  /** The look its owner pinned to it, checked; null draws the hosted page's own. Markdown only. */
+  look: PinnedLook | null;
 }
 
 type ViewState =
@@ -75,7 +79,7 @@ async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | 
   try {
     // Asked alongside the document rather than after it; it never throws.
     const links = loadDocLinks(id);
-    const theme = loadDocTheme(id);
+    const look = loadDocLook(id);
     const doc = await loadDoc(id);
     if (!doc) return { state: "no-access" };
     // A Word, RTF or ODT file Markie keeps read-only to protect what it can't
@@ -91,7 +95,7 @@ async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | 
         // and links to other documents (server/src/doc-links.ts).
         assetUrl: doc.store === "docs" ? memberAssetUrl(apiOrigin, id) : null,
         links: doc.store === "docs" && doc.kind === "markdown" ? await links : null,
-        type: doc.store === "docs" && doc.kind === "markdown" ? pinnedTypeVars(await theme) : null,
+        look: doc.store === "docs" && doc.kind === "markdown" ? await look : null,
       },
     };
   } catch (error) {
@@ -129,8 +133,43 @@ async function loadPublic(token: string, apiOrigin: string, user: WebSessionUser
     }
   }
   const kind = publicKind(format);
-  const links = kind === "markdown" ? await loadPublicLinks(token, apiOrigin, fetcher) : null;
-  return { state: "ready", doc: { name, kind, text, office: null, editId, assetUrl: publicAssetUrl(apiOrigin, token), links } };
+  const [links, look] = kind === "markdown"
+    ? await Promise.all([loadPublicLinks(token, apiOrigin, fetcher), loadPublicLook(token, apiOrigin, fetcher)])
+    : [null, null];
+  return { state: "ready", doc: { name, kind, text, office: null, editId, assetUrl: publicAssetUrl(apiOrigin, token), links, look } };
+}
+
+/**
+ * The look pinned to a public page's document (server/src/public.ts GET
+ * /s/:token/theme), read with the link alone and checked again here. Null
+ * when nothing is pinned or the server could not say.
+ */
+export async function loadPublicLook(token: string, apiOrigin: string, fetcher: typeof fetch = fetch): Promise<PinnedLook | null> {
+  try {
+    const res = await fetcher(`${apiOrigin}/s/${encodeURIComponent(token)}/theme`, { cache: "no-store", credentials: "omit" });
+    return res.ok ? pinnedLookFrom(await res.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Paints a pinned look's colours and faces on the page while its document is
+ * open, the way the desktop does for a member, and puts the reader's own
+ * back afterwards. A change of colour mode repaints the reader's theme, so
+ * the pinned one is painted again after it.
+ */
+function usePinnedTokens(tokens: ThemeTokens | null): void {
+  useEffect(() => {
+    if (!tokens) return;
+    const paint = () => applyTheme(tokens);
+    paint();
+    window.addEventListener(COLOR_MODE_CHANGED_EVENT, paint);
+    return () => {
+      window.removeEventListener(COLOR_MODE_CHANGED_EVENT, paint);
+      applyColorMode(getColorMode());
+    };
+  }, [tokens]);
 }
 
 /**
@@ -206,16 +245,26 @@ export function DocView({ route, apiOrigin, user, onEdit }: DocViewProps) {
   }, [routeKey, apiOrigin, user, reload]);
 
   const doc = view.state === "ready" ? view.doc : null;
+  // A pinned look is for a Markdown page; a CSV is drawn as its table.
+  const look = doc && !isCsvView(doc) ? doc.look : null;
+  // One path for the whole look: the owner's colours, spacing and faces as
+  // one set of tokens, painted the way the desktop paints a member's window.
+  const lookTokens = useMemo(() => (look ? pinnedLookTokens(look) : null), [look]);
+  usePinnedTokens(lookTokens);
+  // A look whose colours could not be used still gives its type to the document.
+  const lookType = useMemo(() => (look && !lookTokens ? pinnedTypeVars(pinnedLookType(look)) : null), [look, lookTokens]);
   useEffect(() => {
     document.title = `${doc ? doc.name : VIEW_TITLES[view.state]} · Markie`;
   }, [doc, view.state]);
 
   const signIn = route.kind === "member" ? viewSignInHref(route.id, apiOrigin) : null;
   const html = useMemo(() => (doc && !isCsvView(doc) && (doc.kind === "markdown" || doc.kind === "text") ? viewHtml(doc.kind, doc.text, doc.assetUrl, doc.links ?? new Map()) : null), [doc]);
+  const pinnedStyle = look?.style ?? null;
   const readText = useCallback(() => doc?.text ?? "", [doc]);
   const original = useMemo(() => (doc?.office ? async () => new Uint8Array(await exportRichDocument(doc.office!)) : undefined), [doc]);
 
-  return <div className="markie-view flex h-screen flex-col" data-web-view={route.kind} data-bar-hidden={bar.hidden ? "true" : "false"} data-view-state={view.state}>
+  return <div className="markie-view flex h-screen flex-col" data-web-view={route.kind} data-bar-hidden={bar.hidden ? "true" : "false"} data-view-state={view.state}
+    data-pinned-look={look ? (lookTokens ? "colors" : "style") : undefined}>
     {bar.hidden ? <ShowBarButton onShow={bar.show} /> : <header className="markie-view-bar" data-web-view-bar>
       <a className="markie-view-brand" href={user ? "/app" : "/"} aria-label={user ? "Your Markie documents" : "Markie"}><MarkieLogo width={104} title={null} /></a>
       <span className="markie-view-title" data-web-view-title>{doc?.name ?? ""}</span>
@@ -223,7 +272,7 @@ export function DocView({ route, apiOrigin, user, onEdit }: DocViewProps) {
         {user ? <a className="markie-view-icon" href="/app">Library</a> : null}
         {doc ? <CopyAllButton text={doc.text} read={readText} /> : null}
         {doc && doc.kind !== "unsupported" ? <WebExportMenu name={doc.name} source={exportSource(doc.kind)} read={readText}
-          html={html ? () => html : undefined} original={original} buttonClassName="markie-view-icon" /> : null}
+          html={html ? () => html : undefined} original={original} markdownStyle={pinnedStyle} buttonClassName="markie-view-icon" /> : null}
         {doc?.editId ? <button type="button" data-web-edit className="markie-view-btn primary" onClick={() => onEdit(doc.editId!)}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           Edit
@@ -236,12 +285,12 @@ export function DocView({ route, apiOrigin, user, onEdit }: DocViewProps) {
       </nav>
     </header>}
 
-    <ViewBody view={view} html={html} signIn={signIn} user={user} apiOrigin={apiOrigin} route={route} onRetry={() => setReload((n) => n + 1)} />
+    <ViewBody view={view} html={html} markdownStyle={pinnedStyle} type={lookType} signIn={signIn} user={user} apiOrigin={apiOrigin} route={route} onRetry={() => setReload((n) => n + 1)} />
   </div>;
 }
 
-function ViewBody({ view, html, signIn, user, apiOrigin, route, onRetry }: {
-  view: ViewState; html: string | null; signIn: string | null; user: WebSessionUser | null; apiOrigin: string; route: ViewRoute; onRetry: () => void;
+function ViewBody({ view, html, markdownStyle, type, signIn, user, apiOrigin, route, onRetry }: {
+  view: ViewState; html: string | null; markdownStyle: unknown; type: Record<string, string> | null; signIn: string | null; user: WebSessionUser | null; apiOrigin: string; route: ViewRoute; onRetry: () => void;
 }) {
   if (view.state === "loading") return <p role="status" className="markie-view-notice">Opening document…</p>;
   if (view.state === "signed-out") {
@@ -299,11 +348,15 @@ function ViewBody({ view, html, signIn, user, apiOrigin, route, onRetry }: {
   if (doc.kind === "unsupported" || html === null) {
     return <main className="markie-view-notice"><h1>{doc.name}</h1><p>Markie can&apos;t show this kind of file in the browser. Export it to download the original.</p></main>;
   }
-  return <ReadingColumn html={html} type={doc.type ?? null} />;
+  return <ReadingColumn html={html} markdownStyle={markdownStyle} type={type} codeOnly={type !== null} />;
 }
 
-/** The rendered document, with the section rail beside it and pictures that enlarge. */
-function ReadingColumn({ html, type }: { html: string; type: Record<string, string> | null }) {
+/**
+ * The rendered document, with the section rail beside it and pictures that
+ * enlarge. `type` is a pinned look's faces and spacing as custom properties,
+ * for a look whose colours could not be used (view-theme.ts).
+ */
+function ReadingColumn({ html, markdownStyle, type, codeOnly }: { html: string; markdownStyle: unknown; type: Record<string, string> | null; codeOnly: boolean }) {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [article, setArticle] = useState<HTMLElement | null>(null);
 
@@ -349,9 +402,16 @@ function ReadingColumn({ html, type }: { html: string; type: Record<string, stri
   return <div className="markie-view-body">
     <HtmlSectionRail root={article} scroller={scroller} content={html} />
     <div ref={setScroller} className="markie-view-scroll" data-web-view-scroll>
-      <main className="markie-view-main">
-        <article ref={setArticle} className="markdown-body" data-web-view-content style={type ? (type as CSSProperties) : undefined} dangerouslySetInnerHTML={{ __html: html }} />
-      </main>
+      {/* The scope keeps this document to the style pinned to it (or none),
+          whatever style this browser's own account uses in the editor. Its
+          faces come with the pinned theme, painted on the page; only when
+          the theme's colours could not be used does the scope set the code
+          face itself. */}
+      <MarkdownStyleScope style={markdownStyle} fonts={codeOnly ? "code" : "none"} className="contents">
+        <main className="markie-view-main">
+          <article ref={setArticle} className="markdown-body" data-web-view-content style={type ? (type as CSSProperties) : undefined} dangerouslySetInnerHTML={{ __html: html }} />
+        </main>
+      </MarkdownStyleScope>
     </div>
     <ImageLightbox container={scroller} openOn="click" />
   </div>;

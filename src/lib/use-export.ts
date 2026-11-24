@@ -9,6 +9,7 @@
 // changed the buffer.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
+import { paintedMarkdownStyle } from "@/lib/markdown-style";
 import { exportFontCss } from "@/lib/fonts/export-fonts";
 import { getColorMode, resolveColorMode } from "@/lib/color-mode";
 import { getSafeAPI } from "@/lib/electron";
@@ -18,7 +19,11 @@ import { convertForExport, exportFileName, exportFormat, type ExportFormatId } f
 // that cannot be read is left out and the text falls back; it never stops the
 // export.
 async function exportPage(rendered: string, theme: PDFTheme): Promise<string> {
-  return buildPDFHTML(rendered, theme, await exportFontCss(rendered).catch(() => ""));
+  return buildPDFHTML(rendered, theme, {
+    fontCss: await exportFontCss(rendered).catch(() => ""),
+    // The Markdown style on screen, so the file is drawn the way it is read.
+    markdownStyle: paintedMarkdownStyle(),
+  });
 }
 
 // One wording for "an export is already running", wherever the second one is

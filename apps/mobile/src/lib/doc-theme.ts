@@ -16,19 +16,14 @@
 // so nothing outside the document changes.
 import { adoptLocalTypefacesIn } from "@/lib/fonts/registry";
 import { DEFAULT_TYPOGRAPHY, editorThemeForTokens, typographyVars, typographyOf, type ThemeTokens } from "@/lib/theme";
+import { pinnedLookFrom, pinnedLookType, plainColor } from "@/lib/pinned-look";
+import { markdownStyleCss, markdownStyleFontCss, markdownStyleFontTokens } from "@/lib/markdown-style";
 import type { Tone } from "./theme-mode";
 
-const HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const SOLID_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
-const FUNCTIONAL = /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\((?:[\d\s.,%/+-]|deg|turn|rad|none)+\)$/i;
 
-/** A colour and nothing else: hex, or a colour function over plain numbers. */
-export function plainColor(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  if (!text || text.length > 64) return null;
-  return HEX.test(text) || FUNCTIONAL.test(text) ? text : null;
-}
+// The colour check is shared with the web read view (src/lib/pinned-look.ts).
+export { plainColor };
 
 /** The pinned size against the desktop's default, held to a range a phone column can take. */
 const MIN_SIZE_RATIO = 0.9;
@@ -49,6 +44,39 @@ const STATUS: Array<[keyof ThemeTokens, string, "foreground" | "link"]> = [
   ["statusBlue", "--status-blue", "link"],
   ["statusPurple", "--status-purple", "foreground"],
 ];
+
+/**
+ * The selector a pinned Markdown style's rules are written for: the article
+ * inside the themed wrapper, named strongly enough to hold over the phone's
+ * own `.m-markdown` rules.
+ */
+export const DOC_STYLE_SCOPE = ".m-doc-themed.m-doc-themed .markdown-body.m-markdown";
+
+/**
+ * The rules for the Markdown style pinned beside a theme (how headings,
+ * lists, tables and the rest are drawn), or "" for none. The style is cleaned
+ * and the rules are looked up from the desktop's own tables
+ * (src/lib/markdown-style.ts), so nothing the server sent is ever CSS.
+ */
+export function docStyleCss(style: unknown): string {
+  // The code face is a rule of its own here. The text and heading faces reach
+  // the article as custom properties, with the rest of the type (docLookTokens).
+  const code = markdownStyleFontTokens(style).codeFont;
+  const faces = code ? markdownStyleFontCss({ choices: { codeFont: code } }, DOC_STYLE_SCOPE) : "";
+  return [faces, markdownStyleCss(style, DOC_STYLE_SCOPE)].filter(Boolean).join("\n");
+}
+
+/**
+ * The pinned tokens with the pinned style's faces settled into them, for
+ * docThemeStyle: the tokens' own body and heading faces stand, and the style
+ * supplies what they do not name. Anything that is not a token set is
+ * returned as it came.
+ */
+export function docLookTokens(tokens: unknown, style: unknown): unknown {
+  const look = pinnedLookFrom({ tokens, style });
+  if (!look) return tokens;
+  return { ...(tokens as object), ...pinnedLookType(look) };
+}
 
 /** What of a pinned theme the reading screen uses, or null when there is nothing usable. */
 export function docThemeStyle(tokens: unknown, tone: Tone): DocThemeStyle | null {

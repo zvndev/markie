@@ -477,6 +477,37 @@ export function createApiClient(options: ApiClientOptions) {
       }
     },
 
+    /**
+     * The whole look the owner pinned: the theme tokens and the Markdown style
+     * beside them (how headings, lists and tables are drawn), both as the
+     * server sent them. Null when nothing is pinned. Decoration, like
+     * docTheme: any failure answers null. What may be used is decided in
+     * lib/doc-theme.ts, which checks both again.
+     */
+    async docLook(id: string): Promise<{ tokens: unknown; style: unknown } | null> {
+      if (!DOC_ID.test(id)) return null;
+      try {
+        const { data } = await json("GET", `/api/docs/${encodeURIComponent(id)}/theme`, { timeoutMs: 10_000 });
+        const look = data as { tokens?: unknown; style?: unknown } | null;
+        return look?.tokens && typeof look.tokens === "object" ? { tokens: look.tokens, style: look.style ?? null } : null;
+      } catch {
+        return null;
+      }
+    },
+
+    /** The look pinned to a public share's document, read with the link alone. Null on any failure. */
+    async publicLook(token: string): Promise<{ tokens: unknown; style: unknown } | null> {
+      if (!PUBLIC_TOKEN.test(token)) return null;
+      try {
+        const response = await send("GET", `/s/${encodeURIComponent(token)}/theme`, { auth: false, timeoutMs: 10_000 });
+        if (response.status !== 200) return null;
+        const look = parseJson(response.text) as { tokens?: unknown; style?: unknown } | null;
+        return look?.tokens && typeof look.tokens === "object" ? { tokens: look.tokens, style: look.style ?? null } : null;
+      } catch {
+        return null;
+      }
+    },
+
     /** Turns the public link on (or returns the one that exists). */
     async createPublicLink(id: string): Promise<string> {
       if (!DOC_ID.test(id)) throw new ApiError(404, "That isn't a Markie document.");

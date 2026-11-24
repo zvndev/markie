@@ -394,10 +394,10 @@ describe("Word renderer inside Markie", () => {
   it("renders supported document theme values in the existing canvas and actual shared font picker", async () => {
     const imported = await themedDocxFixture(), view = editor(imported.document);
     const heading = screen.getByRole("textbox", { name: "Paragraph 1" }), body = screen.getByRole("textbox", { name: "Paragraph 2" });
-    expect(heading.querySelector("[data-run-id]")).toHaveStyle({ fontFamily: "Georgia", fontSize: "16pt", fontWeight: "700", color: "#336699" });
+    expect(heading.querySelector("[data-run-id]")).toHaveStyle({ fontFamily: "'Georgia', 'Gelasio'", fontSize: "16pt", fontWeight: "700", color: "#336699" });
     const bodyRuns = body.querySelectorAll("[data-run-id]");
-    expect(bodyRuns[0]).toHaveStyle({ fontFamily: "Arial", fontSize: "11pt", color: "#222222" });
-    expect(bodyRuns[1]).toHaveStyle({ fontFamily: "Courier New", fontSize: "9pt", color: "#cc0000" });
+    expect(bodyRuns[0]).toHaveStyle({ fontFamily: "'Arial', 'Arimo'", fontSize: "11pt", color: "#222222" });
+    expect(bodyRuns[1]).toHaveStyle({ fontFamily: "'Courier New', 'Cousine'", fontSize: "9pt", color: "#cc0000" });
     const toolbar = screen.getByRole("toolbar", { name: "Document formatting" });
     expect(toolbar).toHaveAttribute("data-markie-doc-toolbar");
     expect(within(toolbar).getByLabelText("Font")).toHaveDisplayValue("Georgia");
@@ -475,7 +475,7 @@ describe("Word renderer inside Markie", () => {
     const font = within(screen.getByRole("toolbar", { name: "Document formatting" })).getByLabelText("Font");
     expect(font).toHaveDisplayValue("Markie Synthetic Serif");
     expect(within(font).getByRole("option", { name: "Markie Synthetic Serif" })).toHaveValue("Markie Synthetic Serif");
-    expect(screen.getByRole("textbox", { name: "Paragraph 1" }).querySelector("[data-run-id]")).toHaveStyle({ fontFamily: "Markie Synthetic Serif" });
+    expect(screen.getByRole("textbox", { name: "Paragraph 1" }).querySelector("[data-run-id]")).toHaveStyle({ fontFamily: "'Markie Synthetic Serif'" });
     expect(await exportDocx(view.state.document)).toEqual(bytes);
     fireEvent.change(font, { target: { value: "Arial" } });
     const exported = await exportDocx(view.state.document), reopened = await openDocx(exported);
@@ -490,7 +490,7 @@ describe("Word renderer inside Markie", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Paragraph style" }), { target: { value: "Heading1" } });
     expect(view.state.document.paragraphs[1].runs.map((run) => run.style)).toEqual(imported.document.paragraphs[1].runs.map((run) => run.style));
     expect(view.state.document.paragraphs[1].runs.map((run) => run.resolvedStyle?.fontFamily)).toEqual(["Georgia", "Courier New"]);
-    expect(body.querySelectorAll("[data-run-id]")[1]).toHaveStyle({ fontFamily: "Courier New", fontSize: "9pt", color: "#cc0000" });
+    expect(body.querySelectorAll("[data-run-id]")[1]).toHaveStyle({ fontFamily: "'Courier New', 'Cousine'", fontSize: "9pt", color: "#cc0000" });
     fireEvent.change(screen.getByLabelText("Font"), { target: { value: "Arial" } });
     const bytes = await exportDocx(view.state.document), reopened = await openDocx(bytes);
     expect(reopened.paragraphs[1].runs[0].style).toEqual({ fontFamily: "Arial" });
@@ -585,7 +585,7 @@ describe("Word renderer inside Markie", () => {
     expect(view.state.document.paragraphs[0].runs.map((run) => run.style)).toEqual(imported.document.paragraphs[0].runs.map((run) => run.style));
     expect(screen.getByRole("textbox", { name: "Paragraph 1" })).toHaveStyle({ textAlign: "center", marginBottom: "12pt" });
     const rendered = screen.getByRole("textbox", { name: "Paragraph 1" }).querySelectorAll("[data-run-id]");
-    expect(rendered[0]).toHaveStyle({ fontWeight: "400", color: "#cc0000", fontSize: "9pt", fontFamily: "Aptos", fontStyle: "italic" });
+    expect(rendered[0]).toHaveStyle({ fontWeight: "400", color: "#cc0000", fontSize: "9pt", fontFamily: "'Aptos'", fontStyle: "italic" });
     expect(rendered[1]).toHaveStyle({ fontWeight: "700", fontSize: "16pt" });
     const bytes = await exportDocx(view.state.document), reopened = await openDocx(bytes);
     expect(reopened.paragraphs[0].styleId).toBe("EditorialLead");

@@ -88,10 +88,17 @@ export function canPrintDocx(document: RichDocument): boolean {
   return true;
 }
 
-function runHTML(run: DocxRun, text: string): string {
+/**
+ * The fonts a printed document carries (word-fonts.ts printFontsFor): the
+ * @font-face rules, files inside them as data: URLs, and how a font name is
+ * painted. Without it a run names its font alone, as it always did.
+ */
+export interface DocxPrintFonts { readonly faces: string; readonly stack: (fontName: string | undefined) => string }
+
+function runHTML(run: DocxRun, text: string, fonts?: DocxPrintFonts): string {
   const style = run.resolvedStyle ?? run.style;
   const css = [`font-weight:${style.bold ? 700 : 400}`, `font-style:${style.italic ? "italic" : "normal"}`];
-  if (style.fontFamily) css.push(`font-family:${font(style.fontFamily)}`);
+  if (style.fontFamily) css.push(`font-family:${fonts?.stack(style.fontFamily) || font(style.fontFamily)}`);
   if (style.fontSizePoints !== undefined) css.push(`font-size:${style.fontSizePoints}pt`);
   if (style.color) css.push(`color:#${style.color}`);
   const underline = style.underline && style.underline !== "none";
@@ -101,15 +108,15 @@ function runHTML(run: DocxRun, text: string): string {
   return run.target ? `<a href="${escape(safeDocxHyperlinkTarget(run.target))}" rel="noreferrer noopener">${span}</a>` : span;
 }
 
-function paragraphHTML(paragraph: DocxParagraph, image: string | undefined): string {
+function paragraphHTML(paragraph: DocxParagraph, image: string | undefined, fonts?: DocxPrintFonts): string {
   const fragments: string[] = [""];
   for (const run of paragraph.runs) {
     let offset = 0;
     for (const pageBreak of run.pageBreaks) {
-      if (pageBreak.offset > offset) fragments[fragments.length - 1] += runHTML(run, run.text.slice(offset, pageBreak.offset));
+      if (pageBreak.offset > offset) fragments[fragments.length - 1] += runHTML(run, run.text.slice(offset, pageBreak.offset), fonts);
       fragments.push(""); offset = pageBreak.offset;
     }
-    if (run.text.length > offset) fragments[fragments.length - 1] += runHTML(run, run.text.slice(offset));
+    if (run.text.length > offset) fragments[fragments.length - 1] += runHTML(run, run.text.slice(offset), fonts);
   }
   if (image) fragments[0] += image;
   let listMarkerRendered = false;
@@ -139,7 +146,7 @@ function paragraphHTML(paragraph: DocxParagraph, image: string | undefined): str
 }
 
 /** Capture the shared supported rich view without converting or changing source bytes. */
-export function buildDocxPrintHTML(document: RichDocument, title = "Document"): string {
+export function buildDocxPrintHTML(document: RichDocument, title = "Document", fonts?: DocxPrintFonts): string {
   if (!canPrintDocx(document)) fail();
   const images = new Map<string, string>();
   let imageBytes = 0, pixels = 0;
@@ -156,12 +163,12 @@ export function buildDocxPrintHTML(document: RichDocument, title = "Document"): 
   }
   const paragraphs = new Map(document.paragraphs.map((paragraph) => [paragraph.id, paragraph]));
   const tables = new Map(document.tables.map((table) => [table.id, table]));
-  const render = (paragraph: DocxParagraph) => paragraphHTML(paragraph, images.get(paragraph.id));
+  const render = (paragraph: DocxParagraph) => paragraphHTML(paragraph, images.get(paragraph.id), fonts);
   const body = document.blocks.map((block) => block.kind === "paragraph" ? render(paragraphs.get(block.paragraphId)!)
     : `<table><tbody>${tables.get(block.tableId)!.rows.map((row) => `<tr>${row.cells.map((cell) => `<td>${cell.paragraphs.map(render).join("")}</td>`).join("")}</tr>`).join("")}</tbody></table>`).join("");
   const layout = document.pageLayout;
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light"><title>${escape(title.slice(0, 1000))}</title><style>
-@page{size:${layout.widthPoints}pt ${layout.heightPoints}pt;margin:${layout.marginTopPoints}pt ${layout.marginRightPoints}pt ${layout.marginBottomPoints}pt ${layout.marginLeftPoints}pt}
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src ${fonts?.faces ? "data:" : "'none'"}; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light"><title>${escape(title.slice(0, 1000))}</title><style>
+${fonts?.faces ? `${fonts.faces.replace(/<\/(style)/gi, "<\\/$1")}\n` : ""}@page{size:${layout.widthPoints}pt ${layout.heightPoints}pt;margin:${layout.marginTopPoints}pt ${layout.marginRightPoints}pt ${layout.marginBottomPoints}pt ${layout.marginLeftPoints}pt}
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#000;color-scheme:light}body{font-family:Georgia,"Times New Roman",serif;font-size:12pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}.paragraph{white-space:pre-wrap;overflow-wrap:anywhere;min-height:1.4em}ol,ul{padding-left:18pt}li{padding:0}a{color:inherit;text-decoration:none}table{width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 8pt}td{border:0.5pt solid #888;padding:6pt;vertical-align:top}tr{break-inside:avoid}img{max-width:100%;object-fit:contain;vertical-align:bottom}.page-break{display:block;break-after:page;page-break-after:always;height:0;margin:0;padding:0}.blank-fragment{display:block;height:1pt;margin:0;padding:0}
 </style></head><body>${body}</body></html>`;
   if (new TextEncoder().encode(html).length > MAX_HTML_BYTES) fail();

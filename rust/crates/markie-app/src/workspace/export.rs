@@ -76,8 +76,23 @@ fn fetch(url: &str) -> Option<Vec<u8>> {
     (bytes.len() <= markie_export::assets::MAX_IMAGE_BYTES).then(|| bytes.to_vec())
 }
 
-fn pdf_bytes(markdown: &str, theme: Theme, doc_dir: Option<&Path>) -> Result<Vec<u8>, String> {
-    let opts = PdfOptions { theme, doc_dir, grants: Grants::default(), fetch: Some(&fetch) };
+/// The look on screen right now, for an export: the Markdown style being
+/// drawn (the person's own, or the one pinned to the open document) and the
+/// faces it is set in (`paintedMarkdownStyle` and `exportFontCss`).
+fn export_look(cx: &App) -> markie_export::ExportLook {
+    let store = crate::themes::store(cx);
+    let tone = if gpui_kit::component::Theme::global(cx).mode.is_dark() { markie_core::theme::Tone::Dark } else { markie_core::theme::Tone::Light };
+    let (_, typography) = store.painted(tone);
+    markie_export::ExportLook {
+        style: Some(markie_core::markdown_style::canonical(&store.active_style())),
+        body_font: typography.body_font,
+        heading_font: typography.heading_font,
+        code_font: store.code_font(tone),
+    }
+}
+
+fn pdf_bytes(markdown: &str, theme: Theme, doc_dir: Option<&Path>, look: markie_export::ExportLook) -> Result<Vec<u8>, String> {
+    let opts = PdfOptions { theme, doc_dir, grants: Grants::default(), fetch: Some(&fetch), look };
     export_pdf(markdown, &opts)
 }
 
@@ -176,6 +191,7 @@ impl Workspace {
         }
 
         let text = self.current_text(cx);
+        let look = export_look(cx);
         match kind {
             ExportKind::PdfDark | ExportKind::PdfLight | ExportKind::Print => {
                 let printing = kind == ExportKind::Print;
@@ -199,14 +215,14 @@ impl Workspace {
                         },
                         None => None,
                     };
-                    let result = with_deadline(cx, move || pdf_bytes(&text, theme, doc_dir.as_deref()), late).await;
+                    let result = with_deadline(cx, move || pdf_bytes(&text, theme, doc_dir.as_deref(), look), late).await;
                     finish(result, target, printing, failure, cx);
                 })
                 .detach();
             }
             ExportKind::Html => {
                 let base = file_name.as_deref().map(|n| n.rsplit_once('.').map(|(b, _)| b).unwrap_or(n)).unwrap_or("document").to_string();
-                let html = markie_export::build_pdf_html(&markie_export::render_markdown_html(&text), Theme::Light);
+                let html = markie_export::build_pdf_html_with(&markie_export::render_markdown_html(&text), Theme::Light, &look);
                 let html = inline_local_images(&html, path.parent(), &Grants::default());
                 let rx = cx.prompt_for_new_path(&dir, Some(&format!("{base}.html")));
                 cx.spawn_in(window, async move |_, cx| {

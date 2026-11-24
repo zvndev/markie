@@ -105,6 +105,7 @@ impl Workspace {
         self.settle(window, cx);
         self.leave_page_for_document();
         self.document_failure = None;
+        load_embedded_fonts(format, bytes, cx);
         let (view, subscription) = view_for(WordEditor::new(document), window, cx);
         let office = OfficeDoc { view, source: Source::Rich, _subscription: subscription };
         office.focus(window, cx);
@@ -199,6 +200,26 @@ fn doc_text(raw: &str) -> String {
         .collect()
 }
 
+/// A Word file's own embedded fonts (`word/fonts/*.odttf`), loaded for this
+/// process only so the document's text is shown in them. They are held in
+/// memory: never installed and never written to disk. Saving keeps them in
+/// the file exactly as they arrived.
+fn load_embedded_fonts(format: FormatKind, bytes: &[u8], cx: &App) {
+    if format != FormatKind::Docx {
+        return;
+    }
+    let fonts = markie_office::docx::fonts::docx_embedded_fonts(bytes);
+    if fonts.is_empty() {
+        return;
+    }
+    for font in &fonts {
+        markie_core::fonts::add_embedded_family(&font.family);
+    }
+    let data: Vec<std::borrow::Cow<'static, [u8]>> = fonts.into_iter().map(|f| std::borrow::Cow::Owned(f.data)).collect();
+    // A font the text system cannot read is left out; the text falls back.
+    let _ = cx.text_system().add_fonts(data);
+}
+
 fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>) -> (Entity<WordView>, Subscription) {
     let view = cx.new(|cx| WordView::new(editor, window, cx));
     let subscription = cx.subscribe_in(&view, window, |this: &mut Workspace, view, event: &WordViewEvent, window, cx| match event {
@@ -229,6 +250,7 @@ pub(super) fn open(path: &Path, format: FormatKind, window: &mut Window, cx: &mu
     let bytes = std::fs::read(path).map_err(|e| format!("Markie could not read this file: {e}"))?;
     if let Some(engine) = engine_format(format) {
         let document = open_rich_document(engine, &bytes).map_err(|e| format!("This document could not be opened. {}", e.message))?;
+        load_embedded_fonts(format, &bytes, cx);
         let (view, subscription) = view_for(WordEditor::new(document), window, cx);
         return Ok(OfficeDoc { view, source: Source::Rich, _subscription: subscription });
     }

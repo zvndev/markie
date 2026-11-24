@@ -21,6 +21,9 @@ use markie_cloud::error::CloudError;
 use markie_cloud::sharing::view::{self as sv, is_email};
 use markie_cloud::sharing::{AddStatus, People, PeopleClient, ShareAccess, ShareContact, ShareMember, ShareRequest, SharesClient};
 use markie_cloud::CloudClient;
+use markie_core::theme::Tone;
+use markie_core::theme::pinned_look::{self, LookState, OwnLook};
+use serde_json::Value;
 
 use super::collab::{CloudDoc, avatar};
 use super::{DocKind, Workspace};
@@ -70,6 +73,12 @@ pub(super) struct ShareSheet {
     link_busy: bool,
     copied: bool,
     row_busy: Option<String>,
+    /// "Readers see my look": what the server says is pinned (None until it
+    /// has answered, and no row is shown), a change in flight, and whether
+    /// the last one failed.
+    look: Option<Value>,
+    look_busy: bool,
+    look_failed: bool,
     /// The sign-in form the gate shows in place when signed out.
     sign_in: Option<Entity<super::account::SignInForm>>,
     /// "Upload destination" for Sync and share, and whether its menu is open.
@@ -79,6 +88,13 @@ pub(super) struct ShareSheet {
     syncing: Option<std::path::PathBuf>,
     _subs: Vec<Subscription>,
     _task: Option<Task<()>>,
+}
+
+/// `GET /api/docs/:id/theme`: the pinned look as the server holds it, or
+/// None when it could not be asked.
+async fn read_look(client: &CloudClient, id: &str) -> Option<Value> {
+    let path = format!("/api/docs/{}/theme", markie_cloud::client::seg(id));
+    client.get(&path).await.ok().filter(|a| a.ok()).and_then(|a| a.json().ok())
 }
 
 impl ShareSheet {
@@ -144,6 +160,9 @@ impl Workspace {
             link_busy: false,
             copied: false,
             row_busy: None,
+            look: None,
+            look_busy: false,
+            look_failed: false,
             sign_in: None,
             upload_area: None,
             area_open: false,
@@ -324,6 +343,9 @@ impl Workspace {
             link_busy: false,
             copied: false,
             row_busy: None,
+            look: None,
+            look_busy: false,
+            look_failed: false,
             sign_in: None,
             upload_area: None,
             area_open: false,
@@ -401,12 +423,15 @@ impl Workspace {
             let manage = access.as_ref().is_some_and(|a| a.can_manage);
             let url = if manage { shares.public_link(&id).await.ok().flatten() } else { None };
             let contacts = if manage { shares.contacts().await.unwrap_or_default() } else { vec![] };
-            (access, members, url, contacts)
+            // What look is pinned, for the owner's switch (`docLookState`).
+            let look = if manage { read_look(&client, &id).await } else { None };
+            (access, members, url, contacts, look)
         });
         let t = cx.spawn(async move |this, cx| {
-            let Ok((access, members, url, contacts)) = task.await else { return };
+            let Ok((access, members, url, contacts, look)) = task.await else { return };
             this.update(cx, |w, cx| {
                 if let Some(s) = w.collab.share.as_mut() {
+                    s.look = look;
                     s.access = access;
                     s.members = Some(members.unwrap_or_default());
                     s.public_url = url;
@@ -629,6 +654,46 @@ impl Workspace {
     }
 
     /// "Anyone with the link" publishes at once; Restricted takes it back.
+    /// The look this account is using right now (`ownLook`): the person's
+    /// own, even while an owner's pinned one is on screen.
+    fn share_own_look(&self, cx: &App) -> OwnLook {
+        let store = self.own_theme.clone().unwrap_or_else(|| themes::store(cx));
+        let tone = if gpui_kit::component::Theme::global(cx).mode.is_dark() { Tone::Dark } else { Tone::Light };
+        pinned_look::own_look(&store, tone)
+    }
+
+    /// Pin this account's look to the document, or unpin it (`setDocLook`),
+    /// then ask the server again what is pinned.
+    fn share_set_look(&mut self, pin: bool, cx: &mut Context<Self>) {
+        let Some((client, id)) = self.share_client() else { return };
+        let body = pinned_look::pin_body(pin.then(|| self.share_own_look(cx)).as_ref());
+        let Some(s) = self.collab.share.as_mut() else { return };
+        if s.look_busy {
+            return;
+        }
+        s.look_busy = true;
+        s.look_failed = false;
+        let task = runtime::handle().spawn(async move {
+            let path = format!("/api/docs/{}/theme", markie_cloud::client::seg(&id));
+            let ok = client.put(&path, body).await.is_ok_and(|a| a.ok());
+            (ok, read_look(&client, &id).await)
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok((ok, look)) = task.await else { return };
+            this.update(cx, |w, cx| {
+                if let Some(s) = w.collab.share.as_mut() {
+                    s.look_busy = false;
+                    s.look_failed = !ok;
+                    s.look = look;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn share_set_general(&mut self, public: bool, cx: &mut Context<Self>) {
         let Some((client, id)) = self.share_client() else { return };
         let Some(s) = self.collab.share.as_mut() else { return };
@@ -906,6 +971,12 @@ impl Workspace {
         let file_name = s.file_name.clone();
         let link = s.doc.as_ref().map(|d| sv::link_to_copy(d.account.client.origin(), &d.doc_id, &s.file_name, s.public_url.as_deref())).unwrap_or_default();
         let public_url = s.public_url.clone();
+        let (look_answer, look_busy, look_failed) = (s.look.clone(), s.look_busy, s.look_failed);
+        // Electron shows the row for a document on the account's own server
+        // (`!server`), not one opened from another server.
+        let on_main_server = s.doc.as_ref().is_some_and(|d| {
+            super::account::AccountStore::global(cx).and_then(|a| a.read(cx).backend()).is_some_and(|(_, client)| client.origin() == d.account.client.origin())
+        });
         let blue = p.blue;
         // `.markie-share-field:focus-within`: a blue border and a 1px blue
         // ring while the field has the caret (in the active window, as
@@ -1146,6 +1217,52 @@ impl Workspace {
                 })
         });
 
+        // share-look.tsx: "Appearance", for the owner of a document on the
+        // main server that is not a Live Doc, once the server has said what
+        // is pinned. A switch in the wrong position is worse than no switch.
+        let look_row = (can_manage && on_main_server && !sv::is_live_doc_name(&file_name)).then_some(()).and(look_answer.as_ref()).map(|answer| {
+            let own = self.share_own_look(cx);
+            let state = pinned_look::look_state(Some(answer), &own);
+            let on = matches!(state, LookState::On { .. });
+            let drifted = state == (LookState::On { drifted: true });
+            let line = pinned_look::look_line(&state, look_busy, &own);
+            v_flex()
+                .mt(px(17.6))
+                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).mb(px(5.6)).child("Appearance"))
+                .child(
+                    h_flex()
+                        .gap(px(12.))
+                        .py(px(4.))
+                        .items_center()
+                        .child(
+                            div()
+                                .size(px(32.))
+                                .flex_none()
+                                .rounded_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(if on { blue.opacity(0.16) } else { p.fg(0.08) })
+                                .child(super::dialog_chrome::stroke_icon("M4 7V5h16v2M9 19h6M12 5v14", if on { blue } else { p.muted }, 15., 1.8)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Readers see my look"))
+                                .child(div().text_size(px(12.)).text_color(p.muted).child(line)),
+                        )
+                        .when(drifted, |el| {
+                            el.child(self.share_pill_button("share-look-update", "Update", false, look_busy, p).on_click(cx.listener(|w, _, _, cx| w.share_set_look(true, cx))))
+                        })
+                        .child(
+                            self.share_pill_button("share-look-switch", if on { "Turn off" } else { "Turn on" }, false, look_busy, p)
+                                .on_click(cx.listener(move |w, _, _, cx| w.share_set_look(!on, cx))),
+                        ),
+                )
+                .when(look_failed, |el| el.child(Self::share_note(p).child(pinned_look::LOOK_FAILED_LINE)))
+        });
+
         let invite_menu = (menu == Some(Menu::InviteRole)).then(|| {
             Self::share_menu_list(p)
                 .absolute()
@@ -1212,6 +1329,7 @@ impl Workspace {
                     }),
             )
             .children(general)
+            .children(look_row)
             .child(
                 h_flex()
                     .justify_between()

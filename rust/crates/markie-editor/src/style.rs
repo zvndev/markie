@@ -25,6 +25,11 @@ pub struct DocStyle {
     pub doc_rule: Hsla,
     /// `--blue`: the template's link colour (links, checked boxes).
     pub link: Hsla,
+    /// The face document code is set in: a monospace typeface id from the
+    /// font registry, or "" for the app's own (SF Mono).
+    pub code_font: String,
+    /// The Markdown style being drawn (headings, lists, tables and the rest).
+    pub md: markie_core::markdown_style::Resolved,
 }
 
 impl Default for DocStyle {
@@ -39,6 +44,8 @@ impl Default for DocStyle {
             content_width: 768.0,
             doc_rule: rgb(0x27272a).into(),
             link: rgb(0x60a5fa).into(),
+            code_font: String::new(),
+            md: Default::default(),
         }
     }
 }
@@ -48,9 +55,19 @@ impl Default for DocStyle {
 /// `ui-serif`, which is this family.
 pub const SYSTEM_SERIF: &str = ".AppleSystemUIFontSerif";
 
-/// `TYPEFACES` as macOS family names. `system` and `mono` are the app's
-/// own faces, so they are left to the caller (None).
-pub fn typeface(id: &str) -> Option<&'static str> {
+/// A typeface id as the family GPUI asks for: a system face's macOS name, a
+/// bundled family's own name, or a font on this computer (the bundled face
+/// it names when it is not installed here). `system` and `mono` are the
+/// app's own faces, so they are left to the caller (None).
+pub fn typeface(id: &str) -> Option<SharedString> {
+    if let Some(family) = system_family(id) {
+        return Some(SharedString::from(family));
+    }
+    markie_core::fonts::native_family(id).map(SharedString::from)
+}
+
+/// The system `TYPEFACES` as macOS family names.
+pub fn system_family(id: &str) -> Option<&'static str> {
     Some(match id {
         "humanist" => "Avenir Next",
         "helvetica" => "Helvetica Neue",

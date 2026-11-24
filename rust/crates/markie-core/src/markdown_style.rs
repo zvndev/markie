@@ -559,7 +559,7 @@ pub fn style_font_id(key: &str, id: &str) -> Option<String> {
         return Some(id.to_string());
     }
     let fallback = fonts::parse_local_typeface_id(id)?.1.id.clone();
-    allowed.iter().any(|o| *o == fallback).then_some(fallback)
+    allowed.contains(&fallback).then_some(fallback)
 }
 
 /// `withPaintedFonts`: `style` with the typefaces that are really being

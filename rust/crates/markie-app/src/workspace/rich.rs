@@ -215,6 +215,7 @@ pub(super) fn doc_style(cx: &App) -> DocStyle {
     let (preset, t) = crate::themes::painted(cx, dark);
     let d = DocStyle::default();
     let k = &preset.tokens;
+    let store = crate::themes::store(cx);
     DocStyle {
         body_font: t.body_font,
         heading_font: t.heading_font,
@@ -224,5 +225,9 @@ pub(super) fn doc_style(cx: &App) -> DocStyle {
         content_width: t.content_width as f32,
         doc_rule: k.doc_rule.as_deref().and_then(hex).or_else(|| hex(&k.border)).unwrap_or(d.doc_rule),
         link: hex(&k.link).unwrap_or(d.link),
+        // The code face the painted tokens name: the Markdown style's, an
+        // owner's pinned one, or this computer's own choice.
+        code_font: k.code_font.as_deref().map(markie_core::fonts::clean_code_font).unwrap_or_default(),
+        md: markie_core::markdown_style::resolve(&store.active_style()),
     }
 }

@@ -67,7 +67,7 @@ pub(super) fn font_family(theme_font: &SharedString) -> SharedString {
         "mono" => markie_editor::MONO.into(),
         "system" => theme_font.clone(),
         "sans" => ".SystemUIFont".into(),
-        other => markie_editor::style::typeface(other).unwrap_or(markie_editor::MONO).into(),
+        other => markie_editor::style::typeface(other).unwrap_or_else(|| markie_editor::MONO.into()),
     }
 }
 

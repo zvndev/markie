@@ -20,6 +20,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 mod files;
+pub mod native;
 
 const FONTS_JSON: &str = include_str!("../../data/fonts.json");
 
@@ -123,7 +124,7 @@ pub fn substitute_for(font_name: &str) -> Option<&'static BundledFamily> {
     if name.is_empty() {
         return None;
     }
-    REGISTRY.bundled.iter().find(|f| f.stands_in_for.iter().any(|n| *n == name))
+    REGISTRY.bundled.iter().find(|f| f.stands_in_for.contains(&name))
 }
 
 /// The bytes of a bundled file (`inter/Inter.woff2`).
@@ -250,14 +251,15 @@ pub fn local_families_from(names: impl IntoIterator<Item = String>) -> Vec<(Stri
         // A leading dot is how macOS names its private system faces. The
         // bundled families are registered for this process only; they are
         // not "installed" and are listed under their own groups.
-        if family.is_empty() || family.starts_with('.') || bundled_family_named(&family).is_some() || !seen.insert(family.to_lowercase()) {
+        let registered = bundled_family_named(&family).is_some() || bundled_families().iter().any(|f| native::native_name(&f.id).as_deref() == Some(family.as_str()));
+        if family.is_empty() || family.starts_with('.') || registered || !seen.insert(family.to_lowercase()) {
             continue;
         }
         let kind = local_font_kind(&family);
         let id = local_typeface_id(&family);
         out.push((family, kind, id));
     }
-    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out.sort_by_key(|a| a.0.to_lowercase());
     out
 }
 
@@ -270,6 +272,14 @@ pub fn set_installed_families(names: impl IntoIterator<Item = String>) {
     *INSTALLED.write().unwrap() = Some(names.into_iter().map(|n| n.trim().to_lowercase()).collect());
 }
 
+static EMBEDDED: RwLock<Option<HashSet<String>>> = RwLock::new(None);
+
+/// Note that a document's own embedded font was loaded under this family
+/// name, so it is painted with ahead of any stand-in.
+pub fn add_embedded_family(family: &str) {
+    EMBEDDED.write().unwrap().get_or_insert_with(HashSet::new).insert(family.trim().to_lowercase());
+}
+
 /// Whether a family is installed here. None when nobody has listed them.
 pub fn is_installed(family: &str) -> Option<bool> {
     INSTALLED.read().unwrap().as_ref().map(|set| set.contains(&family.trim().to_lowercase()))
@@ -280,11 +290,12 @@ pub fn is_installed(family: &str) -> Option<bool> {
 /// here and the bundled face it names otherwise. None for system ids, which
 /// the caller maps to macOS's own faces.
 pub fn native_family(id: &str) -> Option<String> {
+    let bundled = |f: &BundledFamily| native::native_name(&f.id).unwrap_or_else(|| f.family.clone());
     if let Some(f) = bundled_family(id) {
-        return Some(f.family.clone());
+        return Some(bundled(f));
     }
     let (family, fallback) = parse_local_typeface_id(id)?;
-    Some(if is_installed(&family) == Some(false) { fallback.family.clone() } else { family })
+    Some(if is_installed(&family) == Some(false) { bundled(fallback) } else { family })
 }
 
 // ── Fonts in Word, RTF and OpenDocument files ───────────────────────────────
@@ -324,10 +335,14 @@ pub fn office_native_family(font_name: &str, embedded_alias: Option<&str>) -> Op
         return Some(alias.to_string());
     }
     let name = font_name.trim();
+    // A font some open document carries inside itself is there to paint with.
+    if EMBEDDED.read().unwrap().as_ref().is_some_and(|set| set.contains(&name.to_lowercase())) {
+        return Some(name.to_string());
+    }
     if is_installed(name) == Some(false)
         && let Some(sub) = substitute_for(name)
     {
-        return Some(sub.family.clone());
+        return Some(native::native_name(&sub.id).unwrap_or_else(|| sub.family.clone()));
     }
     Some(name.to_string())
 }
@@ -451,6 +466,15 @@ mod tests {
             assert_eq!(substitute_for(name).map(|f| f.id.as_str()), case["substitute"].as_str(), "{name:?}");
         }
         assert_eq!(office_font_families("Calibri", Some("emb")), ["emb", "Calibri", "Carlito"]);
+        // What this computer paints with: the real font when it is here, the
+        // stand-in when it is not, and a document's own embedded copy first.
+        set_installed_families(["Georgia".to_string()]);
+        assert_eq!(office_native_family("Georgia", None).as_deref(), Some("Georgia"));
+        assert_eq!(office_native_family("Cambria", None).as_deref(), Some("Caladea"));
+        assert_eq!(office_native_family("Brand Sans", None).as_deref(), Some("Brand Sans"), "no stand-in: the name itself");
+        add_embedded_family("Cambria");
+        assert_eq!(office_native_family("cambria", None).as_deref(), Some("cambria"));
+        assert_eq!(office_native_family("x\u{1}", None), None);
     }
 
     #[test]

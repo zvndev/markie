@@ -1064,7 +1064,12 @@ impl RichView {
 
 impl Render for RichView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        markie_core::render_boundary::project(|| self.project_document(window, cx).into_any_element())
+        markie_core::render_boundary::project(|| {
+            if self.sample.is_some() {
+                return self.render_document(window, cx);
+            }
+            self.project_document(window, cx).into_any_element()
+        })
             .unwrap_or_else(|detail| {
                 cx.emit(crate::RichEvent::RenderFailed(detail));
                 div().into_any_element()

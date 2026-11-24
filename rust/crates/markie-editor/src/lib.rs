@@ -32,6 +32,7 @@ mod video;
 mod lightbox;
 mod format_rail;
 pub mod style;
+pub mod md;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -353,6 +354,15 @@ pub struct RichView {
     pub(crate) block_tops: Vec<Pixels>,
     pub(crate) content_height: Pixels,
     pub(crate) outline: (u64, Vec<markie_rich::editor::OutlineEntry>),
+    /// Section numbers (a style's `headingNumbers`): the editor version they
+    /// were counted at, and the (h2, h3) count before each block.
+    /// Set for a sample of the page (a style card, the style editor's
+    /// preview): the document alone, with this padding (top and bottom,
+    /// sides) and no toolbar, rail or room past the end.
+    pub sample: Option<(f32, f32)>,
+    pub(crate) heading_counts: (u64, Vec<(u32, u32)>),
+    /// The count while one block is drawn.
+    pub(crate) heading_count: (u32, u32),
     /// The toolbar's width last frame, to fit its groups.
     pub(crate) toolbar_width: Pixels,
     /// The typed font size box (`chrome.rs`), made on the first frame.
@@ -456,6 +466,9 @@ impl RichView {
             block_tops: Vec::new(),
             content_height: px(0.),
             outline: (u64::MAX, Vec::new()),
+            sample: None,
+            heading_counts: (u64::MAX, Vec::new()),
+            heading_count: (0, 0),
             toolbar_width: px(0.),
             size_field: None,
             notice: None,

@@ -148,3 +148,57 @@ fn line_baselines_match_chromium() {
         }
     }
 }
+
+/// The bundled library reaches Typst: every family unpacks from woff2 and
+/// is found under the name its files carry.
+#[test]
+fn bundled_fonts_reach_the_pdf_engine() {
+    let families = markie_export::pdf_world::families();
+    let mut missing = Vec::new();
+    for family in markie_core::fonts::bundled_families() {
+        match markie_export::pdf_world::typst_family(&family.id) {
+            Some(name) if families.iter().any(|f| f.eq_ignore_ascii_case(&name)) => {}
+            other => missing.push(format!("{} -> {other:?}", family.id)),
+        }
+    }
+    assert!(missing.is_empty(), "{missing:?}");
+    assert_eq!(markie_export::pdf_world::typst_family("inter").as_deref(), Some("Inter"));
+}
+
+/// Every preset lays out as a PDF, in its own faces, and Spacious is the
+/// source the export always wrote.
+#[test]
+fn every_markdown_style_exports_to_pdf() {
+    use markie_core::markdown_style::{MarkdownStyle, font_tokens};
+    use markie_export::ExportLook;
+    let md = "# Title\n\nFirst paragraph with a [link](https://example.com) and `code`.\n\nSecond paragraph.\n\n## Section\n\n### Part\n\n- one\n  - two\n    - three\n\n1. a\n   1. b\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\n> Quote\n\n---\n\n```sh\nls\n```\n\n#### Minor\n";
+    let (plain, _) = markie_export::pdf::typst_source(md, &PdfOptions::default()).unwrap();
+    let spacious = PdfOptions { look: ExportLook { style: Some(MarkdownStyle::preset("spacious")), body_font: "system".into(), heading_font: "body".into(), code_font: String::new() }, ..Default::default() };
+    assert_eq!(markie_export::pdf::typst_source(md, &spacious).unwrap().0, plain, "Spacious adds nothing");
+    for preset in markie_core::markdown_style::presets().iter().skip(1) {
+        let style = MarkdownStyle::preset(&preset.id);
+        let faces = font_tokens(&style);
+        let look = ExportLook { style: Some(style), body_font: faces.body_font.unwrap_or_default(), heading_font: faces.heading_font.unwrap_or_default(), code_font: faces.code_font.unwrap_or_default() };
+        for theme in [Theme::Light, Theme::Dark] {
+            let opts = PdfOptions { theme, look: look.clone(), ..Default::default() };
+            let (source, _) = markie_export::pdf::typst_source(md, &opts).unwrap();
+            assert_ne!(source, plain, "{}", preset.id);
+            let family = markie_export::pdf_world::typst_family(&look.body_font).unwrap();
+            assert!(source.contains(&format!("#let sans = (\"{family}\", ")), "{}: set in {family}", preset.id);
+            let pdf = export_pdf(md, &opts).unwrap_or_else(|e| panic!("{} {theme:?}: {e}", preset.id));
+            assert!(pdf.starts_with(b"%PDF-"), "{}", preset.id);
+        }
+    }
+    // What each style asks for reaches the page.
+    let source = |id: &str| markie_export::pdf::typst_source(md, &PdfOptions { look: ExportLook { style: Some(MarkdownStyle::preset(id)), ..Default::default() }, ..Default::default() }).unwrap().0;
+    let technical = source("technical");
+    assert!(technical.contains("\"1\u{2002}\"") && technical.contains("\"1.1\u{2002}\""), "sections are numbered");
+    assert!(technical.contains("mk-mark(\"1.1.\", fill: c-fg)"), "legal numbering in the text colour");
+    assert!(technical.contains("grid: true") && technical.contains("head-style: \"filled\"") && technical.contains("mk-quote-card("));
+    let classic = source("classic");
+    assert!(classic.contains("first-line-indent") && classic.contains("align(center, mk-heading(") && classic.contains("\u{2022}\u{2003}\u{2022}"));
+    let editorial = source("editorial");
+    assert!(editorial.contains("rect(width:") && editorial.contains("mk-quote-plain(none, true, true,") && editorial.contains("mk-shape(\"square\", fill: c-link)") && editorial.contains("upper("));
+    let minimal = source("minimal");
+    assert!(minimal.contains("mk-mark(\"\u{2013}\")") && minimal.contains("mk-mark") && minimal.contains("frame: \"bar\"") && minimal.contains("dotted: true"));
+}

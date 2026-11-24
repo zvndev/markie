@@ -60,11 +60,42 @@ pub static FONTS: LazyLock<Fonts> = LazyLock::new(|| {
             fonts.extend(Font::iter(Bytes::new(data)));
         }
     }
+    // The bundled font library: Electron's woff2 files, unpacked to TrueType
+    // (Typst reads no woff2). A file that cannot be unpacked is left out and
+    // text set in it falls back down the stack.
+    for family in markie_core::fonts::bundled_families() {
+        for file in &family.files {
+            if let Some(ttf) = markie_core::fonts::bundled_file(&file.file).and_then(woff2_to_ttf) {
+                fonts.extend(Font::iter(Bytes::new(ttf)));
+            }
+        }
+    }
     // The embedded faces: math, New Computer Modern for \text, DejaVu Sans Mono.
     fonts.extend(typst_assets::fonts().flat_map(|data| Font::iter(Bytes::new(tex_sub_drop(data)))));
     let book = FontBook::from_fonts(&fonts);
     Fonts { book: LazyHash::new(book), fonts }
 });
+
+/// A woff2 file as the TrueType or OpenType font inside it.
+pub fn woff2_to_ttf(data: &[u8]) -> Option<Vec<u8>> {
+    woff2_patched::decode::convert_woff2_to_ttf(&mut std::io::Cursor::new(data)).ok()
+}
+
+/// The family name Typst knows a bundled family by: the one its files
+/// carry, which for a few variable fonts is not the family's own.
+pub fn typst_family(id: &str) -> Option<String> {
+    static NAMES: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+        let mut names = HashMap::new();
+        for family in markie_core::fonts::bundled_families() {
+            let Some(ttf) = family.files.first().and_then(|f| markie_core::fonts::bundled_file(&f.file)).and_then(woff2_to_ttf) else { continue };
+            if let Some(font) = Font::iter(Bytes::new(ttf)).next() {
+                names.insert(family.id.clone(), font.info().family.to_string());
+            }
+        }
+        names
+    });
+    NAMES.get(id).cloned()
+}
 
 /// KaTeX drops a subscript under a big operator or a group by TeX's
 /// `sub_drop`, 0.05em of the script size; New Computer Modern Math's MATH

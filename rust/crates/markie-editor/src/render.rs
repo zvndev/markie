@@ -12,11 +12,15 @@ use super::media::{self, Source};
 use super::{CONTEXT, RichView};
 use markie_rich::edit::Unit;
 use markie_rich::editor::Pos;
+use markie_core::markdown_style::Resolved;
 use markie_rich::model::*;
 use std::collections::HashSet;
 
+use super::md::{self, Bullet, HeadingRule};
+
 /// Sizes and colours for one frame: the `.markdown-body` rules of
 /// `globals.css`, with the template's typography (`style.rs`).
+#[derive(Clone)]
 pub(crate) struct Look {
     /// The body size, zoom included (`--doc-font-size`).
     pub size: f32,
@@ -47,6 +51,11 @@ pub(crate) struct Look {
     /// The template's heading face, when it is not the body's.
     pub heading_family: Option<SharedString>,
     pub mono: SharedString,
+    /// Set when a code font was chosen: its ligatures are turned off, so
+    /// code shows the characters that were typed.
+    pub code_features: Option<FontFeatures>,
+    /// The Markdown style being drawn (md.rs reads it).
+    pub md: Resolved,
     pub focused: bool,
     pub scale: f32,
     /// Reference keys of document links this reader may not follow.
@@ -75,35 +84,99 @@ impl Look {
             strike: false,
             pad_x: px(0.),
             border: None,
+            tracking: px(0.),
+            upper: false,
+            under: None,
+        }
+    }
+
+    /// The code face, with its ligatures off when one was chosen.
+    fn code_font(&self, from: &Font) -> Font {
+        let mut font = Font { family: self.mono.clone(), ..from.clone() };
+        if let Some(f) = &self.code_features {
+            font.features = f.clone();
+        }
+        font
+    }
+
+    /// `li::marker`'s colour (`markerColor`).
+    fn marker_color(&self) -> Hsla {
+        match self.md.choice("markerColor") {
+            "text" => self.fg,
+            "accent" => self.link,
+            _ => self.muted,
+        }
+    }
+
+    fn block_gap(&self) -> f32 {
+        self.md.number("blockGap") as f32
+    }
+}
+
+/// The (h2, h3) section count after `nodes`, in document order.
+fn count_headings(nodes: &[Node], c: &mut (u32, u32)) {
+    for n in nodes {
+        match n {
+            Node::Heading { level: 2, .. } => *c = (c.0 + 1, 0),
+            Node::Heading { level: 3, .. } => c.1 += 1,
+            Node::Blockquote(children) => count_headings(children, c),
+            Node::BulletList { items, .. } | Node::OrderedList { items, .. } => items.iter().for_each(|i| count_headings(i, c)),
+            Node::TaskList { items } => items.iter().for_each(|i| count_headings(&i.content, c)),
+            Node::Table { rows } => rows.iter().flatten().for_each(|cell| count_headings(&cell.content, c)),
+            _ => {}
         }
     }
 }
 
-/// `h1` to `h6`: size and margins in em of the heading, and weight.
-fn heading_metrics(level: u8) -> (f32, f32, f32, f32) {
-    match level {
-        1 => (2.0, 1.5, 0.6, 700.),
-        2 => (1.5, 1.4, 0.5, 650.),
-        3 => (1.25, 1.3, 0.4, 600.),
-        4 => (1.1, 1.2, 0.4, 600.),
-        _ => (1.0, 1.0, 0.3, 600.),
-    }
+/// What a leaf carries beyond its runs.
+#[derive(Default)]
+struct LeafExtras {
+    indent: f32,
+    prefix: Option<(String, SegStyle)>,
 }
 
 /// What a container does to the blocks inside it.
 #[derive(Clone, Copy)]
 pub(crate) struct Ctx {
-    /// A paragraph's margin in em, when not the template's gap (a quote's
-    /// `0.3em`, a task's `0`).
-    pub para_em: Option<f32>,
     /// A paragraph's line height, when not the template's (a task's 1.6).
     pub line_height: Option<f32>,
     /// Text colour, when not the ink (a quote is muted).
     pub color: Option<Hsla>,
+    /// Inside a blockquote, a task item, a list item or a table cell.
+    pub quote: bool,
+    pub task: bool,
+    pub nested: bool,
+    /// The block before this one, in the same container, is a paragraph.
+    pub after_paragraph: bool,
+    /// The block before this one is a picture (for its caption).
+    pub after_image: bool,
+    /// Text is struck through (a finished task, `taskDone: strike`).
+    pub strike: bool,
+    /// Paragraphs are centred (a pull quote).
+    pub center: bool,
+    /// Bulleted and task lists above this block.
+    pub ul_depth: u8,
+    /// Numbered lists above this block, and the place of the item of each
+    /// that holds it (for legal numbering).
+    pub ol_depth: u8,
+    pub ol_path: [u32; 8],
 }
 
 impl Ctx {
-    const DOC: Ctx = Ctx { para_em: None, line_height: None, color: None };
+    const DOC: Ctx = Ctx {
+        line_height: None,
+        color: None,
+        quote: false,
+        task: false,
+        nested: false,
+        after_paragraph: false,
+        after_image: false,
+        strike: false,
+        center: false,
+        ul_depth: 0,
+        ol_depth: 0,
+        ol_path: [0; 8],
+    };
 }
 
 /// Stack blocks the way CSS collapses vertical margins: the space between
@@ -139,13 +212,12 @@ struct Disc {
 /// its baseline where `layout.rs` does; GPUI's descent is negative. Across,
 /// its centre sits 0.685 em before the item's text, measured from Electron
 /// at 16 px.
-fn disc_marker(size: f32, line_height: f32, ascent: f32, descent: f32, scale: f32) -> Disc {
+fn disc_marker(size: f32, line_height: f32, ascent: f32, descent: f32, scale: f32, gutter: f32) -> Disc {
     let (ascent, descent) = (ascent.abs(), descent.abs());
     let a = (ascent * scale).floor() as i32;
     let width = ((a * 2 / 3 + 1) / 2) as f32 / scale;
     let below_ascent = (3 * (a - a * 2 / 3) / 2) as f32 / scale;
     let baseline = (line_height - (ascent + descent)) / 2. + ascent;
-    let gutter = 1.8 * size;
     Disc { left: gutter - 0.685 * size - width / 2., top: baseline - a as f32 / scale + below_ascent, size: width }
 }
 
@@ -153,10 +225,10 @@ impl RichView {
     pub(crate) fn look(&self, theme: &Theme, window: &Window) -> Look {
         let mut font = window.text_style().font();
         font.family = match self.doc_font {
-            "system" => super::style::typeface(&self.style.body_font).map(SharedString::from).unwrap_or_else(|| theme.font_family.clone()),
+            "system" => super::style::typeface(&self.style.body_font).unwrap_or_else(|| theme.font_family.clone()),
             "sans" => theme.font_family.clone(),
             "mono" => SharedString::from(MONO),
-            id => super::style::typeface(id).map(SharedString::from).unwrap_or_else(|| theme.font_family.clone()),
+            id => super::style::typeface(id).unwrap_or_else(|| theme.font_family.clone()),
         };
         if self.doc_font == "system" && self.style.body_font == "mono" {
             font.family = SharedString::from(MONO);
@@ -168,8 +240,15 @@ impl RichView {
             _ if self.doc_font != "system" => None,
             "system" => Some(theme.font_family.clone()),
             "mono" => Some(SharedString::from(MONO)),
-            id => super::style::typeface(id).map(SharedString::from),
+            id => super::style::typeface(id),
         };
+        // `--doc-code-family`: the style's or the person's code face. The
+        // app's own monospace keeps its ligatures, as it always drew.
+        let code_family = match self.style.code_font.as_str() {
+            "" | "mono" => None,
+            id => super::style::typeface(id),
+        };
+        let code_features = code_family.as_ref().map(|_| FontFeatures(Arc::new(vec![("liga".into(), 0), ("calt".into(), 0)])));
         // Chromium paints a contenteditable selection in macOS's selected-text
         // colours, opaque under the text, and in the unemphasized ones while
         // the window or the editor is not focused. Measured from Electron
@@ -193,7 +272,8 @@ impl RichView {
         Look {
             size: base * self.zoom,
             zoom: self.zoom,
-            line_height: self.style.line_height,
+            // `line-height: calc(var(--doc-line-height) * leading)`.
+            line_height: self.style.line_height * self.style.md.number("leading") as f32,
             gap: self.style.paragraph_gap,
             fg: theme.foreground,
             muted: theme.muted_foreground,
@@ -211,7 +291,9 @@ impl RichView {
             find_current: theme.warning.opacity(0.75),
             font,
             heading_family,
-            mono: SharedString::from(MONO),
+            mono: code_family.unwrap_or_else(|| SharedString::from(MONO)),
+            code_features,
+            md: self.style.md.clone(),
             focused: self.focus.is_focused(window),
             scale: window.scale_factor(),
             unshared_links: self.unshared_links.clone(),
@@ -221,28 +303,36 @@ impl RichView {
     /// A block's outer margins (top, bottom) in px, before collapsing.
     pub(crate) fn margins(n: &Node, look: &Look, ctx: Ctx) -> (f32, f32) {
         let s = look.size;
+        let g = look.block_gap();
         match n {
             Node::Paragraph { .. } => {
-                let m = ctx.para_em.unwrap_or(look.gap) * s;
-                (m, m)
+                let (t, b) = md::paragraph_margins(&look.md, look.gap, ctx.task, ctx.quote, ctx.after_paragraph);
+                (t * s, b * s)
             }
             Node::Heading { level, .. } => {
-                let (k, t, b, _) = heading_metrics(*level);
-                (t * k * s, b * k * s)
+                let h = md::heading(&look.md, *level);
+                // `p + h1 { margin-top: 1.6em }`: with no gap of their own,
+                // indented paragraphs need air before a heading.
+                let top = if ctx.after_paragraph && look.md.choice("paragraphStyle") == "indented" { 1.6 } else { h.top };
+                (top * h.size * s, h.bottom * h.size * s)
             }
-            Node::HorizontalRule => (2. * s, 2. * s),
-            Node::Table { .. } => (0.9 * s, 0.9 * s),
+            Node::HorizontalRule => (2. * g * s, 2. * g * s),
+            Node::Table { .. } => (0.9 * g * s, 0.9 * g * s),
             Node::BulletList { items, .. } | Node::OrderedList { items, .. } => {
-                let own = 0.6 * s;
-                let li = 0.3 * s;
-                let first = items.first().and_then(|i| i.first()).map(|n| Self::margins(n, look, Ctx { para_em: None, ..ctx }).0).unwrap_or(0.);
-                let last = items.last().and_then(|i| i.last()).map(|n| Self::margins(n, look, Ctx { para_em: None, ..ctx }).1).unwrap_or(0.);
+                let own = 0.6 * g * s;
+                let li = look.md.number("listItemGap") as f32 * s;
+                let inner = Ctx { nested: true, quote: false, task: false, after_paragraph: false, ..ctx };
+                let first = items.first().and_then(|i| i.first()).map(|n| Self::margins(n, look, inner).0).unwrap_or(0.);
+                let last = items.last().and_then(|i| i.last()).map(|n| Self::margins(n, look, inner).1).unwrap_or(0.);
                 (own.max(li).max(first), own.max(li).max(last))
             }
             Node::TaskList { .. } => {
-                let m = (0.6 * s).max(2.4 * look.zoom);
+                let m = (0.6 * g * s).max(2.4 * look.zoom);
                 (m, m)
             }
+            // A pull quote is 1.2em, and its margin is in its own em.
+            Node::Blockquote(_) if look.md.choice("quoteStyle") == "pull" => (1.2 * g * s, 1.2 * g * s),
+            Node::Blockquote(_) | Node::CodeBlock { .. } | Node::Image { .. } => (g * s, g * s),
             _ => (s, s),
         }
     }
@@ -255,9 +345,32 @@ impl RichView {
             return (m, m);
         }
         let nodes = block.nodes();
-        let top = nodes.first().map(|n| Self::margins(n, look, Ctx::DOC).0).unwrap_or(0.);
-        let bottom = nodes.last().map(|n| Self::margins(n, look, Ctx::DOC).1).unwrap_or(0.);
+        let first = Ctx { after_paragraph: self.block_follows_paragraph(b), ..Ctx::DOC };
+        let last = Ctx { after_paragraph: nodes.len() > 1 && matches!(nodes[nodes.len() - 2], Node::Paragraph { .. }), ..Ctx::DOC };
+        let top = nodes.first().map(|n| Self::margins(n, look, first).0).unwrap_or(0.);
+        let bottom = nodes.last().map(|n| Self::margins(n, look, if nodes.len() > 1 { last } else { first }).1).unwrap_or(0.);
         (top, bottom)
+    }
+
+    /// Is the block before `b` one that ends in a paragraph?
+    fn block_follows_paragraph(&self, b: usize) -> bool {
+        b > 0 && self.editor.doc.blocks.get(b - 1).is_some_and(|p| !p.is_opaque() && matches!(p.nodes().last(), Some(Node::Paragraph { .. })))
+    }
+
+    /// The section count before each block, for a style that numbers headings.
+    fn count_sections(&mut self) {
+        if self.heading_counts.0 == self.editor.version && self.heading_counts.1.len() == self.editor.block_count() {
+            return;
+        }
+        let mut c = (0u32, 0u32);
+        let mut out = Vec::with_capacity(self.editor.block_count());
+        for block in &self.editor.doc.blocks {
+            out.push(c);
+            if !block.is_opaque() {
+                count_headings(block.nodes(), &mut c);
+            }
+        }
+        self.heading_counts = (self.editor.version, out);
     }
 
     /// Is the document's first block an `h1` (whose top margin CSS drops)?
@@ -300,12 +413,15 @@ impl RichView {
         }
         let theme = cx.theme().clone();
         let look = self.look(&theme, window);
+        if look.md.choice("headingNumbers") == "outline" {
+            self.count_sections();
+        }
         // `.markie-document-scroll`'s padding: clamp(1.25rem, 3vw, 2.25rem)
         // above and below, clamp(1.5rem, 4vw, 3rem) at the sides, then the
         // column at min(100%, --doc-width).
         let vw = f32::from(window.viewport_size().width);
-        let pad_y = (vw * 0.03).clamp(20., 36.);
-        let pad_x = (vw * 0.04).clamp(24., 48.);
+        let (pad_y, pad_x) = self.sample.unwrap_or(((vw * 0.03).clamp(20., 36.), (vw * 0.04).clamp(24., 48.)));
+        let past_end = if self.sample.is_some() { 0. } else { 200. };
         let col = match super::style::width_index(self.page_width) {
             0 => px(self.style.content_width),
             4 => px(100_000.),
@@ -493,7 +609,7 @@ impl RichView {
             .text_color(theme.foreground)
             .children(blocks)
             // Room past the end, as a page has: a click there goes to the end.
-            .child(div().h(px(prev_bottom.unwrap_or(0.) + pad_y + 200.)).w_full())
+            .child(div().h(px(prev_bottom.unwrap_or(0.) + pad_y + past_end)).w_full())
             .child(
                 canvas(
                     move |_bounds, window, cx| {
@@ -576,10 +692,16 @@ impl RichView {
         let nodes = block.nodes().to_vec();
         let mut counter = 0usize;
         let mut out = Vec::new();
+        self.heading_count = self.heading_counts.1.get(b).copied().unwrap_or_default();
+        let mut after_paragraph = self.block_follows_paragraph(b);
+        let mut after_image = b > 0 && self.editor.doc.blocks.get(b - 1).is_some_and(|p| !p.is_opaque() && matches!(p.nodes().last(), Some(Node::Image { .. })));
         for (i, n) in nodes.iter().enumerate() {
-            let el = self.render_node(b, n, vec![i], &mut counter, 0, Ctx::DOC, look, window, cx);
-            let (t, bm) = Self::margins(n, look, Ctx::DOC);
+            let ctx = Ctx { after_paragraph, after_image, ..Ctx::DOC };
+            after_image = matches!(n, Node::Image { .. });
+            let el = self.render_node(b, n, vec![i], &mut counter, 0, ctx, look, window, cx);
+            let (t, bm) = Self::margins(n, look, ctx);
             out.push((el, t, bm));
+            after_paragraph = matches!(n, Node::Paragraph { .. });
         }
         stack(out).0
     }
@@ -599,37 +721,96 @@ impl RichView {
     ) -> AnyElement {
         let key = (b, *counter);
         match n {
-            Node::Paragraph { align, .. } => {
+            Node::Paragraph { align, content } => {
                 *counter += 1;
                 let mut base = look.base(look.size);
                 if let Some(c) = ctx.color {
                     base.color = c;
                 }
+                base.strike = ctx.strike;
+                // `captionStyle`: italic text on the line straight after a
+                // picture is its caption, set small and muted.
+                let caption_style = look.md.choice("captionStyle");
+                let caption = caption_style != "inline" && ctx.after_image && is_caption(content);
+                if caption {
+                    base.size = px(look.size * 0.86);
+                    base.color = look.muted;
+                }
                 let lh = ctx.line_height.unwrap_or(look.line_height);
-                self.rich_leaf(key, look, base, lh, align_of(align), window, cx)
+                let style = look.md.choice("paragraphStyle");
+                // `text-indent: 1.5em`, but the first paragraph of a run
+                // starts flush, as a book sets it, and so does anything
+                // inside a list, a quote or a table.
+                let indent = if style == "indented" && ctx.after_paragraph && !ctx.quote && !ctx.nested && !ctx.task { 1.5 * look.size } else { 0. };
+                let fallback = if ctx.center || (caption && caption_style == "centered") {
+                    Align::Center
+                } else if style == "justified" {
+                    Align::Justify
+                } else {
+                    Align::Left
+                };
+                self.rich_leaf(key, look, base, lh, align_or(align, fallback), LeafExtras { indent, prefix: None }, window, cx)
             }
             Node::Heading { level, align, .. } => {
                 *counter += 1;
-                let (k, _, _, weight) = heading_metrics(*level);
-                let size = look.size * k;
+                let h = md::heading(&look.md, *level);
+                let size = look.size * h.size;
                 let mut base = look.base(size);
-                base.font.weight = FontWeight(weight);
+                base.font.weight = FontWeight(h.weight);
                 if let Some(f) = &look.heading_family {
                     base.font.family = f.clone();
                 }
                 if *level >= 5 {
                     base.color = look.muted;
                 }
-                let el = self.rich_leaf(key, look, base, look.line_height, align_of(align), window, cx);
-                // h1 and h2 carry a hairline under them, a little below the text.
-                let rule = match level {
-                    1 => Some(0.3),
-                    2 => Some(0.25),
-                    _ => None,
-                };
-                match rule {
-                    Some(em) => div().pb(px(em * size)).border_b_1().border_color(look.rule).child(el).into_any_element(),
-                    None => el,
+                base.upper = h.upper;
+                base.tracking = px(h.tracking * size);
+                if h.small_caps {
+                    base.font.features = FontFeatures(Arc::new(vec![("smcp".into(), 1)]));
+                }
+                // Sections are counted from the second level down; the title
+                // stands alone. The number is muted and regular, then an en space.
+                let prefix = (look.md.choice("headingNumbers") == "outline")
+                    .then(|| match level {
+                        2 => {
+                            self.heading_count = (self.heading_count.0 + 1, 0);
+                            Some(format!("{}\u{2002}", self.heading_count.0))
+                        }
+                        3 => {
+                            self.heading_count.1 += 1;
+                            Some(format!("{}.{}\u{2002}", self.heading_count.0, self.heading_count.1))
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .map(|text| {
+                        let mut st = base.clone();
+                        st.color = look.muted;
+                        st.font.weight = FontWeight(400.);
+                        st.tracking = px(0.);
+                        (text, st)
+                    });
+                let fallback = if h.center { Align::Center } else { Align::Left };
+                let aligned = align_or(align, fallback);
+                let el = self.rich_leaf(key, look, base, look.line_height, aligned, LeafExtras { indent: 0., prefix }, window, cx);
+                match h.rule {
+                    // h1 and h2 carry a hairline under them, a little below the text.
+                    HeadingRule::Line => div().pb(px(h.pad_bottom * size)).border_b_1().border_color(look.rule).child(el).into_any_element(),
+                    // `::after`: a block 2.2em wide and 3px tall, 0.35em under
+                    // the text, in the link colour; centred with the heading.
+                    HeadingRule::Short => v_flex()
+                        .child(el)
+                        .child(
+                            div()
+                                .mt(px(0.35 * size))
+                                .w(px(2.2 * size))
+                                .h(px(3.))
+                                .rounded(px(2.))
+                                .bg(look.link)
+                                .when(h.center, |d| d.mx_auto()),
+                        )
+                        .into_any_element(),
+                    HeadingRule::None => el,
                 }
             }
             Node::CodeBlock { language, .. } => {
@@ -660,17 +841,16 @@ impl RichView {
                             this.open_prompt(super::PromptKind::CodeLanguage(pos), window, cx);
                         }))
                 });
-                div()
-                    .relative()
-                    .px(px(look.size * 1.2))
-                    .py(px(look.size))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(look.rule)
-                    .bg(look.surface)
-                    .child(el)
-                    .children(lang_button)
-                    .into_any_element()
+                // `pre`: padding 1em 1.2em, a hairline, 8px corners, on the
+                // surface colour; a style changes the frame, never the code.
+                let frame = div().relative().px(px(look.size * 1.2)).py(px(look.size));
+                let frame = match look.md.choice("codeBlockStyle") {
+                    "flat" => frame.rounded(px(6.)).bg(look.surface),
+                    "bordered" => frame.rounded(px(8.)).border_1().border_color(look.rule),
+                    "bar" => frame.border_l(px(3.)).border_color(look.muted).bg(look.surface),
+                    _ => frame.rounded(px(8.)).border_1().border_color(look.rule).bg(look.surface),
+                };
+                frame.child(el).children(lang_button).into_any_element()
             }
             Node::MathBlock { source } => {
                 *counter += 1;
@@ -727,13 +907,56 @@ impl RichView {
             Node::HorizontalRule => {
                 *counter += 1;
                 let selected = self.is_atom_selected(key);
-                div()
-                    .relative()
-                    .h(px(1.))
-                    .w_full()
-                    .bg(if selected { look.link } else { look.rule })
-                    .child(track(self.store.clone(), key))
-                    .into_any_element()
+                let ink = if selected { look.link } else { look.rule };
+                let quiet = if selected { look.link } else { look.muted };
+                match look.md.choice("dividerStyle") {
+                    // 22% of the column, never under 4em, centred.
+                    "short" => div()
+                        .relative()
+                        .w_full()
+                        .flex()
+                        .justify_center()
+                        .child(div().h(px(1.)).w(relative(0.22)).min_w(px(4. * look.size)).bg(ink))
+                        .child(track(self.store.clone(), key))
+                        .into_any_element(),
+                    // `border-top: 2px dotted`, the muted colour at 60%.
+                    "dotted" => div()
+                        .relative()
+                        .w_full()
+                        .h(px(2.))
+                        .child(
+                            canvas(|_, _, _| {}, {
+                                let color = quiet.opacity(if selected { 1. } else { 0.6 });
+                                move |bounds, _, window, _| {
+                                    let mut x = px(0.);
+                                    while x + px(2.) <= bounds.size.width {
+                                        let dot = Bounds::new(point(bounds.origin.x + x, bounds.origin.y), size(px(2.), px(2.)));
+                                        window.paint_quad(fill(dot, color).corner_radii(px(1.)));
+                                        x += px(4.);
+                                    }
+                                }
+                            })
+                            .size_full(),
+                        )
+                        .child(track(self.store.clone(), key))
+                        .into_any_element(),
+                    // Three bullets an em apart, in a line of their own height.
+                    "ornament" => div()
+                        .relative()
+                        .w_full()
+                        .flex()
+                        .justify_center()
+                        .text_size(px(0.9 * look.size))
+                        .line_height(px(0.9 * look.size))
+                        .font_family(look.font.family.clone())
+                        .text_color(quiet)
+                        .child("\u{2022}\u{2003}\u{2022}\u{2003}\u{2022}")
+                        .child(track(self.store.clone(), key))
+                        .into_any_element(),
+                    // Space only: the rule's own margins.
+                    "space" => div().relative().w_full().h(px(if selected { 1. } else { 0. })).bg(ink.opacity(if selected { 1. } else { 0. })).child(track(self.store.clone(), key)).into_any_element(),
+                    _ => div().relative().h(px(1.)).w_full().bg(ink).child(track(self.store.clone(), key)).into_any_element(),
+                }
             }
             Node::Image { src, alt, width, .. } => {
                 *counter += 1;
@@ -744,71 +967,131 @@ impl RichView {
                 self.render_embed(key, url, look, cx)
             }
             Node::Blockquote(children) => {
-                let inner = Ctx { para_em: Some(0.3), color: Some(look.muted), ..ctx };
+                let style = look.md.choice("quoteStyle");
+                // A pull quote is set larger, in italics, on a 1.5 line; an
+                // italic quote keeps the size. Both read in the ink, not muted.
+                let own_look;
+                let look = match style {
+                    "pull" | "italic" => {
+                        let mut l = look.clone();
+                        l.font.style = FontStyle::Italic;
+                        if style == "pull" {
+                            l.size *= 1.2;
+                            l.line_height = 1.5;
+                        }
+                        own_look = l;
+                        &own_look
+                    }
+                    _ => look,
+                };
+                let color = if matches!(style, "pull" | "italic") { None } else { Some(look.muted) };
+                let inner = Ctx { color, quote: true, center: style == "pull", ..ctx };
                 let mut kids = Vec::new();
+                let mut after_paragraph = false;
                 for (i, c) in children.iter().enumerate() {
                     let mut p = path.clone();
                     p.push(i);
-                    let el = self.render_node(b, c, p, counter, depth, inner, look, window, cx);
-                    let (t, bm) = Self::margins(c, look, inner);
+                    let child_ctx = Ctx { after_paragraph, ..inner };
+                    let el = self.render_node(b, c, p, counter, depth, child_ctx, look, window, cx);
+                    let (t, bm) = Self::margins(c, look, child_ctx);
                     kids.push((el, t, bm));
+                    after_paragraph = matches!(c, Node::Paragraph { .. });
                 }
                 // The quote has padding, so its children's margins stay inside.
                 let (el, t, bm) = stack(kids);
-                div()
-                    .relative()
-                    .pl(px(look.size + 3.))
-                    .pr(px(look.size))
-                    .pt(px(look.size * 0.5 + t))
-                    .pb(px(look.size * 0.5 + bm))
-                    .bg(look.surface)
-                    .rounded_tr(px(6.))
-                    .rounded_br(px(6.))
-                    .child(div().absolute().top_0().bottom_0().left_0().w(px(3.)).bg(rgb(QUOTE_RULE)))
-                    .child(el)
-                    .into_any_element()
+                let s = look.size;
+                // `quoteAccent`: the bar's colour.
+                let bar_color: Hsla = match look.md.choice("quoteAccent") {
+                    "quiet" => look.muted,
+                    "link" => look.link,
+                    "text" => look.fg,
+                    _ => rgb(QUOTE_RULE).into(),
+                };
+                let bar = || div().absolute().top_0().bottom_0().left_0().w(px(3.)).bg(bar_color);
+                let frame = div().relative();
+                match style {
+                    // No panel: the bar alone, `padding: 0.1em 1em`.
+                    "bar" => frame.pl(px(s + 3.)).pr(px(s)).pt(px(s * 0.1 + t)).pb(px(s * 0.1 + bm)).child(bar()).child(el),
+                    "italic" => frame.pl(px(s * 1.1 + 3.)).pr(px(s * 1.1)).pt(px(s * 0.1 + t)).pb(px(s * 0.1 + bm)).child(bar()).child(el),
+                    // A hairline all round (it replaces the bar), 8px corners.
+                    "card" => frame.px(px(s * 1.1)).pt(px(s * 0.7 + t)).pb(px(s * 0.7 + bm)).border_1().border_color(look.rule).rounded(px(8.)).bg(look.surface).child(el),
+                    // No bar and no panel: `padding: 0.4em 2em` of its own em.
+                    "pull" => frame.px(px(s * 2.)).pt(px(s * 0.4 + t)).pb(px(s * 0.4 + bm)).child(el),
+                    _ => frame
+                        .pl(px(s + 3.))
+                        .pr(px(s))
+                        .pt(px(s * 0.5 + t))
+                        .pb(px(s * 0.5 + bm))
+                        .bg(look.surface)
+                        .rounded_tr(px(6.))
+                        .rounded_br(px(6.))
+                        .child(bar())
+                        .child(el),
+                }
+                .into_any_element()
             }
             Node::BulletList { items, .. } | Node::OrderedList { items, .. } => {
                 let start = match n {
                     Node::OrderedList { start, .. } => Some(*start),
                     _ => None,
                 };
-                let item_ctx = Ctx { para_em: None, ..ctx };
-                let li = 0.3 * look.size;
-                let gutter = 1.8 * look.size;
+                // `padding-left` (listIndent) and `li { margin }` (listItemGap).
+                let li = look.md.number("listItemGap") as f32 * look.size;
+                let gutter = look.md.number("listIndent") as f32 * look.size;
+                let marker_color = look.marker_color();
+                let bullet = md::bullet(&look.md, ctx.ul_depth);
                 let mut rows = Vec::new();
                 for (k, item) in items.iter().enumerate() {
                     let mut ip = path.clone();
                     ip.push(k);
+                    let mut item_ctx = Ctx { nested: true, quote: false, task: false, after_paragraph: false, ..ctx };
+                    match start {
+                        Some(_) => {
+                            if (ctx.ol_depth as usize) < item_ctx.ol_path.len() {
+                                item_ctx.ol_path[ctx.ol_depth as usize] = k as u32 + 1;
+                            }
+                            item_ctx.ol_depth = ctx.ol_depth.saturating_add(1);
+                        }
+                        None => item_ctx.ul_depth = ctx.ul_depth.saturating_add(1),
+                    }
                     let (body, t, bm) = self.render_item(b, item, ip, counter, depth, item_ctx, look, window, cx);
-                    // `::marker`: outside, muted, at the item's own size.
+                    // `::marker`: outside, at the item's own size.
                     let lh = look.size * ctx.line_height.unwrap_or(look.line_height);
-                    let marker = match start {
-                        Some(s) => div()
+                    let text_marker = |text: String, pad: f32| {
+                        div()
                             .w(px(gutter))
                             .flex_none()
                             .flex()
                             .justify_end()
-                            .pr(px(look.size * 0.3))
+                            .whitespace_nowrap()
+                            .pr(px(pad))
                             .text_size(px(look.size))
                             .line_height(px(lh))
                             .font_family(look.font.family.clone())
-                            .text_color(look.muted)
-                            .child(format!("{}.", s + k as u64)),
-                        None => {
+                            .text_color(marker_color)
+                            .child(text)
+                    };
+                    let marker = match (start, bullet) {
+                        (Some(s), _) => {
+                            let path = &ctx.ol_path[..(ctx.ol_depth as usize).min(ctx.ol_path.len())];
+                            // The marker's own trailing space is the 0.3em here.
+                            text_marker(md::ordered_marker(&look.md, s + k as u64, k as u64 + 1, ctx.ol_depth, path), look.size * 0.3)
+                        }
+                        (None, Bullet::Text(text)) => text_marker(text.to_string(), 0.),
+                        (None, shape) => {
                             let ts = window.text_system();
                             let id = ts.resolve_font(&look.font);
                             let (asc, desc) = (f32::from(ts.ascent(id, px(look.size))), f32::from(ts.descent(id, px(look.size))));
-                            let disc = disc_marker(look.size, lh, asc, desc, window.scale_factor());
-                            div().w(px(gutter)).h(px(lh)).flex_none().relative().child(
-                                div()
-                                    .absolute()
-                                    .left(px(disc.left))
-                                    .top(px(disc.top))
-                                    .size(px(disc.size))
-                                    .rounded_full()
-                                    .bg(look.muted),
-                            )
+                            let disc = disc_marker(look.size, lh, asc, desc, window.scale_factor(), gutter);
+                            // Chromium gives disc, circle and square one box:
+                            // filled round, a 1px ring, or filled square.
+                            let dot = div().absolute().left(px(disc.left)).top(px(disc.top)).size(px(disc.size));
+                            let dot = match shape {
+                                Bullet::Circle => dot.rounded_full().border_1().border_color(marker_color),
+                                Bullet::Square => dot.bg(marker_color),
+                                _ => dot.rounded_full().bg(marker_color),
+                            };
+                            div().w(px(gutter)).h(px(lh)).flex_none().relative().child(dot)
                         }
                     };
                     let row = h_flex()
@@ -821,22 +1104,43 @@ impl RichView {
                 stack(rows).0
             }
             Node::TaskList { items } => {
-                let item_ctx = Ctx { para_em: Some(0.), line_height: Some(1.6), ..ctx };
                 let li = 2.4 * look.zoom;
+                let box_style = look.md.choice("taskStyle");
+                let done_style = look.md.choice("taskDone");
                 let mut rows = Vec::new();
                 for (k, item) in items.iter().enumerate() {
                     let mut ip = path.clone();
                     ip.push(k);
                     let checked = item.checked;
                     let item_path = ip.clone();
+                    // A finished item reads muted, or muted and struck through.
+                    let done = checked && done_style != "plain";
+                    let item_ctx = Ctx {
+                        line_height: Some(1.6),
+                        task: true,
+                        nested: true,
+                        after_paragraph: false,
+                        ul_depth: ctx.ul_depth.saturating_add(1),
+                        color: if done { Some(look.muted) } else { ctx.color },
+                        strike: ctx.strike || (checked && done_style == "strike"),
+                        ..ctx
+                    };
+                    // `taskStyle`: a rounded box, a circle, or a thin outline
+                    // whose tick takes the link colour instead of a fill.
+                    let thin = box_style == "minimal";
+                    let edge = match (checked, thin) {
+                        (true, _) => look.link,
+                        (false, true) => look.muted,
+                        (false, false) => look.accent,
+                    };
                     let bx = div()
                         .id(SharedString::from(format!("task-{b}-{}", ip.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("-"))))
                         .size(px(16.))
                         .flex_none()
-                        .rounded(px(4.))
-                        .border_2()
-                        .border_color(if checked { look.link } else { look.accent })
-                        .when(checked, |d| d.bg(look.link))
+                        .map(|d| if box_style == "round" { d.rounded_full() } else { d.rounded(px(4.)) })
+                        .map(|d| if thin { d.border(px(1.5)) } else { d.border_2() })
+                        .border_color(edge)
+                        .when(checked && !thin, |d| d.bg(look.link))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -847,7 +1151,7 @@ impl RichView {
                                     .text_size(px(11.))
                                     .line_height(px(11.))
                                     .font_weight(FontWeight::BOLD)
-                                    .text_color(look.background)
+                                    .text_color(if thin { look.link } else { look.background })
                                     .child("✓"),
                             )
                         })
@@ -869,13 +1173,14 @@ impl RichView {
                 }
                 stack(rows).0
             }
-            Node::Table { rows } => self.render_table(b, rows, path, counter, depth, look, window, cx),
+            Node::Table { rows } => self.render_table(b, rows, path, counter, depth, ctx, look, window, cx),
         }
     }
 
     /// `.markdown-body table`: columns as wide as their text (the table is
     /// `display: block`, so it does not stretch), header cells bold and
-    /// centred unless aligned, a hairline under each body row.
+    /// centred unless aligned, a hairline under each body row. A Markdown
+    /// style changes the borders, the header row, the padding and the width.
     #[allow(clippy::too_many_arguments)]
     fn render_table(
         &mut self,
@@ -884,13 +1189,28 @@ impl RichView {
         path: Vec<usize>,
         counter: &mut usize,
         depth: usize,
+        ctx: Ctx,
         look: &Look,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let size = look.size * 0.9;
         let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-        let pad = |header: bool| if header { 1. } else { size };
+        let borders = look.md.choice("tableStyle");
+        let header_style = look.md.choice("tableHeader");
+        let table_width = look.md.choice("tableWidth");
+        // A header cell keeps the browser's own 1px unless a density sets it.
+        let padding = |header: bool| match md::cell_padding(&look.md, header) {
+            Some((x, y)) => (x * size, y * size),
+            None => (1., 1.),
+        };
+        // `tableHeader`: bold (the browser's own), 650, 600 on a fill, or 500 muted.
+        let (header_weight, header_color, header_fill) = match header_style {
+            "bold" => (FontWeight(650.), look.fg, None),
+            "filled" => (FontWeight(600.), look.fg, Some(look.accent)),
+            "plain" => (FontWeight(500.), look.muted, None),
+            _ => (FontWeight::BOLD, look.fg, None),
+        };
         // Column widths from each cell's text on one line.
         let mut widths = vec![48f32 * look.zoom; ncols];
         for row in rows {
@@ -898,7 +1218,7 @@ impl RichView {
                 let text = cell_text(&cell.content);
                 let mut st = look.base(size);
                 if cell.header {
-                    st.font.weight = FontWeight::BOLD;
+                    st.font.weight = header_weight;
                 }
                 let w = if text.is_empty() {
                     0.
@@ -906,7 +1226,7 @@ impl RichView {
                     let run = TextRun { len: text.len(), font: st.font.clone(), color: st.color, background_color: None, underline: None, strikethrough: None };
                     f32::from(window.text_system().shape_line(SharedString::from(text), st.size, &[run], None).width)
                 };
-                widths[c] = widths[c].max(w + 2. * pad(cell.header) + 2.);
+                widths[c] = widths[c].max(w + 2. * padding(cell.header).0 + 2.);
             }
         }
         // Narrower than the column: share the room in proportion.
@@ -916,7 +1236,11 @@ impl RichView {
             let k = room / total;
             widths.iter_mut().for_each(|w| *w *= k);
         }
-        let para = Ctx::DOC;
+        // `display: table; width: 100%`: the columns share the whole width
+        // in proportion to their text.
+        let full = table_width == "full";
+        let grid = borders == "grid";
+        let para = Ctx { nested: true, quote: false, task: false, after_paragraph: false, center: false, ..ctx };
         let mut out_rows = Vec::new();
         for (r, row) in rows.iter().enumerate() {
             let header_row = row.iter().all(|c| c.header);
@@ -942,10 +1266,11 @@ impl RichView {
                             *counter += 1;
                             let mut base = look.base(size);
                             if cell.header {
-                                base.font.weight = FontWeight::BOLD;
+                                base.font.weight = header_weight;
+                                base.color = header_color;
                             }
-                            let el = self.rich_leaf(k, look, base, look.line_height, align, window, cx);
-                            let m = look.gap * size;
+                            let el = self.rich_leaf(k, look, base, look.line_height, align, LeafExtras::default(), window, cx);
+                            let m = md::paragraph_margins(&look.md, look.gap, false, false, false).0 * size;
                             kids.push((el, m, m));
                         }
                         other => {
@@ -956,32 +1281,58 @@ impl RichView {
                     }
                 }
                 let (el, t, bm) = stack(kids);
-                let (px_, py_) = if cell.header { (1., 1.) } else { (size, size * 0.55) };
-                cells.push(
-                    div()
-                        .w(px(widths.get(c).copied().unwrap_or(48.)))
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .justify_center()
-                        .px(px(px_))
-                        .pt(px(py_ + t))
-                        .pb(px(py_ + bm))
-                        .child(el)
-                        .into_any_element(),
-                );
+                let (px_, py_) = padding(cell.header);
+                let width = widths.get(c).copied().unwrap_or(48.);
+                let cell_el = div()
+                    .w(px(width))
+                    .map(|mut d| {
+                        if full {
+                            // `flex: <width> 0 <width>`: grow by its own share.
+                            d.style().flex_grow = Some(width.max(1.));
+                            d.style().flex_shrink = Some(1.);
+                            d
+                        } else {
+                            d.flex_none()
+                        }
+                    })
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .px(px(px_))
+                    .pt(px(py_ + t))
+                    .pb(px(py_ + bm))
+                    .when(cell.header, |d| d.when_some(header_fill, |d, fill| d.bg(fill)))
+                    // `border: 1px solid`, collapsed: each cell draws its
+                    // right and bottom edge, the table its left and top.
+                    .when(grid, |d| d.border_r_1().border_b_1().border_color(look.rule))
+                    // Minimal: one quiet line under the header, nothing else.
+                    .when(borders == "minimal" && cell.header, |d| d.border_b_1().border_color(look.muted))
+                    .child(el);
+                cells.push(cell_el.into_any_element());
             }
             let surface = look.surface;
+            // Body rows carry a hairline; zebra keeps its room but not its
+            // ink, and shades every second row (the header row counts).
+            let line = match borders {
+                "lines" => Some(look.rule),
+                "zebra" => Some(gpui_kit::transparent_black()),
+                _ => None,
+            };
             out_rows.push(
                 h_flex()
                     .id(SharedString::from(format!("row-{b}-{r}")))
                     .items_stretch()
-                    .when(!header_row, |d| d.border_b_1().border_color(look.rule).hover(move |s| s.bg(surface)))
+                    .when(full, |d| d.w_full())
+                    .when(borders == "zebra" && r % 2 == 1, |d| d.bg(surface))
+                    .when(!header_row, |d| d.when_some(line, |d, c| d.border_b_1().border_color(c)))
+                    .when(!header_row && borders != "minimal", |d| d.hover(move |s| s.bg(surface)))
                     .children(cells)
                     .into_any_element(),
             );
         }
-        div().flex().child(v_flex().children(out_rows)).into_any_element()
+        let body = v_flex().when(full, |d| d.w_full()).when(grid, |d| d.border_l_1().border_t_1().border_color(look.rule)).children(out_rows);
+        // `width: fit-content; margin: auto` centres it; otherwise it starts at the left.
+        div().flex().when(table_width == "centered", |d| d.justify_center()).child(body).into_any_element()
     }
 
     /// A list item's blocks, stacked; returns its outer margins too.
@@ -1003,15 +1354,18 @@ impl RichView {
             let key = (b, *counter);
             *counter += 1;
             let lh = ctx.line_height.unwrap_or(look.line_height);
-            return (self.rich_leaf(key, look, look.base(look.size), lh, Align::Left, window, cx), 0., 0.);
+            return (self.rich_leaf(key, look, look.base(look.size), lh, Align::Left, LeafExtras::default(), window, cx), 0., 0.);
         }
         let mut kids = Vec::new();
+        let mut after_paragraph = false;
         for (j, n) in item.iter().enumerate() {
             let mut p = path.clone();
             p.push(j);
-            let el = self.render_node(b, n, p, counter, depth + 1, ctx, look, window, cx);
-            let (t, bm) = Self::margins(n, look, ctx);
+            let child = Ctx { after_paragraph, ..ctx };
+            let el = self.render_node(b, n, p, counter, depth + 1, child, look, window, cx);
+            let (t, bm) = Self::margins(n, look, child);
             kids.push((el, t, bm));
+            after_paragraph = matches!(n, Node::Paragraph { .. });
         }
         stack(kids)
     }
@@ -1027,6 +1381,10 @@ impl RichView {
     fn render_image(&mut self, key: LeafKey, src: &str, alt: Option<&str>, width: Option<u32>, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.is_atom_selected(key);
         let pos = Pos::new(key.0, key.1, 0);
+        // `imageRadius`, `imageFrame` and `imageAlign`.
+        let radius = look.md.number("imageRadius") as f32;
+        let frame = look.md.choice("imageFrame");
+        let centered = look.md.choice("imageAlign") == "center";
         let live = self.live_width.filter(|(p, _)| *p == pos).map(|(_, w)| w);
         let w = live.or(width.map(|w| w as f32));
         let kind = markie_rich::html::media_kind(src);
@@ -1103,7 +1461,7 @@ impl RichView {
             };
             match el {
                 Some(i) => {
-                    let i = i.object_fit(ObjectFit::Contain).with_fallback(fallback.clone()).max_w_full().rounded(px(8.));
+                    let i = i.object_fit(ObjectFit::Contain).with_fallback(fallback.clone()).max_w_full().rounded(px(radius));
                     match w {
                         Some(w) => i.w(px(w * look.zoom)).into_any_element(),
                         None => i.into_any_element(),
@@ -1154,6 +1512,7 @@ impl RichView {
         // The selected picture has a 2px blue outline, 2px off its edge.
         div()
             .flex()
+            .when(centered, |d| d.justify_center())
             .child(
                 div()
                     .group(group)
@@ -1161,10 +1520,14 @@ impl RichView {
                     .flex_none()
                     .max_w_full()
                     .when(w.is_some(), |d| d.w(px(w.unwrap() * look.zoom)))
-                    .rounded(px(8.))
+                    .rounded(px(radius))
+                    .when(frame == "border", |d| d.border_1().border_color(look.rule))
+                    .when(frame == "shadow", |d| {
+                        d.shadow(vec![BoxShadow { color: hsla(0., 0., 0., 0.18), offset: point(px(0.), px(6.)), blur_radius: px(24.), spread_radius: px(0.), inset: false }])
+                    })
                     .child(image)
                     .when(selected, |d| {
-                        d.child(div().absolute().top(px(-4.)).left(px(-4.)).right(px(-4.)).bottom(px(-4.)).rounded(px(10.)).border_2().border_color(look.link))
+                        d.child(div().absolute().top(px(-4.)).left(px(-4.)).right(px(-4.)).bottom(px(-4.)).rounded(px(radius + 2.)).border_2().border_color(look.link))
                     })
                     .child(track(self.store.clone(), key))
                     .children(handles),
@@ -1341,7 +1704,7 @@ impl RichView {
 
     /// A paragraph, heading or cell: styled runs, inline formulas, breaks.
     #[allow(clippy::too_many_arguments)]
-    fn rich_leaf(&mut self, key: LeafKey, look: &Look, base: SegStyle, line_height: f32, align: Align, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn rich_leaf(&mut self, key: LeafKey, look: &Look, base: SegStyle, line_height: f32, align: Align, extras: LeafExtras, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let units = self.editor.units(key.0, key.1);
         let size = f32::from(base.size);
         let mut segs: Vec<Seg> = Vec::new();
@@ -1369,7 +1732,7 @@ impl RichView {
                 Unit::Atom(Inline::Math { source }) => {
                     // KaTeX draws inline formulas at 1.21em too.
                     let m = self.media.math(source, false, base.color, size * 1.21, look.scale);
-                    let fallback_style = SegStyle { color: gpui_kit::red(), font: Font { family: look.mono.clone(), ..base.font.clone() }, ..base.clone() };
+                    let fallback_style = SegStyle { color: gpui_kit::red(), font: look.code_font(&base.font), ..base.clone() };
                     segs.push(Seg {
                         kind: match m {
                             Some(m) => SegKind::Box {
@@ -1396,7 +1759,7 @@ impl RichView {
         if !self.read_only {
             deco.misspelled = self.misspelled(key, &units, cx);
         }
-        let spec = LeafSpec { segs, base, line_height, align, len };
+        let spec = LeafSpec { segs, base, line_height, align, len, indent: px(extras.indent), prefix: extras.prefix };
         let el = LeafElement::new(key, spec, deco, self.store.clone());
         // Inline formulas open their source on a click.
         let math_at: Vec<usize> = units.iter().enumerate().filter(|(_, u)| matches!(u, Unit::Atom(Inline::Math { .. }))).map(|(i, _)| i).collect();
@@ -1431,7 +1794,7 @@ impl RichView {
         let units = self.editor.units(key.0, key.1);
         let text: String = units.iter().map(|u| u.display()).collect();
         let mut base = look.base(size);
-        base.font.family = look.mono.clone();
+        base.font = look.code_font(&base.font);
         base.color = color;
         let mut segs: Vec<Seg> = Vec::new();
         let chars: Vec<char> = text.chars().collect();
@@ -1455,7 +1818,7 @@ impl RichView {
         if spell && !self.read_only {
             deco.misspelled = self.misspelled(key, &units, cx);
         }
-        let spec = LeafSpec { segs, base, line_height, align: Align::Left, len };
+        let spec = LeafSpec { segs, base, line_height, align: Align::Left, len, indent: px(0.), prefix: None };
         div().w_full().child(LeafElement::new(key, spec, deco, self.store.clone())).into_any_element()
     }
 }
@@ -1478,11 +1841,14 @@ fn img_el(i: Arc<Image>) -> Img {
     img(i)
 }
 
-fn align_of(a: &Option<String>) -> Align {
+/// TipTap's `textAlign` on the block, or what its style gives it.
+fn align_or(a: &Option<String>, fallback: Align) -> Align {
     match a.as_deref() {
         Some("center") => Align::Center,
         Some("right") => Align::Right,
-        _ => Align::Left,
+        Some("left") => Align::Left,
+        Some("justify") => Align::Justify,
+        _ => fallback,
     }
 }
 
@@ -1514,7 +1880,21 @@ fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
     if let Some(link) = &m.link {
         // `a[data-doc-link="none"]`: muted, for a document not shared with
         // this reader.
-        s.color = if !look.unshared_links.is_empty() && look.unshared_links.contains(&media::reference_key(&link.href)) { look.muted } else { look.link };
+        let unshared = !look.unshared_links.is_empty() && look.unshared_links.contains(&media::reference_key(&link.href));
+        s.color = if unshared { look.muted } else { look.link };
+        // `linkStyle`: how a link is marked in running text. A link this
+        // reader may not follow keeps its own look.
+        if !unshared {
+            match look.md.choice("linkStyle") {
+                "underline" => s.under = Some((look.link.opacity(0.55), false)),
+                "dotted" => s.under = Some((look.link, true)),
+                "ink" => {
+                    s.color = base.color;
+                    s.under = Some((look.link, false));
+                }
+                _ => {}
+            }
+        }
     }
     if let Some(h) = &m.highlight {
         let c = h.color.as_deref().and_then(media::css_color).unwrap_or_else(|| rgb(0xfef08a).into());
@@ -1524,14 +1904,37 @@ fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
         s.color = rgb(0x1f2328).into();
     }
     if m.code {
-        s.font.family = look.mono.clone();
+        s.font = look.code_font(&s.font);
         s.size = s.size * 0.88;
-        s.color = look.code_fg;
-        s.background = Some(look.surface);
-        s.border = Some(look.rule);
-        s.pad_x = s.size * 0.4;
+        s.tracking = px(0.);
+        s.upper = false;
+        // `inlineCodeStyle`: a chip (fill, hairline, coloured ink), the fill
+        // alone, the hairline alone, or the coloured ink alone.
+        let (fill, edge, ink, pad) = match look.md.choice("inlineCodeStyle") {
+            "flat" => (true, false, s.color, true),
+            "bordered" => (false, true, s.color, true),
+            "plain" => (false, false, look.code_fg, false),
+            _ => (true, true, look.code_fg, true),
+        };
+        s.color = ink;
+        s.background = fill.then_some(look.surface);
+        s.border = edge.then_some(look.rule);
+        s.pad_x = if pad { s.size * 0.4 } else { px(0.) };
     }
     s
+}
+
+/// A paragraph that is nothing but emphasised text.
+fn is_caption(content: &[Inline]) -> bool {
+    let mut any = false;
+    for inline in content {
+        match inline {
+            Inline::Text { text, marks } if marks.italic => any |= !text.trim().is_empty(),
+            Inline::Text { text, .. } if text.trim().is_empty() => {}
+            _ => return false,
+        }
+    }
+    any
 }
 
 /// A cell's text on one line, to size its column.
@@ -1560,14 +1963,17 @@ mod tests {
         // SF Pro at 16 px in a 1.75 line on a 2x screen: ascent 30.4 device
         // pixels floors to 30, so a 10 px (5 pt) disc 15 px below the ascent
         // line, its top 7.5 pt over the baseline; Electron's measures 7.25.
-        let d = disc_marker(16., 28., 15.2, -3.85, 2.);
+        let d = disc_marker(16., 28., 15.2, -3.85, 2., 1.8 * 16.);
         assert_eq!(d.size, 5.);
         let baseline = (28. - (15.2 + 3.85)) / 2. + 15.2;
         assert!((baseline - d.top - 7.5).abs() < 0.01, "{d:?}");
         assert!((1.8 * 16. - (d.left + d.size / 2.) - 0.685 * 16.).abs() < 0.01);
         // On a 1x screen Chromium rounds in its own pixels: 15 floors to 15, 5 px.
-        assert_eq!(disc_marker(16., 28., 15.2, -3.85, 1.).size, 5.);
+        assert_eq!(disc_marker(16., 28., 15.2, -3.85, 1., 28.8).size, 5.);
         // Zoom grows it in whole device pixels.
-        assert_eq!(disc_marker(32., 56., 30.4, -7.7, 2.).size, 10.);
+        assert_eq!(disc_marker(32., 56., 30.4, -7.7, 2., 57.6).size, 10.);
+        // A style's list indent moves the gutter; the disc keeps its place before the text.
+        let narrow = disc_marker(16., 28., 15.2, -3.85, 2., 1.4 * 16.);
+        assert!((1.4 * 16. - (narrow.left + narrow.size / 2.) - 0.685 * 16.).abs() < 0.01);
     }
 }

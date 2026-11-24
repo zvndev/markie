@@ -6,6 +6,7 @@
 //! document exports its original bytes; edits rewrite only the parts they own.
 
 mod edit;
+pub mod fonts;
 mod links;
 mod media;
 mod parts;

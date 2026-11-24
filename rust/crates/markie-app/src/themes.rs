@@ -125,6 +125,35 @@ pub struct ThemeState(pub ThemeStore);
 
 impl Global for ThemeState {}
 
+/// The code font chosen on this computer (Electron's `markie.fonts.v1`): a
+/// monospace typeface id, or "" for the app's own. It belongs to the
+/// computer, not the account, so it lives beside the store and never in it.
+pub struct OwnCodeFont(pub String);
+
+impl Global for OwnCodeFont {}
+
+pub fn own_code_font(cx: &App) -> String {
+    cx.try_global::<OwnCodeFont>().map(|f| f.0.clone()).unwrap_or_default()
+}
+
+/// Remember this computer's code font and repaint with it. Returns the id
+/// kept ("" for anything that is not a monospace face).
+pub fn set_own_code_font(id: &str, window: Option<&mut Window>, cx: &mut App) -> String {
+    let clean = markie_core::fonts::clean_code_font(id);
+    cx.set_global(OwnCodeFont(clean.clone()));
+    apply_store(store(cx), window, cx);
+    clean
+}
+
+/// The family GPUI draws a typeface id in: the app's own face for `system`,
+/// SF Mono for `mono`, and the registry's answer for everything else.
+pub fn face_family(id: &str) -> SharedString {
+    match id {
+        "mono" => markie_editor::MONO.into(),
+        id => markie_editor::style::typeface(id).unwrap_or_else(|| ".SystemUIFont".into()),
+    }
+}
+
 /// The store in use, or Markie's default before one is applied.
 pub fn store(cx: &App) -> ThemeStore {
     cx.try_global::<ThemeState>().map(|s| s.0.clone()).unwrap_or_default()
@@ -150,7 +179,10 @@ pub fn apply(id: &str, window: Option<&mut Window>, cx: &mut App) {
 /// Paint `store`: its light and dark presets become GPUI Kit's themes and
 /// Markie's palettes, and the store becomes the global every view reads.
 pub fn apply_store(store: ThemeStore, window: Option<&mut Window>, cx: &mut App) {
-    let store = store.normalized();
+    let mut store = store.normalized();
+    // Whatever store is painted (the person's, the account's, an owner's
+    // pinned one), this computer's code font rides on it.
+    store.own_code_font = Some(own_code_font(cx)).filter(|f| !f.is_empty());
     let name = store.active_template().name.clone();
     let (light_p, _) = store.painted(Tone::Light);
     let (dark_p, _) = store.painted(Tone::Dark);

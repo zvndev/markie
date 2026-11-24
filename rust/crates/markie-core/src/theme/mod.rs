@@ -8,7 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-const TEMPLATES_JSON: &str = include_str!("../../markie-app/themes/templates.json");
+use crate::markdown_style::{self, MarkdownStyle, StyleStore};
+
+const TEMPLATES_JSON: &str = include_str!("../../../markie-app/themes/templates.json");
 
 pub const HEADING_SAME_AS_BODY: &str = "body";
 
@@ -43,6 +45,10 @@ pub struct ThemeTokens {
     pub body_font: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heading_font: Option<String>,
+    /// The face document code is set in: a Markdown style's, or the one an
+    /// owner pinned. A monospace typeface id from the font registry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_font: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_height: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,8 +160,25 @@ fn clamp(v: Option<f64>, fallback: f64, min: f64, max: f64) -> f64 {
     }
 }
 
+/// A face the font registry knows: a system face, a bundled library family,
+/// or a well-formed `local:` id (a font on one computer).
 fn known_face(id: Option<&str>) -> bool {
-    id.is_some_and(|i| TYPEFACES.iter().any(|t| t.id == i))
+    id.is_some_and(|i| crate::fonts::find_typeface(i).is_some())
+}
+
+/// What a typeface id is called in a picker.
+pub fn face_label(id: &str) -> String {
+    crate::fonts::find_typeface(id).map(|f| f.label).unwrap_or_else(|| TYPEFACES[0].label.to_string())
+}
+
+/// The native families a typeface id paints with, in preference order: a
+/// system face's own stack, a bundled family's name, or a local font (the
+/// bundled face it names when this computer does not have it).
+pub fn native_families(id: &str) -> Vec<String> {
+    if let Some(family) = crate::fonts::native_family(id) {
+        return vec![family];
+    }
+    typeface(id).families.iter().map(|f| f.to_string()).collect()
 }
 
 /// `typographyOf`: every value checked before it reaches the renderer.
@@ -176,11 +199,11 @@ pub fn typography_of(t: &ThemeTokens) -> Typography {
 
 impl Typography {
     /// Native families for the body and for headings (None: same as body).
-    pub fn body_families(&self) -> &'static [&'static str] {
-        typeface(&self.body_font).families
+    pub fn body_families(&self) -> Vec<String> {
+        native_families(&self.body_font)
     }
-    pub fn heading_families(&self) -> Option<&'static [&'static str]> {
-        (self.heading_font != HEADING_SAME_AS_BODY).then(|| typeface(&self.heading_font).families)
+    pub fn heading_families(&self) -> Option<Vec<String>> {
+        (self.heading_font != HEADING_SAME_AS_BODY).then(|| native_families(&self.heading_font))
     }
 }
 
@@ -311,11 +334,33 @@ pub struct ThemeStore {
     pub overrides: Option<Overrides>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typography: Option<TypographyPatch>,
+    /// How Markdown is drawn (markdown_style.rs): the saved style profiles
+    /// and the one in use. Apart from templates on purpose, so any style
+    /// works with any colours and survives a change of template. Cleaned as
+    /// it is read: it may have been written by another device, or by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "read_style_store")]
+    pub markdown_style: Option<StyleStore>,
+    /// The code font chosen on this computer (Electron's `markie.fonts.v1`).
+    /// It is a preference of the computer, not the account: never written
+    /// into the store's JSON, so it does not sync.
+    #[serde(skip)]
+    pub own_code_font: Option<String>,
+    /// This store paints an owner's pinned look (pinned_look.rs): its active
+    /// preset shows in either mode, and its tokens already name the faces
+    /// every reader gets, so neither the style's faces nor this computer's
+    /// code font are laid over them.
+    #[serde(skip)]
+    pub pinned: bool,
+}
+
+fn read_style_store<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<StyleStore>, D::Error> {
+    let raw = serde_json::Value::deserialize(d)?;
+    Ok(crate::markdown_style::sanitize_store(&raw))
 }
 
 impl Default for ThemeStore {
     fn default() -> Self {
-        Self { active_id: "markie-dark".into(), custom: Vec::new(), template_id: None, overrides: None, typography: None }
+        Self { active_id: "markie-dark".into(), custom: Vec::new(), template_id: None, overrides: None, typography: None, markdown_style: None, own_code_font: None, pinned: false }
     }
 }
 
@@ -340,6 +385,8 @@ fn clean_patch(p: &TypographyPatch) -> TypographyPatch {
         content_width: p.content_width.map(|_| t.content_width),
     }
 }
+
+pub mod pinned_look;
 
 impl ThemeStore {
     /// Parse a stored store; anything unreadable is the default.
@@ -395,7 +442,33 @@ impl ThemeStore {
         self.with_tweaks(preset)
     }
 
+    /// The order is the rule for fonts (`findTheme`): the template's own
+    /// tokens, then the typefaces of the Markdown style in use, then what the
+    /// person picked themselves (their code font, a typography tweak).
+    /// Spacious names no face, so with no tweaks this is the template's
+    /// preset itself, as it always was.
     fn with_tweaks(&self, mut p: ThemePreset) -> ThemePreset {
+        if self.pinned {
+            // A pinned look falls back to this computer's code font only
+            // when it names none of its own.
+            if p.tokens.code_font.is_none() {
+                p.tokens.code_font = self.own_code_font.clone().filter(|f| !f.is_empty());
+            }
+            return p;
+        }
+        let fonts = markdown_style::font_tokens(&self.active_style());
+        if let Some(f) = fonts.body_font {
+            p.tokens.body_font = Some(f);
+        }
+        if let Some(f) = fonts.heading_font {
+            p.tokens.heading_font = Some(f);
+        }
+        if let Some(f) = fonts.code_font {
+            p.tokens.code_font = Some(f);
+        }
+        if let Some(own) = self.own_code_font.as_ref().filter(|f| !f.is_empty()) {
+            p.tokens.code_font = Some(own.clone());
+        }
         if let Some(t) = self.typography.as_ref().filter(|t| !t.is_empty()) {
             let k = &mut p.tokens;
             if t.body_font.is_some() {
@@ -412,6 +485,32 @@ impl ThemeStore {
         p
     }
 
+    /// `markdownStyleStoreOf`: the account's styles, or the empty store.
+    pub fn style_store(&self) -> StyleStore {
+        self.markdown_style.clone().unwrap_or_default()
+    }
+
+    /// The same store with its Markdown styles replaced.
+    pub fn with_style_store(&self, styles: StyleStore) -> Self {
+        Self { markdown_style: Some(styles), ..self.clone() }
+    }
+
+    /// The Markdown style being drawn.
+    pub fn active_style(&self) -> MarkdownStyle {
+        match &self.markdown_style {
+            Some(s) => s.active(),
+            None => StyleStore::default().active(),
+        }
+    }
+
+    /// The face document code is painted in, in a tone: the one the painted
+    /// tokens name (a style's, a pinned look's, or this computer's own
+    /// choice, which `find_theme` lays on top), or "" for the app's own.
+    pub fn code_font(&self, tone: Tone) -> String {
+        let (p, _) = self.painted(tone);
+        p.tokens.code_font.as_deref().map(crate::fonts::clean_code_font).unwrap_or_default()
+    }
+
     pub fn active_template(&self) -> &'static Template {
         find_template(self.normalized().template_id.as_deref()).unwrap_or_else(markie)
     }
@@ -419,6 +518,12 @@ impl ThemeStore {
     /// `presetForTone`: the custom override for that tone, or the template's.
     pub fn preset_for_tone(&self, tone: Tone) -> ThemePreset {
         let clean = self.normalized();
+        // An owner's pinned look is read as pinned in either mode.
+        if self.pinned
+            && let Some(p) = clean.custom.iter().find(|p| p.id == clean.active_id)
+        {
+            return p.clone();
+        }
         let ov = clean.overrides.as_ref().and_then(|o| o.get(tone)).and_then(|id| clean.custom.iter().find(|p| &p.id == id));
         match ov {
             Some(p) => p.clone(),
@@ -441,6 +546,10 @@ impl ThemeStore {
             template_id: Some(t.id.clone()),
             overrides: Some(Overrides::default()),
             typography: None,
+            // The Markdown style is not one of the template's parts: it carries over.
+            markdown_style: self.markdown_style.clone(),
+            own_code_font: self.own_code_font.clone(),
+            pinned: false,
         }
     }
 
@@ -460,6 +569,9 @@ impl ThemeStore {
             template_id: Some(template_id),
             overrides: Some(ov),
             typography: if same { clean.typography.clone() } else { None },
+            markdown_style: self.markdown_style.clone(),
+            own_code_font: self.own_code_font.clone(),
+            pinned: false,
         }
     }
 
@@ -631,5 +743,57 @@ mod tests {
         assert_eq!(ThemeStore::parse("not json"), ThemeStore::default());
         let round = ThemeStore::parse(&s.to_json());
         assert_eq!(round, s);
+    }
+
+    #[test]
+    fn fonts_are_layered_template_then_style_then_the_persons_own() {
+        let paper = ThemeStore::default().choose_template("paper", Tone::Light);
+        // Spacious names no face: the template's preset itself, as before.
+        assert_eq!(paper.painted(Tone::Light).0, paper.preset_for_tone(Tone::Light));
+        assert_eq!(paper.code_font(Tone::Light), "");
+        // A style's faces stand in for the template's.
+        let editorial = paper.with_style_store(paper.style_store().choose("editorial"));
+        let (p, t) = editorial.painted(Tone::Dark);
+        assert_eq!((t.body_font.as_str(), t.heading_font.as_str()), ("source-serif", "playfair"));
+        assert_eq!(p.tokens.code_font.as_deref(), Some("fira-code"));
+        assert_eq!(t.body_families(), ["Source Serif 4"]);
+        assert_eq!(t.heading_families().unwrap(), ["Playfair Display"]);
+        // What the person picked themselves is on top of both.
+        let mut own = editorial.set_typography(&TypographyPatch { body_font: Some("iowan".into()), ..Default::default() });
+        own.own_code_font = Some("jetbrains-mono".into());
+        let (_, t) = own.painted(Tone::Light);
+        assert_eq!((t.body_font.as_str(), t.heading_font.as_str()), ("iowan", "playfair"));
+        assert_eq!(own.code_font(Tone::Light), "jetbrains-mono");
+        // A change of template keeps the style; the computer's code font never syncs.
+        let nord = own.choose_template("nord", Tone::Dark);
+        assert_eq!(nord.style_store().active_id, "editorial");
+        assert_eq!(nord.painted(Tone::Dark).1.body_font, "source-serif");
+        assert!(!own.to_json().contains("jetbrains-mono"));
+        let back = ThemeStore::parse(&own.to_json());
+        assert_eq!(back.style_store().active_id, "editorial");
+        assert_eq!(back.own_code_font, None);
+    }
+
+    #[test]
+    fn a_store_from_electron_keeps_its_styles_and_local_fonts() {
+        let json = r##"{"activeId":"markie-dark","custom":[],"templateId":"markie","overrides":{},"typography":{"bodyFont":"local:inter:Futura","headingFont":"lora"},"markdownStyle":{"activeId":"style-a","profiles":[{"id":"style-a","name":"Mine","style":{"base":"technical","choices":{"tableStyle":"zebra","nope":"x"},"numbers":{"leading":9}}}],"draft":{"base":"technical","choices":{"quoteStyle":"pull"}}}}"##;
+        let s = ThemeStore::parse(json);
+        let styles = s.style_store();
+        assert_eq!(styles.active_name(), "Mine (edited)");
+        assert_eq!(styles.profiles[0].style.numbers["leading"], 1.25);
+        assert!(!styles.profiles[0].style.choices.contains_key("nope"));
+        let (p, t) = s.painted(Tone::Dark);
+        assert_eq!(t.body_font, "local:inter:Futura");
+        assert_eq!(t.heading_font, "lora");
+        assert_eq!(p.tokens.code_font.as_deref(), Some("jetbrains-mono"));
+        assert_eq!(face_label("local:inter:Futura"), "Futura (only on this computer)");
+        // The same JSON goes back to the account.
+        let sent: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
+        assert_eq!(sent["markdownStyle"]["profiles"][0]["style"]["choices"]["tableStyle"], "zebra");
+        assert_eq!(sent["markdownStyle"]["draft"]["choices"]["quoteStyle"], "pull");
+        // A store with nothing readable in the field loses only the field.
+        let odd = ThemeStore::parse(r#"{"activeId":"nord-light","custom":[],"markdownStyle":"x"}"#);
+        assert_eq!(odd.active_id, "nord-light");
+        assert_eq!(odd.markdown_style, None);
     }
 }

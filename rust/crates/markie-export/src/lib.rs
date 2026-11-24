@@ -26,4 +26,4 @@ pub mod strict_math;
 pub mod styles;
 
 pub use render::{render_markdown_html, render_tree};
-pub use styles::{Theme, build_pdf_html};
+pub use styles::{ExportLook, Theme, build_pdf_html, build_pdf_html_with};

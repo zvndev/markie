@@ -26,6 +26,12 @@ pub struct SegStyle {
     pub pad_x: Pixels,
     /// A hairline round the background (inline code's `border`).
     pub border: Option<Hsla>,
+    /// CSS `letter-spacing`, added after every character.
+    pub tracking: Pixels,
+    /// CSS `text-transform: uppercase`: drawn in capitals, stored as written.
+    pub upper: bool,
+    /// A link's `border-bottom`: a 1px line under the run's box, solid or dotted.
+    pub under: Option<(Hsla, bool)>,
 }
 
 #[derive(Clone)]
@@ -51,6 +57,9 @@ pub enum Align {
     Left,
     Center,
     Right,
+    /// CSS `text-align: justify`: every line but the last (and one ended by
+    /// a break) is spread to the full width.
+    Justify,
 }
 
 #[derive(Clone)]
@@ -62,6 +71,11 @@ pub struct LeafSpec {
     pub line_height: f32,
     pub align: Align,
     pub len: usize,
+    /// CSS `text-indent`: the first line starts this far in.
+    pub indent: Pixels,
+    /// Text drawn before the first line that is no part of the document (a
+    /// heading's section number, CSS `::before`). The caret never enters it.
+    pub prefix: Option<(String, SegStyle)>,
 }
 
 enum PlacedKind {
@@ -99,6 +113,8 @@ pub struct Laid {
     pub lines: Vec<Line>,
     items: Vec<Placed>,
     pub len: usize,
+    /// The first line's prefix (a section number) and where it starts.
+    prefix: Option<ShapedLine>,
 }
 
 fn run(text_len: usize, s: &SegStyle) -> TextRun {
@@ -176,6 +192,35 @@ fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
                 });
             }
             SegKind::Text(text, style) => {
+                let upper;
+                let text: &String = if style.upper {
+                    upper = uppercase(text);
+                    &upper
+                } else {
+                    text
+                };
+                if style.tracking != px(0.) {
+                    // Letter-spacing: each character is placed on its own,
+                    // with the spacing after it, as CSS does.
+                    let chars: Vec<char> = text.chars().collect();
+                    for (k, c) in chars.iter().enumerate() {
+                        let piece = c.to_string();
+                        let shaped = shape(&piece, style, window);
+                        let space = c.is_whitespace();
+                        let width = shaped.width + style.tracking;
+                        out.push(Piece {
+                            units: seg.units.start + k..seg.units.start + k + 1,
+                            width,
+                            ascent: shaped.ascent,
+                            descent: shaped.descent,
+                            fit: if space { px(0.) } else { width },
+                            joins_next: !space,
+                            kind: PlacedKind::Text { chars: char_bytes(&piece), shaped, style: style.clone(), lead: px(0.), seg: seg_index },
+                            text: None,
+                        });
+                    }
+                    continue;
+                }
                 let chars: Vec<(usize, char)> = text.char_indices().collect();
                 let mut k = 0usize;
                 let first_piece = out.len();
@@ -212,13 +257,29 @@ fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
     out
 }
 
+/// `text-transform: uppercase`, one character for one, so every unit of the
+/// leaf keeps its place (a character whose capital is two, like ß, is left).
+fn uppercase(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let mut up = c.to_uppercase();
+            match (up.next(), up.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
 /// Lay the leaf out in `width`.
 pub fn layout(spec: &LeafSpec, width: Pixels, window: &Window) -> Laid {
     let width = width.max(px(20.));
     let ps = pieces(spec, window);
     let mut items: Vec<Placed> = Vec::new();
     let mut line = 0usize;
-    let mut x = px(0.);
+    let prefix = spec.prefix.as_ref().map(|(text, style)| shape(text, style, window));
+    // The first line starts after its indent and its prefix.
+    let mut x = spec.indent.max(px(0.)).min(width / 2.) + prefix.as_ref().map(|p| p.width).unwrap_or(px(0.));
     let mut line_has = false;
     let place = |p: Piece, x: &mut Pixels, line: usize, items: &mut Vec<Placed>| {
         items.push(Placed { units: p.units, x: *x, width: p.width, ascent: p.ascent, descent: p.descent, line, kind: p.kind });
@@ -381,14 +442,47 @@ pub fn layout(spec: &LeafSpec, width: Pixels, window: &Window) -> Laid {
             items[range.start].units.start..items[range.end - 1].units.end
         };
         let x_offset = match spec.align {
-            Align::Left => px(0.),
+            Align::Left | Align::Justify => px(0.),
             Align::Center => ((width - w) / 2.).max(px(0.)),
             Align::Right => (width - w).max(px(0.)),
         };
         lines.push(Line { top, height, baseline, units, x_offset, items: range });
         top += height;
     }
-    Laid { width, height: top, lines, items, len: spec.len }
+    if spec.align == Align::Justify {
+        justify(&mut items, &lines, width);
+    }
+    Laid { width, height: top, lines, items, len: spec.len, prefix }
+}
+
+/// Spread each wrapped line to `width` by widening the gaps between its
+/// words. The last line, and a line a break ends, stay as they are.
+fn justify(items: &mut [Placed], lines: &[Line], width: Pixels) {
+    for (i, l) in lines.iter().enumerate() {
+        let range = l.items.clone();
+        if i + 1 == lines.len() || range.len() < 2 || matches!(items[range.end - 1].kind, PlacedKind::Break) {
+            continue;
+        }
+        let ends_in_space = |it: &Placed| matches!(&it.kind, PlacedKind::Text { shaped, .. } if shaped.text.ends_with(char::is_whitespace));
+        let last = &items[range.end - 1];
+        let visible = match &last.kind {
+            PlacedKind::Text { shaped, lead, .. } => last.x + *lead + shaped.x_for_index(shaped.text.trim_end().len()),
+            _ => last.x + last.width,
+        };
+        let gaps = items[range.start..range.end - 1].iter().filter(|it| ends_in_space(it)).count();
+        let extra = width - visible;
+        if gaps == 0 || extra <= px(0.) {
+            continue;
+        }
+        let each = extra / gaps as f32;
+        let mut shift = px(0.);
+        for k in range {
+            items[k].x += shift;
+            if ends_in_space(&items[k]) {
+                shift += each;
+            }
+        }
+    }
 }
 
 impl Laid {
@@ -532,6 +626,12 @@ impl Laid {
 
     /// Paint at `origin` (the leaf's top left).
     pub fn paint(&self, origin: Point<Pixels>, window: &mut Window, cx: &mut App) {
+        if let (Some(prefix), Some(l)) = (&self.prefix, self.lines.first()) {
+            // Before the first line's own text, wherever alignment put it.
+            let first = self.items[l.items.clone()].first().map(|it| it.x).unwrap_or(prefix.width);
+            let x = origin.x + l.x_offset + first - prefix.width;
+            let _ = prefix.paint(point(x, origin.y + l.top + l.baseline - prefix.ascent), prefix.ascent + prefix.descent, TextAlign::Left, None, window, cx);
+        }
         for l in &self.lines {
             // Backgrounds first, one box per run on each line, so a run of
             // inline code reads as one chip and not as one per word.
@@ -542,10 +642,10 @@ impl Laid {
                     k += 1;
                     continue;
                 };
-                let Some(bg) = style.background else {
+                if style.background.is_none() && style.border.is_none() && style.under.is_none() {
                     k += 1;
                     continue;
-                };
+                }
                 let (x0, mut x1) = (items[k].x, items[k].x + items[k].width);
                 let (mut asc, mut desc) = (items[k].ascent, items[k].descent);
                 let mut j = k + 1;
@@ -561,16 +661,43 @@ impl Laid {
                     }
                 }
                 let base_y = origin.y + l.top + l.baseline;
-                let pad_y = if style.border.is_some() { style.size * 0.2 } else { px(0.) };
+                // Inline code's `padding: 0.2em 0.4em` and `border-radius: 5px`.
+                let chip = style.pad_x > px(0.) || style.border.is_some();
+                let pad_y = if chip { style.size * 0.2 } else { px(0.) };
                 let b = Bounds::new(
                     point(origin.x + l.x_offset + x0, base_y - asc - pad_y),
                     size(x1 - x0, asc + desc + pad_y * 2.),
                 );
-                let mut q = fill(b, bg);
-                if let Some(c) = style.border {
-                    q = q.corner_radii(px(5.)).border_widths(px(1.)).border_color(c);
+                if style.background.is_some() || style.border.is_some() {
+                    let mut q = fill(b, style.background.unwrap_or(gpui_kit::transparent_black()));
+                    if chip {
+                        q = q.corner_radii(px(5.));
+                    }
+                    if let Some(c) = style.border {
+                        q = q.border_widths(px(1.)).border_color(c);
+                    }
+                    window.paint_quad(q);
                 }
-                window.paint_quad(q);
+                if let Some((color, dotted)) = style.under {
+                    // A link's `border-bottom`: under the run's own box, not
+                    // through its descenders as a text underline would be.
+                    let last = &items[j - 1];
+                    let end = match &last.kind {
+                        PlacedKind::Text { shaped, lead, .. } => last.x + *lead + shaped.x_for_index(shaped.text.trim_end().len()),
+                        _ => x1,
+                    };
+                    let (left, y) = (origin.x + l.x_offset + x0, base_y + desc);
+                    let w = (end - x0).max(px(0.));
+                    if dotted {
+                        let mut at = px(0.);
+                        while at + px(1.) <= w {
+                            window.paint_quad(fill(Bounds::new(point(left + at, y), size(px(1.), px(1.))), color));
+                            at += px(2.);
+                        }
+                    } else {
+                        window.paint_quad(fill(Bounds::new(point(left, y), size(w, px(1.))), color));
+                    }
+                }
                 k = j;
             }
             for it in &self.items[l.items.clone()] {

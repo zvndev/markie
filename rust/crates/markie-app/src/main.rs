@@ -192,6 +192,22 @@ fn main() {
     });
     app.run(move |cx| {
             gpui_kit::init(cx);
+            // The bundled font library, for this process only: the same 26
+            // families Electron ships. Before any window lays out text, so a
+            // style's faces are there on the first frame.
+            markie_core::fonts::native::register_bundled(&markie_core::paths::data_dir().join("fonts"));
+            // Which families this computer has, for fonts chosen as "only on
+            // this computer": listing them is slow, so it runs off the main
+            // thread and the windows repaint when it lands.
+            {
+                let text_system = cx.text_system().clone();
+                cx.spawn(async move |cx| {
+                    let names = cx.background_executor().spawn(async move { text_system.all_font_names() }).await;
+                    markie_core::fonts::set_installed_families(names);
+                    let _ = cx.update(|cx| cx.refresh_windows());
+                })
+                .detach();
+            }
             perf::init(cx);
             bind_keys(cx);
             markie_editor::bind_keys(cx);
@@ -220,7 +236,14 @@ fn main() {
                 initial.extend(open_urls::file_paths(&urls));
                 launch_links.extend(urls.into_iter().filter(|u| u.starts_with(deeplinks::SCHEME)));
             }
-            let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
+            // A scene may ask for its own window size (`MARKIE_RS_SCENE_SIZE=1100x4000`),
+            // to draw a whole document in one frame.
+            let scene_size = in_scene
+                .then(|| std::env::var("MARKIE_RS_SCENE_SIZE").ok())
+                .flatten()
+                .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))));
+            let (win_w, win_h) = scene_size.unwrap_or((1280., 820.));
+            let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 // Electron's minWidth 600, minHeight 400.

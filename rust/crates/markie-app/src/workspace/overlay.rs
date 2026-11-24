@@ -103,6 +103,11 @@ impl Workspace {
         if !self.dialogs.open.is_open() {
             return;
         }
+        // Escape and a click outside leave the style editor first, not Settings.
+        if matches!(self.dialogs.open, Overlay::Settings { .. }) && self.appearance.style.editing {
+            self.close_style_editor(cx);
+            return;
+        }
         self.dialogs.open = Overlay::None;
         match self.dialogs.restore.take() {
             Some(handle) => handle.focus(window, cx),

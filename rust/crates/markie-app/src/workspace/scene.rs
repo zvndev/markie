@@ -74,6 +74,26 @@ pub fn start(spec: Spec, handle: AnyWindowHandle, workspace: Entity<Workspace>, 
                 ws.pick_color_mode(if spec.dark { ColorMode::Dark } else { ColorMode::Light }, window, cx);
             });
         });
+        // Any scene: `style` (a Markdown style preset id, or a whole style
+        // store as JSON), `template` (a colour template id) and `code_font`
+        // (this computer's code font), applied the way Settings applies them.
+        let _ = cx.update_window(handle, |_, window, cx| {
+            if let Some(id) = spec.args.get("template").and_then(Value::as_str) {
+                crate::themes::apply(id, Some(window), cx);
+            }
+            if let Some(style) = spec.args.get("style") {
+                let store = crate::themes::store(cx);
+                let styles = match style {
+                    Value::String(id) => store.style_store().choose(id),
+                    other => markie_core::markdown_style::sanitize_store(other).unwrap_or_default(),
+                };
+                crate::themes::apply_store(store.with_style_store(styles), Some(window), cx);
+            }
+            if let Some(font) = spec.args.get("code_font").and_then(Value::as_str) {
+                crate::themes::set_own_code_font(font, Some(window), cx);
+            }
+            workspace.update(cx, |_, cx| cx.notify());
+        });
         if let Some(token) = spec.args.get("token").and_then(Value::as_str) {
             let token = token.to_string();
             let _ = cx.update(|cx| {
@@ -152,6 +172,27 @@ impl Workspace {
         let wants_session = args.get("token").is_some();
         match spec.name.as_str() {
             "doc" => self.doc.is_some(),
+            // Settings › Appearance, with the Markdown style section. `editor: true`
+            // opens the style editor, `group` one of its elements ("tables"),
+            // `edit` changes choices first ({"tableStyle": "zebra"}), and
+            // `face` opens a font menu ("body", "heading", "code").
+            "style-settings" => {
+                if *step == 0 {
+                    self.open_settings(super::overlay::SettingsSection::Appearance, window, cx);
+                    if let Some(edit) = args.get("edit").and_then(Value::as_object) {
+                        let choices: Vec<(&str, &str)> = edit.iter().filter_map(|(k, v)| Some((k.as_str(), v.as_str()?))).collect();
+                        let store = crate::themes::store(cx);
+                        crate::themes::apply_store(store.with_style_store(store.style_store().edit(&choices, &[])), Some(window), cx);
+                    }
+                    self.scene_style(args.get("editor").and_then(Value::as_bool).unwrap_or(false), arg(args, "group"), arg(args, "face"));
+                    cx.notify();
+                    *step = 1;
+                    return false;
+                }
+                *step += 1;
+                // A few frames, so every sample view has measured itself.
+                *step > 6
+            }
             // {origin, token, doc_id, file_name?, pending?: [..], query?, role?: "editor", menu?: "role" | "general"}
             "share" => {
                 if *step == 0 {

@@ -16,13 +16,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use markie_core::theme::{
-    CONTENT_WIDTH_LIMITS, FONT_SIZE_LIMITS, HEADING_SAME_AS_BODY, LINE_HEIGHT_LIMITS, PARAGRAPH_GAP_LIMITS, TYPEFACES,
-    ThemeStore, ThemeTokens, Tone, TypographyPatch, find_template, preset_tone, typeface,
+    CONTENT_WIDTH_LIMITS, FONT_SIZE_LIMITS, HEADING_SAME_AS_BODY, LINE_HEIGHT_LIMITS, PARAGRAPH_GAP_LIMITS, ThemeStore, ThemeTokens, Tone, TypographyPatch, find_template, preset_tone,
 };
 
 use super::Workspace;
 use super::dialog_chrome::{self as chrome, Tokens, fade, section_label};
 use super::overlay::Overlay;
+use super::style_ui::FaceSlot;
 use crate::themes;
 
 /// `COLOR_FIELDS` in settings.tsx.
@@ -79,14 +79,9 @@ impl Slider {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FontSlot {
-    Body,
-    Heading,
-}
-
 pub(crate) struct AppearanceUi {
-    font_open: Option<FontSlot>,
+    /// Markdown styles and the font menus (style_ui.rs).
+    pub(crate) style: super::style_ui::StyleUi,
     dragging: Option<Slider>,
     tracks: [Rc<Cell<Bounds<Pixels>>>; 4],
     colors: Vec<Entity<InputState>>,
@@ -148,8 +143,10 @@ impl AppearanceUi {
             }));
             colors.push(input);
         }
+        let (style, style_subs) = super::style_ui::StyleUi::new(window, cx);
+        subs.extend(style_subs);
         let ui = Self {
-            font_open: None,
+            style,
             dragging: None,
             tracks: std::array::from_fn(|_| Rc::new(Cell::new(Bounds::default()))),
             colors,
@@ -208,17 +205,6 @@ impl Workspace {
         if !same {
             self.commit_store(store.set_typography(&slider.patch(v)), cx);
         }
-    }
-
-    fn pick_font(&mut self, slot: FontSlot, id: &str, cx: &mut Context<Self>) {
-        let mut patch = TypographyPatch::default();
-        match slot {
-            FontSlot::Body => patch.body_font = Some(id.into()),
-            FontSlot::Heading => patch.heading_font = Some(id.into()),
-        }
-        self.appearance.font_open = None;
-        let next = themes::store(cx).set_typography(&patch);
-        self.commit_store(next, cx);
     }
 
     fn toggle_colors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -295,11 +281,9 @@ impl Workspace {
             )
         });
 
-        let body_label = typeface(&typo.body_font).label;
-        let heading_label =
-            if typo.heading_font == HEADING_SAME_AS_BODY { "Same as body" } else { typeface(&typo.heading_font).label };
-        let body_family = typo.body_families()[0];
-        let heading_family = typo.heading_families().map_or(body_family, |f| f[0]);
+        let style_section = self.render_style_section(t, card_w, cx);
+        let body_family = themes::face_family(&typo.body_font);
+        let heading_family = if typo.heading_font == HEADING_SAME_AS_BODY { body_family.clone() } else { themes::face_family(&typo.heading_font) };
         let typography = super::settings::group(t).mb(px(16.)).child(
             div()
                 .child(
@@ -326,9 +310,11 @@ impl Workspace {
                                     div()
                                         .flex()
                                         .gap(px(8.))
-                                        .child(self.font_menu(FontSlot::Body, "Body font", body_label, body_family, &typo.body_font, t, cx))
-                                        .child(self.font_menu(FontSlot::Heading, "Heading font", heading_label, heading_family, &typo.heading_font, t, cx)),
+                                        .child(self.face_menu(FaceSlot::Body, "Body font", &typo.body_font, &body_family, t, cx))
+                                        .child(self.face_menu(FaceSlot::Heading, "Heading font", &typo.heading_font, &body_family, t, cx)),
                                 )
+                                // The code font, and fonts installed on this computer.
+                                .child(self.render_font_library(&body_family, t, cx))
                                 .child(self.slider(Slider::Size, "Text size", format!("{} px", typo.font_size), typo.font_size, t, cx))
                                 .child(self.slider(Slider::LineHeight, "Line height", format!("{:.2}", typo.line_height), typo.line_height, t, cx))
                                 .child(self.slider(Slider::Gap, "Paragraph spacing", format!("{:.1} em", typo.paragraph_gap), typo.paragraph_gap, t, cx))
@@ -438,74 +424,11 @@ impl Workspace {
             )
             .child(templates)
             .children(presets)
+            .child(style_section)
             .child(typography)
             .child(colors)
             .child(footer)
             .into_any_element()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn font_menu(&self, slot: FontSlot, label: &str, value: &str, family: &'static str, selected: &str, t: &Tokens, cx: &mut Context<Self>) -> Div {
-        let open = self.appearance.font_open == Some(slot);
-        let hover = t.hover_soft();
-        let mut options: Vec<(&'static str, &'static str, &'static str)> = Vec::new();
-        if slot == FontSlot::Heading {
-            options.push((HEADING_SAME_AS_BODY, "Same as body", family));
-        }
-        options.extend(TYPEFACES.iter().map(|f| (f.id, f.label, f.families[0])));
-        let selected = selected.to_string();
-        div()
-            .flex_1()
-            .min_w_0()
-            .child(div().text_size(px(11.)).text_color(t.muted).mb(px(4.)).child(label.to_string()))
-            .child(
-                div()
-                    .id(SharedString::from(format!("font-menu-{slot:?}")))
-                    .h(px(32.))
-                    .flex()
-                    .items_center()
-                    .gap(px(7.))
-                    .rounded(px(7.))
-                    .border_1()
-                    .border_color(t.field_border())
-                    .bg(t.select_bg())
-                    .pl(px(10.4))
-                    .pr(px(8.8))
-                    .cursor_pointer()
-                    .child(div().flex_1().text_size(px(12.5)).font_family(family).child(value.to_string()))
-                    .child(chrome::stroke_icon(chrome::PATH_CHEVRON_DOWN, t.muted, 14., 2.))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.appearance.font_open = if this.appearance.font_open == Some(slot) { None } else { Some(slot) };
-                        cx.notify();
-                    })),
-            )
-            .when(open, |el| {
-                el.child(
-                    div()
-                        .mt(px(4.))
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(t.border)
-                        .bg(t.panel_bg())
-                        .p(px(4.))
-                        .children(options.into_iter().map(|(id, label, family)| {
-                            let on = id == selected;
-                            div()
-                                .id(SharedString::from(format!("font-{slot:?}-{id}")))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .rounded(px(5.))
-                                .px(px(8.))
-                                .py(px(5.))
-                                .cursor_pointer()
-                                .hover(move |el| el.bg(hover))
-                                .child(div().text_size(px(12.5)).font_family(family).child(label))
-                                .when(on, |el| el.child(chrome::stroke_icon(chrome::PATH_CHECK, t.blue, 12., 2.5)))
-                                .on_click(cx.listener(move |this, _, _, cx| this.pick_font(slot, id, cx)))
-                        })),
-                )
-            })
     }
 
     fn slider(&self, slider: Slider, label: &str, display: String, value: f64, t: &Tokens, cx: &mut Context<Self>) -> Div {

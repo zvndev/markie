@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 markie-math = { path = "../markie-math" }
+markie-core.workspace = true
 # KaTeX ported to Rust: the same HTML rehype-katex writes, for HTML export (MATH.md).
 katex-rs = "0.3.0"
 markie-office = { path = "../markie-office" }
@@ -25,6 +26,8 @@ typst-layout = "0.15.1"
 typst-pdf = "0.15.1"
 typst-assets = { version = "0.15.1", features = ["fonts"] }
 imagesize = "0.13"
+# The bundled fonts are woff2 (the same files Electron ships); Typst reads TrueType.
+woff2-patched = "0.4"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -99,6 +99,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // The style editor stands in for the Settings panel while it is open.
+        if section == SettingsSection::Appearance && self.appearance.style.editing {
+            return self.render_style_editor(t, window, cx);
+        }
         let max_h = window.viewport_size().height * 0.86;
         let body = match section {
             SettingsSection::Account => self.render_account_section(t, cx),
@@ -603,7 +607,7 @@ pub(super) fn template_card(tpl: &chrome::TemplateInfo, selected: bool, t: &Toke
 }
 
 /// The typography specimen: a short page in the template's faces.
-pub(super) fn specimen(body: &'static str, heading: &'static str, size: f32, lh: f32, t: &Tokens) -> Div {
+pub(super) fn specimen(body: SharedString, heading: SharedString, size: f32, lh: f32, t: &Tokens) -> Div {
     div()
         .flex_1()
         .min_w_0()

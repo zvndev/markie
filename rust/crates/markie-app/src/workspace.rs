@@ -32,6 +32,7 @@ pub(crate) mod account;
 mod account_slot;
 mod agents;
 mod appearance;
+mod style_ui;
 mod chrome;
 mod csv_doc;
 mod collab;
@@ -282,6 +283,14 @@ impl Workspace {
             }
         };
         let template = store.active_template().id.clone();
+        // This computer's code font (`markie.fonts.v1`, the shape Electron keeps).
+        let code_font = registry
+            .as_ref()
+            .and_then(|r| r.setting("fonts.v1").ok().flatten())
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+            .and_then(|v| v.get("codeFont").and_then(|f| f.as_str()).map(markie_core::fonts::clean_code_font))
+            .unwrap_or_default();
+        cx.set_global(crate::themes::OwnCodeFont(code_font));
         crate::themes::apply_store(store, Some(window), cx);
         // The user's own light or dark choice outranks the system appearance;
         // System follows macOS, also when it changes while the app runs.

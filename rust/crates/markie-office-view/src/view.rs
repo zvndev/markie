@@ -701,7 +701,15 @@ impl WordView {
             None if look.is_some_and(|l| l.link) => colors.link,
             None => colors.text,
         };
-        let family: SharedString = look.and_then(|l| l.font_family.clone()).unwrap_or_else(|| DEFAULT_FONT.to_string()).into();
+        // The font the file names, as this computer can paint it: the
+        // document's own embedded copy or the installed font when there is
+        // one, and only then Markie's metric-compatible stand-in (Carlito for
+        // Calibri, and so on). The name in the file is never touched.
+        let family: SharedString = look
+            .and_then(|l| l.font_family.as_deref())
+            .and_then(|name| markie_core::fonts::office_native_family(name, None))
+            .unwrap_or_else(|| DEFAULT_FONT.to_string())
+            .into();
         let mut font = font(family);
         if look.is_some_and(|l| l.bold) {
             font.weight = FontWeight::BOLD;

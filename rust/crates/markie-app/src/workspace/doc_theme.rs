@@ -1,6 +1,6 @@
-//! Owner-pinned document themes (page.tsx `enforcedTheme`,
-//! `getDocTheme`): a member of a shared Markie Cloud document reads it in
-//! the owner's pinned theme while it is open. The person's own store is
+//! Owner-pinned document looks (page.tsx `enforcedLook`, `getDocLook`): a
+//! member of a shared Markie Cloud document reads it in the owner's pinned
+//! theme and Markdown style while it is open. The person's own store is
 //! kept aside, never written, and painted again when another document opens.
 //! While a pinned theme shows, theme changes are not kept (Electron locks
 //! the theme then).
@@ -8,20 +8,18 @@
 use gpui_kit::*;
 use markie_cloud::collab::runtime;
 use markie_cloud::sharing::ShareMember;
-use markie_core::theme::{ThemePreset, ThemeStore, ThemeTokens};
+use markie_core::theme::ThemeStore;
+use markie_core::theme::pinned_look::{self, PinnedLook};
+#[cfg(test)]
+use markie_core::theme::pinned_look::PINNED_ID;
 use serde_json::Value;
 
 use super::Workspace;
 
-pub(super) const PINNED_ID: &str = "doc-pinned";
-
-/// `getDocTheme`'s answer: `{ tokens }`, null when nothing is pinned.
-pub(super) fn read_doc_theme(body: Option<Value>) -> Option<ThemeTokens> {
-    let tokens = body?.get("tokens")?.clone();
-    if tokens.is_null() {
-        return None;
-    }
-    serde_json::from_value(tokens).ok()
+/// `getDocLook`'s answer: `{ tokens, style }`, checked. None when nothing is
+/// pinned or the colours cannot be used.
+pub(super) fn read_doc_theme(body: Option<Value>) -> Option<PinnedLook> {
+    pinned_look::pinned_look_from(&body?).filter(|look| look.tokens.is_some())
 }
 
 /// Pinned themes live on Markie Cloud only, and apply to its members.
@@ -29,15 +27,9 @@ pub(super) fn pinned_applies(on_markie_cloud: bool, members: &[ShareMember], me:
     on_markie_cloud && members.iter().any(|m| m.user_id.as_deref() == Some(me))
 }
 
-/// The person's store with the pinned tokens as the active preset.
-pub(super) fn pinned_store(own: &ThemeStore, tokens: ThemeTokens) -> ThemeStore {
-    let mut store = own.clone();
-    store.custom.retain(|p| p.id != PINNED_ID);
-    store.custom.push(ThemePreset { id: PINNED_ID.into(), name: "Owner theme".into(), built_in: None, template_id: None, tone: None, tokens });
-    store.active_id = PINNED_ID.into();
-    store.overrides = None;
-    store.typography = None;
-    store
+/// The person's store with the owner's look painted over it.
+pub(super) fn pinned_store(own: &ThemeStore, look: &PinnedLook) -> ThemeStore {
+    pinned_look::pinned_store(own, look).unwrap_or_else(|| own.clone())
 }
 
 impl Workspace {
@@ -61,9 +53,9 @@ impl Workspace {
                     return;
                 }
                 match read_doc_theme(body) {
-                    Some(tokens) => {
+                    Some(look) => {
                         let own = this.own_theme.clone().unwrap_or_else(|| crate::themes::store(cx));
-                        crate::themes::apply_store(pinned_store(&own, tokens), None, cx);
+                        crate::themes::apply_store(pinned_store(&own, &look), None, cx);
                         this.own_theme = Some(own);
                     }
                     None => this.release_doc_theme(cx),
@@ -94,7 +86,7 @@ mod tests {
     use super::{PINNED_ID, pinned_applies, pinned_store, read_doc_theme};
     use markie_cloud::docs::Role;
     use markie_cloud::sharing::ShareMember;
-    use markie_core::theme::{ThemeStore, ThemeTokens};
+    use markie_core::theme::{ThemeStore, ThemeTokens, Tone};
     use serde_json::json;
 
     fn member(id: &str) -> ShareMember {
@@ -114,13 +106,21 @@ mod tests {
     fn the_answer_and_the_store_follow_get_doc_theme() {
         assert_eq!(read_doc_theme(None), None);
         assert_eq!(read_doc_theme(Some(json!({ "tokens": null }))), None);
-        let tokens = ThemeTokens { background: "#101010".into(), ..Default::default() };
-        let got = read_doc_theme(Some(json!({ "tokens": serde_json::to_value(&tokens).unwrap() }))).unwrap();
-        assert_eq!(got.background, "#101010");
         let own = ThemeStore::default();
-        let pinned = pinned_store(&own, got);
+        let mut tokens = own.painted(Tone::Dark).0.tokens;
+        tokens.background = "#101010".into();
+        let half = ThemeTokens { background: "#101010".into(), ..Default::default() };
+        assert_eq!(read_doc_theme(Some(json!({ "tokens": serde_json::to_value(&half).unwrap() }))), None, "colours that are not colours are not painted");
+        let got = read_doc_theme(Some(json!({ "tokens": markie_core::theme::pinned_look::tokens_json(&tokens), "style": { "base": "classic" } }))).unwrap();
+        assert_eq!(got.tokens.as_ref().unwrap().background, "#101010");
+        let pinned = pinned_store(&own, &got);
         assert_eq!(pinned.active_id, PINNED_ID);
         assert_eq!(pinned.find_theme(PINNED_ID).tokens.background, "#101010");
+        assert_eq!(pinned.active_style().base, "classic", "the owner's Markdown style comes with the theme");
+        // The tokens' own text face stays; the style brings the code face.
+        assert_eq!(pinned.painted(Tone::Light).1.body_font, "system");
+        assert_eq!(pinned.code_font(Tone::Light), "source-code");
         assert_eq!(own.active_id, "markie-dark", "the person's own store is untouched");
+        assert_eq!(own.active_style().base, "spacious");
     }
 }

@@ -182,6 +182,19 @@ What the Markie RS numbers are: main-thread time from the action to the end of t
 
 The model alone, best of 9 (`times_100_000_rows`): parse 3.5 ms, serialize 0.6 ms, sort by number 6.4 ms, sort by text 11.6 ms, filter 5.4 ms.
 
+### The CSV sheet
+
+Date: 2026-11-24, branch `t3/markie-rs-csv-sheet`: the table redrawn as a spreadsheet (AUDIT-EDITORS.md section 7b). The same file and the same run, on the binary before the change and the one after, turn about, twice each. The Mac was busier still (1-minute load 110 to 120), so read the two columns against each other, not against the table above.
+
+| | Before (the table) | After (the sheet) |
+|---|---|---|
+| Open to the first cells | 42 to 47 ms | 46 to 50 ms |
+| Sort a column | 10 to 11 ms by number, 16 ms by text | 12 to 13 ms by number, 18 to 19 ms by text |
+| Filter | 8 to 9 ms | 11 ms |
+| Scroll, a frame on average | 1.4 to 1.6 ms, 2.2 ms the slowest of 600 | 2.2 to 2.3 ms, 3.1 ms the slowest of 600; none over 16.7 ms |
+
+Every figure is 1 to 3 ms higher, and all of it is the frame, not the model: the model's own times (`times_100_000_rows`) did not move (parse 3.2 ms, serialize 0.6 ms, sort 5.9 ms by number and 10.5 ms by text, filter 4.7 ms). A frame costs about 0.7 ms more because there is more in it. Rows are 24 points tall where they were 30, so a quarter more of them are on screen; each visible cell is read for how it is drawn (number, date, link); the cells that line up on the right are shaped with tabular figures; the empty sheet's lines, the name box, the formula bar and the sheet tab are drawn. Sort, filter and open each end in one such frame. Electron's sheet (PR #154, headless Chromium, 100,000 rows by 8 columns) holds 60 fps as its table did, 17.0 ms a frame against 16.7.
+
 Run it again:
 
 ```sh

@@ -1,3 +1,5 @@
+> Archived 2026-11-24. A June 2026 roadmap: public links and the Markie MCP shipped, the terminal is still hidden behind `TERMINAL_ENABLED`, and its `markie` CLI and summonable agent were never built; open work is tracked in Circular. Kept for history: do not plan from it.
+
 # Markie — Upcoming Features Plan
 
 _Last updated: 2026-06-12_

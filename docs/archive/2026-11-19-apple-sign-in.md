@@ -1,3 +1,5 @@
+> Archived 2026-11-24. Sign in with Apple and labeled linked sign-ins shipped in 0.9.7. Superseded by [the linked sign-ins checks](../document-testing/linked-sign-ins.md). Kept for history: do not plan from it.
+
 # Sign in with Apple, and linking several Google and Apple accounts
 
 Date: 2026-11-19. Branch `feat/apple-sign-in`.

@@ -1,3 +1,5 @@
+> Archived 2026-11-24. The October 14 document plan: its formats shipped in 0.9.0, and the October 18 product contract replaced it as the target. Superseded by [the word processor product contract](../superpowers/specs/2026-10-18-word-processor-product.md). Kept for history: do not plan from it.
+
 # Markie document platform and web support
 
 Product direction agreed with Kirby on October 14, 2026. This is the requested durable product plan; implementation evidence and task ownership live in Circular, not in a second local task tracker.

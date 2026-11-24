@@ -5,7 +5,7 @@
 - Status: Active for document capabilities inside the existing Markie app.
 - Last refreshed: 2026-10-18.
 - Primary product surfaces: native Windows and macOS desktop workspaces, original Word editor, existing Markdown workspace, protected local vault. Web is a new, secondary surface sharing the same document core.
-- Evidence reviewed: src/app/globals.css, src/lib/theme.ts, src/components/toolbar.tsx, library.tsx, doc-toolbar.tsx, docs/design/radius-scale.md and docs/superpowers/plans/2026-10-14-document-platform.md.
+- Evidence reviewed: src/app/globals.css, src/lib/theme.ts, src/components/toolbar.tsx, library.tsx, doc-toolbar.tsx, docs/design/radius-scale.md and docs/archive/2026-10-14-document-platform.md (now archived).
 
 ## Brand
 
@@ -94,5 +94,5 @@ React 19, TypeScript, Vite and Tailwind with existing tokens. No third-party Off
 
 ## Open questions
 
-- Native biometric key protection and browser PRF availability are later platform-specific capabilities; do not display enabled biometric controls before they work.
+- Touch ID unlock for the vault works on macOS (`electron/vault-touch-id.js`). Biometric unlock on other platforms and browser PRF availability are later platform-specific capabilities; do not display enabled biometric controls before they work.
 - Exact Word pagination fidelity remains a measured compatibility target, not a cosmetic claim.

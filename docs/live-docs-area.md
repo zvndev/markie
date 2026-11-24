@@ -1,6 +1,6 @@
 # The Live Docs area on the Mac
 
-Status: step M3, super-nightly only. The renderer shows it when `nightlyFeaturesEnabled()` is true, and every IPC handler also checks `nightlyEnabledInMain()`.
+Status: step M3, behind the nightly gate. The renderer shows it when `nightlyFeaturesEnabled()` is true, and every IPC handler also checks `nightlyEnabledInMain()`. That gate is open in a private build, an unpackaged development run and a desktop preview build. On the Mac the super-nightly lane now carries the Rust app, so an Electron private build there is only a roll back.
 
 The Live Docs area is a third pane beside the Markdown and documents panes, with its own rail button. Its home lists the Darkmown projects a person has added. Opening one shows every project file in a tree and edits any text file in one CodeMirror editor with simple tabs. An edit made outside Markie shows up in the tree and in the open tab.
 

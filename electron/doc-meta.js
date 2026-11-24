@@ -1,5 +1,5 @@
 // Markie's own records about a document: comments today, branches and block
-// versions next (docs/superpowers/specs/2026-10-30-doc-features-nightly.md,
+// versions next (docs/archive/2026-10-30-doc-features-nightly.md,
 // decision 1).
 //
 // One folder per document under userData/doc-meta/, named exactly like the

@@ -1,3 +1,5 @@
+> Archived 2026-11-24. A phase plan for features gated to the Electron super-nightly, and on the Mac that lane now carries the Rust app; the doc-meta decisions it records still hold in `electron/doc-meta.js`. Kept for history: do not plan from it.
+
 # Document features for super-nightly
 
 2026-10-30. Kirby's list: a section rail, document tabs, comments driven by MCP, version history, branches and block versions, and a rethought Darkmown. All of it ships to super-nightly only, so Kirby can iterate before anyone else sees it. The section rail is the exception: it left the gate on 2026-11-03 and now ships to every build. Markdown first. Other formats can wait.

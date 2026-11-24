@@ -94,4 +94,4 @@ Vault search currently covers decrypted filenames while unlocked. Its encrypted 
 
 ## Remaining compatibility work
 
-The full [document platform plan](superpowers/plans/2026-10-14-document-platform.md) still includes Word-equivalent automatic layout/pagination, richer print fidelity, sections, headers/footers/page fields, merged/complex tables, advanced review, a native DOC writer, live Office co-editing and platform-protected biometric unlock. A broader sanitized Word-generated corpus, Windows runtime QA and physical Intel Mac QA are still open. Unsupported features must not be silently flattened to meet a visual approximation.
+The [word processor product contract](superpowers/specs/2026-10-18-word-processor-product.md) still includes Word-equivalent automatic layout/pagination, richer print fidelity, sections, headers/footers/page fields, merged/complex tables, advanced review, a native DOC writer, live Office co-editing and biometric unlock outside macOS. A broader sanitized Word-generated corpus, Windows runtime QA and physical Intel Mac QA are still open. Unsupported features must not be silently flattened to meet a visual approximation.

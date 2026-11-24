@@ -28,7 +28,7 @@ Test native Print and Export PDF with portrait/landscape and margins. Output mus
 
 In TXT, type `# still literal`, `**not bold**`, Unicode, tabs and multiple lines. It must not turn into Markdown. Test Find/Replace, Undo/Redo, save/reopen and local recovery. Try the UTF-16 BOM/CRLF sample. Font and zoom are viewing settings only. Older encodings such as Windows-1252 and TXT-specific print/PDF remain pending.
 
-For CSV, preserve quoted commas, quotes and line endings; use Table preview without rewriting the source. JSON, YAML and XML should keep their literal content. Do not expect a schema editor or code execution.
+For CSV, preserve quoted commas, quotes and line endings. Edit one cell in the sheet, save, and check in the file's text that only that cell changed. JSON, YAML and XML should keep their literal content. Do not expect a schema editor or code execution.
 
 `README.md` is Markdown. Extensionless `README` and additional text aliases are still tracked separately. Darkmown `.wd` has its own source editor and trusted offline runtime; follow the [Darkmown checks](darkmown.md).
 

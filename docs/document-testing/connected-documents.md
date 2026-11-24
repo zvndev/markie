@@ -14,7 +14,7 @@ Untrusted documents start inactive. Explicit trust should enable reviewed runtim
 
 ## Cleaner cloud and people
 
-Cloud should make local copies, owned/shared documents and access roles easy to distinguish. Search/filter by a person already involved in authorized shares. Share typeahead should autocomplete previous collaborators by name/email, support the keyboard and avoid cross-account or cross-server suggestions. Choosing a suggestion must not itself invite or change access.
+Cloud should make local copies, owned/shared documents and access roles easy to distinguish. Search/filter by a person already involved in authorized shares. The Share dialog suggests people you have shared with before (since 0.9.3). Check that suggestions work from the keyboard, never cross accounts or servers, and that choosing one does not itself invite or change access.
 
 ## Links between documents
 
@@ -22,4 +22,4 @@ Documents should link to each other through intentional, format-aware navigation
 
 ## Remaining acceptance areas
 
-Broader Word/RTF/ODT fidelity, native DOC writing, rich HTML, extensionless README/text aliases, all-files body indexing, live Office multiplayer, biometric vault keys and full browser acceptance remain open. The public release is a separate human-gated step after desktop testing and polish.
+Broader Word/RTF/ODT fidelity, native DOC writing, rich HTML, extensionless README/text aliases, all-files body indexing, live Office multiplayer, biometric vault unlock outside macOS and full browser acceptance remain open. The public release is a separate human-gated step after desktop testing and polish.

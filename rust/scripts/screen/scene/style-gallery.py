@@ -4,7 +4,13 @@
   style-gallery.py parts <dir>            split fixtures/lighthouse.md into four files that each fit a window
   style-gallery.py jobs <dir> <out.json>  the Electron jobs for shoot.mjs (editing view and read view)
   style-gallery.py rs <dir>               draw every preset in Markie RS (scene.sh; SCENE_BIN names the binary)
+  style-gallery.py pdfjobs <dir> <out.json>  the Electron jobs that print its export page as PDFs (shoot.mjs)
+  style-gallery.py pdf <dir>              pair <dir>/pdf/electron-*.pdf with rs-*.pdf, page by page (needs PyMuPDF)
   style-gallery.py build <dir>            crop, stack and pair the frames; writes <dir>/gallery and GALLERY.md
+
+The Markie RS PDFs come from the exporter's own example:
+  cargo run --release -p markie-export --example export_pdf -- fixtures/lighthouse.md <dir>/pdf/rs-<style>-<tone>.pdf <tone> --style <style>
+Screenshots of "Readers see my look" go in <dir>/look (docs/rust-port/STYLES-FONTS.md says how they are made).
 
 Everything is drawn in the background (docs/rust-port/SCREEN.md). Needs Pillow.
 """
@@ -57,6 +63,52 @@ def rs(d):
                 out = os.path.join(d, "rs", f"{style}-{tone}-{p}.png")
                 r = subprocess.run([os.path.join(HERE, "..", "scene.sh"), "doc", out, tone, json.dumps({"style": style}), os.path.join(d, "parts", f"part{p}.md")], env=env, capture_output=True, text=True)
                 print(style, tone, p, "ok" if os.path.exists(out) else r.stdout[-300:] + r.stderr[-300:])
+
+
+PDF_STYLES = ["technical", "editorial", "classic"]
+
+
+def pdfjobs(d, out):
+    fixture = os.path.join(HERE, "fixtures", "lighthouse.md")
+    os.makedirs(os.path.join(d, "pdf"), exist_ok=True)
+    js = [{"scene": "export", "theme": t, "out": os.path.join(d, "pdf", f"electron-{s}-{t}.pdf"), "args": {"file": fixture, "style": s, "theme": t},
+           "ready": "body[data-scene-export]", "settle": 800, "pdf": True} for s in PDF_STYLES for t in TONES]
+    json.dump(js, open(out, "w"))
+    print(f"{len(js)} jobs")
+
+
+def pdf(d):
+    import fitz
+    from PIL import Image, ImageDraw, ImageFont
+    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 26)
+
+    def pages(path):
+        out = []
+        for page in fitz.open(path):
+            pm = page.get_pixmap(dpi=110)
+            out.append(Image.frombytes("RGB", (pm.width, pm.height), pm.samples))
+        return out
+
+    os.makedirs(os.path.join(d, "gallery"), exist_ok=True)
+    for s in PDF_STYLES:
+        for t in TONES:
+            pair = [os.path.join(d, "pdf", f"{app}-{s}-{t}.pdf") for app in ("electron", "rs")]
+            if not all(os.path.exists(p) for p in pair):
+                continue
+            e, r = pages(pair[0]), pages(pair[1])
+            n, w, h, head = max(len(e), len(r)), e[0].width, e[0].height, 50
+            sheet = Image.new("RGB", (w * 2 + 20, (h + 10) * n + head), (120, 120, 120))
+            draw = ImageDraw.Draw(sheet)
+            draw.rectangle((0, 0, sheet.width, head), fill=(32, 32, 36))
+            draw.text((16, 10), f"Electron PDF: {s}, {t} ({len(e)} pages)", fill=(240, 240, 240), font=font)
+            draw.text((w + 36, 10), f"Markie RS PDF: {s}, {t} ({len(r)} pages)", fill=(240, 240, 240), font=font)
+            for i in range(n):
+                if i < len(e):
+                    sheet.paste(e[i], (0, head + i * (h + 10)))
+                if i < len(r):
+                    sheet.paste(r[i], (w + 20, head + i * (h + 10)))
+            sheet.save(os.path.join(d, "gallery", f"pdf-{s}-{t}.png"))
+            print(s, t, len(e), len(r))
 
 
 def column(path, left, top):
@@ -118,9 +170,22 @@ def build(d):
             sheet.save(os.path.join(g, name))
             lines += [f"### {style.capitalize()}", "", f"![{style} {tone}](gallery/{name})", ""]
             print(name, sheet.size)
+    sheets = sorted(f for f in os.listdir(g) if f.startswith("pdf-"))
+    if sheets:
+        lines += ["## PDF export", "", "The Lighthouse sample exported as a PDF. Left: Electron's export page printed by headless Chromium. Right: Markie RS's own exporter.", ""]
+        for f in sheets:
+            lines += [f"### {f[4:-4].replace('-', ', ').capitalize()}", "", f"![{f}](gallery/{f})", ""]
+    look = os.path.join(d, "look")
+    captions = [("rs-share-off.png", "Markie RS: Share, before the look is pinned"), ("rs-share-on.png", "Markie RS: Share, after \"Turn on\""),
+                ("electron-share-on.png", "Electron: Share on the same document, reading the look Markie RS pinned"), ("public-link.png", "The public link, as anyone reads it, in the pinned look")]
+    if os.path.isdir(look) and any(os.path.exists(os.path.join(look, f)) for f, _ in captions):
+        lines += ["## Readers see my look", "", "A document on a scratch server with `docs.enforced_style` (Electron main's server). The look was pinned from Markie RS: the Markie theme and the Technical style.", ""]
+        for f, caption in captions:
+            if os.path.exists(os.path.join(look, f)):
+                lines += [f"### {caption}", "", f"![{caption}](look/{f})", ""]
     open(os.path.join(d, "GALLERY.md"), "w").write("\n".join(lines))
 
 
 if __name__ == "__main__":
     cmd = sys.argv[1]
-    {"parts": lambda: print(parts(sys.argv[2])), "jobs": lambda: jobs(sys.argv[2], sys.argv[3]), "rs": lambda: rs(sys.argv[2]), "build": lambda: build(sys.argv[2])}[cmd]()
+    {"parts": lambda: print(parts(sys.argv[2])), "jobs": lambda: jobs(sys.argv[2], sys.argv[3]), "rs": lambda: rs(sys.argv[2]), "pdfjobs": lambda: pdfjobs(sys.argv[2], sys.argv[3]), "pdf": lambda: pdf(sys.argv[2]), "build": lambda: build(sys.argv[2])}[cmd]()

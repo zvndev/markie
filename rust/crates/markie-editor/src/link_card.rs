@@ -89,7 +89,23 @@ impl RichView {
         }
     }
 
+    /// The link whose own text is under `at`, as its leaf and units.
+    fn link_run_at(&self, at: Point<Pixels>) -> Option<((usize, usize), std::ops::Range<usize>)> {
+        let p = self.hit(at)?;
+        let (a, b, _) = self.editor.link_range(p)?;
+        let store = self.store.borrow();
+        let pl = store.leaves.get(&(p.block, p.leaf))?;
+        let o = pl.bounds.origin;
+        pl.laid.selection_rects(a..b).into_iter().any(|r| Bounds::new(point(o.x + r.origin.x, o.y + r.origin.y), r.size).contains(&at)).then_some(((p.block, p.leaf), a..b))
+    }
+
     pub(crate) fn link_hover_move(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        // `.markdown-body a:hover`: the link under the pointer is underlined.
+        let hovered = self.link_run_at(at);
+        if hovered != self.hovered_link {
+            self.hovered_link = hovered;
+            cx.notify();
+        }
         if !self.link_previews {
             return;
         }

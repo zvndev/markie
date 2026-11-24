@@ -60,7 +60,7 @@ function Doc() {
   );
 }
 
-if (scene === "doc" || scene === "style-settings" || scene === "export") {
+if (scene === "doc" || scene === "style-settings" || scene === "export" || (scene === "share" && args.style)) {
   installBundledFonts();
   startCodeFont();
   const styles = typeof args.style === "string" ? chooseMarkdownStyle(loadMarkdownStyleStore(), args.style) : sanitizeMarkdownStyleStore(args.style);

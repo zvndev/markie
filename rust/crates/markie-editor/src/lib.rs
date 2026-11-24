@@ -360,6 +360,8 @@ pub struct RichView {
     /// preview): the document alone, with this padding (top and bottom,
     /// sides) and no toolbar, rail or room past the end.
     pub sample: Option<(f32, f32)>,
+    /// The link under the pointer: its leaf and its units (`a:hover`).
+    pub(crate) hovered_link: Option<((usize, usize), std::ops::Range<usize>)>,
     pub(crate) heading_counts: (u64, Vec<(u32, u32)>),
     /// The count while one block is drawn.
     pub(crate) heading_count: (u32, u32),
@@ -467,6 +469,7 @@ impl RichView {
             content_height: px(0.),
             outline: (u64::MAX, Vec::new()),
             sample: None,
+            hovered_link: None,
             heading_counts: (u64::MAX, Vec::new()),
             heading_count: (0, 0),
             toolbar_width: px(0.),

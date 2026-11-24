@@ -56,6 +56,14 @@ pub(crate) struct Look {
     pub code_features: Option<FontFeatures>,
     /// The Markdown style being drawn (md.rs reads it).
     pub md: Resolved,
+    /// The link under the pointer (`a:hover`).
+    pub hovered_link: Option<(LeafKey, std::ops::Range<usize>)>,
+    /// Heights and gaps are set on whole device pixels (this is the window's
+    /// scale) in every style but Spacious. Chromium carries fractions of a
+    /// pixel from line to line; GPUI rounds each box up, which made a page
+    /// of 24.08 px lines about 1% longer than Electron's. Spacious's own
+    /// numbers land on whole pixels already, and it is left exactly as it was.
+    pub snap: Option<f32>,
     pub focused: bool,
     pub scale: f32,
     /// Reference keys of document links this reader may not follow.
@@ -182,19 +190,27 @@ impl Ctx {
 /// Stack blocks the way CSS collapses vertical margins: the space between
 /// two neighbours is the larger of their margins. Returns the stack and the
 /// first top and last bottom margins, which escape to the container.
-fn stack(children: Vec<(AnyElement, f32, f32)>) -> (AnyElement, f32, f32) {
+fn stack(children: Vec<(AnyElement, f32, f32)>, snap: Option<f32>) -> (AnyElement, f32, f32) {
     let mut top = 0.;
     let mut prev: Option<f32> = None;
     let mut out = Vec::with_capacity(children.len());
     for (el, t, b) in children {
         match prev {
             None => top = t,
-            Some(pb) => out.push(div().flex_none().h(px(pb.max(t))).into_any_element()),
+            Some(pb) => out.push(div().flex_none().h(px(snapped(pb.max(t), snap))).into_any_element()),
         }
         out.push(el);
         prev = Some(b);
     }
     (v_flex().w_full().children(out).into_any_element(), top, prev.unwrap_or(0.))
+}
+
+/// `v` on the nearest whole device pixel, when the look asks for that.
+fn snapped(v: f32, snap: Option<f32>) -> f32 {
+    match snap {
+        Some(scale) if scale > 0. => (v * scale).round() / scale,
+        _ => v,
+    }
 }
 
 /// Where a bullet list's disc sits in its 1.8 em gutter.
@@ -294,6 +310,8 @@ impl RichView {
             mono: code_family.unwrap_or_else(|| SharedString::from(MONO)),
             code_features,
             md: self.style.md.clone(),
+            hovered_link: self.hovered_link.clone(),
+            snap: (!self.style.md.is_spacious_drawing()).then(|| window.scale_factor()),
             focused: self.focus.is_focused(window),
             scale: window.scale_factor(),
             unshared_links: self.unshared_links.clone(),
@@ -491,7 +509,7 @@ impl RichView {
                     .flex()
                     .justify_center()
                     .px(px(pad_x))
-                    .pt(px(gap))
+                    .pt(px(snapped(gap, look.snap)))
                     .child(div().w_full().max_w(col).child(el))
                     .child(
                         canvas(move |bounds, _, _| {
@@ -703,7 +721,7 @@ impl RichView {
             out.push((el, t, bm));
             after_paragraph = matches!(n, Node::Paragraph { .. });
         }
-        stack(out).0
+        stack(out, look.snap).0
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -998,7 +1016,7 @@ impl RichView {
                     after_paragraph = matches!(c, Node::Paragraph { .. });
                 }
                 // The quote has padding, so its children's margins stay inside.
-                let (el, t, bm) = stack(kids);
+                let (el, t, bm) = stack(kids, look.snap);
                 let s = look.size;
                 // `quoteAccent`: the bar's colour.
                 let bar_color: Hsla = match look.md.choice("quoteAccent") {
@@ -1101,7 +1119,7 @@ impl RichView {
                         .into_any_element();
                     rows.push((row, li.max(t), li.max(bm)));
                 }
-                stack(rows).0
+                stack(rows, look.snap).0
             }
             Node::TaskList { items } => {
                 let li = 2.4 * look.zoom;
@@ -1171,7 +1189,7 @@ impl RichView {
                         .into_any_element();
                     rows.push((row, li, li));
                 }
-                stack(rows).0
+                stack(rows, look.snap).0
             }
             Node::Table { rows } => self.render_table(b, rows, path, counter, depth, ctx, look, window, cx),
         }
@@ -1280,7 +1298,7 @@ impl RichView {
                         }
                     }
                 }
-                let (el, t, bm) = stack(kids);
+                let (el, t, bm) = stack(kids, look.snap);
                 let (px_, py_) = padding(cell.header);
                 let width = widths.get(c).copied().unwrap_or(48.);
                 let cell_el = div()
@@ -1367,7 +1385,7 @@ impl RichView {
             kids.push((el, t, bm));
             after_paragraph = matches!(n, Node::Paragraph { .. });
         }
-        stack(kids)
+        stack(kids, look.snap)
     }
 
     fn is_atom_selected(&self, key: LeafKey) -> bool {
@@ -1759,7 +1777,19 @@ impl RichView {
         if !self.read_only {
             deco.misspelled = self.misspelled(key, &units, cx);
         }
-        let spec = LeafSpec { segs, base, line_height, align, len, indent: px(extras.indent), prefix: extras.prefix };
+        // `a:hover { border-bottom-color: var(--blue) }`, where the style
+        // does not already mark its links.
+        if let Some((hover_key, units)) = &look.hovered_link
+            && *hover_key == key
+            && look.md.choice("linkStyle") == "hover"
+        {
+            for seg in segs.iter_mut().filter(|s| s.units.start < units.end && units.start < s.units.end) {
+                if let SegKind::Text(_, style) = &mut seg.kind {
+                    style.under = Some((look.link, false));
+                }
+            }
+        }
+        let spec = LeafSpec { segs, base, line_height, align, len, indent: px(extras.indent), prefix: extras.prefix, snap: look.snap };
         let el = LeafElement::new(key, spec, deco, self.store.clone());
         // Inline formulas open their source on a click.
         let math_at: Vec<usize> = units.iter().enumerate().filter(|(_, u)| matches!(u, Unit::Atom(Inline::Math { .. }))).map(|(i, _)| i).collect();
@@ -1818,7 +1848,7 @@ impl RichView {
         if spell && !self.read_only {
             deco.misspelled = self.misspelled(key, &units, cx);
         }
-        let spec = LeafSpec { segs, base, line_height, align: Align::Left, len, indent: px(0.), prefix: None };
+        let spec = LeafSpec { segs, base, line_height, align: Align::Left, len, indent: px(0.), prefix: None, snap: look.snap };
         div().w_full().child(LeafElement::new(key, spec, deco, self.store.clone())).into_any_element()
     }
 }

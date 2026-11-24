@@ -105,8 +105,9 @@ impl Workspace {
         self.settle(window, cx);
         self.leave_page_for_document();
         self.document_failure = None;
-        load_embedded_fonts(format, bytes, cx);
+        let embedded = load_embedded_fonts(format, bytes, cx);
         let (view, subscription) = view_for(WordEditor::new(document), window, cx);
+        view.update(cx, |v, _| v.embedded_fonts = embedded);
         let office = OfficeDoc { view, source: Source::Rich, _subscription: subscription };
         office.focus(window, cx);
         // The recovery key is not a document file.
@@ -201,23 +202,28 @@ fn doc_text(raw: &str) -> String {
 }
 
 /// A Word file's own embedded fonts (`word/fonts/*.odttf`), loaded for this
-/// process only so the document's text is shown in them. They are held in
-/// memory: never installed and never written to disk. Saving keeps them in
-/// the file exactly as they arrived.
-fn load_embedded_fonts(format: FormatKind, bytes: &[u8], cx: &App) {
+/// process only so the document's text is shown in them. Each family is
+/// loaded under a private name (as Electron loads it under an alias only that
+/// document's text uses), so it never stands in for an installed font or for
+/// another document's. They are held in memory: never installed and never
+/// written to disk. Saving keeps them in the file exactly as they arrived.
+/// Returns the family names the document's runs use, lower case, with the
+/// private name of each.
+fn load_embedded_fonts(format: FormatKind, bytes: &[u8], cx: &App) -> std::collections::HashMap<String, String> {
     if format != FormatKind::Docx {
-        return;
+        return Default::default();
     }
     let fonts = markie_office::docx::fonts::docx_embedded_fonts(bytes);
-    if fonts.is_empty() {
-        return;
+    let (data, names) = markie_office::docx::fonts::aliased_embedded_fonts(&fonts);
+    if data.is_empty() {
+        return Default::default();
     }
-    for font in &fonts {
-        markie_core::fonts::add_embedded_family(&font.family);
+    let data: Vec<std::borrow::Cow<'static, [u8]>> = data.into_iter().map(std::borrow::Cow::Owned).collect();
+    // A font the text system cannot read leaves the text to fall back.
+    if cx.text_system().add_fonts(data).is_err() {
+        return Default::default();
     }
-    let data: Vec<std::borrow::Cow<'static, [u8]>> = fonts.into_iter().map(|f| std::borrow::Cow::Owned(f.data)).collect();
-    // A font the text system cannot read is left out; the text falls back.
-    let _ = cx.text_system().add_fonts(data);
+    names.into_iter().map(|(family, alias)| (family.trim().to_lowercase(), alias)).collect()
 }
 
 fn view_for(editor: WordEditor, window: &mut Window, cx: &mut Context<Workspace>) -> (Entity<WordView>, Subscription) {
@@ -250,8 +256,9 @@ pub(super) fn open(path: &Path, format: FormatKind, window: &mut Window, cx: &mu
     let bytes = std::fs::read(path).map_err(|e| format!("Markie could not read this file: {e}"))?;
     if let Some(engine) = engine_format(format) {
         let document = open_rich_document(engine, &bytes).map_err(|e| format!("This document could not be opened. {}", e.message))?;
-        load_embedded_fonts(format, &bytes, cx);
+        let embedded = load_embedded_fonts(format, &bytes, cx);
         let (view, subscription) = view_for(WordEditor::new(document), window, cx);
+        view.update(cx, |v, _| v.embedded_fonts = embedded);
         return Ok(OfficeDoc { view, source: Source::Rich, _subscription: subscription });
     }
     if format != FormatKind::Doc {

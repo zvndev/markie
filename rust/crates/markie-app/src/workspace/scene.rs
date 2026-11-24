@@ -235,7 +235,14 @@ impl Workspace {
                     }
                     let pending: Vec<String> = args.get("pending").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
                     self.scene_share_fill(&pending, arg(args, "query"), arg(args, "role") == "editor", arg(args, "menu"), window, cx);
+                    // `look: "on"`: turn on "Readers see my look", as its button does.
+                    if arg(args, "look") == "on" {
+                        self.share_set_look(true, cx);
+                    }
                     *step = 2;
+                    return false;
+                }
+                if arg(args, "look") == "on" && !self.scene_share_look_pinned() {
                     return false;
                 }
                 true

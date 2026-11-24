@@ -204,7 +204,7 @@ fn main() {
                 cx.spawn(async move |cx| {
                     let names = cx.background_executor().spawn(async move { text_system.all_font_names() }).await;
                     markie_core::fonts::set_installed_families(names);
-                    let _ = cx.update(|cx| cx.refresh_windows());
+                    cx.update(|cx| cx.refresh_windows());
                 })
                 .detach();
             }

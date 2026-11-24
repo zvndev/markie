@@ -272,14 +272,6 @@ pub fn set_installed_families(names: impl IntoIterator<Item = String>) {
     *INSTALLED.write().unwrap() = Some(names.into_iter().map(|n| n.trim().to_lowercase()).collect());
 }
 
-static EMBEDDED: RwLock<Option<HashSet<String>>> = RwLock::new(None);
-
-/// Note that a document's own embedded font was loaded under this family
-/// name, so it is painted with ahead of any stand-in.
-pub fn add_embedded_family(family: &str) {
-    EMBEDDED.write().unwrap().get_or_insert_with(HashSet::new).insert(family.trim().to_lowercase());
-}
-
 /// Whether a family is installed here. None when nobody has listed them.
 pub fn is_installed(family: &str) -> Option<bool> {
     INSTALLED.read().unwrap().as_ref().map(|set| set.contains(&family.trim().to_lowercase()))
@@ -335,10 +327,6 @@ pub fn office_native_family(font_name: &str, embedded_alias: Option<&str>) -> Op
         return Some(alias.to_string());
     }
     let name = font_name.trim();
-    // A font some open document carries inside itself is there to paint with.
-    if EMBEDDED.read().unwrap().as_ref().is_some_and(|set| set.contains(&name.to_lowercase())) {
-        return Some(name.to_string());
-    }
     if is_installed(name) == Some(false)
         && let Some(sub) = substitute_for(name)
     {
@@ -472,8 +460,8 @@ mod tests {
         assert_eq!(office_native_family("Georgia", None).as_deref(), Some("Georgia"));
         assert_eq!(office_native_family("Cambria", None).as_deref(), Some("Caladea"));
         assert_eq!(office_native_family("Brand Sans", None).as_deref(), Some("Brand Sans"), "no stand-in: the name itself");
-        add_embedded_family("Cambria");
-        assert_eq!(office_native_family("cambria", None).as_deref(), Some("cambria"));
+        // A document's own embedded copy comes first, under its private name.
+        assert_eq!(office_native_family("Cambria", Some("Markie Doc 1 Cambria")).as_deref(), Some("Markie Doc 1 Cambria"));
         assert_eq!(office_native_family("x\u{1}", None), None);
     }
 

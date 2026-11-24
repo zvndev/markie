@@ -6,14 +6,14 @@ The overall score across the five audits, and the rules behind it. Updated 2026-
 
 | Audit | Counted | Meets parity | Score |
 |---|---|---|---|
-| [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 55 | 54 | 98.2% |
-| [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 83 | 78 | 94.0% |
+| [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 55 | 55 | 100% |
+| [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 83 | 79 | 95.2% |
 | [Editors, autosave, history](AUDIT-EDITORS.md) | 62 | 56 | 90.3% |
 | [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 100 | 97 | 97.0% |
 | [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 61 | 58 | 95.1% |
-| **Total** | **361** | **343** | **95.0%** |
+| **Total** | **361** | **345** | **95.6%** |
 
-The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 11 are met.
+The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 13 are met.
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -37,7 +37,7 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
 
 Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 
-## What is still open (18 rows)
+## What is still open (16 rows)
 
 | Rows | What closes them |
 |---|---|
@@ -47,8 +47,6 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Editors 7.9 | The 50 MB timing, run with the speed comparison on a quiet Mac |
 | Editors 7.18 | A scheduled screen session of about 15 minutes: the CSV table with a real pointer, keyboard and clipboard, and one frame beside Electron's |
 | Library 28.S4, 28.S5, 28.F2 | A scheduled screen session of about 15 minutes: the Markdown style section, the style editor and the font menus with a real pointer, beside Electron's. The checks are written in each audit row |
-| Cloud 30.L2 | Draw "Readers see my look" against a server that has `docs.enforced_style` |
-| Export 23.S2 | Finish the style in the PDF and compare a style PDF with Electron's |
 | Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
 
 If every row above closes except the last two, the score is 359 of 361, which is 99.4%.

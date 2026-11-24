@@ -358,6 +358,12 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Scene mode: the server has said a look is pinned, and nothing is in flight.
+    #[cfg(feature = "scene")]
+    pub(super) fn scene_share_look_pinned(&self) -> bool {
+        self.collab.share.as_ref().is_some_and(|s| !s.look_busy && s.look.as_ref().is_some_and(|l| l.get("tokens").is_some_and(|t| t.is_object())))
+    }
+
     /// Scene mode: the dialog has its people and link.
     #[cfg(feature = "scene")]
     pub(super) fn scene_share_loaded(&self) -> bool {
@@ -664,7 +670,7 @@ impl Workspace {
 
     /// Pin this account's look to the document, or unpin it (`setDocLook`),
     /// then ask the server again what is pinned.
-    fn share_set_look(&mut self, pin: bool, cx: &mut Context<Self>) {
+    pub(super) fn share_set_look(&mut self, pin: bool, cx: &mut Context<Self>) {
         let Some((client, id)) = self.share_client() else { return };
         let body = pinned_look::pin_body(pin.then(|| self.share_own_look(cx)).as_ref());
         let Some(s) = self.collab.share.as_mut() else { return };
@@ -1230,8 +1236,10 @@ impl Workspace {
                 .mt(px(17.6))
                 .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).mb(px(5.6)).child("Appearance"))
                 .child(
+                    // `.markie-share-general`: a 0.7rem gap; the round mark turns
+                    // the status green while the look is pinned (`data-public`).
                     h_flex()
-                        .gap(px(12.))
+                        .gap(px(11.2))
                         .py(px(4.))
                         .items_center()
                         .child(
@@ -1242,21 +1250,24 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .bg(if on { blue.opacity(0.16) } else { p.fg(0.08) })
-                                .child(super::dialog_chrome::stroke_icon("M4 7V5h16v2M9 19h6M12 5v14", if on { blue } else { p.muted }, 15., 1.8)),
+                                .bg(if on { p.green.opacity(0.16) } else { p.fg(0.08) })
+                                .child(super::dialog_chrome::stroke_icon("M4 7V5h16v2M9 19h6M12 5v14", if on { p.green } else { p.muted }, 15., 1.8)),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child("Readers see my look"))
+                                // The title takes the dialog's own text: 16px, regular.
+                                .child(div().text_size(px(16.)).text_color(p.foreground).child("Readers see my look"))
                                 .child(div().text_size(px(12.)).text_color(p.muted).child(line)),
                         )
                         .when(drifted, |el| {
-                            el.child(self.share_pill_button("share-look-update", "Update", false, look_busy, p).on_click(cx.listener(|w, _, _, cx| w.share_set_look(true, cx))))
+                            el.child(self.share_pill_button("share-look-update", "Update", false, look_busy, p).px(px(17.6)).text_color(p.foreground).on_click(cx.listener(|w, _, _, cx| w.share_set_look(true, cx))))
                         })
                         .child(
                             self.share_pill_button("share-look-switch", if on { "Turn off" } else { "Turn on" }, false, look_busy, p)
+                                .px(px(17.6))
+                                .text_color(p.foreground)
                                 .on_click(cx.listener(move |w, _, _, cx| w.share_set_look(!on, cx))),
                         ),
                 )

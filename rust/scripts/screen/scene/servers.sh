@@ -5,6 +5,12 @@
 #   servers.sh start <scratch>   primary :18991, second :18995 ("Dana's server")
 #   servers.sh stop <scratch>    kill both by their pid files
 #
+# SCENE_SERVER_SRC names another server/ folder to run (read only), such as
+# the Electron checkout's when a scene needs a newer server than this branch's.
+#
+# SCENE_WEB_DIST names a built web app (vite.web.config.ts), for scenes that
+# draw a hosted page; without it the server draws its plain fallback page.
+#
 # The headless Electron harness serves on :18990, so that origin is trusted.
 set -eu
 cmd=$1; dir=$(mkdir -p "$2" && cd "$2" && pwd)
@@ -14,10 +20,10 @@ if [ "$cmd" = stop ]; then
   exit 0
 fi
 start() { port=$1; name=$2; work="$dir/srv-$port"; mkdir -p "$work"
-  ( cd "$repo/server" && exec env -i PATH="$PATH" HOME="$work" TMPDIR="$work" NODE_ENV=development PORT="$port" \
+  ( cd "${SCENE_SERVER_SRC:-$repo/server}" && exec env -i PATH="$PATH" HOME="$work" TMPDIR="$work" NODE_ENV=development PORT="$port" \
       DB_PATH="$work/markie.db" ASSETS_DIR="$work/assets" BETTER_AUTH_URL="http://localhost:$port" \
       BETTER_AUTH_SECRET="local-scene-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" \
-      MARKIE_WEB_DIST="$work/no-web-dist" ENABLE_CRONS=false MARKIE_WEB_ORIGINS="http://localhost:18990" \
+      MARKIE_WEB_DIST="${SCENE_WEB_DIST:-$work/no-web-dist}" ENABLE_CRONS=false MARKIE_WEB_ORIGINS="http://localhost:18990" \
       ${name:+MARKIE_SERVER_NAME="$name"} \
       sh -c 'node --experimental-strip-types src/migrate.ts && exec node --experimental-strip-types src/index.ts' ) \
     >"$work/server.log" 2>&1 &

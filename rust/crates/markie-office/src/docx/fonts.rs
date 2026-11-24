@@ -169,6 +169,144 @@ pub fn read_docx_embedded_fonts(entries: &[ZipEntry]) -> Vec<DocxEmbeddedFont> {
     fonts
 }
 
+/// The name a document's embedded family is loaded under: private to the
+/// font's own bytes, so it never stands in for an installed font of the same
+/// name and two documents that embed different fonts under one name do not
+/// share one.
+pub fn embedded_alias(family: &str, data: &[u8]) -> String {
+    // FNV-1a over the font, which is all the name has to tell apart.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in data {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let plain: String = family.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ').take(40).collect();
+    format!("Markie Doc {:08x} {}", hash as u32, plain.trim())
+}
+
+fn be16(data: &[u8], at: usize) -> Option<usize> {
+    data.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize)
+}
+
+fn be32(data: &[u8], at: usize) -> Option<usize> {
+    data.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
+}
+
+fn checksum(table: &[u8]) -> u32 {
+    table.chunks(4).fold(0u32, |sum, chunk| {
+        let mut word = [0u8; 4];
+        word[..chunk.len()].copy_from_slice(chunk);
+        sum.wrapping_add(u32::from_be_bytes(word))
+    })
+}
+
+/// A `name` table that calls the font `family`, in the style `variant`.
+fn name_table(family: &str, variant: DocxFontVariant) -> Vec<u8> {
+    let style = match variant {
+        DocxFontVariant::Regular => "Regular",
+        DocxFontVariant::Bold => "Bold",
+        DocxFontVariant::Italic => "Italic",
+        DocxFontVariant::BoldItalic => "Bold Italic",
+    };
+    let postscript: String = format!("{family}-{style}").chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    // Family, style, unique id, full name, PostScript name.
+    let names: [(u16, String); 5] = [(1, family.to_string()), (2, style.to_string()), (3, format!("{family} {style}")), (4, format!("{family} {style}")), (6, postscript)];
+    let mut records = Vec::new();
+    let mut strings = Vec::new();
+    for (id, text) in &names {
+        let bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        // Windows, Unicode BMP, US English.
+        for field in [3u16, 1, 0x0409, *id, bytes.len() as u16, strings.len() as u16] {
+            records.extend(field.to_be_bytes());
+        }
+        strings.extend(bytes);
+    }
+    let mut table = Vec::new();
+    for field in [0u16, names.len() as u16, (6 + records.len()) as u16] {
+        table.extend(field.to_be_bytes());
+    }
+    table.extend(records);
+    table.extend(strings);
+    table
+}
+
+/// The same font under another family name: its `name` table replaced and
+/// the file's directory and checksums written again. None when the bytes
+/// are not a single TrueType or OpenType font this can read.
+pub fn rename_font_family(data: &[u8], family: &str, variant: DocxFontVariant) -> Option<Vec<u8>> {
+    if !is_sfnt(data) {
+        return None;
+    }
+    let count = be16(data, 4)?;
+    let mut tables: Vec<([u8; 4], Vec<u8>)> = Vec::with_capacity(count + 1);
+    for i in 0..count {
+        let record = 12 + i * 16;
+        let tag: [u8; 4] = data.get(record..record + 4)?.try_into().ok()?;
+        let (offset, length) = (be32(data, record + 8)?, be32(data, record + 12)?);
+        if &tag != b"name" {
+            tables.push((tag, data.get(offset..offset.checked_add(length)?)?.to_vec()));
+        }
+    }
+    tables.push((*b"name", name_table(family, variant)));
+    tables.sort_by_key(|(tag, _)| *tag);
+    // `head.checkSumAdjustment` is zero while the file is summed.
+    for (tag, table) in tables.iter_mut() {
+        if tag == b"head" {
+            table.get_mut(8..12)?.fill(0);
+        }
+    }
+    let n = tables.len();
+    let pow = 1usize << (usize::BITS - 1 - n.leading_zeros());
+    let mut out = Vec::new();
+    out.extend_from_slice(&data[..4]);
+    for field in [n as u16, (pow * 16) as u16, pow.trailing_zeros() as u16, ((n - pow) * 16) as u16] {
+        out.extend(field.to_be_bytes());
+    }
+    let mut offset = 12 + n * 16;
+    let mut head_at = None;
+    for (tag, table) in &tables {
+        out.extend_from_slice(tag);
+        out.extend(checksum(table).to_be_bytes());
+        out.extend((offset as u32).to_be_bytes());
+        out.extend((table.len() as u32).to_be_bytes());
+        if tag == b"head" {
+            head_at = Some(offset);
+        }
+        offset += table.len().div_ceil(4) * 4;
+    }
+    for (_, table) in &tables {
+        out.extend_from_slice(table);
+        out.resize(out.len().div_ceil(4) * 4, 0);
+    }
+    if let Some(at) = head_at {
+        let adjustment = 0xB1B0_AFBAu32.wrapping_sub(checksum(&out));
+        out.get_mut(at + 8..at + 12)?.copy_from_slice(&adjustment.to_be_bytes());
+    }
+    Some(out)
+}
+
+/// A document's embedded fonts ready to load: each family under its private
+/// alias, with (the name the document's runs use, the alias) for the view.
+/// A font that cannot be renamed is left out, and its text is drawn as it
+/// would be with no embedded copy.
+pub fn aliased_embedded_fonts(fonts: &[DocxEmbeddedFont]) -> (Vec<Vec<u8>>, Vec<(String, String)>) {
+    let mut data = Vec::new();
+    let mut names: Vec<(String, String)> = Vec::new();
+    for font in fonts {
+        // One alias for a family: its first face names it.
+        let alias = match names.iter().find(|(family, _)| family.eq_ignore_ascii_case(&font.family)) {
+            Some((_, alias)) => alias.clone(),
+            None => embedded_alias(&font.family, &font.data),
+        };
+        if let Some(renamed) = rename_font_family(&font.data, &alias, font.variant) {
+            data.push(renamed);
+            if !names.iter().any(|(family, _)| family.eq_ignore_ascii_case(&font.family)) {
+                names.push((font.family.clone(), alias));
+            }
+        }
+    }
+    (data, names)
+}
+
 /// The embedded fonts of a DOCX file's bytes, or none when it cannot be read.
 pub fn docx_embedded_fonts(bytes: &[u8]) -> Vec<DocxEmbeddedFont> {
     match crate::zip::read_zip(bytes, crate::zip::ZipLimits::default()) {
@@ -202,6 +340,62 @@ mod tests {
         assert_eq!(deobfuscate_docx_font(&hidden, key).unwrap(), font);
         assert_eq!(deobfuscate_docx_font(&font[..20], key), None);
         assert!(is_sfnt(b"OTTO\0\0\0\0\0\0\0\0") && is_sfnt(b"true\0\0\0\0\0\0\0\0") && !is_sfnt(b"wOF2\0\0\0\0\0\0\0\0"));
+    }
+
+    /// A real font (the bundled Carlito, unpacked by the test below it)
+    /// is not needed to check the rewrite: any well-formed table directory will do.
+    fn tiny_font() -> Vec<u8> {
+        let head = vec![0u8; 54];
+        let glyf = vec![7u8; 10];
+        let name = name_table("Old Name", DocxFontVariant::Regular);
+        let tables: [(&[u8; 4], &Vec<u8>); 3] = [(b"glyf", &glyf), (b"head", &head), (b"name", &name)];
+        let mut out = vec![0, 1, 0, 0, 0, 3, 0, 32, 0, 1, 0, 16];
+        let mut offset = 12 + 16 * 3;
+        for (tag, table) in tables {
+            out.extend_from_slice(tag);
+            out.extend(checksum(table).to_be_bytes());
+            out.extend((offset as u32).to_be_bytes());
+            out.extend((table.len() as u32).to_be_bytes());
+            offset += table.len().div_ceil(4) * 4;
+        }
+        for (_, table) in tables {
+            out.extend_from_slice(table);
+            out.resize(out.len().div_ceil(4) * 4, 0);
+        }
+        out
+    }
+
+    fn family_of(font: &[u8]) -> String {
+        let count = be16(font, 4).unwrap();
+        let record = (0..count).map(|i| 12 + i * 16).find(|r| &font[*r..*r + 4] == b"name").unwrap();
+        let table = &font[be32(font, record + 8).unwrap()..][..be32(font, record + 12).unwrap()];
+        let strings = be16(table, 4).unwrap();
+        let (length, offset) = (be16(table, 6 + 8).unwrap(), be16(table, 6 + 10).unwrap());
+        let units: Vec<u16> = table[strings + offset..strings + offset + length].chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        String::from_utf16(&units).unwrap()
+    }
+
+    #[test]
+    fn an_embedded_font_is_loaded_under_a_private_name() {
+        let font = tiny_font();
+        assert_eq!(family_of(&font), "Old Name");
+        let alias = embedded_alias("Brand Sans!", &font);
+        assert!(alias.starts_with("Markie Doc ") && alias.ends_with(" Brand Sans"), "{alias}");
+        assert_ne!(alias, embedded_alias("Brand Sans!", &[1, 2, 3]), "another font, another name");
+        let renamed = rename_font_family(&font, &alias, DocxFontVariant::Bold).unwrap();
+        assert_eq!(family_of(&renamed), alias);
+        // The other tables are untouched, and the file sums to the magic number.
+        assert!(renamed.windows(10).any(|w| w == [7u8; 10]));
+        assert_eq!(checksum(&renamed), 0xB1B0_AFBA);
+        assert_eq!(rename_font_family(b"wOF2 not a font", &alias, DocxFontVariant::Regular), None);
+        // A family's faces share one alias.
+        let fonts = vec![
+            DocxEmbeddedFont { family: "Brand Sans".into(), variant: DocxFontVariant::Regular, data: font.clone(), part: "a".into() },
+            DocxEmbeddedFont { family: "Brand Sans".into(), variant: DocxFontVariant::Bold, data: renamed.clone(), part: "b".into() },
+        ];
+        let (data, names) = aliased_embedded_fonts(&fonts);
+        assert_eq!((data.len(), names.len()), (2, 1));
+        assert_eq!(family_of(&data[1]), names[0].1);
     }
 
     #[test]

@@ -131,6 +131,9 @@ const OUTLINE_WIDTH: f32 = 165.;
 const OUTLINE_LINE_HEIGHT: f32 = 1.5;
 
 pub struct WordView {
+    /// The document's own embedded fonts: the family name its runs use
+    /// (lower case) to the private name that font was loaded under.
+    pub embedded_fonts: std::collections::HashMap<String, String>,
     pub editor: WordEditor,
     pub(crate) focus: FocusHandle,
     scroll: ScrollHandle,
@@ -254,6 +257,7 @@ impl WordView {
         WordView {
             editor,
             focus: cx.focus_handle(),
+            embedded_fonts: Default::default(),
             scroll: ScrollHandle::new(),
             mode,
             outline: false,
@@ -707,7 +711,7 @@ impl WordView {
         // Calibri, and so on). The name in the file is never touched.
         let family: SharedString = look
             .and_then(|l| l.font_family.as_deref())
-            .and_then(|name| markie_core::fonts::office_native_family(name, None))
+            .and_then(|name| markie_core::fonts::office_native_family(name, self.embedded_fonts.get(&name.trim().to_lowercase()).map(String::as_str)))
             .unwrap_or_else(|| DEFAULT_FONT.to_string())
             .into();
         let mut font = font(family);

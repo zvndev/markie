@@ -76,6 +76,8 @@ pub struct LeafSpec {
     /// Text drawn before the first line that is no part of the document (a
     /// heading's section number, CSS `::before`). The caret never enters it.
     pub prefix: Option<(String, SegStyle)>,
+    /// Set each line's height on a whole device pixel (the window's scale).
+    pub snap: Option<f32>,
 }
 
 enum PlacedKind {
@@ -432,7 +434,10 @@ pub fn layout(spec: &LeafSpec, width: Pixels, window: &Window) -> Laid {
             desc = base_desc;
             lh = spec.base.size * spec.line_height;
         }
-        let height = lh.max(asc + desc);
+        let mut height = lh.max(asc + desc);
+        if let Some(scale) = spec.snap.filter(|s| *s > 0.) {
+            height = px((f32::from(height) * scale).round() / scale);
+        }
         let baseline = (height - (asc + desc)) / 2. + asc;
         let units = if range.is_empty() {
             // An empty line: at the unit after the break before it.

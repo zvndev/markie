@@ -138,12 +138,35 @@ pub fn own_look(store: &ThemeStore, tone: Tone) -> OwnLook {
     }
 }
 
-/// The tokens as they are sent: the fields that are set, and no nulls.
+/// The order Electron writes a painted preset's tokens in (`findTheme`: the
+/// template's colours and typography, then a style's code face). Electron
+/// tells a pinned look from the owner's own by comparing the two as JSON
+/// text, so a pin made here must be written in the same order or Electron
+/// says "Yours has changed since" about a look that has not changed.
+const TOKEN_ORDER: [&str; 21] = [
+    "background", "surface", "surface2", "foreground", "muted", "border", "docRule", "accent", "link", "statusGreen", "statusYellow", "statusRed", "statusBlue", "statusPurple", "bodyFont", "headingFont",
+    "lineHeight", "paragraphGap", "fontSize", "contentWidth", "codeFont",
+];
+
+/// The tokens as they are sent: the fields that are set, no nulls, whole
+/// numbers written as JavaScript writes them, in Electron's order.
 pub fn tokens_json(tokens: &ThemeTokens) -> Value {
-    match serde_json::to_value(tokens) {
-        Ok(Value::Object(map)) => Value::Object(map.into_iter().filter(|(_, v)| !v.is_null()).collect()),
-        _ => Value::Null,
+    let Ok(Value::Object(mut map)) = serde_json::to_value(tokens) else { return Value::Null };
+    let mut out = Map::new();
+    for key in TOKEN_ORDER {
+        match map.remove(key) {
+            Some(Value::Null) | None => {}
+            Some(Value::Number(n)) => {
+                let whole = n.as_f64().filter(|v| v.fract() == 0.0 && v.abs() < 1e15).map(|v| json!(v as i64));
+                out.insert(key.into(), whole.unwrap_or(Value::Number(n)));
+            }
+            Some(v) => {
+                out.insert(key.into(), v);
+            }
+        }
     }
+    out.extend(map.into_iter().filter(|(_, v)| !v.is_null()));
+    Value::Object(out)
 }
 
 /// The body of `PUT /api/docs/:id/theme`: a look to pin, or None to unpin.
@@ -258,6 +281,11 @@ mod tests {
         assert_eq!(body["tokens"]["background"], json!(own.tokens.background));
         assert!(body["tokens"].as_object().unwrap().values().all(|v| !v.is_null()));
         assert_eq!(body["style"]["base"], "technical");
+        // The same text Electron's `JSON.stringify(findTheme(...).tokens)` gives for this look.
+        let plain = own_look(&ThemeStore::default().choose_template("markie", Tone::Light).with_style_store(StyleStore::default().choose("technical")), Tone::Light);
+        let text = serde_json::to_string(&tokens_json(&plain.tokens)).unwrap();
+        assert!(text.contains("\"fontSize\":16,") && text.contains("\"lineHeight\":1.75"), "{text}");
+        assert!(tokens_json(&plain.tokens).get("codeFont").is_some());
         assert_eq!(pin_body(None), json!({ "tokens": null, "style": null }));
 
         assert_eq!(look_state(None, &own), LookState::Unknown);

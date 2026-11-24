@@ -4,7 +4,7 @@ Sections 10, 11, 12, 14, 21 and 30 of [PARITY.md](PARITY.md), checked against Ma
 
 ## Score
 
-**Parity: 94.0%** (75 PASS + 3 IMPROVEMENT ÷ 83 rows counted, after the three Markdown style rows of 2026-11-24 at the end of this file). Before them: **95.0%** (73 PASS + 3 IMPROVEMENT ÷ 80 rows counted; 83 rows, 1 EXCLUDED, 2 EXCLUDED-NIGHTLY), rescored on 2026-11-23: 30.1, 14.1.1, its group 14.1 and 21.1.4 passed the background comparison (`SCREEN.md`). The same day (branch `t3/markie-rs-home-pages`) 14.1.2, 14.1.3 and 30.1 became IMPROVEMENT: the Cloud page has its own calmer layout. The total does not move. Local comments (12.2, 12.2.1) ship only in super-nightly Electron builds.
+**Parity: 95.2%** (76 PASS + 3 IMPROVEMENT ÷ 83 rows counted, after the three Markdown style rows of 2026-11-24 at the end of this file). Before them: **95.0%** (73 PASS + 3 IMPROVEMENT ÷ 80 rows counted; 83 rows, 1 EXCLUDED, 2 EXCLUDED-NIGHTLY), rescored on 2026-11-23: 30.1, 14.1.1, its group 14.1 and 21.1.4 passed the background comparison (`SCREEN.md`). The same day (branch `t3/markie-rs-home-pages`) 14.1.2, 14.1.3 and 30.1 became IMPROVEMENT: the Cloud page has its own calmer layout. The total does not move. Local comments (12.2, 12.2.1) ship only in super-nightly Electron builds.
 
 | Status | Rows |
 |---|---|
@@ -227,14 +227,14 @@ Safety note: one stray click opened a shared document in Electron, which saves t
 
 ## Markdown styles, 2026-11-24
 
-Electron PR #150, ported on branch `t3/markie-rs-styles-fonts` ([STYLES-FONTS.md](STYLES-FONTS.md)). Three rows. The score is now **78 of 83 = 94.0 %**.
+Electron PR #150, ported on branch `t3/markie-rs-styles-fonts` ([STYLES-FONTS.md](STYLES-FONTS.md)). Three rows, all met since the follow-up of 2026-11-24. The score is now **79 of 83 = 95.2 %**.
 
 | Item | Row | Status | Evidence |
 |---|---|---|---|
 | The account's styles sync through the theme store, in Electron's JSON shape | 30.L1 | PASS | `theme::tests::a_store_from_electron_keeps_its_styles_and_local_fonts`; the store is sent by the existing `PUT /api/me/themes` path |
-| Share › Appearance › "Readers see my look": pin, unpin, Update when drifted, the failure line | 30.L2 | NEEDS-CAPTURE | `pinned_look::tests` (the body sent, the state read, the lines); `share.rs` `share_set_look` |
+| Share › Appearance › "Readers see my look": pin, unpin, Update when drifted, the failure line | 30.L2 | PASS | Drawn against Electron main's server (which has `docs.enforced_style`) on scratch data: the row off, then on after `share_set_look` (scene `share` with `look: "on"`); the server answers `{tokens, style}`; Electron's own Share dialog reads that pin as "On: Markie theme, Technical style." with no drift; the public link draws the pinned look. `.autoloop/runs/styles-fonts/GALLERY.md`, "Readers see my look"; `pinned_look::tests` |
 | A reader gets the owner's style and faces with the pinned theme | 30.L3 | PASS | `pinned_look::tests`, `doc_theme::tests` |
 
-30.L2 was not drawn against a server. The scene servers run this branch's own `server/`, which predates `docs.enforced_style`. Capture steps: start the scene servers from the Electron checkout's `server/`, run the `share` scene as the owner, and shoot `ShareDialog` beside it.
+30.L2: Electron tells a pinned look from the owner's own by comparing the two as JSON text, so Markie RS writes the tokens in Electron's key order and number form (`pinned_look::tokens_json`). Without that, Electron said "Yours has changed since" about a look pinned a moment before. The row's mark, title size and buttons were set from Electron's frame. Turning the look off and the Update button run the same call and were not drawn.
 
 A pinned look now shows in either mode, as Electron's does. Before, Markie RS painted it only in the mode its background belonged to.

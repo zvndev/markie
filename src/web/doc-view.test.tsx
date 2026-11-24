@@ -105,19 +105,23 @@ describe("the read view", () => {
 
   it("titles the tab for the state the page is in", async () => {
     render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={null} onEdit={() => {}} />);
+    // The title is set in an effect, and React may run that a task later than
+    // the commit that shows the heading: on a slow machine the heading is on
+    // the page while the tab still reads "Opening document". So the title is
+    // waited for, not read the moment the heading appears.
     await screen.findByRole("heading", { name: "Sign in to read this document" });
-    expect(document.title).toBe("Sign in to read this · Markie");
+    await waitFor(() => expect(document.title).toBe("Sign in to read this · Markie"));
     cleanup();
     // Signed in, but not shared with this account: nothing says sign in.
     loadDoc.mockResolvedValue(null);
     render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
     await screen.findByRole("heading", { name: "This account can't open this document" });
-    expect(document.title).toBe("Can't open this document · Markie");
+    await waitFor(() => expect(document.title).toBe("Can't open this document · Markie"));
     cleanup();
     loadDoc.mockResolvedValue(doc("owner"));
     render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
     await screen.findByRole("heading", { name: "Plan" });
-    expect(document.title).toBe("Plan.md · Markie");
+    await waitFor(() => expect(document.title).toBe("Plan.md · Markie"));
   });
 
   it("offers no Edit for a Word, RTF or ODT file Markie keeps read-only", async () => {

@@ -135,6 +135,46 @@ describe("large documents", () => {
     await waitFor(() => expect(probe).toHaveBeenCalled());
   });
 
+  it("gives the mode back when the size check comes due as the next document lands", async () => {
+    // page measures the open document a beat after it lands. That check can
+    // come due after the next document has been loaded and before React has
+    // painted it; it then holds the last document's text, and must not put
+    // the large tier back over the document that replaced it. The timing is
+    // forced here: the due check runs from registryTrack, which page calls in
+    // the same turn as the load, before any render.
+    const pending = new Map<unknown, () => void>();
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    const timeouts = vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
+      const id = realSetTimeout(fn, ms, ...rest);
+      if (ms === 500) pending.set(id, fn);
+      return id;
+    }) as typeof setTimeout);
+    const clears = vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id?: Parameters<typeof clearTimeout>[0]) => {
+      pending.delete(id);
+      realClearTimeout(id);
+    }) as typeof clearTimeout);
+    try {
+      const registryTrack = vi.fn(async () => {
+        for (const [id, fire] of [...pending]) { pending.delete(id); realClearTimeout(id as Parameters<typeof clearTimeout>[0]); fire(); }
+        return { ok: true };
+      });
+      installBridge({ getInitialFile: vi.fn(async () => LARGE), registryTrack } as Partial<ElectronAPI>);
+      render(<Home />);
+      await waitFor(() => expect(largeStrip()).not.toBeNull());
+      await waitFor(() => expect(sourceEditor()).not.toBeNull());
+
+      emit("onFileOpened", SMALL);
+      await waitFor(() => expect(registryTrack).toHaveBeenCalled());
+      await waitFor(() => expect(largeStrip()).toBeNull());
+      await waitFor(() => expect(richPane()).not.toBeNull());
+      await expectRichAvailable();
+    } finally {
+      timeouts.mockRestore();
+      clears.mockRestore();
+    }
+  });
+
   it("shows a refusal for a file over the cap and keeps the open document", async () => {
     installBridge({ getInitialFile: vi.fn(async () => SMALL) } as Partial<ElectronAPI>);
     render(<Home />);

@@ -247,3 +247,8 @@
 @media print {
   html.markie-printing .markie-print-layer[data-print-style] { --foreground: #1a1a2e; --muted: #52525b; --surface: #f4f4f5; --doc-rule: #d4d4d8; --border: #d4d4d8; --blue: #1d4ed8; --background: #fff; --accent: #e4e4e7; }
 }
+
+/* A CSV or TSV: the table takes the page under the bar (csv-table.css maps the palette). */
+.markie-view-csv { display: flex; flex: 1; min-height: 0; width: 100%; max-width: 1240px; margin: 0 auto; padding: 18px 20px 22px; box-sizing: border-box; }
+.markie-view-csv .csv-table { border: 1px solid var(--view-line); border-radius: 12px; overflow: hidden; box-shadow: var(--view-shadow); }
+@media (max-width: 640px) { .markie-view-csv { padding: 0; } .markie-view-csv .csv-table { border: 0; border-radius: 0; box-shadow: none; } }

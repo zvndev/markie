@@ -42,7 +42,7 @@ describe("shared compact formatting controls", () => {
     render(<TextDocumentEditor session={session} onChange={vi.fn()} onFlushReady={vi.fn()} />);
     const leading = document.querySelector("[data-markie-toolbar-start]")!;
     expect(within(leading as HTMLElement).getByRole("button", { name: "Find" })).toBeInTheDocument();
-    if (format === "csv") expect(within(leading as HTMLElement).getByRole("button", { name: "Table preview" })).toBeInTheDocument();
+    if (format === "csv") expect(leading).toHaveTextContent("CSV · Table");
     if (format === "markdown") expect(within(leading as HTMLElement).getByRole("button", { name: "Source" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Font")).toBeNull();
     resize(700, 220);

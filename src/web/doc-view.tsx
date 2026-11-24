@@ -24,6 +24,8 @@ import { pinnedLookFrom, type PinnedLook } from "@/lib/pinned-look";
 import { MarkdownStyleScope } from "@/components/markdown-style-scope";
 import { MarkieLogo } from "@/components/markie-logo";
 import { CopyAllButton } from "@/components/copy-all-button";
+import { CsvTable } from "@/components/csv-table/csv-table";
+import { isCsvName } from "@/lib/csv-table";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { HtmlSectionRail } from "@/components/section-rail";
 import { HideBarButton, ShowBarButton } from "./bar-controls";
@@ -184,6 +186,11 @@ async function loadPublicLinks(token: string, apiOrigin: string, fetcher: typeof
   }
 }
 
+/** A CSV or TSV, which the view draws as a table rather than as text. */
+export function isCsvView(doc: Pick<ViewDoc, "name" | "kind">): boolean {
+  return (doc.kind === "text" || doc.kind === "markdown") && isCsvName(doc.name);
+}
+
 /** The tab's title for each state that has no document to name, matching what the page says. */
 export const VIEW_TITLES: Record<ViewState["state"], string> = {
   loading: "Opening document",
@@ -237,14 +244,15 @@ export function DocView({ route, apiOrigin, user, onEdit }: DocViewProps) {
   }, [routeKey, apiOrigin, user, reload]);
 
   const doc = view.state === "ready" ? view.doc : null;
-  const look = doc?.look ?? null;
+  // A pinned look is for a Markdown page; a CSV is drawn as its table.
+  const look = doc && !isCsvView(doc) ? doc.look : null;
   usePinnedTokens(look);
   useEffect(() => {
     document.title = `${doc ? doc.name : VIEW_TITLES[view.state]} · Markie`;
   }, [doc, view.state]);
 
   const signIn = route.kind === "member" ? viewSignInHref(route.id, apiOrigin) : null;
-  const html = useMemo(() => (doc && (doc.kind === "markdown" || doc.kind === "text") ? viewHtml(doc.kind, doc.text, doc.assetUrl, doc.links ?? new Map()) : null), [doc]);
+  const html = useMemo(() => (doc && !isCsvView(doc) && (doc.kind === "markdown" || doc.kind === "text") ? viewHtml(doc.kind, doc.text, doc.assetUrl, doc.links ?? new Map()) : null), [doc]);
   const pinnedStyle = look?.style ?? null;
   const readText = useCallback(() => doc?.text ?? "", [doc]);
   const original = useMemo(() => (doc?.office ? async () => new Uint8Array(await exportRichDocument(doc.office!)) : undefined), [doc]);
@@ -324,6 +332,12 @@ function ViewBody({ view, html, markdownStyle, signIn, user, apiOrigin, route, o
         <WordDocumentEditor document={doc.office} readOnly reading onChange={() => {}} />
       </Suspense>
     </div></div></div>;
+  }
+  // A CSV or TSV reads as its table, never as a column of commas. Read-only:
+  // editing is the editor's, behind the Edit button.
+  // (The server files a .csv under "markdown", so a public link names it that.)
+  if (isCsvView(doc)) {
+    return <main className="markie-view-csv" data-web-view-csv><CsvTable text={doc.text} name={doc.name} readOnly /></main>;
   }
   if (doc.kind === "unsupported" || html === null) {
     return <main className="markie-view-notice"><h1>{doc.name}</h1><p>Markie can&apos;t show this kind of file in the browser. Export it to download the original.</p></main>;

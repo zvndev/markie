@@ -24,6 +24,20 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with its public link, then reads it that way on the web, the desktop and
   the phone. HTML and PDF exports are drawn in the style too.
 
+### Changed
+
+- A CSV file now opens as a table: a sticky header, row numbers, columns sized to
+  what they hold, numbers lined up on the right, and long cells shown in full
+  below the grid when you select them. Click a header to sort, type in the filter
+  box to narrow the rows; neither changes the file. A Table / Text switch shows
+  the file's own text. The same table draws a shared CSV on a web link and on the
+  phone, read-only there. TSV files open the same way.
+- Editing a CSV writes CSV. Change a cell, add or delete rows and columns, and the
+  file keeps its delimiter (comma, semicolon, tab), its quoting, its line endings,
+  its BOM and its trailing newline; only the cells you changed are rewritten.
+  Markie no longer turns a CSV into a Markdown table on the way in and back on
+  save, which used to rewrite the whole file.
+
 ## [0.9.7] - 2026-11-20
 
 ### Added

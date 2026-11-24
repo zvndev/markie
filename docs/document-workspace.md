@@ -39,7 +39,7 @@ For repository development, `npm run desktop:preview:mac`, `npm run desktop:prev
 | DOCX | Supported paragraph/run and selected-text formatting, headings, simple lists, spacing/alignment, page dimensions/margins, basic tables, PNG/JPEG pictures, safe text hyperlinks, explicit page breaks, whole-paragraph comments and simple text revisions. Unsupported package features remain read-only. |
 | Markdown | Markdown source and the established rich editor, without using Markdown as an Office serialization format. |
 | TXT, TEXT, LOG | Literal text with supported UTF-8/UTF-16 BOM and newline preservation. |
-| CSV | Literal CSV editing with a table preview. |
+| CSV, TSV | Opens as a table (sort, filter, cell editing, rows and columns), with the file's text one switch away. Saving rewrites only the edited cells. |
 | JSON, YAML, XML | Literal text editing, not schema-aware structured editors. |
 | Legacy DOC | Word 97–2003 main-story extraction in a disposable local worker, producing a text-only copy. No DOC writer. Five-second worker time budget and 32 MiB input limit. |
 | RTF | Original bounded rich-text codec: text, basic font/color/emphasis and paragraph alignment/spacing, with same-format save/recovery. Unsupported semantics remain read-only with original-byte export. No tables, pictures, lists, links, named styles, review, cloud upload or print/PDF in this subset. |

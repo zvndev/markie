@@ -24,6 +24,8 @@ import { StatsPanel } from "@/components/stats-panel";
 import type { Editor as TipTapEditor } from "@tiptap/react";
 import { formatMarkdownTables } from "@/lib/format-tables";
 import { csvToMarkdownTable, csvDropsContent, markdownTableToCSV } from "@/lib/csv";
+import { isCsvName, plainEditorText, restoreTextShape } from "@/lib/csv-table";
+import { CsvTable, type CsvView } from "@/components/csv-table/csv-table";
 import { classifyDocumentFormat } from "@/lib/document-formats";
 import { CommandPalette } from "@/components/command-palette";
 import { LiveDocsPreviewPanel } from "@/components/live-docs-preview-panel";
@@ -159,17 +161,11 @@ const FORMAT_MENU_ACTIONS: Readonly<Record<string, FormattingAction>> = {
 };
 const FORMAT_MENU_STYLES: Readonly<Record<string, string>> = { "format-normal": "paragraph", "format-heading-1": "h1", "format-heading-2": "h2", "format-heading-3": "h3" };
 
-// A file converted on the way in (a CSV as a markdown table, every cell
-// gaining its separators) is tiered by the text the pane holds, which
-// enterTier measures when it is given no size; an unconverted one is tiered
-// by the bytes main read.
-const sizeUnlessConverted = (md: string, raw: string, bytes: number): number | undefined =>
-  md === raw ? bytes : undefined;
-
-
 type ViewMode = "edit" | "preview" | "split";
 
-const isCSVName = (name: string | null) => !!name && /\.csv$/i.test(name);
+// A CSV is held as the text it is on disk and shown as a table (CsvTable).
+// It is never turned into Markdown on the way in or back on the way out.
+const isCSVName = (name: string | null) => isCsvName(name);
 const isMarkdownName = (name: string | null) => !!name && /\.(?:md|markdown|mdx)$/i.test(name);
 // "Trip notes.md" becomes "Trip notes.wd"; an untitled document becomes "Untitled.wd".
 const interactiveCopyName = (name: string | null) => `${(name ?? "").replace(/\.(?:md|markdown|mdx)$/i, "").trim() || "Untitled"}.wd`;
@@ -187,12 +183,6 @@ const tokenTag = (token: string) => {
   for (let i = 0; i < token.length; i++) h = ((h * 33) ^ token.charCodeAt(i)) >>> 0;
   return h.toString(36);
 };
-
-// CSV files stay true CSV on disk; in the app they live as a markdown table
-const fromDisk = (name: string | null, raw: string) =>
-  isCSVName(name) ? csvToMarkdownTable(raw) : raw;
-const toDisk = (name: string | null, md: string) =>
-  isCSVName(name) ? markdownTableToCSV(md) : md;
 
 const DocumentEditor = lazy(() => import("@/components/document-workspace-host").then((module) => ({ default: module.DocumentWorkspaceHost })));
 // The Live Docs area (super-nightly, step M3), loaded the first time it opens.
@@ -268,7 +258,11 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const { latest: latestContent } = doc;
   const [booted, setBooted] = useState(false);
   const [preferredMode, setMode] = useState<ViewMode>("preview");
-  const plainText = isPlainTextName(fileName);
+  // A CSV has no rich pane either: its one pane is the table, with the file's
+  // own text a switch away.
+  const csvFile = isCSVName(fileName);
+  const [csvView, setCsvView] = useState<CsvView>("table");
+  const plainText = isPlainTextName(fileName) || csvFile;
   const mode: ViewMode = plainText ? "edit" : preferredMode;
   const [isDragging, setIsDragging] = useState(false);
   const [showStats, setShowStats] = useState(false);
@@ -297,6 +291,10 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   const [richEditor, setRichEditor] = useState<TipTapEditor | null>(null);
   const [sourceHandle, setSourceHandle] = useState<SourceHandle | null>(null);
   const [showFind, setShowFind] = useState(false);
+  // Find works on text, so it brings a CSV's text forward; a newly opened
+  // CSV starts as its table again.
+  useEffect(() => { if (showFind && csvFile) setCsvView("text"); }, [showFind, csvFile]);
+  useEffect(() => { setCsvView("table"); }, [filePath]);
   const openLiveDocs = useCallback(() => {
     if (!liveDocsAreaAvailable) return;
     liveDocsOpenRef.current = true; setLiveDocsOpen(true); setLiveDocsMounted(true);
@@ -534,7 +532,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         // mounts, so a session would only lock the owner out of their file.
         // Plain text goes live through its own text pane (Y.Text), so it is
         // no longer excluded here.
-        if (largeDocRef.current || liveUnavailableRef.current || !me || !members || members.length === 0) {
+        // A CSV syncs as a file: the server keeps no text room for one, and a
+        // rich room would rewrite it as a paragraph.
+        if (isCsvName(filePath) || largeDocRef.current || liveUnavailableRef.current || !me || !members || members.length === 0) {
           setCollabCfg(null);
           return;
         }
@@ -733,7 +733,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           setMode(modeBeforeLargeRef.current);
           modeBeforeLargeRef.current = null;
         }
-        assessRichSafety(md, path);
+        // A CSV has no rich pane to prove anything about.
+        if (isCsvName(path)) skipRichSafety(path);
+        else assessRichSafety(md, path);
       }
       return large;
     },
@@ -796,15 +798,14 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         return;
       }
       if (typeof res.content === "string") {
-        // What came back is what is now on disk, and a CSV on disk is CSV.
+        // What came back is what is now on disk.
         // Main refuses a cloud copy over the cap before writing it; this is
         // the same line for a copy that somehow reached here, and it leaves
         // the update on offer rather than pretending it was taken.
         const bytes = admitUnderCap(res.content, fileName ?? "This document", undefined, "reloaded");
         if (bytes === null) return;
-        const pulled = fromDisk(fileName, res.content);
-        applyExternalDoc(pulled);
-        enterTier(pulled, docRef.current.filePath, sizeUnlessConverted(pulled, res.content, bytes));
+        applyExternalDoc(res.content);
+        enterTier(res.content, docRef.current.filePath, bytes);
       }
       setUpdateWaiting(null);
       setLibRefreshKey((k) => k + 1);
@@ -820,9 +821,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     (next: string) => {
       const bytes = admitUnderCap(next, fileName ?? "This document", undefined, "reloaded");
       if (bytes !== null) {
-        const pulled = fromDisk(fileName, next);
-        applyExternalDoc(pulled);
-        enterTier(pulled, docRef.current.filePath, sizeUnlessConverted(pulled, next, bytes));
+        applyExternalDoc(next);
+        enterTier(next, docRef.current.filePath, bytes);
       }
       setUpdateWaiting(null);
       setUpdateError(null);
@@ -972,23 +972,19 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       // it down: refreshCollab is keyed on filePath, so an unchanged path never
       // re-resolved the role and the live session never came back.
       if (!data.path || data.path !== docRef.current.filePath) resetDocAccess();
-      const md = fromDisk(data.name, data.content);
+      const md = data.content;
       // A snapshot revert arrives with unsaved:true: the buffer holds the old
       // version while the file on disk still holds the new one, so the document
       // must show as dirty until the user saves (or discards) the revert.
       loadDoc({ name: data.name, content: md, path: data.path, unsaved: data.unsaved });
       // Main sends the size of a file it read; a restore of text already in
-      // memory is measured (enterTier), and so is a file converted on the way
-      // in (a CSV becomes a markdown table, and every cell gains its
-      // separators): the buffer is what the pane has to hold, and it can be
-      // large where the file was not. The cap was checked on the file above.
-      const converted = md !== data.content;
-      const large = enterTier(md, data.path, converted ? undefined : bytes);
+      // memory is measured (enterTier). The cap was checked on the file above.
+      const large = enterTier(md, data.path, bytes);
       // A large document was registered by main when it read it, so its text
       // is not sent back to be hashed. Anything else is registered here,
       // including a converted buffer that measured large: main read an
       // ordinary file and did not register it.
-      if (data.path && !data.large && (!large || converted)) {
+      if (data.path && !data.large && !large) {
         getElectronAPI()?.registryTrack?.({
           path: data.path,
           name: data.name,
@@ -1209,17 +1205,22 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     // format, and they only type it after the content has been encoded. Hand
     // main both encodings so it can write the right one once, instead of the
     // renderer writing the file a second time behind the save sheet.
-    const csvContent = markdownTableToCSV(md);
+    // An open CSV is already CSV: saved under a .csv name it is written as it
+    // is, and under any other name as the Markdown table of the same rows. A
+    // Markdown document saved as .csv keeps its first table.
+    const fromCsv = isCSVName(fileName);
+    const csvContent = fromCsv ? md : markdownTableToCSV(md);
+    const otherContent = fromCsv ? csvToMarkdownTable(md) : md;
     const res = await api.saveFileAs({
       defaultName: name,
-      content: md,
+      content: otherContent,
       csvContent,
     });
     if (res?.error) return res;
     if (res.success && res.path && res.name) {
       // Which bytes actually landed. An older main has no `wroteCsv` and wrote
       // `content` verbatim, so a .csv still needs the one re-encode + rewrite.
-      let written = res.wroteCsv === undefined ? md : res.wroteCsv ? csvContent : md;
+      let written = res.wroteCsv === undefined ? otherContent : res.wroteCsv ? csvContent : otherContent;
       if (res.wroteCsv === undefined && isCSVName(res.name)) {
         written = csvContent;
         const rewrite = await api.saveFile({ filePath: res.path, content: written });
@@ -1236,7 +1237,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       }
       // CSV keeps the first table and nothing else. Saying so after the fact is
       // the least we owe someone who just watched their prose disappear.
-      const dropped = isCSVName(res.name) ? csvDropsContent(md) : null;
+      const dropped = !fromCsv && isCSVName(res.name) ? csvDropsContent(md) : null;
       setForkError(
         dropped?.drops
           ? dropped.hasTable
@@ -1251,7 +1252,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       resetDocAccess();
       setLocation(res.path, res.name);
       // The buffer held the original file, not the live text the copy took.
-      if (liveCopy) applyExternalDoc(md);
+      // Nor is it what a save into the other format wrote: the open document
+      // is now that file, so it holds that file's text.
+      if (liveCopy || written !== md) applyExternalDoc(written);
       else markSaved(md);
       // Save As commits the untitled buffer, so its journal entry is spent too.
       void getElectronAPI()?.draftSave?.({ path: null, name: null, content: "" });
@@ -1287,8 +1290,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       return saved?.error ?? null;
     }
     const md = currentMarkdown();
-    const diskContent = toDisk(fileName, md);
-    const res = await api.saveFile({ filePath, content: diskContent, force, autosave });
+    const res = await api.saveFile({ filePath, content: md, force, autosave });
     // Every caller of handleSave discards the return value, so a save that
     // never reached disk has to say so here or it says nothing at all.
     if (res?.error) {
@@ -1300,9 +1302,8 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
     if (res.code === "reloaded" && typeof res.content === "string") {
       const bytes = admitUnderCap(res.content, fileName ?? "This document", res.size, "reloaded");
       if (bytes !== null) {
-        const reloaded = fromDisk(fileName, res.content);
-        applyExternalDoc(reloaded);
-        enterTier(reloaded, filePath, sizeUnlessConverted(reloaded, res.content, bytes));
+        applyExternalDoc(res.content);
+        enterTier(res.content, filePath, bytes);
       }
       return null;
     }
@@ -1321,17 +1322,6 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       // the file as it was, without the edits on screen. Say so, every time
       // it is asked for: a silent save reads as "saved".
       if (!autosave && liveRichRefusedRef.current) setForkError(LIVE_FILE_REFUSAL_NOTE);
-      // ⌘S on a .csv keeps the first table and drops the rest, every time.
-      // Only on a save the user asked for: repeating it every second while
-      // they type would bury the banner in its own noise.
-      const dropped = !autosave && isCSVName(fileName) ? csvDropsContent(md) : null;
-      if (dropped?.drops) {
-        setForkError(
-          dropped.hasTable
-            ? `Saved as CSV: ${dropped.droppedLines} line${dropped.droppedLines === 1 ? "" : "s"} outside the first table are not in that file.`
-            : "Saved as CSV: this document has no table, so the file is empty."
-        );
-      }
       // Push the snapshot if this file is cloud-synced — except during a live
       // session, where peers saving would race the version counter into fake
       // conflicts; the Yjs update log is the source of truth while live.
@@ -1339,7 +1329,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         const push = await api.docPush?.({
           path: filePath,
           name: fileName ?? "untitled.md",
-          content: diskContent,
+          content: md,
         });
         // The file is on disk but not in the cloud. The Library shows the row
         // as "Not backed up", but nobody reads a return value: every caller of
@@ -1889,15 +1879,12 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
 
   // Take what is on disk, dropping the buffer. Used by the strip (where there
   // is nothing to drop) and by the dialog's explicit "discard mine".
-  // fromDisk, because the disk text may be CSV or another to-disk format and
-  // the buffer always holds markdown.
   const reloadFromDisk = useCallback(() => {
     if (diskChange === null) return;
     const bytes = admitUnderCap(diskChange.content, fileName ?? "This document", diskChange.size, "reloaded");
     if (bytes !== null) {
-      const md = fromDisk(fileName, diskChange.content);
-      applyExternalDoc(md);
-      enterTier(md, docRef.current.filePath, sizeUnlessConverted(md, diskChange.content, bytes));
+      applyExternalDoc(diskChange.content);
+      enterTier(diskChange.content, docRef.current.filePath, bytes);
     }
     setDiskChange(null);
     setShowDiskConflict(false);
@@ -2636,7 +2623,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
                 } markie-source-pane h-full min-w-0 w-full flex-1 overflow-hidden flex flex-col`}
               >
                 {collabCfg && !plainText && <LiveSourceBanner />}
-                {plainText && canShare && !collabCfg && <p className="px-3 py-2 text-xs text-muted border-b border-border">Plain text syncs as a file until a live session starts.</p>}
+                {plainText && canShare && !collabCfg && <p className="px-3 py-2 text-xs text-muted border-b border-border">{csvFile ? "A CSV syncs as a file." : "Plain text syncs as a file until a live session starts."}</p>}
                 {liveUnavailable && <LiveUnavailableNote />}
                 <div className="flex-1 min-h-0 overflow-hidden">
                   {plainText && collabCfg ? (
@@ -2649,6 +2636,28 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
                       onReady={setSourceHandle}
                       onPeersChange={handlePeersChange}
                       onCollabStatus={handleCollabStatus}
+                    />
+                  ) : csvFile ? (
+                    <CsvTable
+                      key={filePath ?? fileName ?? "untitled"}
+                      text={content}
+                      name={fileName ?? undefined}
+                      readOnly={!docEditable}
+                      onChange={editContent}
+                      view={csvView}
+                      onViewChange={setCsvView}
+                      // The source editor only knows "\n": it is given plain
+                      // lines, and what it hands back gets the file's own line
+                      // ending and BOM again.
+                      renderText={() => (
+                        <SourceEditor
+                          value={plainEditorText(content)}
+                          plainText
+                          onChange={(next) => editContent((previous) => restoreTextShape(previous, next))}
+                          onReady={setSourceHandle}
+                          readOnly={!docEditable}
+                        />
+                      )}
                     />
                   ) : (
                     <SourceEditor
@@ -2819,7 +2828,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
         <ShareGate
           filePath={filePath}
           fileName={fileName}
-          content={toDisk(fileName, content)}
+          content={content}
           onClose={() => setShowShare(false)}
           onChanged={refreshCollab}
         />
@@ -2827,9 +2836,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       {showDiskConflict && diskChange !== null && (
         <DiskConflictDialog
           fileName={fileName ?? "This document"}
-          // Compare disk-form to disk-form: the buffer holds markdown, the
-          // file may be CSV or another to-disk format.
-          localContent={toDisk(fileName, currentMarkdown())}
+          localContent={currentMarkdown()}
           diskContent={diskChange.content}
           onClose={() => setShowDiskConflict(false)}
           onSaveCopy={saveCopyOfMine}
@@ -2852,7 +2859,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           fileName={fileName ?? "this document"}
           // The buffer, not the file on disk: unsaved text is what a pull would
           // actually cost, so it is what gets counted.
-          localContent={toDisk(fileName, content)}
+          localContent={content}
           onClose={() => setShowConflict(false)}
           onResolved={handleConflictResolved}
           onChanged={() => setLibRefreshKey((k) => k + 1)}
@@ -2874,7 +2881,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
           <VersionHistoryView
             filePath={filePath}
             fileName={fileName ?? "this document"}
-            currentContent={toDisk(fileName, content)}
+            currentContent={content}
             dirty={isDirty}
             onClose={() => setShowHistory(false)}
             onRestore={(versionContent) => {

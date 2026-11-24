@@ -41,6 +41,7 @@ SCENE_SERVER=http://localhost:18991 rust/scripts/screen/scene.sh <scene> <out.pn
 | Scene | Args | State |
 |---|---|---|
 | `doc` | none | The file passed on the command line |
+| `csv` | optional `header: false`, `filter`, `sort: [column, "asc" or "desc"]`, `cursor: [row, column]`, `anchor: [row, column]`, `scroll: [x, y]`, `resize: [[column, width]]`, `hover: [row, column]`, `scrollbars: true`, `edit: true`, `text: true`; `keys` (keystrokes for the grid's own handler, `{"type": "…"}` to fill an open cell, `{"op": …}` for `commit`, `commit-right`, `cancel`, `tab`, `add-row`, `add-column`, `delete-row`, `delete-column`, `undo`, `redo`, `select-all`, `clear`, `sort`); `report: true` prints the file's text, cursor, status line and what ⌘C would copy as a `markie-csv-state` line in the scene log; `bench: true` times a large file (PERF.md) | The CSV or TSV passed on the command line as its table, or as its text. Rows count from 0 on screen and -1 is the header. A scene never writes the pasteboard |
 | `share` | `token`, `doc_id`, `file_name`, optional `pending` (addresses), `query`, `role: "editor"`, `menu` | Share dialog for a cloud document, loaded |
 | `office-cloud` | `token`, optional `upload: true` | The open office file's cloud dialog, before or after Create a cloud copy |
 | `servers` | `token`, `second_origin`, `email`, `password`, optional `stop` (`confirm`, `added`, `form`) | Settings › Advanced with the second server added and signed in |

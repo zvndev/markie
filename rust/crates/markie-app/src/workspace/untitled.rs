@@ -85,12 +85,18 @@ impl Workspace {
         let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
         let format = kind_for_extension(&ext);
         // A .wd source is a plain textarea too.
-        let literal = !matches!(format, FormatKind::Markdown | FormatKind::Csv);
+        let csv = format == FormatKind::Csv;
+        let literal = format != FormatKind::Markdown;
+        let editor_text = if csv { markie_core::csv_table::plain_editor_text(&text) } else { text.clone() };
+        if csv {
+            self.csv_text_base = text.clone();
+            self.csv.update(cx, |table, cx| table.open(&text, Some(&name), cx));
+        }
         self.editor.update(cx, |state, cx| {
-            state.set_highlighter(if literal { "text" } else if format == FormatKind::Csv { "markdown" } else { format.editor_language() }, cx);
+            state.set_highlighter(if literal { "text" } else { format.editor_language() }, cx);
             state.set_line_number(!literal, window, cx);
             state.set_folding(!literal, window, cx);
-            state.set_value(text.clone(), window, cx);
+            state.set_value(editor_text, window, cx);
         });
         if let Some(old) = &self.doc {
             if !old.untitled {
@@ -104,7 +110,9 @@ impl Workspace {
             kind: DocKind::Text { encoding: TextEncoding::Utf8, bom: false, saved: if clean { text.clone() } else { String::new() } },
             untitled: true,
         });
-        if literal {
+        if csv {
+            self.mode = Mode::View;
+        } else if literal {
             self.mode = Mode::Source;
         } else if !super::mode_allowed(format, false, self.mode) {
             self.mode = Mode::View;
@@ -121,7 +129,9 @@ impl Workspace {
         if self.dirty {
             let _ = self.drafts.save(None, &text);
         }
-        if self.mode == Mode::Source {
+        if self.csv_table_active() {
+            self.focus_csv(window, cx);
+        } else if self.mode == Mode::Source {
             self.focus_editor(window, cx);
         } else if self.rich_active() {
             self.load_rich(&text, cx);
@@ -181,13 +191,19 @@ impl Workspace {
             return self.save_a_copy(window, cx);
         }
         let text = self.current_text(cx);
+        let from_csv = self.is_csv_doc();
+        let (encoding, bom) = match &doc.kind {
+            DocKind::Text { encoding, bom, .. } if from_csv => (*encoding, *bom),
+            _ => (TextEncoding::Utf8, false),
+        };
         let rx = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(target))) = rx.await else { return };
-            // Saved as .csv, the first table is written as CSV (handleSaveAs).
             let as_csv = kind_for_extension(&target.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default()) == FormatKind::Csv;
-            let bytes = if as_csv { super::csv_doc::markdown_table_to_csv(&text) } else { text.clone() };
-            let written = document::save_text(&target, &bytes, TextEncoding::Utf8, false);
+            let bytes = super::csv_doc::save_as_text(&text, from_csv, as_csv);
+            // An open CSV saved as CSV is the same file again, encoding and BOM included.
+            let (encoding, bom) = if as_csv { (encoding, bom) } else { (TextEncoding::Utf8, false) };
+            let written = document::save_text(&target, &bytes, encoding, bom);
             this.update_in(cx, |this, window, cx| match written {
                 Ok(()) => {
                     // Save As commits the untitled buffer, so its journal
@@ -201,7 +217,7 @@ impl Workspace {
                     this.dirty = false;
                     this.open_path(&target, window, cx);
                     // CSV keeps the first table and nothing else (handleSaveAs).
-                    if as_csv {
+                    if as_csv && !from_csv {
                         if let Some(note) = super::csv_doc::csv_save_note(&text) {
                             window.push_notification(note, cx);
                         }

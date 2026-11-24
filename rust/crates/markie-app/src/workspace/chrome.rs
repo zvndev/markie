@@ -207,14 +207,15 @@ impl Workspace {
         let name = doc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let source = doc.path.clone();
         let text = matches!(doc.kind, DocKind::Text { .. }).then(|| self.current_text(cx));
+        let from_csv = self.is_csv_doc();
         let rx = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |_, cx| {
             if let Ok(Ok(Some(target))) = rx.await {
-                let as_csv = target.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+                let as_csv = target.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv") || e.eq_ignore_ascii_case("tsv"));
                 let result = match text {
-                    // A copy saved as .csv holds the first table as CSV.
-                    Some(text) if as_csv => std::fs::write(&target, super::csv_doc::markdown_table_to_csv(&text)),
-                    Some(text) => std::fs::write(&target, text),
+                    // A copy saved as .csv holds the first table as CSV; a
+                    // CSV saved under another name, the same rows as Markdown.
+                    Some(text) => std::fs::write(&target, super::csv_doc::save_as_text(&text, from_csv, as_csv)),
                     None => std::fs::copy(&source, &target).map(|_| ()),
                 };
                 if let Err(e) = result {

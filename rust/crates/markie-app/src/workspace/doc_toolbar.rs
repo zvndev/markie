@@ -229,7 +229,13 @@ impl Workspace {
             TextEncoding::Utf16Le => "UTF-16LE",
             TextEncoding::Utf16Be => "UTF-16BE",
         };
-        let label = if darkmown { "Darkmown · Source".to_string() } else { format!("{} · Literal text", format_name(doc.format)) };
+        let label = if darkmown {
+            "Darkmown · Source".to_string()
+        } else if doc.format == FormatKind::Csv {
+            format!("CSV · {}", if self.mode == super::Mode::View { "Table" } else { "Text" })
+        } else {
+            format!("{} · Literal text", format_name(doc.format))
+        };
         let size = font_size();
         let (fg, muted, hover) = (p.foreground, p.muted, p.accent.opacity(0.4));
         let editor_focus = self.editor.read(cx).focus_handle(cx);

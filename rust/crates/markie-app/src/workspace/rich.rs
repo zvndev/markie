@@ -48,12 +48,15 @@ impl Workspace {
     /// Is View mode showing the rich editor for the open document?
     pub(super) fn rich_active(&self) -> bool {
         matches!(self.mode, Mode::View | Mode::Split)
-            && matches!(self.doc.as_ref(), Some(OpenDoc { format: FormatKind::Markdown | FormatKind::Csv, large: false, kind: DocKind::Text { .. }, .. }))
+            && matches!(self.doc.as_ref(), Some(OpenDoc { format: FormatKind::Markdown, large: false, kind: DocKind::Text { .. }, .. }))
     }
 
     /// The document's text as it would be saved, from whichever editor
     /// holds the latest edits.
     pub(super) fn current_text(&self, cx: &App) -> String {
+        if let Some(text) = self.csv_current_text(cx) {
+            return text;
+        }
         if self.rich_active() && !(self.mode == Mode::Split && self.split_source_latest) {
             self.rich.read(cx).markdown()
         } else {

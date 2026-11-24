@@ -7,7 +7,7 @@
 //! window server is never asked for pixels, so the window never has to be on
 //! screen and nothing on Kirby's display moves. Then the app quits.
 //!
-//! - `MARKIE_RS_SCENE`: `doc`, `share`, `office-cloud`, `servers`, `vault`, `browse`,
+//! - `MARKIE_RS_SCENE`: `doc`, `csv`, `share`, `office-cloud`, `servers`, `vault`, `browse`,
 //!   `recent`, `launch`, `library` or `cloud`.
 //! - `MARKIE_RS_SCENE_ARGS`: a JSON object for the scene (see each one below).
 //! - `MARKIE_RS_SCENE_OUT`: the PNG to write.
@@ -103,6 +103,9 @@ pub fn start(spec: Spec, handle: AnyWindowHandle, workspace: Entity<Workspace>, 
                 break;
             }
         }
+        if spec.name == "csv" && spec.args.get("bench").and_then(Value::as_bool).unwrap_or(false) {
+            csv_bench(handle, &workspace, cx);
+        }
         // Settle: text inputs, images and async answers.
         for _ in 0..4 {
             timer(spec.args.get("settle").and_then(Value::as_u64).unwrap_or(700) / 4).await;
@@ -152,6 +155,23 @@ impl Workspace {
         let wants_session = args.get("token").is_some();
         match spec.name.as_str() {
             "doc" => self.doc.is_some(),
+            // {text?: true, …}: the CSV or TSV passed on the command line as its
+            // table, in the state `CsvTable::scene` reads from the other args,
+            // or as its text. `bench: true` then times a large file (below).
+            "csv" => {
+                if !self.is_csv_doc() {
+                    return false;
+                }
+                if *step == 0 {
+                    self.csv.update(cx, |table, cx| table.scene(args, window, cx));
+                    if args.get("text").and_then(Value::as_bool).unwrap_or(false) {
+                        self.set_mode(super::Mode::Source, window, cx);
+                    }
+                    *step = 1;
+                    return false;
+                }
+                true
+            }
             // {origin, token, doc_id, file_name?, pending?: [..], query?, role?: "editor", menu?: "role" | "general"}
             "share" => {
                 if *step == 0 {
@@ -372,4 +392,86 @@ impl Workspace {
             }
         }
     }
+}
+
+/// The 100,000-row measurement (docs/rust-port/PERF.md), on the open CSV.
+/// Each figure is main-thread time from the action to the end of the frame
+/// it causes: the model's work, render, layout and paint. The window is
+/// hidden, so presenting the frame on the GPU is not in it.
+fn csv_bench(handle: AnyWindowHandle, workspace: &Entity<Workspace>, cx: &mut AsyncApp) {
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.;
+    let _ = cx.update_window(handle, |_, window, cx| {
+        let (table, path) = {
+            let ws = workspace.read(cx);
+            (ws.csv.clone(), ws.doc.as_ref().map(|d| d.path.clone()))
+        };
+        let Some(path) = path else { return };
+        let frame = |window: &mut Window, cx: &mut App| window.draw(cx).clear(cx);
+        let median = |mut samples: Vec<f64>| {
+            samples.sort_by(f64::total_cmp);
+            samples[samples.len() / 2]
+        };
+        // Open: the file read, decoded, parsed and laid out, to the first frame with its cells.
+        let mut opens = Vec::new();
+        for _ in 0..7 {
+            let t = Instant::now();
+            workspace.update(cx, |ws, cx| ws.open_path(&path, window, cx));
+            frame(window, cx);
+            opens.push(ms(t));
+        }
+        let rows = table.read(cx).shown_rows();
+        eprintln!("markie-csv-bench rows {rows}");
+        eprintln!("markie-csv-bench open_to_first_cells_ms median {:.2} min {:.2} max {:.2}", median(opens.clone()), opens.iter().copied().fold(f64::MAX, f64::min), opens.iter().copied().fold(0., f64::max));
+        let timed = |steps: &[&str], window: &mut Window, cx: &mut App| {
+            let mut samples = Vec::new();
+            for _ in 0..7 {
+                for step in steps {
+                    let t = Instant::now();
+                    table.update(cx, |table, cx| table.bench_step(step, cx));
+                    frame(window, cx);
+                    samples.push(ms(t));
+                }
+            }
+            samples
+        };
+        for (label, steps) in [
+            ("sort_number_ms", &["sort-number-asc", "sort-number-desc"][..]),
+            ("sort_text_ms", &["sort-text-asc", "sort-text-desc"][..]),
+        ] {
+            let samples = timed(steps, window, cx);
+            eprintln!("markie-csv-bench {label} median {:.2} min {:.2} max {:.2}", median(samples.clone()), samples.iter().copied().fold(f64::MAX, f64::min), samples.iter().copied().fold(0., f64::max));
+        }
+        table.update(cx, |table, cx| table.bench_step("sort-off", cx));
+        frame(window, cx);
+        let mut filters = Vec::new();
+        for _ in 0..7 {
+            let t = Instant::now();
+            table.update(cx, |table, cx| table.bench_step("filter", cx));
+            frame(window, cx);
+            filters.push(ms(t));
+            table.update(cx, |table, cx| table.bench_step("filter-off", cx));
+            frame(window, cx);
+        }
+        eprintln!("markie-csv-bench filter_ms median {:.2} min {:.2} max {:.2}", median(filters.clone()), filters.iter().copied().fold(f64::MAX, f64::min), filters.iter().copied().fold(0., f64::max));
+        // Scroll: 600 frames, 240 points apart, through the whole file.
+        let mut frames = Vec::new();
+        for _ in 0..600 {
+            let t = Instant::now();
+            table.update(cx, |table, cx| table.bench_step("scroll", cx));
+            frame(window, cx);
+            frames.push(ms(t));
+        }
+        let mut sorted = frames.clone();
+        sorted.sort_by(f64::total_cmp);
+        let mean = frames.iter().sum::<f64>() / frames.len() as f64;
+        let over = frames.iter().filter(|f| **f > 1000. / 60.).count();
+        eprintln!(
+            "markie-csv-bench scroll_frame_ms mean {mean:.3} median {:.3} p95 {:.3} max {:.3} frames_over_16.7ms {over} of {}",
+            sorted[sorted.len() / 2],
+            sorted[sorted.len() * 95 / 100],
+            sorted[sorted.len() - 1],
+            frames.len()
+        );
+        table.update(cx, |table, cx| table.bench_step("top", cx));
+    });
 }

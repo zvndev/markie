@@ -166,3 +166,26 @@ Each number is the median of 5 runs, with the minimum and maximum in brackets.
 ### Instrumentation
 
 `MARKIE_RS_PERF=1` turns on `crates/markie-app/src/perf.rs`. It writes `markie-perf {json}` lines to stderr: `main`, `first_paint`, `open`, `key`, `scroll_frame` and `scan`. Off, it costs one atomic load per call and draws nothing.
+
+## The CSV table: 100,000 rows
+
+Date: 2026-11-24, branch `t3/markie-rs-csv-table`. The file is the one Electron's own test builds: `id,name,amount,note` and 100,000 rows like `7,Name 7,10.50,"note, 7"`, 4.0 MB. The Mac was busy while this ran (1-minute load 70 to 100), so the numbers are on the slow side for both apps.
+
+| | Electron (PR #149, headless Chromium) | Markie RS |
+|---|---|---|
+| Open to the first cells | 114 ms (43 ms of it the parse) | 47 ms, 47 to 63 over 7 opens (3.5 ms of it the parse) |
+| Sort a column | 65 to 77 ms | 11 ms by number, 17 ms by text |
+| Filter | 17 ms | 9 ms |
+| Scroll | 60 fps | 1.5 ms a frame on average, 2.2 ms the slowest of 600; none over 16.7 ms |
+
+What the Markie RS numbers are: main-thread time from the action to the end of the frame it causes, in a release build. Open is `open_path` to the first frame with cells: the file read and decoded, the table parsed, the columns measured, the window rendered, laid out and painted. Sort and filter are the model's work plus that frame. Scroll is 600 frames 240 points apart through the whole file. The window is hidden (scene mode), so presenting the frame on the GPU is not included, and the scroll figure is frame cost, not a measured frame rate on a display.
+
+The model alone, best of 9 (`times_100_000_rows`): parse 3.5 ms, serialize 0.6 ms, sort by number 6.4 ms, sort by text 11.6 ms, filter 5.4 ms.
+
+Run it again:
+
+```sh
+(cd rust && cargo build --release -p markie-app --features scene)
+rust/scripts/screen/scene.sh csv out.png light '{"bench":true,"timeout":120}' rows-100k.csv   # markie-csv-bench lines in the scene log; keep SCENE_HOME to read it
+(cd rust && cargo test --release -p markie-core csv_table::tests::times -- --ignored --nocapture)
+```

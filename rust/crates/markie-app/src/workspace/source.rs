@@ -249,6 +249,10 @@ impl Workspace {
     }
 
     fn on_find_replace(&mut self, _: &FindReplace, window: &mut Window, cx: &mut Context<Self>) {
+        if self.csv_table_active() {
+            // Find works on text, so it brings a CSV's text forward.
+            return self.csv_find(Box::new(gpui_kit::component::input::Replace), window, cx);
+        }
         if self.rich_active() {
             // The View find bar always has its replace field.
             let h = self.rich.read(cx).focus_handle().clone();

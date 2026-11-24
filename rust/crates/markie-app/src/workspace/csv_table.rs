@@ -1,13 +1,20 @@
-//! The table a CSV or TSV file opens in. A port of Electron's
+//! The sheet a CSV or TSV file opens in. A port of Electron's
 //! `src/components/csv-table/csv-table.tsx` and its stylesheet.
+//!
+//! It is drawn as a spreadsheet: a strip of column letters and a gutter of
+//! row numbers, a name box and formula bar, a frozen header row, gridlines on
+//! every cell, empty cells out to the edges of the window, and a sheet tab
+//! below.
 //!
 //! The file stays the file. Every edit goes through the lossless model in
 //! `markie_core::csv_table`, which rewrites only the cells that changed;
-//! sorting and filtering reorder what is shown and never touch the text.
+//! sorting, filtering and the way a number, a date or a link is drawn change
+//! what is shown and never touch the text.
 //!
-//! The toolbar, the header row and the status line are ordinary elements.
-//! The rows are painted directly: only the rows and columns on screen are
-//! read, shaped and drawn, so a file of any length costs the same per frame.
+//! The toolbar, the formula bar, the letters, the header row and the sheet
+//! tab are ordinary elements. The rows are painted directly: only the rows
+//! and columns on screen are read, shaped and drawn, so a file of any length
+//! costs the same per frame.
 
 use std::cell::Cell as StdCell;
 use std::collections::HashMap;
@@ -20,12 +27,15 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use markie_core::csv_table::{CsvDocument, CsvSort, SortDirection, clipboard_to_cells, column_letter, format_sum, grouped};
+use markie_core::csv_table::{
+    CellKind, CsvDocument, CsvSort, RangeStats, SortDirection, cell_reference, clipboard_to_cells, column_letter, format_average, format_cell, format_sum, grouped, parse_cell_reference,
+};
 
 use super::dialog_chrome::{PATH_CHECK, Tokens, black, fade, mix, ring, shadow, stroke_icon, svg_image};
 use super::source::{EditCopy, EditCut, EditFind, EditPaste, EditRedo, EditSelectAll, EditUndo};
 
 const KEY_CONTEXT: &str = "CsvGrid";
+const FORMULA_CONTEXT: &str = "CsvFormula";
 
 actions!(markie_csv, [NextCell, PreviousCell]);
 
@@ -33,7 +43,13 @@ actions!(markie_csv, [NextCell, PreviousCell]);
 /// the whole window; a binding in the grid's own context is asked first, and
 /// hands the key on when the walk reaches either end of the table.
 pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("tab", NextCell, Some(KEY_CONTEXT)), KeyBinding::new("shift-tab", PreviousCell, Some(KEY_CONTEXT))]);
+    cx.bind_keys([
+        KeyBinding::new("tab", NextCell, Some(KEY_CONTEXT)),
+        KeyBinding::new("shift-tab", PreviousCell, Some(KEY_CONTEXT)),
+        // In the formula bar Tab saves and moves on, as it does in a cell.
+        KeyBinding::new("tab", NextCell, Some(FORMULA_CONTEXT)),
+        KeyBinding::new("shift-tab", PreviousCell, Some(FORMULA_CONTEXT)),
+    ]);
 }
 
 /// The header row as a place the cursor can be.
@@ -45,6 +61,8 @@ const MAX_SHOWN_ROWS: usize = 500_000;
 const OVERSCAN: usize = 2;
 /// The longest text shaped for one cell; the rest cannot show in any column.
 const MAX_DRAWN_CHARS: usize = 600;
+/// The status bar adds up a selection up to this many cells; past it, it only counts them.
+const MAX_STAT_CELLS: usize = 400_000;
 
 /// The scrollbar thumbs, vertical then horizontal: (start, length) along the track.
 type Thumbs = (Option<(f32, f32)>, Option<(f32, f32)>);
@@ -81,6 +99,10 @@ struct Editing {
 #[derive(Clone, Copy)]
 enum Drag {
     Select,
+    /// From a row number: whole rows.
+    Rows,
+    /// From a column letter: whole columns.
+    Columns,
     Resize { column: usize, start_x: f32, start_width: f32 },
     ScrollY { grab: f32 },
     ScrollX { grab: f32 },
@@ -98,34 +120,48 @@ struct Palette {
     bg: Hsla,
     fg: Hsla,
     muted: Hsla,
+    /// Gridlines are solid colours, never see-through: one crisp pixel on any fill.
     line: Hsla,
+    /// The gridlines of the empty sheet past the data.
+    line_faint: Hsla,
+    /// The heavier rule under the header row.
+    rule: Hsla,
+    /// The letters and the row numbers.
+    chrome: Hsla,
+    chrome_select: Hsla,
+    /// The text of the letters and numbers of the empty sheet.
+    chrome_faint: Hsla,
+    /// The header row.
     head: Hsla,
+    head_select: Hsla,
     bar: Hsla,
     accent: Hsla,
-    stripe: Hsla,
-    hover: Hsla,
+    negative: Hsla,
     select: Hsla,
-    head_select: Hsla,
 }
 
 impl Palette {
     fn current(cx: &App) -> Self {
         let t = Tokens::current("markie", cx);
-        // color-mix(in srgb, surface 92%, foreground 3%): the two do not add
-        // up to 100%, so the result is 95% opaque over the table's background.
-        let head = mix(mix(t.surface, 92. / 95., t.foreground), 0.95, t.background);
+        let line = mix(t.border, 0.88, t.background);
+        let chrome = mix(t.foreground, 0.05, t.background);
+        let head = mix(t.foreground, 0.08, t.background);
         Self {
             bg: t.background,
             fg: t.foreground,
             muted: t.muted,
-            line: fade(t.border, 0.78),
+            line,
+            line_faint: mix(line, 0.5, t.background),
+            rule: mix(t.foreground, 0.34, t.background),
+            chrome,
+            chrome_select: mix(t.blue, 0.22, chrome),
+            chrome_faint: mix(t.muted, 0.6, chrome),
             head,
+            head_select: mix(t.blue, 0.16, head),
             bar: t.surface,
             accent: t.blue,
-            stripe: mix(t.foreground, 0.026, t.background),
-            hover: mix(t.foreground, 0.05, t.background),
-            select: mix(t.blue, 0.15, t.background),
-            head_select: mix(t.blue, 0.18, head),
+            negative: t.red,
+            select: mix(t.blue, 0.13, t.background),
         }
     }
 }
@@ -133,6 +169,10 @@ impl Palette {
 pub(super) struct CsvTable {
     focus: FocusHandle,
     doc: CsvDocument,
+    /// The file's name, which the sheet tab carries.
+    name: Option<String>,
+    /// Bumped whenever the cells or the rows shown change, for what is worked out from them.
+    version: u64,
     /// The text `doc` serializes to, kept until the next edit.
     text: std::cell::RefCell<Option<Rc<str>>>,
     read_only: bool,
@@ -167,9 +207,23 @@ pub(super) struct CsvTable {
     scrolled_at: Option<Instant>,
     _scrollbar_fade: Task<()>,
 
+    /// The far corner of the selection, the end the Shift keys move.
     cursor: Option<Cell>,
+    /// The active cell: the one the name box names and typing edits.
     anchor: Option<Cell>,
+    /// A cell was picked. The sheet opens with its first cell selected, but a
+    /// row or a column is added beside one only once a cell was picked.
+    picked: bool,
     editing: Option<Editing>,
+    /// The name box and the formula bar.
+    name_input: Entity<InputState>,
+    name_shown: String,
+    formula_input: Entity<InputState>,
+    formula_shown: String,
+    /// The cell the formula bar is typing into, and what it has typed.
+    bar_edit: Option<(Cell, String)>,
+    /// What the selected block adds up to, for the selection and version it was worked out for.
+    stats: std::cell::RefCell<Option<(StatsKey, Option<BlockStats>)>>,
     past: Vec<Step>,
     future: Vec<Step>,
     drag: Option<Drag>,
@@ -178,6 +232,23 @@ pub(super) struct CsvTable {
 }
 
 impl EventEmitter<CsvEvent> for CsvTable {}
+
+type StatsKey = ((i64, i64, usize, usize), u64);
+
+/// A selected block: how many cells, and what its numbers come to (None past [`MAX_STAT_CELLS`]).
+#[derive(Clone, Copy)]
+struct BlockStats {
+    cells: usize,
+    numbers: Option<RangeStats>,
+}
+
+/// The tab reads as a sheet's name does: the file's, without its extension.
+fn sheet_name(name: Option<&str>) -> String {
+    let Some(name) = name else { return "Sheet 1".into() };
+    let lower = name.to_ascii_lowercase();
+    let stem = [".csv", ".tsv", ".tab", ".txt"].iter().find(|ext| lower.ends_with(**ext)).map_or(name, |ext| &name[..name.len() - ext.len()]);
+    if stem.is_empty() { name.into() } else { stem.into() }
+}
 
 fn count(n: usize, one: &str) -> String {
     format!("{} {one}{}", grouped(n), if n == 1 { "" } else { "s" })
@@ -202,15 +273,49 @@ fn one_line(value: &str) -> SharedString {
 impl CsvTable {
     pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter rows"));
-        let subscriptions = vec![cx.subscribe(&filter_input, |this, input, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                let value = input.read(cx).value().to_string();
-                this.set_filter(value, cx);
-            }
-        })];
+        let name_input = cx.new(|cx| InputState::new(window, cx));
+        let formula_input = cx.new(|cx| InputState::new(window, cx));
+        let subscriptions = vec![
+            cx.subscribe(&filter_input, |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let value = input.read(cx).value().to_string();
+                    this.set_filter(value, cx);
+                }
+            }),
+            // The name box: a cell's name and Enter goes to it.
+            cx.subscribe_in(&name_input, window, |this, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Focus => input.update(cx, |state, cx| state.select_all(window, cx)),
+                InputEvent::PressEnter { .. } => {
+                    let typed = input.read(cx).value().to_string();
+                    if this.jump(&typed, cx) {
+                        this.focus.focus(window, cx);
+                    }
+                }
+                InputEvent::Blur => {
+                    this.name_shown.clear();
+                    cx.notify();
+                }
+                _ => {}
+            }),
+            // The formula bar edits the active cell. Leaving it saves, as leaving a cell does.
+            cx.subscribe_in(&formula_input, window, |this, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Focus => this.begin_bar_edit(window, cx),
+                InputEvent::Change => {
+                    if let Some((_, text)) = this.bar_edit.as_mut() {
+                        *text = input.read(cx).value().to_string();
+                        cx.notify();
+                    }
+                }
+                InputEvent::PressEnter { shift: false, .. } => this.finish_bar_edit(true, Some(Direction::Down), true, window, cx),
+                InputEvent::Blur => this.finish_bar_edit(true, None, false, window, cx),
+                _ => {}
+            }),
+        ];
         Self {
             focus: cx.focus_handle(),
             doc: CsvDocument::parse("", None),
+            name: None,
+            version: 0,
             text: Default::default(),
             read_only: false,
             text_view: false,
@@ -236,7 +341,14 @@ impl CsvTable {
             _scrollbar_fade: Task::ready(()),
             cursor: None,
             anchor: None,
+            picked: false,
             editing: None,
+            name_input,
+            name_shown: String::new(),
+            formula_input,
+            formula_shown: String::new(),
+            bar_edit: None,
+            stats: Default::default(),
             past: Vec::new(),
             future: Vec::new(),
             drag: None,
@@ -250,6 +362,7 @@ impl CsvTable {
     /// A newly opened file: the table starts over.
     pub(super) fn open(&mut self, text: &str, name: Option<&str>, cx: &mut Context<Self>) {
         self.doc = CsvDocument::parse(text, name);
+        self.name = name.map(str::to_string);
         self.header_guess = self.doc.first_row_is_header();
         self.header_choice = None;
         self.sort = None;
@@ -275,8 +388,10 @@ impl CsvTable {
         self.past.clear();
         self.future.clear();
         self.editing = None;
+        self.bar_edit = None;
         self.cursor = None;
         self.anchor = None;
+        self.picked = false;
         self.hover = None;
         self.drag = None;
         self.widths_stale = true;
@@ -333,6 +448,7 @@ impl CsvTable {
         self.matched = order.len();
         order.truncate(MAX_SHOWN_ROWS);
         self.order = order;
+        self.version += 1;
         self.clamp_cursor();
         self.clamp_scroll();
     }
@@ -363,8 +479,25 @@ impl CsvTable {
             self.anchor = None;
             return;
         }
-        self.cursor = self.cursor.map(clamp);
-        self.anchor = self.anchor.map(clamp);
+        // A sheet opens with its first cell selected.
+        let first = clamp(Cell { row: 0, col: 0 });
+        self.cursor = Some(self.cursor.map_or(first, clamp));
+        self.anchor = Some(self.anchor.map_or(self.cursor.unwrap_or(first), clamp));
+    }
+
+    /// The active cell.
+    fn active(&self) -> Option<Cell> {
+        self.anchor.or(self.cursor)
+    }
+
+    fn select(&mut self, anchor: Cell, cursor: Cell) {
+        self.anchor = Some(anchor);
+        self.cursor = Some(cursor);
+        self.picked = true;
+    }
+
+    fn single(&self) -> bool {
+        self.selection().is_some_and(|(top, bottom, left, right)| top == bottom && left == right)
     }
 
     /// The row in the file behind a row on screen.
@@ -390,20 +523,31 @@ impl CsvTable {
     // ---- sizes
 
     fn row_height(&self) -> f32 {
-        (30. * self.zoom).round()
+        (24. * self.zoom).round()
+    }
+
+    /// The strip of column letters.
+    fn letter_height(&self) -> f32 {
+        (20. * self.zoom).round()
+    }
+
+    /// A column of the empty sheet past the last one in the file.
+    fn fill_width(&self) -> f32 {
+        (96. * self.zoom).round()
     }
 
     fn font_size(&self) -> f32 {
         (13. * self.zoom * 10.).round() / 10.
     }
 
-    /// The header row: a row and its bottom line.
+    /// What stays put above the rows: the letters, and the header row under them.
     fn head_height(&self) -> f32 {
-        self.row_height() + 1.
+        self.letter_height() + if self.header_on() { self.row_height() } else { 0. }
     }
 
+    /// Wide enough for the numbers of the empty rows under the data as well.
     fn gutter(&self) -> f32 {
-        (20 + self.doc.row_count().to_string().len() * 8).max(44) as f32
+        ((16. + (self.doc.row_count() + 60).to_string().len() as f32 * 7.5) * self.zoom).round().max(36.)
     }
 
     fn total_width(&self) -> f32 {
@@ -430,6 +574,7 @@ impl CsvTable {
     /// and the first rows.
     fn content_widths(&self, font: &Font, window: &Window) -> Vec<f32> {
         let (min, max) = (64. * self.zoom, 340. * self.zoom);
+        let header_on = self.header_on();
         let size = px(self.font_size());
         let mut widths = vec![min; self.doc.column_count];
         for r in 0..self.doc.row_count().min(200) {
@@ -441,7 +586,9 @@ impl CsvTable {
                 let cut = value.char_indices().nth(80).map_or(value.len(), |(i, _)| i);
                 let text = one_line(&value[..cut]);
                 let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
-                let measured = f32::from(window.text_system().shape_line(text, size, &[run], None).width).ceil() + if r == 0 { 46. } else { 26. };
+                let text_width = f32::from(window.text_system().shape_line(text, size, &[run], None).width).ceil();
+                // The header is bold and leaves room for its sort mark.
+                let measured = if header_on && r == 0 { (text_width * 1.08).ceil() + 34. } else { text_width + 20. };
                 if measured > *width {
                     *width = measured.min(max);
                 }
@@ -456,7 +603,7 @@ impl CsvTable {
             self.widths_stale = false;
         }
         let columns = self.columns();
-        self.widths = (0..columns).map(|c| self.resized.get(&c).copied().unwrap_or_else(|| self.auto_widths.get(c).copied().unwrap_or(96.))).collect();
+        self.widths = (0..columns).map(|c| self.resized.get(&c).copied().unwrap_or_else(|| self.auto_widths.get(c).copied().unwrap_or(self.fill_width()))).collect();
         self.offsets = Vec::with_capacity(columns + 1);
         let mut x = 0.;
         self.offsets.push(0.);
@@ -518,10 +665,25 @@ impl CsvTable {
             return;
         }
         let next = Cell { row: row.clamp(min, max), col: col.clamp(0, self.columns() as i64 - 1) as usize };
-        self.anchor = Some(if extend { self.anchor.or(self.cursor).unwrap_or(next) } else { next });
-        self.cursor = Some(next);
+        self.select(if extend { self.active().unwrap_or(next) } else { next }, next);
         self.reveal(next);
         cx.notify();
+    }
+
+    /// The name box: "B4" and Enter goes to that cell. False when the sheet has no such cell.
+    fn jump(&mut self, reference: &str, cx: &mut Context<Self>) -> bool {
+        let Some((file_row, column)) = parse_cell_reference(reference).filter(|(_, column)| *column < self.columns()) else { return false };
+        let row = if self.header_on() && file_row == 0 {
+            HEADER
+        } else {
+            match self.order.iter().position(|r| *r as usize == file_row) {
+                Some(row) => row as i64,
+                None => return false,
+            }
+        };
+        self.name_shown.clear();
+        self.move_to(row, column as i64, false, cx);
+        true
     }
 
     // ---- edits
@@ -536,6 +698,7 @@ impl CsvTable {
 
     fn after_edit(&mut self, rows_changed: bool, cx: &mut Context<Self>) {
         *self.text.borrow_mut() = None;
+        self.version += 1;
         if rows_changed {
             self.widths_stale = true;
             self.recompute_view();
@@ -613,8 +776,9 @@ impl CsvTable {
                 if let Some(editing) = this.editing.as_mut().filter(|e| e.lines != lines) {
                     editing.lines = lines;
                     input.update(cx, |state, cx| state.set_rows(lines, cx));
-                    cx.notify();
                 }
+                // The formula bar shows what is being typed.
+                cx.notify();
             }
             _ => {}
         });
@@ -631,6 +795,40 @@ impl CsvTable {
             let row = self.file_row(cell.row);
             self.commit_cells(&[(row, cell.col, value.as_str())], cx);
         }
+        self.step_from(cell, then, cx);
+        if refocus {
+            self.focus.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The formula bar took the focus: it now types into the active cell.
+    fn begin_bar_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            self.finish_editing(true, None, false, window, cx);
+        }
+        let Some(cell) = self.active().filter(|_| self.editable() && self.bar_edit.is_none()) else { return };
+        let value = self.doc.cell_value(self.file_row(cell.row), cell.col).into_owned();
+        self.bar_edit = Some((cell, value));
+        cx.notify();
+    }
+
+    fn finish_bar_edit(&mut self, save: bool, then: Option<Direction>, refocus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((cell, value)) = self.bar_edit.take() else { return };
+        if save {
+            let row = self.file_row(cell.row);
+            self.commit_cells(&[(row, cell.col, value.as_str())], cx);
+        }
+        self.formula_shown.clear();
+        self.step_from(cell, then, cx);
+        if refocus {
+            self.focus.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Where Enter and Tab go after an edit of `cell`.
+    fn step_from(&mut self, cell: Cell, then: Option<Direction>, cx: &mut Context<Self>) {
         let (max_row, columns) = (self.max_row(), self.columns() as i64);
         match then {
             Some(Direction::Down) => self.move_to((cell.row + 1).min(max_row), cell.col as i64, false, cx),
@@ -638,10 +836,6 @@ impl CsvTable {
             Some(Direction::Left) => self.move_to(cell.row, (cell.col as i64 - 1).max(0), false, cx),
             None => {}
         }
-        if refocus {
-            self.focus.focus(window, cx);
-        }
-        cx.notify();
     }
 
     fn copy_as(&self, delimiter: char) -> String {
@@ -650,9 +844,9 @@ impl CsvTable {
 
     /// What ⌘C puts on the clipboard: one cell as its own text, a block as tab-separated rows.
     fn copy_text(&self) -> Option<String> {
-        let ((top, bottom, left, right), cursor) = (self.selection()?, self.cursor?);
+        let ((top, bottom, left, right), active) = (self.selection()?, self.active()?);
         if top == bottom && left == right {
-            return Some(self.doc.cell_value(self.file_row(cursor.row), cursor.col).into_owned());
+            return Some(self.doc.cell_value(self.file_row(active.row), active.col).into_owned());
         }
         Some(self.copy_as('\t'))
     }
@@ -684,7 +878,7 @@ impl CsvTable {
     }
 
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let at = match self.selection() {
+        let at = match self.selection().filter(|_| self.picked) {
             Some((_, bottom, ..)) if !self.order.is_empty() => {
                 if bottom == HEADER { 1 } else { self.file_row(bottom) + 1 }
             }
@@ -698,15 +892,14 @@ impl CsvTable {
         if !self.commit_structure(true, |doc| { doc.insert_row(at, &[]); true }, cx) {
             return;
         }
-        let next = Cell { row: (at as i64 - first_row as i64).max(0), col: self.cursor.map_or(0, |c| c.col) };
-        self.cursor = Some(next);
-        self.anchor = Some(next);
+        let next = Cell { row: (at as i64 - first_row as i64).max(0), col: self.active().map_or(0, |c| c.col) };
+        self.select(next, next);
         self.clamp_cursor();
         self.reveal(self.cursor.unwrap_or(next));
     }
 
     fn add_column(&mut self, cx: &mut Context<Self>) {
-        let at = self.selection().map_or(self.doc.column_count, |(_, _, _, right)| right + 1);
+        let at = self.selection().filter(|_| self.picked).map_or(self.doc.column_count, |(_, _, _, right)| right + 1);
         self.resized.clear();
         let empty = self.doc.row_count() == 0;
         self.commit_structure(empty, |doc| {
@@ -719,30 +912,26 @@ impl CsvTable {
     fn remove_rows(&mut self, cx: &mut Context<Self>) {
         let Some((top, ..)) = self.selection() else { return };
         let rows = self.selected_file_rows();
-        let (min_row, max_row) = (self.min_row(), self.max_row());
+        let col = self.active().map_or(0, |c| c.col);
         if !self.commit_structure(true, |doc| doc.delete_rows(&rows), cx) {
             return;
         }
-        self.anchor = None;
-        if let Some(cursor) = self.cursor.as_mut() {
-            cursor.row = top.min(max_row - rows.len() as i64).max(min_row);
-        }
+        let next = Cell { row: top, col };
+        self.select(next, next);
         self.clamp_cursor();
     }
 
     fn remove_columns(&mut self, cx: &mut Context<Self>) {
         let Some((_, _, left, _)) = self.selection() else { return };
         let dropped = self.selected_columns();
-        let columns = self.columns();
+        let row = self.active().map_or(0, |c| c.row);
         self.resized.clear();
         self.sort = None;
         if !self.commit_structure(true, |doc| doc.delete_columns(&dropped), cx) {
             return;
         }
-        self.anchor = None;
-        if let Some(cursor) = self.cursor.as_mut() {
-            cursor.col = left.min(columns.saturating_sub(dropped.len() + 1));
-        }
+        let next = Cell { row, col: left };
+        self.select(next, next);
         self.clamp_cursor();
     }
 
@@ -761,6 +950,10 @@ impl CsvTable {
         self.header_choice = Some(on);
         self.cursor = None;
         self.anchor = None;
+        self.picked = false;
+        self.bar_edit = None;
+        // The header is measured bold, a first row of data is not.
+        self.widths_stale = true;
         self.recompute_view();
         cx.notify();
     }
@@ -774,7 +967,8 @@ impl CsvTable {
         let key = &event.keystroke;
         let (cmd, shift) = (key.modifiers.platform || key.modifiers.control, key.modifiers.shift);
         let (min_row, max_row, columns) = (self.min_row(), self.max_row(), self.columns() as i64);
-        let at = self.cursor.unwrap_or(Cell { row: min_row, col: 0 });
+        // Shift moves the far corner of the selection; without it the active cell moves.
+        let at = (if shift { self.cursor } else { self.active() }).unwrap_or(Cell { row: min_row, col: 0 });
         let (row, col) = (at.row, at.col as i64);
         let page = self.page_rows();
         let target = match key.key.as_str() {
@@ -794,16 +988,14 @@ impl CsvTable {
         }
         match key.key.as_str() {
             "enter" | "f2" => {
-                if let Some(cursor) = self.cursor.filter(|_| self.editable()) {
-                    self.start_editing(cursor, None, window, cx);
+                if let Some(active) = self.active().filter(|_| self.editable()) {
+                    self.start_editing(active, None, window, cx);
                     cx.stop_propagation();
                 }
             }
             "escape" => {
-                if let (Some(anchor), Some(cursor)) = (self.anchor, self.cursor)
-                    && anchor != cursor
-                {
-                    self.anchor = Some(cursor);
+                if let Some(active) = self.active().filter(|_| !self.single()) {
+                    self.cursor = Some(active);
                     cx.notify();
                     cx.stop_propagation();
                 }
@@ -820,10 +1012,10 @@ impl CsvTable {
             }
             _ => {
                 let typed = key.key_char.as_ref().filter(|c| c.chars().count() == 1 && !c.chars().any(char::is_control));
-                if let (Some(typed), Some(cursor), false, false) = (typed, self.cursor, cmd, key.modifiers.alt)
+                if let (Some(typed), Some(active), false, false) = (typed, self.active(), cmd, key.modifiers.alt)
                     && self.editable()
                 {
-                    self.start_editing(cursor, Some(typed.clone()), window, cx);
+                    self.start_editing(active, Some(typed.clone()), window, cx);
                     cx.stop_propagation();
                 }
             }
@@ -833,7 +1025,7 @@ impl CsvTable {
     /// Tab walks the row, then the next one; at either end it leaves the table.
     fn tab(&mut self, back: bool, cx: &mut Context<Self>) -> bool {
         let (min_row, max_row, columns) = (self.min_row(), self.max_row(), self.columns() as i64);
-        let at = self.cursor.unwrap_or(Cell { row: min_row, col: 0 });
+        let at = self.active().unwrap_or(Cell { row: min_row, col: 0 });
         let col = at.col as i64 + if back { -1 } else { 1 };
         if (0..columns).contains(&col) {
             self.move_to(at.row, col, false, cx);
@@ -850,10 +1042,32 @@ impl CsvTable {
     fn select_all(&mut self, cx: &mut Context<Self>) {
         let (min_row, max_row) = (self.min_row(), self.max_row());
         if max_row >= min_row {
-            self.anchor = Some(Cell { row: min_row, col: 0 });
-            self.cursor = Some(Cell { row: max_row, col: self.columns() - 1 });
+            self.select(Cell { row: min_row, col: 0 }, Cell { row: max_row, col: self.columns() - 1 });
             cx.notify();
         }
+    }
+
+    /// A row number: the whole row. Shift carries on from the active cell's row.
+    fn pick_row(&mut self, row: i64, extend: bool, cx: &mut Context<Self>) {
+        if self.max_row() < self.min_row() {
+            return;
+        }
+        let start = self.anchor.filter(|_| extend).map_or(row, |anchor| anchor.row);
+        self.select(Cell { row: start, col: 0 }, Cell { row, col: self.columns() - 1 });
+        self.drag = Some(Drag::Rows);
+        cx.notify();
+    }
+
+    /// A column letter: the whole column. Shift carries on from the active cell's column.
+    fn pick_column(&mut self, column: usize, extend: bool, cx: &mut Context<Self>) {
+        let (min_row, max_row) = (self.min_row(), self.max_row());
+        if max_row < min_row {
+            return;
+        }
+        let start = self.anchor.filter(|_| extend).map_or(column, |anchor| anchor.col);
+        self.select(Cell { row: min_row, col: start }, Cell { row: max_row, col: column });
+        self.drag = Some(Drag::Columns);
+        cx.notify();
     }
 
     fn copy(&mut self, cut: bool, cx: &mut Context<Self>) {
@@ -954,24 +1168,25 @@ impl CsvTable {
         }
         self.focus.focus(window, cx);
         let Some(cell) = self.cell_at(local) else { return };
+        // The empty sheet under and beside the data is drawn, not part of the file.
         if local.y >= self.head_height() + self.order.len() as f32 * self.row_height() - self.scroll.y {
             return;
         }
         if local.x < self.gutter() {
-            // A row number selects the whole row.
-            let start = match self.anchor {
-                Some(anchor) if event.modifiers.shift => anchor.row,
-                _ => cell.row,
-            };
-            self.anchor = Some(Cell { row: start, col: 0 });
-            self.cursor = Some(Cell { row: cell.row, col: self.columns() - 1 });
+            self.pick_row(cell.row, event.modifiers.shift, cx);
         } else if local.x - self.gutter() + self.scroll.x < self.offsets.last().copied().unwrap_or(0.) {
-            self.anchor = Some(if event.modifiers.shift { self.anchor.or(self.cursor).unwrap_or(cell) } else { cell });
-            self.cursor = Some(cell);
+            // A web address opens on a plain click where the sheet is only read,
+            // and with ⌘ or Ctrl held where a click has to be able to pick the cell.
+            if (self.read_only || event.modifiers.platform || event.modifiers.control)
+                && let Some(url) = self.link_at(cell, local, window)
+            {
+                return cx.open_url(&url);
+            }
+            self.select(if event.modifiers.shift { self.active().unwrap_or(cell) } else { cell }, cell);
             self.drag = Some(Drag::Select);
             if event.click_count == 2 && self.editable() {
                 self.drag = None;
-                self.anchor = Some(cell);
+                self.select(cell, cell);
                 self.start_editing(cell, None, window, cx);
             }
         }
@@ -988,6 +1203,28 @@ impl CsvTable {
                     self.cursor = Some(cell);
                     self.reveal(cell);
                     cx.notify();
+                }
+                return;
+            }
+            Some(Drag::Rows) => {
+                if let Some(cell) = self.cell_at(local) {
+                    let row = if local.y < self.head_height() && self.header_on() { HEADER } else { cell.row };
+                    let next = Cell { row, col: self.columns() - 1 };
+                    if Some(next) != self.cursor {
+                        self.cursor = Some(next);
+                        self.reveal(Cell { row, col: self.visible_columns().start });
+                        cx.notify();
+                    }
+                }
+                return;
+            }
+            Some(Drag::Columns) => {
+                if let Some(cell) = self.cell_at(local) {
+                    let next = Cell { row: self.max_row(), col: cell.col };
+                    if Some(next) != self.cursor {
+                        self.cursor = Some(next);
+                        cx.notify();
+                    }
                 }
                 return;
             }
@@ -1037,36 +1274,60 @@ impl CsvTable {
         }
     }
 
-    // ---- what the status line says
-
-    /// (cell name, value, detail).
-    fn status(&self) -> Option<(String, String, String)> {
-        let (cursor, (top, bottom, left, right)) = (self.cursor?, self.selection()?);
-        if self.max_row() < self.min_row() {
+    /// The web address in a cell, when the point is on its text.
+    fn link_at(&self, cell: Cell, local: Point<f32>, window: &Window) -> Option<String> {
+        let value = self.doc.cell_value(self.file_row(cell.row), cell.col);
+        let shown = format_cell(&value, self.doc.reads_decimal_comma());
+        if shown.kind != CellKind::Url {
             return None;
         }
-        let row = self.file_row(cursor.row);
-        let label = format!("{}{}", column_letter(cursor.col), row + 1);
-        if top == bottom && left == right {
-            return Some((label, self.doc.cell_value(row, cursor.col).into_owned(), String::new()));
+        let (left, _, width) = self.cell_rect(cell);
+        let text = one_line(&shown.text);
+        let font = window.text_style().font();
+        let shaped = window.text_system().shape_line(text.clone(), px(self.font_size()), &[text_run(text.len(), &font, black())], None);
+        let end = left + 8. + f32::from(shaped.width).min((width - 17.).max(0.));
+        (local.x >= left + 8. && local.x <= end).then(|| shown.text.into_owned())
+    }
+
+    // ---- what the name box, the formula bar and the status bar say
+
+    /// The active cell's name, "B4": its column's letter and its line in the file.
+    fn active_reference(&self) -> String {
+        self.active().map_or_else(String::new, |cell| cell_reference(self.file_row(cell.row), cell.col))
+    }
+
+    fn active_value(&self) -> String {
+        self.active().map_or_else(String::new, |cell| self.doc.cell_value(self.file_row(cell.row), cell.col).into_owned())
+    }
+
+    /// What a selected block adds up to; None for one cell.
+    fn block_stats(&self) -> Option<BlockStats> {
+        let selection = self.selection().filter(|_| !self.single())?;
+        let key = (selection, self.version);
+        if let Some((cached, stats)) = self.stats.borrow().as_ref()
+            && *cached == key
+        {
+            return *stats;
         }
+        let (top, bottom, left, right) = selection;
         let cells = (bottom - top + 1) as usize * (right - left + 1);
-        let mut detail = String::new();
-        if cells <= 20_000 {
-            let (mut sum, mut numbers) = (0f64, 0usize);
-            for r in top..=bottom {
-                for c in left..=right {
-                    if let Some(number) = self.doc.cell_number(self.file_row(r), c) {
-                        sum += number;
-                        numbers += 1;
-                    }
-                }
-            }
-            if numbers > 1 {
-                detail = format!("Sum {}", format_sum(sum));
+        let numbers = if cells > MAX_STAT_CELLS { None } else { self.doc.range_stats((top..=bottom).map(|row| self.file_row(row)), left, right) };
+        let stats = Some(BlockStats { cells, numbers });
+        *self.stats.borrow_mut() = Some((key, stats));
+        stats
+    }
+
+    /// (cell name, value, detail), as the scene report prints them.
+    #[cfg(feature = "scene")]
+    fn status(&self) -> Option<(String, String, String)> {
+        self.active()?;
+        match self.block_stats() {
+            None => Some((self.active_reference(), self.active_value(), String::new())),
+            Some(stats) => {
+                let detail = stats.numbers.map_or_else(String::new, |n| format!("Sum {} · Average {} · Count {}", format_sum(n.sum), format_average(n.average), grouped(n.count)));
+                Some((self.active_reference(), format!("{} selected", count(stats.cells, "cell")), detail))
             }
         }
-        Some((label, format!("{} selected", count(cells, "cell")), detail))
     }
 
     fn filtered(&self) -> bool {
@@ -1090,23 +1351,37 @@ impl CsvTable {
 // ---------------------------------------------------------------------------
 // Drawing
 
+/// A cell as it is drawn: its text on one line, and how it reads.
+struct ShownCell {
+    text: SharedString,
+    kind: CellKind,
+    negative: bool,
+}
+
 /// Everything the painted rows need, read from the table before the frame.
 struct Rows {
     palette: Palette,
     font: Font,
+    /// The same face with tabular figures, for the cells that line up on the
+    /// right: a column of numbers reads digit under digit.
+    figures: Font,
     font_size: f32,
     row_height: f32,
+    /// The letters and the header row: where the rows start.
     head_height: f32,
     gutter: f32,
+    fill_width: f32,
     scroll: Point<f32>,
-    /// (index on screen, file row, the visible cells' text).
-    rows: Vec<(usize, u32, Vec<SharedString>)>,
+    /// (index on screen, file row, the visible cells).
+    rows: Vec<(usize, u32, Vec<ShownCell>)>,
     columns: std::ops::Range<usize>,
     offsets: Vec<f32>,
-    numeric: Vec<bool>,
+    /// How many rows are shown in all, and how many the file has: the empty
+    /// sheet starts under the first and is numbered from the second.
+    shown: usize,
+    file_rows: usize,
     selection: Option<(i64, i64, usize, usize)>,
-    cursor: Option<Cell>,
-    hover_row: Option<i64>,
+    active: Option<Cell>,
     editing: Option<Cell>,
     thumbs: Thumbs,
 }
@@ -1122,65 +1397,152 @@ impl Rows {
         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
         let rect = |x: f32, y: f32, w: f32, h: f32| Bounds::new(point(px(ox + x), px(oy + y)), size(px(w), px(h)));
         let size = px(self.font_size);
-        let line_height = px(self.row_height - 1.);
+        let (row_height, head) = (self.row_height, self.head_height);
+        let line_height = px(row_height - 1.);
         let ellipsis = window.text_system().shape_line("…".into(), size, &[text_run("…".len(), &self.font, p.fg)], None).width;
+        // Where the file's own columns and rows end, and the empty sheet begins.
+        let data_right = self.gutter + self.offsets.last().copied().unwrap_or(0.) - self.scroll.x;
+        let data_bottom = head + self.shown as f32 * row_height - self.scroll.y;
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for (index, _, cells) in &self.rows {
-                let y = self.head_height + *index as f32 * self.row_height - self.scroll.y;
-                if y >= height || y + self.row_height <= 0. {
+                let y = head + *index as f32 * row_height - self.scroll.y;
+                if y >= height || y + row_height <= 0. {
                     continue;
-                }
-                if index % 2 == 1 {
-                    window.paint_quad(fill(rect(self.gutter, y, width - self.gutter, self.row_height), p.stripe));
                 }
                 let row = *index as i64;
                 let selected_row = self.selection.is_some_and(|(top, bottom, ..)| row >= top && row <= bottom);
-                for (column, text) in self.columns.clone().zip(cells) {
+                for (column, cell) in self.columns.clone().zip(cells) {
                     let x = self.gutter + self.offsets[column] - self.scroll.x;
                     let cell_width = self.offsets[column + 1] - self.offsets[column];
-                    let selected = selected_row && self.selection.is_some_and(|(_, _, left, right)| column >= left && column <= right);
-                    if selected {
-                        window.paint_quad(fill(rect(x, y, cell_width, self.row_height), p.select));
-                    } else if self.hover_row == Some(row) {
-                        window.paint_quad(fill(rect(x, y, cell_width, self.row_height), p.hover));
+                    let here = Cell { row, col: column };
+                    let active = self.active == Some(here);
+                    // The block is tinted; the active cell stays clear inside its ring.
+                    if !active && selected_row && self.selection.is_some_and(|(_, _, left, right)| column >= left && column <= right) {
+                        window.paint_quad(fill(rect(x, y, cell_width, row_height), p.select));
                     }
-                    window.paint_quad(fill(rect(x + cell_width - 1., y, 1., self.row_height), p.line));
-                    window.paint_quad(fill(rect(x, y + self.row_height - 1., cell_width, 1.), p.line));
-                    let editing = self.editing == Some(Cell { row, col: column });
-                    if !text.is_empty() && !editing {
-                        let room = px((cell_width - 21.).max(0.));
-                        let mut shaped = window.text_system().shape_line(text.clone(), size, &[text_run(text.len(), &self.font, p.fg)], None);
+                    window.paint_quad(fill(rect(x + cell_width - 1., y, 1., row_height), p.line));
+                    window.paint_quad(fill(rect(x, y + row_height - 1., cell_width, 1.), p.line));
+                    let editing = self.editing == Some(here);
+                    if !cell.text.is_empty() && !editing {
+                        // How a value reads. Display only: the file keeps what was typed.
+                        let link = cell.kind == CellKind::Url;
+                        let color = if cell.negative {
+                            p.negative
+                        } else if link {
+                            p.accent
+                        } else {
+                            p.fg
+                        };
+                        let size = if cell.kind == CellKind::Boolean { size * 0.92 } else { size };
+                        let font = if cell.kind.right_aligned() { &self.figures } else { &self.font };
+                        let run = |len: usize| TextRun {
+                            underline: link.then(|| UnderlineStyle { thickness: px(1.), color: Some(fade(p.accent, 0.45)), wavy: false }),
+                            ..text_run(len, font, color)
+                        };
+                        let text = &cell.text;
+                        let room = px((cell_width - 17.).max(0.));
+                        let mut shaped = window.text_system().shape_line(text.clone(), size, &[run(text.len())], None);
                         if shaped.width > room {
                             let mut cut = shaped.closest_index_for_x((room - ellipsis).max(px(0.))).min(text.len());
                             while cut > 0 && !text.is_char_boundary(cut) {
                                 cut -= 1;
                             }
                             let short: SharedString = format!("{}…", text[..cut].trim_end()).into();
-                            shaped = window.text_system().shape_line(short.clone(), size, &[text_run(short.len(), &self.font, p.fg)], None);
+                            shaped = window.text_system().shape_line(short.clone(), size, &[run(short.len())], None);
                         }
-                        let left = if self.numeric.get(column).copied().unwrap_or(false) { x + cell_width - 11. - f32::from(shaped.width) } else { x + 10. };
-                        let _ = shaped.paint(point(px(ox + left.max(x + 10.)), px(oy + y)), line_height, TextAlign::Left, None, window, cx);
+                        let text_width = f32::from(shaped.width);
+                        let left = if cell.kind.right_aligned() {
+                            x + cell_width - 9. - text_width
+                        } else if cell.kind == CellKind::Boolean {
+                            x + (cell_width - 1. - text_width) / 2.
+                        } else {
+                            x + 8.
+                        };
+                        let _ = shaped.paint(point(px(ox + left.max(x + 8.)), px(oy + y)), line_height, TextAlign::Left, None, window, cx);
                     }
-                    if self.cursor == Some(Cell { row, col: column }) && !editing {
-                        window.paint_quad(quad(rect(x, y, cell_width, self.row_height), px(0.), gpui_kit::transparent_black(), px(2.), p.accent, BorderStyle::Solid));
+                    if active && !editing {
+                        // A 2px ring inside the cell's own box, its right and bottom gridlines included.
+                        for (rx, ry, rw, rh) in [(x, y, cell_width, 2.), (x, y, 2., row_height), (x + cell_width - 2., y, 2., row_height), (x, y + row_height - 2., cell_width, 2.)] {
+                            window.paint_quad(fill(rect(rx, ry, rw, rh), p.accent));
+                        }
                     }
                 }
+                // The row carries on, fainter, to the edge of the window.
+                if data_right < width {
+                    window.paint_quad(fill(rect(data_right, y + row_height - 1., width - data_right, 1.), p.line_faint));
+                }
+            }
+            // The empty sheet: columns out to the right edge, rows down to the bottom.
+            let mut x = data_right + self.fill_width - 1.;
+            while x < width {
+                window.paint_quad(fill(rect(x, head, 1., height - head), p.line_faint));
+                x += self.fill_width;
+            }
+            if data_bottom < height {
+                let top = data_bottom.max(head);
+                for column in self.columns.clone() {
+                    let x = self.gutter + self.offsets[column + 1] - self.scroll.x - 1.;
+                    window.paint_quad(fill(rect(x, top, 1., height - top), p.line_faint));
+                }
+                let mut y = top;
+                while y < height {
+                    window.paint_quad(fill(rect(self.gutter, y + row_height - 1., width - self.gutter, 1.), p.line_faint));
+                    y += row_height;
+                }
+            }
+            // The selected block's outline and the small square at its corner.
+            if let Some((top, bottom, left, right)) = self.selection.filter(|(_, bottom, ..)| *bottom >= 0 && self.shown > 0)
+                && left < self.offsets.len() - 1
+            {
+                let right = right.min(self.offsets.len() - 2);
+                let (x0, x1) = (self.gutter + self.offsets[left] - self.scroll.x, self.gutter + self.offsets[right + 1] - self.scroll.x);
+                let (y0, y1) = (head + top.max(0) as f32 * row_height - self.scroll.y, head + (bottom + 1) as f32 * row_height - self.scroll.y);
+                let body = rect(self.gutter, head, (width - self.gutter).max(0.), (height - head).max(0.));
+                window.with_content_mask(Some(ContentMask { bounds: body }), |window| {
+                    if top != bottom || left != right {
+                        // The header row is above this frame: a block that starts there is open at the top.
+                        if top != HEADER {
+                            window.paint_quad(fill(rect(x0, y0, x1 - x0, 1.), p.accent));
+                        }
+                        window.paint_quad(fill(rect(x0, y0, 1., y1 - y0), p.accent));
+                        window.paint_quad(fill(rect(x1 - 1., y0, 1., y1 - y0), p.accent));
+                        window.paint_quad(fill(rect(x0, y1 - 1., x1 - x0, 1.), p.accent));
+                    }
+                    if self.editing.is_none() {
+                        window.paint_quad(fill(rect(x1 - 4., y1 - 4., 7., 7.), p.bg));
+                        window.paint_quad(fill(rect(x1 - 3., y1 - 3., 5., 5.), p.accent));
+                    }
+                });
             }
             // The row numbers stay put while the cells scroll under them.
             let small = px(self.font_size * 0.85);
+            let number = |label: String, y: f32, selected: bool, color: Hsla, window: &mut Window, cx: &mut App| {
+                window.paint_quad(fill(rect(0., y, self.gutter, row_height), if selected { p.chrome_select } else { p.chrome }));
+                window.paint_quad(fill(rect(self.gutter - 1., y, 1., row_height), p.line));
+                window.paint_quad(fill(rect(0., y + row_height - 1., self.gutter, 1.), p.line));
+                if selected {
+                    window.paint_quad(fill(rect(self.gutter - 2., y, 2., row_height), p.accent));
+                }
+                let label: SharedString = label.into();
+                let shaped = window.text_system().shape_line(label.clone(), small, &[text_run(label.len(), &self.font, color)], None);
+                let _ = shaped.paint(point(px(ox + ((self.gutter - 1. - f32::from(shaped.width)) / 2.).round()), px(oy + y)), px(row_height), TextAlign::Left, None, window, cx);
+            };
             for (index, file_row, _) in &self.rows {
-                let y = self.head_height + *index as f32 * self.row_height - self.scroll.y;
-                if y >= height || y + self.row_height <= 0. {
+                let y = head + *index as f32 * row_height - self.scroll.y;
+                if y >= height || y + row_height <= 0. {
                     continue;
                 }
                 let row = *index as i64;
                 let selected = self.selection.is_some_and(|(top, bottom, ..)| row >= top && row <= bottom);
-                window.paint_quad(fill(rect(0., y, self.gutter, self.row_height), if selected { p.head_select } else { p.head }));
-                window.paint_quad(fill(rect(self.gutter - 1., y, 1., self.row_height), p.line));
                 // The number is the row's line in the file, so it still names the row when sorted.
-                let label: SharedString = (file_row + 1).to_string().into();
-                let shaped = window.text_system().shape_line(label.clone(), small, &[text_run(label.len(), &self.font, if selected { p.fg } else { p.muted })], None);
-                let _ = shaped.paint(point(px(ox + self.gutter - 9. - f32::from(shaped.width)), px(oy + y)), px(self.row_height), TextAlign::Left, None, window, cx);
+                number((file_row + 1).to_string(), y, selected, if selected { p.fg } else { p.muted }, window, cx);
+            }
+            // The empty rows are numbered on from the last line of the file.
+            let (mut y, mut line) = (data_bottom.max(head), self.file_rows + 1);
+            while data_bottom < height && y < height {
+                number(line.to_string(), y, false, p.chrome_faint, window, cx);
+                y += row_height;
+                line += 1;
             }
             let thumb = fade(p.fg, 0.42);
             if let Some((start, length)) = self.thumbs.0 {
@@ -1196,35 +1558,54 @@ impl Rows {
 impl CsvTable {
     fn rows_to_paint(&self, palette: Palette, font: Font) -> Rows {
         let columns = self.visible_columns();
+        let decimal_comma = self.doc.reads_decimal_comma();
+        // The cell the formula bar is typing into shows what it has typed.
+        let live = self.bar_edit.as_ref();
         let rows = self
             .visible_rows()
             .map(|index| {
                 let file_row = self.order[index];
-                let cells = columns.clone().map(|c| self.doc.raw(file_row as usize, c).map_or_else(SharedString::default, |raw| one_line(&markie_core::csv_table::decode_field(raw)))).collect();
+                let cells = columns
+                    .clone()
+                    .map(|c| {
+                        let value = match live {
+                            Some((cell, typed)) if cell.row == index as i64 && cell.col == c => std::borrow::Cow::Borrowed(typed.as_str()),
+                            _ => self.doc.raw(file_row as usize, c).map_or(std::borrow::Cow::Borrowed(""), markie_core::csv_table::decode_field),
+                        };
+                        let shown = format_cell(&value, decimal_comma);
+                        ShownCell { text: one_line(&shown.text), kind: shown.kind, negative: shown.negative }
+                    })
+                    .collect();
                 (index, file_row, cells)
             })
             .collect();
+        let mut figures = font.clone();
+        figures.features = FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]));
         Rows {
             palette,
             font,
+            figures,
             font_size: self.font_size(),
             row_height: self.row_height(),
             head_height: self.head_height(),
             gutter: self.gutter(),
+            fill_width: self.fill_width(),
             scroll: self.scroll,
             rows,
             columns,
             offsets: self.offsets.clone(),
-            numeric: self.numeric.clone(),
+            shown: self.order.len(),
+            file_rows: self.doc.row_count(),
             selection: self.selection(),
-            cursor: self.cursor,
-            hover_row: self.hover.map(|c| c.row),
+            active: self.active(),
             editing: self.editing.as_ref().map(|e| e.cell),
             thumbs: if self.scrollbars_shown() { self.thumbs() } else { (None, None) },
         }
     }
 }
 
+const SHEET_ICON: &str = r#"<rect x="1.65" y="2.65" width="12.7" height="10.7" rx="1.6" stroke="COLOR" stroke-width="1.3"/><path d="M1.65 6.5h12.7M1.65 10h12.7M6 2.65v10.7" stroke="COLOR" stroke-width="1.3"/>"#;
+const CORNER_ICON: &str = r#"<path d="M8 0v8H0z" fill="COLOR"/>"#;
 const SEARCH_ICON: &str = r#"<circle cx="11" cy="11" r="7" stroke="COLOR" stroke-width="2"/><path d="m20 20-3.5-3.5" stroke="COLOR" stroke-width="2" stroke-linecap="round"/>"#;
 
 impl CsvTable {
@@ -1344,8 +1725,8 @@ impl CsvTable {
                     .child("Header row"),
             );
             if self.editable() {
-                let no_row = self.cursor.is_none_or(|c| c.row == HEADER) || self.order.is_empty();
-                let no_column = self.cursor.is_none() || self.doc.column_count == 0;
+                let no_row = self.selection().is_none_or(|(_, bottom, ..)| bottom == HEADER) || self.order.is_empty();
+                let no_column = self.selection().is_none() || self.doc.column_count == 0;
                 bar = bar.child(
                     div()
                         .flex()
@@ -1369,92 +1750,287 @@ impl CsvTable {
                 );
             }
         }
-        bar.child(div().ml_auto().text_color(p.muted).whitespace_nowrap().child(self.summary()))
+        bar
     }
 
-    fn render_status(&self, p: &Palette) -> Div {
-        let mut bar = div()
+    /// The name box and the formula bar, under the toolbar: which cell is
+    /// selected, and all of what it holds. Typing in the bar edits the cell.
+    fn render_formula(&mut self, p: &Palette, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let reference = self.active_reference();
+        if self.name_shown != reference && !self.name_input.read(cx).focus_handle(cx).is_focused(window) {
+            self.name_input.update(cx, |state, cx| state.set_value(reference.clone(), window, cx));
+            self.name_shown = reference;
+        }
+        // While a cell is open the bar shows what is being typed in it.
+        let value = match &self.editing {
+            Some(editing) => editing.input.read(cx).value().to_string(),
+            None => self.active_value(),
+        };
+        // The bar is one line: a cell with a line break in it is edited in the cell.
+        let field = self.editable() && self.active().is_some() && self.editing.is_none() && !value.contains(['\n', '\r']);
+        if field && self.bar_edit.is_none() && self.formula_shown != value {
+            self.formula_input.update(cx, |state, cx| state.set_value(value.clone(), window, cx));
+            self.formula_shown = value.clone();
+        }
+        let size = px(13.);
+        let content = if field {
+            div()
+                .id("csv-formula")
+                .key_context(FORMULA_CONTEXT)
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .px(px(6.))
+                .capture_action(cx.listener(|this, _: &kit::Escape, window, cx| {
+                    if this.bar_edit.is_some() {
+                        this.finish_bar_edit(false, None, true, window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &NextCell, window, cx| this.finish_bar_edit(true, Some(Direction::Right), true, window, cx)))
+                .on_action(cx.listener(|this, _: &PreviousCell, window, cx| this.finish_bar_edit(true, Some(Direction::Left), true, window, cx)))
+                .child(Input::new(&self.formula_input).appearance(false).xsmall().text_size(size))
+                .into_any_element()
+        } else {
+            self.formula_shown.clear();
+            div().flex_1().min_w_0().flex().items_center().px(px(10.)).child(div().min_w_0().truncate().child(one_line(&value))).into_any_element()
+        };
+        div()
             .flex()
             .flex_row()
             .flex_none()
             .w_full()
-            .items_center()
-            .gap(px(10.))
-            .min_h(px(28.))
-            .px(px(12.))
+            .h(px(28.))
+            .border_b_1()
+            .border_color(p.line)
+            .bg(p.bg)
+            .text_color(p.fg)
+            .text_size(size)
+            .child(div().flex().flex_none().items_center().w(px(76.)).px(px(4.)).border_r_1().border_color(p.line).child(Input::new(&self.name_input).appearance(false).xsmall().text_size(size)))
+            .child(div().flex().flex_none().items_center().px(px(9.)).border_r_1().border_color(p.line).text_color(p.muted).font_family("Georgia").italic().child("fx"))
+            .child(content)
+    }
+
+    /// The sheet tab and the status bar: the file's name as the one sheet,
+    /// how big it is, and what the selected block adds up to.
+    fn render_foot(&self, p: &Palette) -> Div {
+        let part = |text: String| div().flex().flex_none().items_center().whitespace_nowrap().child(text);
+        let icon = svg_image(&SHEET_ICON.replace("COLOR", &super::dialog_chrome::css(p.accent)), 16., 16., 12., 12.);
+        let mut foot = div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .w_full()
+            .h(px(28.))
+            .gap(px(14.))
+            .pr(px(12.))
+            .overflow_hidden()
             .border_t_1()
             .border_color(p.line)
             .bg(p.bar)
             .text_color(p.muted)
-            .text_size(px(12.));
-        let detail = |text: String| div().flex_none().whitespace_nowrap().child(text);
-        match self.status() {
-            Some((label, value, note)) => {
-                bar = bar
-                    .child(div().flex_none().px(px(6.)).py(px(2.)).rounded(px(4.)).bg(fade(p.fg, 0.08)).text_color(p.fg).font_family(markie_editor::MONO).text_size(px(11.)).child(label))
-                    .child(div().flex_1().min_w_0().truncate().text_color(p.fg).child(one_line(&value)));
-                if !note.is_empty() {
-                    bar = bar.child(detail(note));
-                }
-            }
-            None => {
-                let hint = if self.editable() { "Select a cell. Enter edits it, Escape cancels." } else { "Select a cell to read all of it." };
-                bar = bar.child(div().flex_1().min_w_0().truncate().child(hint));
-            }
+            .text_size(px(12.))
+            .child(
+                // The one sheet: a tab hanging from the grid, as in Excel and Numbers.
+                div().flex().flex_shrink(1.).min_w_0().max_w(px(300.)).pl(px(10.)).child(
+                    div()
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .min_w_0()
+                        .pl(px(10.))
+                        .pr(px(12.))
+                        .bg(p.bg)
+                        .border_l_1()
+                        .border_r_1()
+                        .border_color(p.line)
+                        .text_color(p.fg)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(icon)
+                        .child(div().min_w_0().truncate().child(sheet_name(self.name.as_deref())))
+                        .child(div().absolute().left_0().right_0().bottom_0().h(px(2.)).bg(p.accent)),
+                ),
+            )
+            .child(part(self.summary()))
+            .child(div().flex_1().min_w_0());
+        let table = !self.text_view;
+        if let Some(stats) = self.block_stats().filter(|_| table) {
+            let figure = |label: &'static str, value: String| div().flex().flex_none().items_center().gap(px(5.)).whitespace_nowrap().child(label).child(div().text_color(p.fg).font_weight(FontWeight::SEMIBOLD).child(value));
+            foot = match stats.numbers {
+                Some(n) => foot.child(figure("Sum", format_sum(n.sum))).child(figure("Average", format_average(n.average))).child(figure("Count", grouped(n.count))),
+                None => foot.child(part(format!("{} selected", count(stats.cells, "cell")))),
+            };
         }
-        if self.matched > MAX_SHOWN_ROWS {
-            bar = bar.child(detail(format!("Showing the first {} rows", grouped(MAX_SHOWN_ROWS))));
+        if table && self.matched > MAX_SHOWN_ROWS {
+            foot = foot.child(part(format!("Showing the first {} rows", grouped(MAX_SHOWN_ROWS))));
         }
-        let view_only = if self.sort.is_some() || self.filtered() { " · view only, the file keeps its order" } else { "" };
-        bar.child(detail(format!("{}{view_only}", delimiter_name(self.doc.delimiter))))
+        let view_only = if table && (self.sort.is_some() || self.filtered()) { " · view only, the file keeps its order" } else { "" };
+        foot.child(part(format!("{}{view_only}", delimiter_name(self.doc.delimiter))))
     }
 
+    /// The sheet tab under the file's text, for the host that draws the text.
+    pub(super) fn foot(&self, cx: &App) -> Div {
+        self.render_foot(&Palette::current(cx))
+    }
+
+    /// What stays put above the rows: the strip of column letters, and under
+    /// it the header row, bold and filled, with a heavier rule below.
     fn render_head(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
-        let (row, gutter, scroll) = (self.row_height(), self.gutter(), self.scroll.x);
+        let (row, letters, gutter, scroll, fill) = (self.row_height(), self.letter_height(), self.gutter(), self.scroll.x, self.fill_width());
         let header_on = self.header_on();
-        let selection = self.selection().filter(|(top, ..)| *top == HEADER);
+        let selection = self.selection();
+        let active = self.active();
         let editing = self.editing.as_ref().map(|e| e.cell);
-        let mut head = div().absolute().top_0().left_0().w_full().h(px(self.head_height())).bg(p.head).border_b_1().border_color(p.line).overflow_hidden().font_weight(FontWeight::SEMIBOLD);
-        let hover = fade(p.fg, 0.06);
+        let view_width = self.view_size().width;
+        let data_right = gutter + self.offsets.last().copied().unwrap_or(0.) - scroll;
+        let small = px(self.font_size() * 0.85);
+        let in_columns = |column: usize| selection.is_some_and(|(_, _, left, right)| column >= left && column <= right);
+        let mut head = div().absolute().top_0().left_0().w_full().h(px(self.head_height())).overflow_hidden();
+
+        // ---- the letters. With no header row they are the header: they name the columns and sort them.
+        let letter_hover = mix(p.fg, 0.09, p.bg);
         for column in self.visible_columns() {
-            let numeric = self.numeric.get(column).copied().unwrap_or(false);
-            let label = self.header_label(column);
-            let tip: SharedString = if label.is_empty() { "Click to sort".into() } else { format!("{}: click to sort", one_line(&label)).into() };
-            let mark = self.sort.filter(|s| s.column == column).map(|s| if s.direction == SortDirection::Asc { "▲" } else { "▼" });
-            let selected = header_on && selection.is_some_and(|(_, _, left, right)| column >= left && column <= right);
-            let cursor = header_on && self.cursor == Some(Cell { row: HEADER, col: column });
-            let hidden = editing == Some(Cell { row: HEADER, col: column });
-            head = head.child(
-                div()
-                    .id(("csv-th", column))
-                    .absolute()
-                    .top_0()
-                    .left(px(gutter + self.offsets[column] - scroll))
-                    .w(px(self.widths[column]))
-                    .h(px(row))
-                    .flex()
-                    .border_r_1()
-                    .border_color(p.line)
-                    .when(selected, |el| el.bg(p.head_select))
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| this.head_click(column, event.click_count(), window, cx)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .items_center()
-                            .gap(px(4.))
-                            .px(px(10.))
-                            .hover(move |s| s.bg(hover))
-                            .when(numeric, |el| el.flex_row_reverse())
-                            .when(!hidden, |el| el.child(div().min_w_0().truncate().child(one_line(&label))))
-                            .children(mark.map(|m| div().flex_none().text_color(p.accent).text_size(px(self.font_size() * 0.62)).child(m))),
-                    )
-                    .when(cursor, |el| el.child(div().absolute().inset_0().border_2().border_color(p.accent))),
-            );
+            let selected = in_columns(column);
+            let name = column_letter(column);
+            let group: SharedString = format!("csv-letter-{column}").into();
+            let mut letter = div()
+                .id(("csv-letter", column))
+                .group(group.clone())
+                .absolute()
+                .top_0()
+                .left(px(gutter + self.offsets[column] - scroll))
+                .w(px(self.widths[column]))
+                .h(px(letters))
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_r_1()
+                .border_b_1()
+                .border_color(p.line)
+                .text_size(small)
+                .map(|el| {
+                    if selected {
+                        el.bg(p.chrome_select).text_color(p.fg).font_weight(FontWeight::SEMIBOLD)
+                    } else {
+                        el.bg(p.chrome).text_color(p.muted).font_weight(FontWeight::MEDIUM).hover(move |s| s.bg(letter_hover))
+                    }
+                })
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    if this.editing.is_some() {
+                        this.finish_editing(true, None, false, window, cx);
+                    }
+                    this.focus.focus(window, cx);
+                    this.pick_column(column, event.modifiers.shift, cx);
+                    cx.stop_propagation();
+                }))
+                .child(name.clone())
+                .when(selected, |el| el.child(div().absolute().left_0().right_0().bottom_0().h(px(2.)).bg(p.accent)));
+            if !header_on {
+                let sorted = self.sort.filter(|s| s.column == column).map(|s| s.direction);
+                let tip: SharedString = format!("Sort column {name}").into();
+                letter = letter.child(
+                    div()
+                        .id(("csv-letter-sort", column))
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right(px(5.))
+                        .w(px(14.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .map(|el| match sorted {
+                            Some(_) => el.text_color(p.accent).text_size(small * 0.7),
+                            None => el.text_color(p.muted).opacity(0.).group_hover(group, |s| s.opacity(1.)),
+                        })
+                        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.toggle_sort(column, cx);
+                            this.focus.focus(window, cx);
+                        }))
+                        .child(match sorted {
+                            Some(SortDirection::Asc) => "▲",
+                            Some(SortDirection::Desc) => "▼",
+                            None => "↕",
+                        }),
+                );
+            }
+            head = head.child(letter);
         }
-        // The resize handles sit over the line between two headers.
+        // The letters carry on over the empty sheet.
+        let (mut x, mut index) = (data_right, self.columns());
+        while x < view_width {
+            head = head.child(
+                div().absolute().top_0().left(px(x)).w(px(fill)).h(px(letters)).flex().items_center().justify_center().bg(p.chrome).border_r_1().border_b_1().border_color(p.line_faint).text_size(small).font_weight(FontWeight::MEDIUM).text_color(p.chrome_faint).child(column_letter(index)),
+            );
+            x += fill;
+            index += 1;
+        }
+
+        // ---- the header row
+        if header_on {
+            head = head.child(div().absolute().top(px(letters)).left_0().w_full().h(px(row)).bg(p.head).border_b_2().border_color(p.rule));
+            let hover = fade(p.fg, 0.06);
+            let live = self.bar_edit.as_ref().filter(|(cell, _)| cell.row == HEADER);
+            for column in self.visible_columns() {
+                let numeric = self.numeric.get(column).copied().unwrap_or(false);
+                let label = match live {
+                    Some((cell, typed)) if cell.col == column => typed.clone(),
+                    _ => self.header_label(column),
+                };
+                let tip: SharedString = if label.is_empty() { "Click to sort".into() } else { format!("{}: click to sort", one_line(&label)).into() };
+                let mark = self.sort.filter(|s| s.column == column).map(|s| if s.direction == SortDirection::Asc { "▲" } else { "▼" });
+                let here = Cell { row: HEADER, col: column };
+                let selected = selection.is_some_and(|(top, ..)| top == HEADER) && in_columns(column);
+                let is_active = active == Some(here);
+                let hidden = editing == Some(here);
+                head = head.child(
+                    div()
+                        .id(("csv-th", column))
+                        .absolute()
+                        .top(px(letters))
+                        .left(px(gutter + self.offsets[column] - scroll))
+                        .w(px(self.widths[column]))
+                        .h(px(row))
+                        .flex()
+                        .border_r_1()
+                        .border_b_2()
+                        .border_color(if is_active { p.accent } else { p.line })
+                        .bg(if selected && !is_active { p.head_select } else { p.head })
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| this.head_click(column, event.click_count(), window, cx)))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_1()
+                                .min_w_0()
+                                .items_center()
+                                .gap(px(4.))
+                                .px(px(8.))
+                                .hover(move |s| s.bg(hover))
+                                .when(numeric, |el| el.flex_row_reverse())
+                                .when(!hidden, |el| el.child(div().min_w_0().truncate().child(one_line(&label))))
+                                .children(mark.map(|m| div().flex_none().text_color(p.accent).text_size(px(self.font_size() * 0.62)).child(m))),
+                        )
+                        // The rule under the header is the row's own, whatever the cell's side line is.
+                        .when(!is_active, |el| el.child(div().absolute().left_0().right(px(-1.)).bottom(px(-2.)).h(px(2.)).bg(p.rule)))
+                        .when(is_active && !hidden, |el| el.child(div().absolute().inset_0().border_l_2().border_t_2().border_r_1().border_color(p.accent))),
+                );
+            }
+            // The header row carries on over the empty sheet.
+            let mut x = data_right + fill - 1.;
+            while x < view_width {
+                head = head.child(div().absolute().top(px(letters)).left(px(x)).w(px(1.)).h(px(row - 2.)).bg(p.line_faint));
+                x += fill;
+            }
+        }
+
+        // The resize handles sit over the line between two columns: drag to size, double click to fit.
         for column in self.visible_columns() {
             let group: SharedString = format!("csv-resize-{column}").into();
             let dragging = matches!(self.drag, Some(Drag::Resize { column: c, .. }) if c == column);
@@ -1466,7 +2042,7 @@ impl CsvTable {
                     .top_0()
                     .left(px(gutter + self.offsets[column + 1] - scroll - 4.))
                     .w(px(8.))
-                    .h(px(row))
+                    .h(px(self.head_height()))
                     .flex()
                     .justify_center()
                     .cursor_col_resize()
@@ -1485,7 +2061,62 @@ impl CsvTable {
                     .child(div().w(px(2.)).h_full().when(dragging, |el| el.bg(p.accent)).group_hover(group, |s| s.bg(p.accent))),
             );
         }
-        head.child(div().absolute().top_0().left_0().w(px(gutter)).h(px(row)).bg(p.head).border_r_1().border_color(p.line).occlude())
+
+        // ---- the gutter's part: the select-all corner, and the header row's number
+        let corner = svg_image(&CORNER_ICON.replace("COLOR", &super::dialog_chrome::css(mix(p.muted, 0.55, p.chrome))), 8., 8., 8., 8.);
+        head = head.child(
+            div()
+                .id("csv-corner")
+                .absolute()
+                .top_0()
+                .left_0()
+                .w(px(gutter))
+                .h(px(letters))
+                .bg(p.chrome)
+                .border_r_1()
+                .border_b_1()
+                .border_color(p.line)
+                .occlude()
+                .tooltip(|window, cx| Tooltip::new("Select all").build(window, cx))
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    this.focus.focus(window, cx);
+                    this.select_all(cx);
+                    cx.stop_propagation();
+                }))
+                .child(div().absolute().right(px(3.)).bottom(px(3.)).child(corner)),
+        );
+        if header_on {
+            let selected = selection.is_some_and(|(top, ..)| top == HEADER);
+            head = head.child(
+                div()
+                    .id("csv-header-number")
+                    .absolute()
+                    .top(px(letters))
+                    .left_0()
+                    .w(px(gutter))
+                    .h(px(row))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(if selected { p.chrome_select } else { p.chrome })
+                    .border_r_1()
+                    .border_color(p.line)
+                    .text_size(small)
+                    .text_color(if selected { p.fg } else { p.muted })
+                    .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.focus.focus(window, cx);
+                        this.pick_row(HEADER, event.modifiers.shift, cx);
+                        cx.stop_propagation();
+                    }))
+                    // The header row is line 1 of the file.
+                    .child("1")
+                    .child(div().absolute().left_0().right(px(-1.)).bottom_0().h(px(2.)).bg(p.rule))
+                    .when(selected, |el| el.child(div().absolute().top_0().right_0().bottom_0().w(px(2.)).bg(p.accent))),
+            );
+        }
+        head
     }
 
     fn head_click(&mut self, column: usize, clicks: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -1496,8 +2127,7 @@ impl CsvTable {
             self.sort = self.sort_before_click;
             self.recompute_view();
             let cell = Cell { row: HEADER, col: column };
-            self.cursor = Some(cell);
-            self.anchor = Some(cell);
+            self.select(cell, cell);
             self.start_editing(cell, None, window, cx);
         }
     }
@@ -1505,7 +2135,7 @@ impl CsvTable {
     /// Where a cell is in the grid: (left, top, width).
     fn cell_rect(&self, cell: Cell) -> (f32, f32, f32) {
         let left = self.gutter() + self.offsets.get(cell.col).copied().unwrap_or(0.) - self.scroll.x;
-        let top = if cell.row == HEADER { 0. } else { self.head_height() + cell.row as f32 * self.row_height() - self.scroll.y };
+        let top = if cell.row == HEADER { self.letter_height() } else { self.head_height() + cell.row as f32 * self.row_height() - self.scroll.y };
         (left, top, self.widths.get(cell.col).copied().unwrap_or(96.))
     }
 
@@ -1515,22 +2145,24 @@ impl CsvTable {
         let (row, size) = (self.row_height(), self.font_size());
         let line = size * 1.25;
         let input = editing.input.clone();
+        // As in a spreadsheet, the editor grows over the cells to its right as the text does.
+        let longest = editing.input.read(cx).value().split('\n').map(|line| line.chars().count()).max().unwrap_or(0).min(90);
+        let width = width.max((longest as f32 + 3.) * size * 0.56).min((self.view_size().width - left).max(width));
         Some(
             div()
                 .absolute()
-                .left(px(left - 1.))
-                .top(px(top - 1.))
-                .w(px((width + 2.).max(120.)))
-                .min_h(px(row + 1.))
+                .left(px(left))
+                .top(px(top))
+                .w(px(width.max(120.)))
+                .min_h(px(row))
                 .border_2()
                 .border_color(p.accent)
-                .rounded(px(2.))
                 .bg(p.bg)
                 .text_color(p.fg)
-                .shadow(vec![shadow(fade(black(), 0.22), 0., 6., 18.)])
-                // `padding: … 9px` less the 2 px border and GPUI Kit's own 4 px inset.
-                .px(px(3.))
-                .py(px(((row - line) / 2.).max(0.)))
+                .shadow(vec![shadow(fade(black(), 0.22), 0., 4., 14.)])
+                // `padding: … 6px` less GPUI Kit's own 4 px inset.
+                .px(px(2.))
+                .py(px(((row - line - 4.) / 2.).max(0.)))
                 .font_weight(FontWeight::NORMAL)
                 .occlude()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1572,13 +2204,13 @@ impl CsvTable {
             } else {
                 "No rows yet."
             };
-            div().absolute().top(px(self.head_height())).left_0().w_full().px(px(16.)).py(px(28.)).flex().justify_center().text_color(p.muted).text_size(px(13.)).child(message)
+            div().absolute().top(px(self.head_height() + self.row_height())).left_0().w_full().px(px(16.)).py(px(18.)).flex().justify_center().text_color(p.muted).text_size(px(13.)).child(message)
         });
         // The whole of a long cell shows while the pointer rests on it.
         let tip = self.hover.filter(|_| self.drag.is_none() && self.editing.is_none()).and_then(|cell| {
             let value = self.doc.cell_value(self.file_row(cell.row), cell.col);
             let (left, top, width) = self.cell_rect(cell);
-            if value.chars().count() as f32 * 7. <= width - 20. {
+            if value.chars().count() as f32 * 7. <= width - 16. {
                 return None;
             }
             let text: SharedString = value.chars().take(2_000).collect::<String>().into();
@@ -1675,7 +2307,8 @@ impl Render for CsvTable {
             self.viewport.set(Bounds::new(point(px(0.), px(0.)), window.viewport_size()));
         }
         self.layout_columns(&font, window);
-        root.h_full().min_h_0().child(self.render_grid(p, font, cx)).child(self.render_status(&p))
+        let formula = self.render_formula(&p, window, cx);
+        root.h_full().min_h_0().child(formula).child(self.render_grid(p, font, cx)).child(self.render_foot(&p))
     }
 }
 
@@ -1713,8 +2346,11 @@ impl CsvTable {
         if let Some((row, col)) = pair("cursor") {
             self.move_to(row, col, false, cx);
         }
+        // The other corner of a block: `cursor` is then its active cell.
         if let Some((row, col)) = pair("anchor") {
-            self.anchor = Some(Cell { row, col: col as usize });
+            let active = self.cursor;
+            self.cursor = Some(Cell { row, col: col as usize });
+            self.anchor = active;
             self.clamp_cursor();
         }
         if let Some((x, y)) = args.get("scroll").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))) {
@@ -1743,6 +2379,18 @@ impl CsvTable {
                 && let Some(editing) = &self.editing
             {
                 editing.input.update(cx, |state, cx| state.set_value(text.to_string(), window, cx));
+            } else if let Some(reference) = step.get("jump").and_then(Value::as_str) {
+                // The name box: a cell's name and Enter.
+                if !self.jump(reference, cx) {
+                    eprintln!("markie-rs scene: no cell {reference}");
+                }
+            } else if let Some(text) = step.get("bar").and_then(Value::as_str) {
+                // The formula bar: focus it, type, Enter.
+                self.begin_bar_edit(window, cx);
+                if let Some((_, typed)) = self.bar_edit.as_mut() {
+                    *typed = text.to_string();
+                }
+                self.finish_bar_edit(true, Some(Direction::Down), false, window, cx);
             } else if let Some(op) = step.get("op").and_then(Value::as_str) {
                 match op {
                     "commit" => self.finish_editing(true, Some(Direction::Down), false, window, cx),
@@ -1758,15 +2406,23 @@ impl CsvTable {
                     "redo" => self.travel(false, cx),
                     "select-all" => self.select_all(cx),
                     "clear" => self.clear_selection(cx),
-                    "sort" => self.toggle_sort(self.cursor.map_or(0, |c| c.col), cx),
+                    "sort" => self.toggle_sort(self.active().map_or(0, |c| c.col), cx),
+                    "select-column" => {
+                        self.pick_column(self.active().map_or(0, |c| c.col), false, cx);
+                        self.drag = None;
+                    }
+                    "select-row" => {
+                        self.pick_row(self.active().map_or(0, |c| c.row), false, cx);
+                        self.drag = None;
+                    }
                     _ => eprintln!("markie-rs scene: unknown csv op {op}"),
                 }
             }
         }
         if args.get("edit").and_then(Value::as_bool).unwrap_or(false)
-            && let Some(cursor) = self.cursor
+            && let Some(active) = self.active()
         {
-            self.start_editing(cursor, None, window, cx);
+            self.start_editing(active, None, window, cx);
         }
         if args.get("report").and_then(Value::as_bool).unwrap_or(false) {
             // What the keys and ops left behind, for a check that reads the log.
@@ -1778,6 +2434,8 @@ impl CsvTable {
                     "cursor": self.cursor.map(|c| [c.row, c.col as i64]),
                     "anchor": self.anchor.map(|c| [c.row, c.col as i64]),
                     "status": self.status().map(|(label, value, detail)| [label, value, detail]),
+                    "reference": self.active_reference(),
+                    "formula": self.active_value(),
                     "summary": self.summary(),
                     "copy": self.copy_text(),
                     "copy_csv": self.copy_as(','),

@@ -581,6 +581,13 @@ pub fn parse_number(value: &str, decimal_comma: bool) -> Option<f64> {
     if text.is_empty() || text.encode_utf16().count() > 40 {
         return None;
     }
+    // Accounting style: "(1,234.50)" is the negative of what is inside.
+    if let Some(inner) = text.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) {
+        if js_trim(inner).starts_with(['-', '+', '(']) {
+            return None;
+        }
+        return parse_number(inner, decimal_comma).map(|number| -number);
+    }
     // /^[-+]?(?:[$€£¥]\s?)?(\d[\d.,'  ]*|[.,]\d+)(?:\s?[%$€£¥])?$/
     let mut body = text.strip_prefix(['-', '+']).unwrap_or(text);
     if let Some(rest) = body.strip_prefix(is_currency) {
@@ -1007,6 +1014,207 @@ pub fn format_sum(sum: f64) -> String {
         out.push_str(fraction);
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// The sheet: cell names, how a value is drawn, what a block adds up to.
+// Display only: nothing here is ever written to the file.
+
+/// "B4": the column's letter and the row's line in the file.
+pub fn cell_reference(file_row: usize, column: usize) -> String {
+    format!("{}{}", column_letter(column), file_row + 1)
+}
+
+/// "b4" as a zero-based (file row, column), or None when it is not a cell's name.
+pub fn parse_cell_reference(text: &str) -> Option<(usize, usize)> {
+    // /^\s*([A-Za-z]{1,4})\s*(\d{1,9})\s*$/
+    let text = js_trim(text);
+    let letters = text.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let digits = js_trim(&text[letters..]);
+    if !(1..=4).contains(&letters) || !(1..=9).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let column = text[..letters].bytes().fold(0usize, |n, b| n * 26 + (b.to_ascii_uppercase() - b'A') as usize + 1);
+    let row: usize = digits.parse().ok()?;
+    (row >= 1).then(|| (row - 1, column - 1))
+}
+
+/// What a cell holds, as far as drawing it goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CellKind {
+    Empty,
+    Text,
+    Number,
+    Percent,
+    Currency,
+    Date,
+    Boolean,
+    Url,
+}
+
+impl CellKind {
+    /// Numbers, money, percents and dates line up on the right.
+    pub fn right_aligned(self) -> bool {
+        matches!(self, Self::Number | Self::Percent | Self::Currency | Self::Date)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CellFormat<'a> {
+    pub kind: CellKind,
+    /// A number below zero, drawn in red.
+    pub negative: bool,
+    /// What the cell shows. The file's own text, except TRUE and FALSE.
+    pub text: Cow<'a, str>,
+}
+
+struct DatePatterns {
+    iso: regex::Regex,
+    ymd: regex::Regex,
+    dmy: regex::Regex,
+    named: regex::Regex,
+    time: regex::Regex,
+}
+
+fn date_patterns() -> &'static DatePatterns {
+    static PATTERNS: std::sync::OnceLock<DatePatterns> = std::sync::OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        const MONTH: &str = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?";
+        const TIME: &str = r"[0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:[.,][0-9]+)?)?(?:\s?[ap]\.?m\.?)?";
+        let build = |pattern: String| regex::Regex::new(&pattern).expect("a date pattern");
+        DatePatterns {
+            iso: build(format!(r"(?i)^([0-9]{{4}})-([0-9]{{2}})-([0-9]{{2}})(?:[t ]{TIME}(?:\s?(?:z|[+-][0-9]{{2}}:?[0-9]{{2}}))?)?$")),
+            ymd: build(r"^([0-9]{4})[/.]([0-9]{1,2})[/.]([0-9]{1,2})$".to_string()),
+            // The two separators must be the same one; the pattern cannot say so, the caller checks.
+            dmy: build(format!(r"(?i)^([0-9]{{1,2}})([/.-])([0-9]{{1,2}})([/.-])(?:[0-9]{{2}}|[0-9]{{4}})(?:,?\s{TIME})?$")),
+            named: build(format!(
+                r"(?i)^(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s)?(?:[0-9]{{1,2}}(?:st|nd|rd|th)?[ -]{MONTH}|{MONTH}[ -][0-9]{{1,2}}(?:st|nd|rd|th)?)(?:,?[ -][0-9]{{2,4}})?(?:,?\s{TIME})?$|^{MONTH}[ -][0-9]{{4}}$"
+            )),
+            time: build(format!(r"(?i)^{TIME}$")),
+        }
+    })
+}
+
+/// A date, a date with a time, or a time of day, in the shapes people type them.
+pub fn is_date_value(value: &str) -> bool {
+    let text = js_trim(value);
+    if text.len() < 4 || text.encode_utf16().count() > 40 {
+        return false;
+    }
+    // Every shape starts with a digit or a letter and has a digit in it: most
+    // cells are turned away here, before any pattern is tried.
+    let bytes = text.as_bytes();
+    if !bytes[0].is_ascii_alphanumeric() || !bytes.iter().any(u8::is_ascii_digit) {
+        return false;
+    }
+    let patterns = date_patterns();
+    if bytes[0].is_ascii_alphabetic() {
+        // Only the name of a month or of a weekday starts a date with a letter.
+        let lead = [bytes[0] | 0x20, bytes[1] | 0x20, bytes[2] | 0x20];
+        let named = matches!(
+            &lead,
+            b"jan" | b"feb" | b"mar" | b"apr" | b"may" | b"jun" | b"jul" | b"aug" | b"sep" | b"oct" | b"nov" | b"dec" | b"mon" | b"tue" | b"wed" | b"thu" | b"fri" | b"sat" | b"sun"
+        );
+        return named && patterns.named.is_match(text);
+    }
+    let between = |text: &str, low: u32, high: u32| text.parse::<u32>().is_ok_and(|n| n >= low && n <= high);
+    if let Some(found) = patterns.iso.captures(text).or_else(|| patterns.ymd.captures(text)) {
+        return between(&found[2], 1, 12) && between(&found[3], 1, 31);
+    }
+    if let Some(found) = patterns.dmy.captures(text) {
+        return found[2] == found[4] && between(&found[1], 1, 31) && between(&found[3], 1, 31) && (between(&found[1], 1, 12) || between(&found[3], 1, 12));
+    }
+    patterns.named.is_match(text) || patterns.time.is_match(text)
+}
+
+/// A web address a cell can be opened as. Only http and https.
+pub fn is_url_value(value: &str) -> bool {
+    // /^https?:\/\/[^\s<>"]+$/i
+    let text = js_trim(value);
+    let bytes = text.as_bytes();
+    let rest = if bytes.len() > 8 && bytes[..8].eq_ignore_ascii_case(b"https://") {
+        &text[8..]
+    } else if bytes.len() > 7 && bytes[..7].eq_ignore_ascii_case(b"http://") {
+        &text[7..]
+    } else {
+        return false;
+    };
+    !rest.chars().any(|c| is_js_space(c) || matches!(c, '<' | '>' | '"'))
+}
+
+/// How a cell reads on the sheet: numbers, percents, money and dates line up
+/// on the right, negatives are red, TRUE and FALSE sit in the middle, a web
+/// address is a link, and a cell of nothing but spaces is blank.
+pub fn format_cell(value: &str, decimal_comma: bool) -> CellFormat<'_> {
+    let text = js_trim(value);
+    fn plain(kind: CellKind, negative: bool, text: &str) -> CellFormat<'_> {
+        CellFormat { kind, negative, text: Cow::Borrowed(text) }
+    }
+    let Some(first) = text.chars().next() else { return plain(CellKind::Empty, false, "") };
+    if matches!(first, 't' | 'T' | 'f' | 'F') && (text.eq_ignore_ascii_case("true") || text.eq_ignore_ascii_case("false")) {
+        return CellFormat { kind: CellKind::Boolean, negative: false, text: Cow::Owned(text.to_ascii_uppercase()) };
+    }
+    if matches!(first, 'h' | 'H') && is_url_value(text) {
+        return plain(CellKind::Url, false, text);
+    }
+    if let Some(number) = parse_number(text, decimal_comma) {
+        let kind = if text.contains('%') {
+            CellKind::Percent
+        } else if text.contains(is_currency) {
+            CellKind::Currency
+        } else {
+            CellKind::Number
+        };
+        return plain(kind, number < 0., value);
+    }
+    plain(if is_date_value(text) { CellKind::Date } else { CellKind::Text }, false, value)
+}
+
+/// What the numbers in a block of cells come to, as a status bar shows them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RangeStats {
+    pub count: usize,
+    pub sum: f64,
+    pub average: f64,
+}
+
+impl CsvDocument {
+    /// Whether this file writes its decimals with a comma (a ";" file does).
+    pub fn reads_decimal_comma(&self) -> bool {
+        self.decimal_comma()
+    }
+
+    /// Sum, average and count of the numbers in `rows` (file rows) between two columns.
+    pub fn range_stats(&self, rows: impl IntoIterator<Item = usize>, left: usize, right: usize) -> Option<RangeStats> {
+        let decimal_comma = self.decimal_comma();
+        let (mut sum, mut count) = (0f64, 0usize);
+        for row in rows {
+            let len = self.row_len(row);
+            if len == 0 {
+                continue;
+            }
+            for column in left..=right.min(len - 1) {
+                let Some(raw) = self.raw(row, column).filter(|raw| !raw.is_empty()) else { continue };
+                if let Some(number) = parse_number(&decode_field(raw), decimal_comma) {
+                    sum += number;
+                    count += 1;
+                }
+            }
+        }
+        // Twelve significant digits hides the 0.1 + 0.2 noise without rounding real figures.
+        let tidy = |n: f64| format!("{n:.11e}").parse().unwrap_or(n);
+        (count > 0).then(|| RangeStats { count, sum: tidy(sum), average: tidy(sum / count as f64) })
+    }
+}
+
+/// An average as the status bar shows it: two places, more only for a small one.
+/// `n.toLocaleString("en-US", { maximumFractionDigits: Math.abs(n) >= 1 ? 2 : 6 })`
+pub fn format_average(average: f64) -> String {
+    if !average.is_finite() || average.abs() < 1. {
+        return format_sum(average);
+    }
+    // Halves round away from zero, as the browser's do.
+    format_sum((average * 100.).round() / 100.)
 }
 
 #[cfg(test)]

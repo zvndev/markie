@@ -170,7 +170,9 @@ impl Workspace {
             )
             .into_any_element()
         };
-        pane.child(self.csv.clone()).child(div().flex_1().min_h_0().child(editor)).into_any_element()
+        // The sheet tab stays under the file's text, as it is under the table.
+        let foot = self.csv.read(cx).foot(cx);
+        pane.child(self.csv.clone()).child(div().flex_1().min_h_0().child(editor)).child(foot).into_any_element()
     }
 }
 

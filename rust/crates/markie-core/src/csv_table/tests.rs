@@ -389,6 +389,97 @@ fn writes_counts_and_sums_as_en_us() {
     assert_eq!(format_sum(1. / 3.), "0.333333");
 }
 
+// ---- the sheet: cell names, how a value is drawn, what a block adds up to
+
+#[test]
+fn names_a_cell_by_its_letter_and_its_line_in_the_file_and_reads_the_name_back() {
+    assert_eq!(cell_reference(3, 1), "B4");
+    assert_eq!(cell_reference(0, 27), "AB1");
+    assert_eq!(parse_cell_reference("b4"), Some((3, 1)));
+    assert_eq!(parse_cell_reference(" AB1 "), Some((0, 27)));
+    for text in ["", "4", "B", "B0", "B-1", "hello world", "A1:B2"] {
+        assert_eq!(parse_cell_reference(text), None, "{text}");
+    }
+}
+
+#[test]
+fn reads_accounting_brackets_as_a_negative_number() {
+    let n = |s: &str| parse_number(s, false);
+    assert_eq!(n("(1,234.50)"), Some(-1234.5));
+    assert_eq!(n("($12)"), Some(-12.));
+    assert_eq!(n("(-3)"), None);
+    assert_eq!(n("((3))"), None);
+    assert_eq!(n("(see note)"), None);
+}
+
+fn kind(value: &str) -> CellKind {
+    format_cell(value, false).kind
+}
+
+fn shown<'a>(kind: CellKind, negative: bool, text: &'a str) -> CellFormat<'a> {
+    CellFormat { kind, negative, text: Cow::Borrowed(text) }
+}
+
+#[test]
+fn tells_numbers_percents_and_money_apart_and_marks_the_negative_ones() {
+    assert_eq!(format_cell("1,234.50", false), shown(CellKind::Number, false, "1,234.50"));
+    assert_eq!(format_cell("-3", false), shown(CellKind::Number, true, "-3"));
+    assert_eq!(format_cell("(250.00)", false), shown(CellKind::Number, true, "(250.00)"));
+    assert_eq!(format_cell("12.5%", false), shown(CellKind::Percent, false, "12.5%"));
+    assert!(format_cell("-4%", false).negative);
+    assert_eq!(kind("$1,200"), CellKind::Currency);
+    assert_eq!(format_cell("-\u{20ac} 12,50", true).kind, CellKind::Currency);
+    assert_eq!(kind("12 \u{20ac}"), CellKind::Currency);
+    assert_eq!(kind("0"), CellKind::Number);
+    assert!(!format_cell("0", false).negative);
+}
+
+#[test]
+fn knows_a_date_when_it_sees_one() {
+    for value in [
+        "2026-11-24", "2026-11-24 09:30", "2026-11-24T09:30:00Z", "2026-11-24T09:30:00.250+01:00", "2026/11/24", "11/24/2026", "24.11.2026", "24-11-26", "11/24/2026 9:30 PM", "Nov 24, 2026",
+        "24 Nov 2026", "November 24", "24-Nov-26", "Tue, 24 Nov 2026", "November 2026", "09:30", "9:30:15 pm",
+    ] {
+        assert!(is_date_value(value), "{value}");
+        assert_eq!(kind(value), CellKind::Date, "{value}");
+    }
+    for value in ["2026-13-01", "2026-11-32", "13/13/2026", "1.5", "2026", "v1.2.3", "May", "March on", "12:5", "A-12", "1-2", "Room 12/3/4", "11/24.2026"] {
+        assert!(!is_date_value(value), "{value}");
+    }
+}
+
+#[test]
+fn shows_true_and_false_links_and_blanks_for_what_they_are_and_leaves_the_rest_alone() {
+    assert_eq!(format_cell("true", false), shown(CellKind::Boolean, false, "TRUE"));
+    assert_eq!(format_cell(" False ", false), shown(CellKind::Boolean, false, "FALSE"));
+    assert_eq!(kind("truely"), CellKind::Text);
+    assert_eq!(format_cell("https://markiedocs.com/download?x=1", false), shown(CellKind::Url, false, "https://markiedocs.com/download?x=1"));
+    assert_eq!(kind("HTTP://example.com"), CellKind::Url);
+    assert_eq!(kind("https://example.com and more"), CellKind::Text);
+    assert_eq!(kind("javascript:alert(1)"), CellKind::Text);
+    assert_eq!(kind("ftp://example.com"), CellKind::Text);
+    assert_eq!(kind("https://"), CellKind::Text);
+    assert_eq!(format_cell("   ", false), shown(CellKind::Empty, false, ""));
+    assert_eq!(format_cell("", false), shown(CellKind::Empty, false, ""));
+    // The text a cell shows is the file's own, spaces and all.
+    assert_eq!(format_cell(" Pear ", false), shown(CellKind::Text, false, " Pear "));
+}
+
+#[test]
+fn sums_averages_and_counts_the_numbers_in_a_block() {
+    let doc = open("name,qty,price\nApple,3,1.20\nPear,12,\"0.85\"\nPlum,,n/a\nFig,(5),50%\n");
+    assert_eq!(doc.range_stats([1, 2, 3, 4], 1, 2), Some(RangeStats { count: 6, sum: 62.05, average: 10.3416666667 }));
+    assert_eq!(doc.range_stats([1, 2], 1, 1), Some(RangeStats { count: 2, sum: 15., average: 7.5 }));
+    assert_eq!(doc.range_stats([1, 2, 3], 0, 0), None);
+    assert_eq!(open("a\n0.1\n0.2\n").range_stats([1, 2], 0, 5), Some(RangeStats { count: 2, sum: 0.3, average: 0.15 }));
+    assert_eq!(format_average(7.5), "7.5");
+    assert_eq!(format_average(38.333333333), "38.33");
+    assert_eq!(format_average(1187.27857143), "1,187.28");
+    assert_eq!(format_average(0.15), "0.15");
+    assert_eq!(format_average(0.000123456789), "0.000123");
+    assert_eq!(format_average(-2.125), "-2.13");
+}
+
 // ---- a large file
 
 fn large_text(rows: usize) -> String {

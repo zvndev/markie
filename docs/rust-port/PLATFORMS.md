@@ -51,7 +51,7 @@ Today a tablet shows the phone screens, stretched. A tablet layout means:
 
 Agent time: 3 to 5 days for layout and tests, plus a day for screenshots and store listings. It shares code across iPad and Android tablets, and none of it waits on Kirby until the store listing.
 
-## 4. Windows: port the Rust app later
+## 4. Windows: port the Rust app later (no rush, per Kirby)
 
 GPUI, the UI framework Markie RS is built on, runs on Windows: Zed ships on it. Most of Markie RS is plain Rust and should build there. The Mac-only parts are 55 `#[cfg(target_os = "macos")]` sites in about 20 files:
 
@@ -70,12 +70,18 @@ GPUI, the UI framework Markie RS is built on, runs on Windows: Zed ships on it. 
 Plan:
 
 1. **Spike: 1 to 2 days.** Build Markie RS on a Windows CI runner, stub the Mac-only pieces, get it to launch and render the scene tests. That turns the estimate below into a measured one.
-2. **Port: about 1.5 to 2.5 weeks.** Replace each row above, add a Windows installer and updater lane, and run the five parity audits on Windows.
+2. **Port: about 3 to 5 days of agent time.** Replace each row above, add a Windows installer and updater lane, and run the five parity audits on Windows. GPUI's Windows backend is mature, and only the Mac-only edges need new code; the long pole is testing on a real Windows machine.
 3. **Cutover:** the same pattern as the Mac. Windows super-nightly first, then the Windows stable feed hands users over.
 
 Gates: a Windows machine for Kirby's in-person checks (Windows Hello, the installer, the feel). A cloud Windows VM works if he has no PC.
 
 Timing: the full port is best started after the Mac cutover, so it ports a settled app. The spike is cheap and can run any time.
+
+## 5. iPad on Rust: possible, needs a spike
+
+Zed's GPUI has an iOS backend (`gpui_ios`: windows, touch events, keyboard text input), and the GPUI build Markie RS uses already ships it. It is young, about 3,600 lines, and not proven in an App Store app. There is no Android backend, so Android tablets would stay on the mobile app.
+
+Unknowns a 1 to 2 day spike answers: launching Markie RS on the iPad simulator, text input with autocorrect and selection handles, scrolling feel, the Files app and sandboxed documents, and how much of the desktop UI needs touch-sized targets and no-hover menus.
 
 ## Recommended order
 

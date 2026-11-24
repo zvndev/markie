@@ -143,6 +143,34 @@ Those tests do not establish a valid Developer ID artifact, notary acceptance,
 owner-only gateway authorization, a successful installed app/update or native
 Windows distribution. The root records that separate exact-artifact evidence.
 
+## The second lane: `rs-nightly` (Markie Nightly, the Rust build)
+
+The same gateway serves a second, separate lane for Markie Nightly, the private build of
+Markie RS. Nothing about the super-nightly lane changed to add it: a test in
+`server/src/private-releases.test.ts` replays a fixed super-nightly session and compares every
+status, header and body byte with a digest recorded from the gateway before the second lane existed.
+
+| | `super-nightly` | `rs-nightly` |
+|---|---|---|
+| Prefix | `/private-releases/super-nightly/:filename` | `/private-releases/rs-nightly/:filename` |
+| Feed | `super-nightly-mac.yml` (and `super-nightly.yml`) | `rs-nightly-mac.yml` |
+| Version | `X.Y.Z-super-nightly.<parts>` | `X.Y.Z-rs-nightly.N`, N a plain number |
+| Artifacts | `Markie-<version>-<arch>[-mac].zip`, `.dmg`, and their `.blockmap` | `Markie-Nightly-<version>-arm64.zip` only |
+| Folder | `PRIVATE_RELEASE_ROOT` itself | `PRIVATE_RELEASE_ROOT/rs-nightly`, made on first use, mode 0700 |
+
+Both lanes share the rest: every GET and HEAD checks the bearer token against Markie Cloud and
+serves only the owner, every refusal is the same 404, a PUT needs `x-markie-publish-key`, base64
+`x-markie-sha512` and an exact `Content-Length`, artifacts are write-once, the cap is 512 MiB, and
+a feed is accepted only after every artifact it names is on disk with the size and SHA-512 it
+states, then swapped in last. A feed can name only its own lane's artifacts, and neither prefix can
+reach the other lane's files. `/private-releases/access` still answers for super-nightly alone;
+Markie Nightly asks for its feed directly, and a 404 there means no updates.
+
+No new configuration: the lane needs no environment variable and no infra change beyond deploying
+an image built from a commit that has it. The builder, signer, updater and publisher for this lane
+live with Markie RS, on branch `rust/markie-rs` (`docs/rust-port/NIGHTLY.md`), not in this repo's
+Electron release tooling.
+
 ## Moving Kirby's Mac between the private and public lanes
 
 A private build only updates from the private gateway, and a public build never looks there, so

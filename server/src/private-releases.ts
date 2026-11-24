@@ -1,4 +1,6 @@
-/** Standalone private transport. Never import the public app, auth or database here. */
+/** Standalone private transport. Never import the public app, auth or database here.
+ * Two lanes behind one owner gate: super-nightly (Electron Markie) and rs-nightly
+ * (Markie Nightly, the Rust build). docs/PRIVATE_RELEASES.md. */
 import { Hono } from "hono";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
@@ -9,9 +11,8 @@ import { releaseCommit } from "./runtime-config.ts";
 
 export const MAX_PRIVATE_RELEASE_BYTES = 512 * 1024 * 1024;
 const MAX_FEED_BYTES = 64 * 1024, MAX_AUTH_BYTES = 32 * 1024;
-const PREFIX = "/private-releases/super-nightly/";
-const FEEDS = new Set(["super-nightly.yml", "super-nightly-mac.yml"]);
 const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-super-nightly(?:\.[0-9A-Za-z-]+)+$/;
+const RS_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-rs-nightly\.(?:0|[1-9]\d*)$/;
 const HASH = /^[A-Za-z0-9+/]{86}==$/;
 const MAX_AUTH_IN_FLIGHT = 8, MAX_AUTH_PER_MINUTE = 60, MAX_NEGATIVE_AUTH_ENTRIES = 256;
 export interface PrivateReleaseConfig {
@@ -49,7 +50,34 @@ function artifactVersion(name: string): string | null {
   const match = /-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-super-nightly(?:\.[0-9A-Za-z-]+)+)$/.exec(stem);
   return match && VERSION.test(match[1]) ? match[1] : null;
 }
-function validName(name: string): boolean { return FEEDS.has(name) || artifactVersion(name) !== null; }
+/** Markie Nightly (the Rust build): one signed arm64 ZIP per version, no sidecars. */
+function rsArtifactVersion(name: string): string | null {
+  if (name.length > 200) return null;
+  const match = /^Markie-Nightly-([0-9A-Za-z.-]+)-arm64\.zip$/.exec(name);
+  return match && RS_VERSION.test(match[1]) ? match[1] : null;
+}
+/** One private lane: its URL prefix, feed names, version rule, artifact names and folder. */
+interface Channel {
+  name: string;
+  prefix: string;
+  feeds: ReadonlySet<string>;
+  version: RegExp;
+  artifactVersion: (name: string) => string | null;
+  /** Folder under the private root; "" is the root itself. */
+  folder: string;
+}
+const SUPER_NIGHTLY: Channel = {
+  name: "super-nightly", prefix: "/private-releases/super-nightly/", feeds: new Set(["super-nightly.yml", "super-nightly-mac.yml"]),
+  version: VERSION, artifactVersion, folder: "",
+};
+// Its files live in their own folder, which no super-nightly name can reach:
+// "rs-nightly" is neither a feed nor a versioned artifact there.
+const RS_NIGHTLY: Channel = {
+  name: "rs-nightly", prefix: "/private-releases/rs-nightly/", feeds: new Set(["rs-nightly-mac.yml"]),
+  version: RS_VERSION, artifactVersion: rsArtifactVersion, folder: "rs-nightly",
+};
+const CHANNELS: readonly Channel[] = [SUPER_NIGHTLY, RS_NIGHTLY];
+function validName(channel: Channel, name: string): boolean { return channel.feeds.has(name) || channel.artifactVersion(name) !== null; }
 function equalSecret(a: string, b: string): boolean {
   return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
 }
@@ -125,6 +153,11 @@ async function checkedRoot(root: string): Promise<string> {
       (process.getuid && info.uid !== process.getuid()) || await realpath(root) !== resolve(root)) throw new Error("private root");
   return root;
 }
+/** The channel's own folder. The private root is checked first, so a channel never outlives a bad root. */
+async function channelRoot(root: string, channel: Channel): Promise<string> {
+  const base = await checkedRoot(root);
+  return channel.folder ? checkedRoot(join(base, channel.folder)) : base;
+}
 async function checkedFile(root: string, name: string): Promise<FileHandle> {
   const file = await open(join(root, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -145,7 +178,7 @@ function scalar(input: string): string {
   return input;
 }
 /** Intentionally accepts only electron-builder's simple feed subset, not YAML tags/aliases. */
-function parseFeed(bytes: Buffer): { version: string; files: FeedArtifact[] } {
+function parseFeed(channel: Channel, bytes: Buffer): { version: string; files: FeedArtifact[] } {
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\r\n/g, "\n");
   if (/[\x00-\x08\x0b-\x1f\x7f]/.test(text)) throw new Error("feed syntax");
   const top = new Map<string, string>(), files: Record<string, string>[] = [];
@@ -166,10 +199,10 @@ function parseFeed(bytes: Buffer): { version: string; files: FeedArtifact[] } {
     inFiles = false; top.set(field[1], scalar(field[2]));
   }
   const version = top.get("version") ?? "", path = top.get("path"), sha = top.get("sha512");
-  if (!VERSION.test(version) || !files.length || !path || !sha || !HASH.test(sha)) throw new Error("feed metadata");
+  if (!channel.version.test(version) || !files.length || !path || !sha || !HASH.test(sha)) throw new Error("feed metadata");
   const seen = new Set<string>();
   const parsed = files.map((file) => {
-    if (!file.url || artifactVersion(file.url) !== version || file.url.endsWith(".blockmap") || seen.has(file.url) || !HASH.test(file.sha512 ?? "") || !/^[1-9]\d*$/.test(file.size ?? "")) throw new Error("feed artifact");
+    if (!file.url || channel.artifactVersion(file.url) !== version || file.url.endsWith(".blockmap") || seen.has(file.url) || !HASH.test(file.sha512 ?? "") || !/^[1-9]\d*$/.test(file.size ?? "")) throw new Error("feed artifact");
     seen.add(file.url);
     const size = Number(file.size);
     if (!Number.isSafeInteger(size) || size > MAX_PRIVATE_RELEASE_BYTES) throw new Error("feed size");
@@ -179,8 +212,8 @@ function parseFeed(bytes: Buffer): { version: string; files: FeedArtifact[] } {
   if (top.has("releaseDate") && !Number.isFinite(Date.parse(top.get("releaseDate")!))) throw new Error("feed date");
   return { version, files: parsed };
 }
-async function validateFeed(root: string, bytes: Buffer): Promise<void> {
-  for (const reference of parseFeed(bytes).files) {
+async function validateFeed(channel: Channel, root: string, bytes: Buffer): Promise<void> {
+  for (const reference of parseFeed(channel, bytes).files) {
     const file = await checkedFile(root, reference.url);
     try {
       if ((await file.stat()).size !== reference.size || !equalSecret(await digest(file), reference.sha512)) throw new Error("feed integrity");
@@ -222,82 +255,85 @@ export function createPrivateReleaseGateway(options: Options = privateReleaseCon
     if (!enabled || !await authorizedOwner(c.req.raw)) return c.notFound();
     return c.json({ channel: "super-nightly", authorized: true, userId: config.ownerId });
   });
-  app.on(["GET", "HEAD"], `${PREFIX}:filename`, async (c) => {
-    const name = c.req.param("filename");
-    if (!validName(name)) return c.notFound();
-    if (!enabled || !await authorizedOwner(c.req.raw)) return c.notFound();
-    let file: FileHandle | undefined;
-    try {
-      const root = await checkedRoot(config.root); file = await checkedFile(root, name);
-      const size = (await file.stat()).size;
-      if (FEEDS.has(name)) {
-        if (size > MAX_FEED_BYTES) return c.notFound();
-        const feed = await file.readFile(); await validateFeed(root, feed);
-      }
-      const range = rangeFor(c.req.header("range") ?? null, size);
-      if (!range) { c.header("Content-Range", `bytes */${size}`); return c.text("Range not satisfiable", 416); }
-      c.header("Accept-Ranges", "bytes"); c.header("Content-Length", String(range.end - range.start + 1));
-      c.header("Content-Type", FEEDS.has(name) ? "application/yaml; charset=utf-8" : "application/octet-stream");
-      c.header("Content-Disposition", `attachment; filename="${name}"`);
-      if (range.partial) c.header("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
-      if (c.req.method === "HEAD") return c.body(null, range.partial ? 206 : 200);
-      const body = Readable.toWeb(file.createReadStream({ start: range.start, end: range.end, autoClose: true })) as ReadableStream<Uint8Array>;
-      file = undefined; // Stream owns and closes the descriptor, including cancellation.
-      return new Response(body, { status: range.partial ? 206 : 200, headers: c.res.headers });
-    } catch { return c.notFound(); } finally { await file?.close().catch(() => {}); }
-  });
-  app.put(`${PREFIX}:filename`, async (c) => {
-    const key = c.req.header("x-markie-publish-key") ?? "";
-    if (!enabled || !validPublishKey(config.publishKey) || key.length > 256 || !equalSecret(key, config.publishKey)) return c.notFound();
-    const name = c.req.param("filename");
-    if (!validName(name)) return c.notFound();
-    const rawLength = c.req.header("content-length") ?? "", expectedHash = c.req.header("x-markie-sha512") ?? "";
-    if (!/^[1-9]\d*$/.test(rawLength) || !HASH.test(expectedHash) || c.req.header("content-encoding")) return c.text("Invalid upload", 400);
-    const length = Number(rawLength), limit = FEEDS.has(name) ? Math.min(MAX_FEED_BYTES, maxBytes) : maxBytes;
-    if (!Number.isSafeInteger(length) || !Number.isSafeInteger(limit) || limit < 1 || length > limit) return c.text("Upload too large", 413);
-    if (publishing.has(name) || publishing.size >= 2) return c.text("Upload busy", 409);
-    publishing.add(name);
-    let temp: string | undefined, handle: FileHandle | undefined, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    try {
-      const root = await checkedRoot(config.root), destination = join(root, name);
-      const existing = await lstat(destination).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return null; });
-      if (existing && (!FEEDS.has(name) || !existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1)) return c.text("Upload conflict", 409);
-      temp = join(root, `.upload-${randomUUID()}`);
-      handle = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
-      reader = c.req.raw.body?.getReader();
-      if (!reader) return c.text("Invalid upload", 400);
-      const hash = createHash("sha512"); let received = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        received += value.byteLength;
-        if (received > length || received > limit) return c.text("Invalid upload", 400);
-        hash.update(value);
-        for (let at = 0; at < value.byteLength;) {
-          const written = await handle.write(value, at, value.byteLength - at);
-          if (!written.bytesWritten) throw new Error("short write");
-          at += written.bytesWritten;
+  for (const channel of CHANNELS) {
+    app.on(["GET", "HEAD"], `${channel.prefix}:filename`, async (c) => {
+      const name = c.req.param("filename");
+      if (!validName(channel, name)) return c.notFound();
+      if (!enabled || !await authorizedOwner(c.req.raw)) return c.notFound();
+      let file: FileHandle | undefined;
+      try {
+        const root = await channelRoot(config.root, channel); file = await checkedFile(root, name);
+        const size = (await file.stat()).size;
+        if (channel.feeds.has(name)) {
+          if (size > MAX_FEED_BYTES) return c.notFound();
+          const feed = await file.readFile(); await validateFeed(channel, root, feed);
         }
+        const range = rangeFor(c.req.header("range") ?? null, size);
+        if (!range) { c.header("Content-Range", `bytes */${size}`); return c.text("Range not satisfiable", 416); }
+        c.header("Accept-Ranges", "bytes"); c.header("Content-Length", String(range.end - range.start + 1));
+        c.header("Content-Type", channel.feeds.has(name) ? "application/yaml; charset=utf-8" : "application/octet-stream");
+        c.header("Content-Disposition", `attachment; filename="${name}"`);
+        if (range.partial) c.header("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
+        if (c.req.method === "HEAD") return c.body(null, range.partial ? 206 : 200);
+        const body = Readable.toWeb(file.createReadStream({ start: range.start, end: range.end, autoClose: true })) as ReadableStream<Uint8Array>;
+        file = undefined; // Stream owns and closes the descriptor, including cancellation.
+        return new Response(body, { status: range.partial ? 206 : 200, headers: c.res.headers });
+      } catch { return c.notFound(); } finally { await file?.close().catch(() => {}); }
+    });
+    app.put(`${channel.prefix}:filename`, async (c) => {
+      const key = c.req.header("x-markie-publish-key") ?? "";
+      if (!enabled || !validPublishKey(config.publishKey) || key.length > 256 || !equalSecret(key, config.publishKey)) return c.notFound();
+      const name = c.req.param("filename");
+      if (!validName(channel, name)) return c.notFound();
+      const rawLength = c.req.header("content-length") ?? "", expectedHash = c.req.header("x-markie-sha512") ?? "";
+      if (!/^[1-9]\d*$/.test(rawLength) || !HASH.test(expectedHash) || c.req.header("content-encoding")) return c.text("Invalid upload", 400);
+      const length = Number(rawLength), limit = channel.feeds.has(name) ? Math.min(MAX_FEED_BYTES, maxBytes) : maxBytes;
+      if (!Number.isSafeInteger(length) || !Number.isSafeInteger(limit) || limit < 1 || length > limit) return c.text("Upload too large", 413);
+      const reservation = channel.prefix + name;
+      if (publishing.has(reservation) || publishing.size >= 2) return c.text("Upload busy", 409);
+      publishing.add(reservation);
+      let temp: string | undefined, handle: FileHandle | undefined, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      try {
+        const root = await channelRoot(config.root, channel), destination = join(root, name);
+        const existing = await lstat(destination).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return null; });
+        if (existing && (!channel.feeds.has(name) || !existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1)) return c.text("Upload conflict", 409);
+        temp = join(root, `.upload-${randomUUID()}`);
+        handle = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+        reader = c.req.raw.body?.getReader();
+        if (!reader) return c.text("Invalid upload", 400);
+        const hash = createHash("sha512"); let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+          if (received > length || received > limit) return c.text("Invalid upload", 400);
+          hash.update(value);
+          for (let at = 0; at < value.byteLength;) {
+            const written = await handle.write(value, at, value.byteLength - at);
+            if (!written.bytesWritten) throw new Error("short write");
+            at += written.bytesWritten;
+          }
+        }
+        const actualHash = hash.digest("base64");
+        if (received !== length || !equalSecret(actualHash, expectedHash)) return c.text("Invalid upload", 400);
+        await handle.sync(); await handle.close(); handle = undefined;
+        if (channel.feeds.has(name)) {
+          const feedHandle = await checkedFile(root, basename(temp));
+          try { await validateFeed(channel, root, await feedHandle.readFile()); } finally { await feedHandle.close(); }
+          await rename(temp, destination); temp = undefined; // Feeds become visible last.
+        } else await link(temp, destination); // Atomic create-if-absent, never overwrite.
+        c.header("x-markie-sha512", actualHash);
+        return c.json({ ok: true, channel: channel.name, filename: name, size: received, sha512: actualHash }, channel.feeds.has(name) ? 200 : 201);
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "EEXIST" ? c.text("Upload conflict", 409) : c.text("Invalid upload", 400);
       }
-      const actualHash = hash.digest("base64");
-      if (received !== length || !equalSecret(actualHash, expectedHash)) return c.text("Invalid upload", 400);
-      await handle.sync(); await handle.close(); handle = undefined;
-      if (FEEDS.has(name)) {
-        const feedHandle = await checkedFile(root, basename(temp));
-        try { await validateFeed(root, await feedHandle.readFile()); } finally { await feedHandle.close(); }
-        await rename(temp, destination); temp = undefined; // Feeds become visible last.
-      } else await link(temp, destination); // Atomic create-if-absent, never overwrite.
-      c.header("x-markie-sha512", actualHash);
-      return c.json({ ok: true, channel: "super-nightly", filename: name, size: received, sha512: actualHash }, FEEDS.has(name) ? 200 : 201);
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "EEXIST" ? c.text("Upload conflict", 409) : c.text("Invalid upload", 400);
-    }
-    finally {
-      await reader?.cancel().catch(() => {}); reader?.releaseLock();
-      await handle?.close().catch(() => {});
-      if (temp) await unlink(temp).catch(() => {});
-      publishing.delete(name);
-    }
-  });
+      finally {
+        await reader?.cancel().catch(() => {}); reader?.releaseLock();
+        await handle?.close().catch(() => {});
+        if (temp) await unlink(temp).catch(() => {});
+        publishing.delete(reservation);
+      }
+    });
+  }
   return app;
 }

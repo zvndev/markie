@@ -2522,10 +2522,20 @@ textarea:not(.m-editor-text):focus-visible {
 .m-share-invite-row {
   display: flex;
   gap: 8px;
+  /* Never wider than the sheet: at a large text size the role menu grows,
+     and the address field gives up the room instead of pushing the row and
+     the button under it past the right edge. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+.m-share-invite > * {
+  min-width: 0;
 }
 
 .m-share-invite-row input {
-  flex: 1;
+  flex: 1 1 0;
+  width: 0;
   min-width: 0;
   min-height: 46px;
   padding: 0 12px;

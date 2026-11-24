@@ -48,12 +48,24 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   heading and code fonts you chose, and carries the fonts it needs inside it.
 - The font menu in Word, RTF and OpenDocument files lists the document's own
   fonts first, then the fonts that come with Markie, then the ones installed.
-- A CSV file now opens as a table: a sticky header, row numbers, columns sized to
-  what they hold, numbers lined up on the right, and long cells shown in full
-  below the grid when you select them. Click a header to sort, type in the filter
-  box to narrow the rows; neither changes the file. A Table / Text switch shows
-  the file's own text. The same table draws a shared CSV on a web link and on the
-  phone, read-only there. TSV files open the same way.
+- A CSV file now opens as a spreadsheet: column letters across the top and row
+  numbers down the side, a frozen bold header row, a gridline on every cell, and
+  an empty sheet carrying on to the edges of the window. The first cell is
+  selected when the file opens. A name box shows the selected cell (B4) and a
+  formula bar beside it shows the whole value; type there to edit the cell, or
+  type a cell's name in the name box to go to it. Drag or Shift click to select a
+  block and the status bar shows its Sum, Average and Count. Click a letter to
+  select a column, a number to select a row. The file's name is the sheet tab at
+  the bottom.
+- A CSV's values are drawn the way a spreadsheet draws them: numbers, money,
+  percents and dates line up on the right, negative numbers are red (accounting
+  brackets count), TRUE and FALSE sit in the middle, and a web address is a link
+  (hold Command or Ctrl to open one while editing). This is display only. The
+  file keeps exactly what was typed.
+- Click a header to sort a CSV and type in the filter box to narrow its rows;
+  neither changes the file. A Table / Text switch shows the file's own text. The
+  same sheet draws a shared CSV on a web link and on the phone, read-only there.
+  TSV files open the same way.
 - Editing a CSV writes CSV. Change a cell, add or delete rows and columns, and the
   file keeps its delimiter (comma, semicolon, tab), its quoting, its line endings,
   its BOM and its trailing newline; only the cells you changed are rewritten.

@@ -19,6 +19,9 @@ import { isCsvName } from "@/lib/csv-table";
 import { DarkmownView } from "../components/darkmown-view";
 import { InboxIcon, PencilIcon } from "../components/icons";
 
+// A web address in a CSV cell opens outside the app, as a link in a document does.
+const openCsvLink = (url: string) => { void openExternal(url).catch(() => undefined); };
+
 interface IncomingProps {
   api: ApiClient;
   file: IncomingFile;
@@ -87,7 +90,7 @@ export function IncomingScreen({ api, file, fileKey, tone, backLabel, onBack, on
       {error ? <p className="m-inline-error" role="alert">{error}</p> : null}
       {file.format === "markdown" ? <MarkdownView content={file.content} onLink={onLink} /> : null}
       {file.format === "text" && !isCsv ? <pre className="m-text-doc">{file.content}</pre> : null}
-      {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={file.content} name={file.name} readOnly compact /></div> : null}
+      {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={file.content} name={file.name} readOnly compact onOpenLink={openCsvLink} /></div> : null}
       {isWd ? <DarkmownView docKey={fileKey} source={file.content} tone={tone} /> : null}
     </Screen>
   );

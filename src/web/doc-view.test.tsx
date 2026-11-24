@@ -145,8 +145,11 @@ describe("the read view", () => {
     expect(grid.getAttribute("aria-readonly")).toBe("true");
     expect(Array.from(grid.querySelectorAll("[role=columnheader]")).map((h) => h.textContent)).toEqual(["region", "total"]);
     expect(Array.from(grid.querySelectorAll("[role=gridcell]")).map((c) => c.textContent)).toEqual(["Nord", "1,5", "Süd", "2,25"]);
-    fireEvent.doubleClick(screen.getByText("Nord"));
+    // The sheet opens on its first cell, and the formula bar shows it as text, not as a field.
+    expect(document.querySelector(".csv-table-value")?.textContent).toBe("Nord");
+    fireEvent.doubleClick(screen.getByText("Nord", { selector: "[role=gridcell]" }));
     expect(screen.queryByRole("textbox", { name: "Edit cell" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Cell contents" })).toBeNull();
     // The file itself is one switch away, and Export still offers it.
     fireEvent.click(screen.getByRole("button", { name: "Text" }));
     expect(document.querySelector(".csv-table-text")?.textContent).toContain("Nord;1,5");

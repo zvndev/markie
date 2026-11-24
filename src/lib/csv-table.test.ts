@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { CSV_FIXTURES } from "./csv-fixtures";
 import { decodeTextDocument, encodeTextDocument } from "./document-formats";
 import {
-  cellValue, cellsToText, clipboardToCells, columnLetter, decodeField, deleteColumns, deleteRows, encodeField, firstRowIsHeader,
-  insertColumn, insertRow, numericColumns, parseCsvDocument, parseNumber, plainEditorText, restoreTextShape, serializeCsvDocument,
-  setCell, sniffDelimiter, viewRows,
+  cellReference, cellValue, cellsToText, clipboardToCells, columnLetter, decodeField, deleteColumns, deleteRows, encodeField, firstRowIsHeader,
+  formatCell, insertColumn, insertRow, isDateValue, numericColumns, parseCellReference, parseCsvDocument, parseNumber, plainEditorText, rangeStats,
+  restoreTextShape, serializeCsvDocument, setCell, sniffDelimiter, viewRows,
 } from "./csv-table";
 
 const open = (text: string, name = "file.csv") => parseCsvDocument(text, { name });
@@ -192,6 +192,71 @@ describe("the view", () => {
 
   it("names columns by letter", () => {
     expect([0, 25, 26, 27, 701, 702].map(columnLetter)).toEqual(["A", "Z", "AA", "AB", "ZZ", "AAA"]);
+  });
+
+  it("names a cell by its letter and its line in the file, and reads the name back", () => {
+    expect(cellReference(3, 1)).toBe("B4");
+    expect(cellReference(0, 27)).toBe("AB1");
+    expect(parseCellReference("b4")).toEqual({ row: 3, column: 1 });
+    expect(parseCellReference(" AB1 ")).toEqual({ row: 0, column: 27 });
+    for (const text of ["", "4", "B", "B0", "B-1", "hello world", "A1:B2"]) expect(parseCellReference(text)).toBeNull();
+  });
+});
+
+describe("how a cell is shown", () => {
+  const kind = (value: string, decimalComma = false) => formatCell(value, decimalComma).kind;
+
+  it("reads accounting brackets as a negative number", () => {
+    expect(parseNumber("(1,234.50)")).toBe(-1234.5);
+    expect(parseNumber("($12)")).toBe(-12);
+    expect(parseNumber("(-3)")).toBeNull();
+    expect(parseNumber("((3))")).toBeNull();
+    expect(parseNumber("(see note)")).toBeNull();
+  });
+
+  it("tells numbers, percents and money apart, and marks the negative ones", () => {
+    expect(formatCell("1,234.50")).toEqual({ kind: "number", negative: false, text: "1,234.50" });
+    expect(formatCell("-3")).toEqual({ kind: "number", negative: true, text: "-3" });
+    expect(formatCell("(250.00)")).toEqual({ kind: "number", negative: true, text: "(250.00)" });
+    expect(formatCell("12.5%")).toEqual({ kind: "percent", negative: false, text: "12.5%" });
+    expect(formatCell("-4%").negative).toBe(true);
+    expect(kind("$1,200")).toBe("currency");
+    expect(kind("-€ 12,50", true)).toBe("currency");
+    expect(kind("12 €")).toBe("currency");
+    expect(kind("0")).toBe("number");
+    expect(formatCell("0").negative).toBe(false);
+  });
+
+  it("knows a date when it sees one", () => {
+    for (const value of ["2026-11-24", "2026-11-24 09:30", "2026-11-24T09:30:00Z", "2026-11-24T09:30:00.250+01:00", "2026/11/24", "11/24/2026", "24.11.2026", "24-11-26",
+      "11/24/2026 9:30 PM", "Nov 24, 2026", "24 Nov 2026", "November 24", "24-Nov-26", "Tue, 24 Nov 2026", "November 2026", "09:30", "9:30:15 pm"]) {
+      expect(isDateValue(value), value).toBe(true);
+      expect(kind(value), value).toBe("date");
+    }
+    for (const value of ["2026-13-01", "2026-11-32", "13/13/2026", "1.5", "2026", "v1.2.3", "May", "March on", "12:5", "A-12", "1-2", "Room 12/3/4"]) expect(isDateValue(value), value).toBe(false);
+  });
+
+  it("shows TRUE and FALSE, links and blanks for what they are, and leaves the rest alone", () => {
+    expect(formatCell("true")).toEqual({ kind: "boolean", negative: false, text: "TRUE" });
+    expect(formatCell(" False ")).toEqual({ kind: "boolean", negative: false, text: "FALSE" });
+    expect(kind("truely")).toBe("text");
+    expect(formatCell("https://markiedocs.com/download?x=1")).toEqual({ kind: "url", negative: false, text: "https://markiedocs.com/download?x=1" });
+    expect(kind("HTTP://example.com")).toBe("url");
+    expect(kind("https://example.com and more")).toBe("text");
+    expect(kind("javascript:alert(1)")).toBe("text");
+    expect(kind("ftp://example.com")).toBe("text");
+    expect(formatCell("   ")).toEqual({ kind: "empty", negative: false, text: "" });
+    expect(formatCell("")).toEqual({ kind: "empty", negative: false, text: "" });
+    // The text a cell shows is the file's own, spaces and all.
+    expect(formatCell(" Pear ")).toEqual({ kind: "text", negative: false, text: " Pear " });
+  });
+
+  it("sums, averages and counts the numbers in a block", () => {
+    const doc = open("name,qty,price\nApple,3,1.20\nPear,12,\"0.85\"\nPlum,,n/a\nFig,(5),50%\n");
+    expect(rangeStats(doc, [1, 2, 3, 4], 1, 2)).toEqual({ count: 6, sum: 62.05, average: 10.3416666667 });
+    expect(rangeStats(doc, [1, 2], 1, 1)).toEqual({ count: 2, sum: 15, average: 7.5 });
+    expect(rangeStats(doc, [1, 2, 3], 0, 0)).toBeNull();
+    expect(rangeStats(open("a\n0.1\n0.2\n"), [1, 2], 0, 5)).toEqual({ count: 2, sum: 0.3, average: 0.15 });
   });
 });
 

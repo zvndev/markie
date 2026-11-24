@@ -235,6 +235,11 @@ const GROUPED_BY_SPACE = /^\d{1,3}(?:[  ']\d{3})+(?:[.,]\d+)?$/;
 export function parseNumber(value: string, decimalComma = false): number | null {
   const text = value.trim();
   if (text === "" || text.length > 40) return null;
+  // Accounting style: "(1,234.50)" is the negative of what is inside.
+  if (text.charCodeAt(0) === 40 && text.charCodeAt(text.length - 1) === 41) {
+    const inner = parseNumber(text.slice(1, -1), decimalComma);
+    return inner === null || inner < 0 || /^[-+(]/.test(text.slice(1).trim()) ? null : -inner;
+  }
   const match = NUMBER.exec(text);
   if (!match) return null;
   let digits = match[1].trim();
@@ -299,6 +304,99 @@ export function columnLetter(index: number): string {
   let name = "", n = index;
   do { name = String.fromCharCode(65 + (n % 26)) + name; n = Math.floor(n / 26) - 1; } while (n >= 0);
   return name;
+}
+
+/** "B4": the column's letter and the row's line in the file. */
+export const cellReference = (fileRow: number, column: number): string => `${columnLetter(column)}${fileRow + 1}`;
+
+/** "b4" as a zero-based file row and column, or null when it is not a reference. */
+export function parseCellReference(text: string): { row: number; column: number } | null {
+  const match = /^\s*([A-Za-z]{1,4})\s*(\d{1,9})\s*$/.exec(text);
+  if (!match) return null;
+  let column = 0;
+  for (const letter of match[1].toUpperCase()) column = column * 26 + (letter.charCodeAt(0) - 64);
+  const row = Number(match[2]);
+  return row >= 1 ? { row: row - 1, column: column - 1 } : null;
+}
+
+// ---------------------------------------------------------------------------
+// How a cell is shown. Display only: nothing here is ever written to the file.
+
+export type CsvCellKind = "empty" | "text" | "number" | "percent" | "currency" | "date" | "boolean" | "url";
+
+export interface CsvCellFormat {
+  kind: CsvCellKind;
+  /** A number below zero, drawn in red. */
+  negative: boolean;
+  /** What the cell shows. The file's own text, except TRUE and FALSE. */
+  text: string;
+}
+
+const MONTH = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?";
+const TIME = "\\d{1,2}:\\d{2}(?::\\d{2}(?:[.,]\\d+)?)?(?:\\s?[ap]\\.?m\\.?)?";
+const ISO_DATE = new RegExp(`^(\\d{4})-(\\d{2})-(\\d{2})(?:[t ]${TIME}(?:\\s?(?:z|[+-]\\d{2}:?\\d{2}))?)?$`, "i");
+const YMD_DATE = /^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/;
+const DMY_DATE = new RegExp(`^(\\d{1,2})([/.-])(\\d{1,2})\\2(\\d{2}|\\d{4})(?:,?\\s${TIME})?$`, "i");
+const NAMED_DATE = new RegExp(`^(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?,?\\s)?(?:\\d{1,2}(?:st|nd|rd|th)?[ -]${MONTH}|${MONTH}[ -]\\d{1,2}(?:st|nd|rd|th)?)(?:,?[ -]\\d{2,4})?(?:,?\\s${TIME})?$|^${MONTH}[ -]\\d{4}$`, "i");
+const TIME_ONLY = new RegExp(`^${TIME}$`, "i");
+const CURRENCY = /[$€£¥]/;
+const URL_VALUE = /^https?:\/\/[^\s<>"]+$/i;
+
+const inRange = (text: string, low: number, high: number) => { const n = Number(text); return n >= low && n <= high; };
+
+/** A date, a date with a time, or a time of day, in the shapes people type them. */
+export function isDateValue(value: string): boolean {
+  const text = value.trim();
+  if (text.length < 4 || text.length > 40) return false;
+  const first = text.charCodeAt(0);
+  // Every shape starts with a digit or a letter, and has a digit somewhere.
+  if (!((first >= 48 && first <= 57) || (first >= 65 && first <= 90) || (first >= 97 && first <= 122))) return false;
+  let match = ISO_DATE.exec(text) ?? YMD_DATE.exec(text);
+  if (match) return inRange(match[2], 1, 12) && inRange(match[3], 1, 31);
+  match = DMY_DATE.exec(text);
+  if (match) return inRange(match[1], 1, 31) && inRange(match[3], 1, 31) && (Number(match[1]) <= 12 || Number(match[3]) <= 12);
+  return NAMED_DATE.test(text) || TIME_ONLY.test(text);
+}
+
+/** A web address a cell can be opened as. Only http and https. */
+export const isUrlValue = (value: string): boolean => URL_VALUE.test(value.trim());
+
+/**
+ * How a cell reads on the sheet: numbers, percents, money and dates line up on
+ * the right, negatives are red, TRUE and FALSE sit in the middle, a web address
+ * is a link, and a cell of nothing but spaces is blank.
+ */
+export function formatCell(value: string, decimalComma = false): CsvCellFormat {
+  const text = value.trim();
+  if (text === "") return { kind: "empty", negative: false, text: "" };
+  const first = text.charCodeAt(0);
+  if ((first === 116 || first === 84 || first === 102 || first === 70) && /^(?:true|false)$/i.test(text)) return { kind: "boolean", negative: false, text: text.toUpperCase() };
+  if ((first === 104 || first === 72) && URL_VALUE.test(text)) return { kind: "url", negative: false, text };
+  const number = parseNumber(text, decimalComma);
+  if (number !== null) return { kind: text.includes("%") ? "percent" : CURRENCY.test(text) ? "currency" : "number", negative: number < 0, text: value };
+  if (isDateValue(text)) return { kind: "date", negative: false, text: value };
+  return { kind: "text", negative: false, text: value };
+}
+
+/** Sum, average and count of the numbers in a block of cells, as a status bar shows them. */
+export function rangeStats(doc: CsvDocument, rows: readonly number[], left: number, right: number): { count: number; sum: number; average: number } | null {
+  const decimalComma = doc.delimiter === ";";
+  let sum = 0, count = 0;
+  for (const r of rows) {
+    const row = doc.rows[r];
+    if (!row) continue;
+    const end = Math.min(right, row.length - 1);
+    for (let c = left; c <= end; c++) {
+      const raw = row[c];
+      if (raw === "") continue;
+      const number = parseNumber(raw.charCodeAt(0) === QUOTE ? decodeField(raw) : raw, decimalComma);
+      if (number !== null) { sum += number; count++; }
+    }
+  }
+  if (count === 0) return null;
+  // Twelve significant digits hides the 0.1 + 0.2 noise without rounding real figures.
+  const tidy = (n: number) => Number(n.toPrecision(12));
+  return { count, sum: tidy(sum), average: tidy(sum / count) };
 }
 
 export interface CsvSort { column: number; direction: "asc" | "desc" }

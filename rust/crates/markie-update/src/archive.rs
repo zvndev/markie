@@ -42,10 +42,12 @@ fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
 }
 
 /// Whether a name stays inside the bundle: `Markie Nightly.app/…`, no empty,
-/// `.` or `..` parts, no backslash, no control character.
+/// `.` or `..` parts, no backslash, and plain printable ASCII only. The Mac's
+/// disk treats names that differ by letter case or by Unicode form as one
+/// file, so only ASCII names can be compared here the way the disk will.
 fn inside_bundle(name: &str) -> bool {
     let Some(rest) = name.strip_prefix(crate::BUNDLE_NAME).and_then(|r| r.strip_prefix('/')) else { return false };
-    if name.chars().any(|c| c == '\\' || c.is_control()) {
+    if name.bytes().any(|b| b == b'\\' || !(0x20..=0x7e).contains(&b)) {
         return false;
     }
     // A directory entry ends in one slash.
@@ -110,8 +112,8 @@ pub fn inspect<R: Read + Seek>(reader: &mut R) -> Result<Contents, ArchiveError>
         if !inside_bundle(name) {
             return Err(ArchiveError::Escape);
         }
-        // "a" and "a/" are one place on disk.
-        let key = name.strip_suffix('/').unwrap_or(name).to_string();
+        // "a" and "a/" are one place on disk, and so are "a" and "A".
+        let key = name.strip_suffix('/').unwrap_or(name).to_ascii_lowercase();
         // Unix mode sits in the high half when the entry was made on Unix.
         let symlink = made_by >> 8 == 3 && (external >> 16) & 0o170000 == 0o120000;
         if symlink {
@@ -250,6 +252,10 @@ pub(crate) mod tests {
             "Markie.app/Contents/Info.plist",
             "Markie RS.app/Contents/Info.plist",
             "__MACOSX/Markie Nightly.app/._Info.plist",
+            "markie nightly.app/Contents/Info.plist",
+            "Markie Nightly.app/Contents/Re\u{301}sume\u{301}.txt",
+            "Markie Nightly.app/Contents/R\u{e9}sum\u{e9}.txt",
+            "Markie Nightly.app/Contents/tab\there",
             "",
         ] {
             assert_eq!(check(&[file("Markie Nightly.app/Contents/Info.plist", b"ok"), file(name, b"x")]), Err(ArchiveError::Escape), "{name:?}");
@@ -273,6 +279,15 @@ pub(crate) mod tests {
         );
         let long = "a".repeat(4096);
         assert_eq!(check(&[link("Markie Nightly.app/Contents/link", &long)]), Err(ArchiveError::Entry));
+        // The disk ignores letter case: "resources/evil" lands under the link "Resources".
+        assert_eq!(
+            check(&[link("Markie Nightly.app/Contents/Resources", "/tmp"), file("Markie Nightly.app/Contents/resources/evil", b"x")]),
+            Err(ArchiveError::Escape)
+        );
+        assert_eq!(
+            check(&[file("Markie Nightly.app/Contents/Info.plist", b"a"), file("Markie Nightly.app/Contents/info.PLIST", b"b")]),
+            Err(ArchiveError::Entry)
+        );
     }
 
     #[test]

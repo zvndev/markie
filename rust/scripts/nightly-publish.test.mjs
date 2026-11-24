@@ -159,11 +159,14 @@ test("the feed is the gateway's subset and names exactly this version's ZIP", ()
 test("a ZIP may hold only the bundle, and nothing written through a link", () => {
   const inside = `${BUNDLE_NAME}/Contents/Info.plist`;
   assert.deepEqual(inspectZip(storedZip([{ name: `${BUNDLE_NAME}/`, mode: 0o040755 }, { name: inside, data: "x" }, { name: `${BUNDLE_NAME}/Contents/Current`, data: "A", mode: 0o120755 }])), { entries: 3, expanded: 2, links: 1 });
-  for (const name of ["evil.sh", `../${inside}`, `${BUNDLE_NAME}/../../evil`, `${BUNDLE_NAME}/./x`, `${BUNDLE_NAME}//x`, `/Applications/${inside}`, `${BUNDLE_NAME}\\x`, "Markie.app/Contents/Info.plist", `__MACOSX/${BUNDLE_NAME}/._x`, BUNDLE_NAME]) {
+  for (const name of ["evil.sh", `markie nightly.app/Contents/Info.plist`, `${BUNDLE_NAME}/Contents/R\u00e9sum\u00e9.txt`, `../${inside}`, `${BUNDLE_NAME}/../../evil`, `${BUNDLE_NAME}/./x`, `${BUNDLE_NAME}//x`, `/Applications/${inside}`, `${BUNDLE_NAME}\\x`, "Markie.app/Contents/Info.plist", `__MACOSX/${BUNDLE_NAME}/._x`, BUNDLE_NAME]) {
     assert.throws(() => inspectZip(storedZip([{ name: inside, data: "x" }, { name, data: "x" }])), /outside Markie Nightly\.app/, name);
   }
   assert.throws(() => inspectZip(storedZip([{ name: `${BUNDLE_NAME}/Contents/Resources`, data: "/tmp", mode: 0o120755 }, { name: `${BUNDLE_NAME}/Contents/Resources/evil`, data: "x" }])), /through a link/);
   assert.throws(() => inspectZip(storedZip([{ name: inside, data: "a" }, { name: inside, data: "b" }])), /repeats an entry/);
+  // The disk ignores letter case: these are one file, and "resources/evil" lands under the link "Resources".
+  assert.throws(() => inspectZip(storedZip([{ name: inside, data: "a" }, { name: `${BUNDLE_NAME}/Contents/info.PLIST`, data: "b" }])), /repeats an entry/);
+  assert.throws(() => inspectZip(storedZip([{ name: `${BUNDLE_NAME}/Contents/Resources`, data: "/tmp", mode: 0o120755 }, { name: `${BUNDLE_NAME}/Contents/resources/evil`, data: "x" }])), /through a link/);
   assert.throws(() => inspectZip(Buffer.from("not a zip archive at all, just some text")), /not a ZIP/);
   assert.throws(() => inspectZip(storedZip([])), /out of bounds/);
 });

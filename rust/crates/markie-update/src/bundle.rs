@@ -178,21 +178,9 @@ pub fn verify(tools: &dyn Tools, app: &Path, expect: &Expect) -> Result<(), Bund
         return Err(BundleError::Shape);
     }
     contained(app)?;
-    let plist = app.join("Contents/Info.plist");
-    if plist_value(tools, &plist, "CFBundleIdentifier")? != expect.bundle_id {
-        return Err(BundleError::Identity);
-    }
-    let found = plist_value(tools, &plist, "CFBundleShortVersionString")?;
-    if found != expect.version {
-        return Err(BundleError::Version { expected: expect.version.clone(), found });
-    }
-    let executable = plist_value(tools, &plist, "CFBundleExecutable")?;
-    let plain_name = !executable.is_empty() && !executable.contains(['/', '\\']) && executable != "." && executable != "..";
-    if !plain_name || !std::fs::symlink_metadata(app.join("Contents/MacOS").join(&executable)).is_ok_and(|m| m.file_type().is_file()) {
-        return Err(BundleError::Shape);
-    }
-
-    // The signature seals every file, and is valid against Apple's roots.
+    // The signature first: nothing inside the bundle is read as data until
+    // macOS has vouched for all of it. It seals every file, and is valid
+    // against Apple's roots.
     let sealed = ok(tools, CODESIGN, &["--verify".as_ref(), "--deep".as_ref(), "--strict".as_ref(), app.as_os_str()])?;
     if !sealed.status.success() {
         return Err(BundleError::Signature);
@@ -221,6 +209,20 @@ pub fn verify(tools: &dyn Tools, app: &Path, expect: &Expect) -> Result<(), Bund
     let gatekeeper = ok(tools, SPCTL, &["--assess".as_ref(), "--type".as_ref(), "execute".as_ref(), app.as_os_str()])?;
     if !gatekeeper.status.success() {
         return Err(BundleError::Gatekeeper);
+    }
+    // Now the sealed Info.plist: this app, and the version the feed promised.
+    let plist = app.join("Contents/Info.plist");
+    if plist_value(tools, &plist, "CFBundleIdentifier")? != expect.bundle_id {
+        return Err(BundleError::Identity);
+    }
+    let found = plist_value(tools, &plist, "CFBundleShortVersionString")?;
+    if found != expect.version {
+        return Err(BundleError::Version { expected: expect.version.clone(), found });
+    }
+    let executable = plist_value(tools, &plist, "CFBundleExecutable")?;
+    let plain_name = !executable.is_empty() && !executable.contains(['/', '\\']) && executable != "." && executable != "..";
+    if !plain_name || !std::fs::symlink_metadata(app.join("Contents/MacOS").join(&executable)).is_ok_and(|m| m.file_type().is_file()) {
+        return Err(BundleError::Shape);
     }
     Ok(())
 }

@@ -190,6 +190,8 @@ zip() {
   local stray
   stray="$(/usr/bin/zipinfo -1 "$ZIP" | grep -v "^$APP_NAME\.app/" || true)"
   [[ -z "$stray" ]] || die "the ZIP holds entries outside $APP_NAME.app: $stray"
+  # Plain ASCII names only, as the updater requires (crates/markie-update/src/archive.rs).
+  if /usr/bin/zipinfo -1 "$ZIP" | LC_ALL=C grep -q '[^ -~]'; then die "the ZIP holds a file name that is not plain ASCII"; fi
   # What the updater will unpack must still be the verified app.
   local check
   check="$(mktemp -d "${TMPDIR:-/tmp}/markie-nightly-zip-check.XXXXXX")"

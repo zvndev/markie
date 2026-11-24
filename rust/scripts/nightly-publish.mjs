@@ -165,8 +165,9 @@ export function inspectZip(bytes) {
     const name = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(at + 46, at + 46 + nameLength));
     assert(!(flags & 1) && unpacked !== 0xffffffff, "The ZIP holds an encrypted or oversized entry.");
     const rest = name.startsWith(`${BUNDLE_NAME}/`) ? name.slice(BUNDLE_NAME.length + 1).replace(/\/$/, "") : null;
-    assert(rest !== null && !/[\\\x00-\x1f\x7f]/.test(name) && (rest === "" || rest.split("/").every((part) => part && part !== "." && part !== "..")), `The ZIP holds an entry outside ${BUNDLE_NAME}.`);
-    const key = name.replace(/\/$/, "");
+    // Plain ASCII only: the Mac's disk treats names that differ by case or Unicode form as one file.
+    assert(rest !== null && /^[\x20-\x7e]*$/.test(name) && !name.includes("\\") && (rest === "" || rest.split("/").every((part) => part && part !== "." && part !== "..")), `The ZIP holds an entry outside ${BUNDLE_NAME}.`);
+    const key = name.replace(/\/$/, "").toLowerCase();
     assert(!names.has(key), "The ZIP repeats an entry.");
     names.add(key);
     if (madeBy >>> 8 === 3 && (mode & 0o170000) === 0o120000) { assert(unpacked < 4096, "The ZIP holds an oversized link."); links.push(key); }

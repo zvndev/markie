@@ -19,7 +19,10 @@ jobs:
   # module, so the tests run unchanged.
   unit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The suite itself takes about 4 minutes; the informational coverage step
+    # below runs it a second time. 10 minutes used to cover both, and a PR whose
+    # tests all passed was cancelled inside the coverage step.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7.1.0
@@ -37,6 +40,9 @@ jobs:
       # be the thing that blocks a green PR.
       - name: Coverage summary
         continue-on-error: true
+        # Capped on its own so a slow coverage run is a skipped report, never a
+        # cancelled job.
+        timeout-minutes: 12
         run: npx vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=lcov
       # The summary scrolls out of the log; the lcov report is the thing you can
       # actually open next to the diff.

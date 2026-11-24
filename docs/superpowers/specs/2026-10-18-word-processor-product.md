@@ -1,6 +1,6 @@
 # Markie everyday word processor
 
-Product and implementation contract requested by Kirby on October 18, 2026. This supersedes treating isolated codec milestones as completion of the product described in [the document-platform direction](../plans/2026-10-14-document-platform.md). Circular owns task status, dependencies, owners and execution evidence; this document defines product behavior and architectural boundaries, not a second backlog.
+Product and implementation contract requested by Kirby on October 18, 2026. This supersedes treating isolated codec milestones as completion of the product described in [the document-platform direction](../../archive/2026-10-14-document-platform.md). Circular owns task status, dependencies, owners and execution evidence; this document defines product behavior and architectural boundaries, not a second backlog.
 
 Kirby subsequently approved internal rich-document model extensions while preserving original file formats and keeping database/cloud API schemas unchanged. Full DOC and DOCX rich editing and same-format support are the immediate implementation priority. Text extraction, text-only import, relabeled packages or conversion into Markdown do not complete that requirement. The other requested formats and connected features remain in the product contract but do not displace the Word-file core.
 

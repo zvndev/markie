@@ -25,7 +25,7 @@ LIVE_DOCS_DOMAIN=localhost:8787 MARKIE_OFFICIAL=0 MARKIE_SIGNUP=open MARKIE_MAIL
   sh -c 'node --experimental-strip-types src/migrate.ts && npm run dev'
 ```
 
-1. Point a nightly Mac build (or `npm run dev` with `localStorage["markie.nightly"] = "1"`) at `http://127.0.0.1:8787` and sync a `.wd`.
+1. Point a development build (`npm run dev` with `localStorage["markie.nightly"] = "1"`) at `http://127.0.0.1:8787` and sync a `.wd`.
 2. In the Library, open the row's menu: Copy Live Doc address, or Open Live Doc.
 3. The browser goes to the address, then to the Markie sign-in on `127.0.0.1`, then back to the page.
 

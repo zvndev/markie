@@ -26,7 +26,9 @@ override task notes, backlog entries, and older progress logs.
 - `docs/mobile`: mobile store setup and the agent links contract.
 - `src/assets/fonts`, `src/lib/fonts`, `scripts/fonts`: the bundled fonts, their registry and the
   script that rebuilds them (see `docs/FONTS.md`).
-- `docs/superpowers`: the document platform plan and the product specs it builds on.
+- `docs/superpowers/specs`: the word processor product contract.
+- `docs/README.md`: every doc and its status. Check it before planning from a doc; `docs/archive/` is
+  history, not a plan.
 - `.autoloop/runs`: gitignored evidence output from check scripts.
 
 ## Work tracking and hosting
@@ -71,6 +73,8 @@ Use only trailers that add real decision context.
   **Check for Updates**.
 - Websites and emails link to `https://markiedocs.com/download` or a stable manifest route,
   never a versioned artifact URL.
+- On the Mac, the super-nightly lane now carries the Rust app (markie-rs). Electron's
+  `publish-private` is for rolling that lane back only. Windows and Linux ship the Electron app.
 - Kirby's own Mac follows the work: after publishing a super-nightly he is meant to test, run
   `npm run markie:use -- private`; after a full release reaches stable, run
   `npm run markie:use -- public`. It quits and reopens Markie, so say so in the reply. See

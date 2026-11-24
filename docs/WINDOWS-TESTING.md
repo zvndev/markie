@@ -1,6 +1,6 @@
 # Windows x64 — build on a Mac, test on a real PC
 
-Markie for Windows is released and signed through Azure Trusted Signing. 0.9.1 is stable. Public
+Markie for Windows is released and signed through Azure Trusted Signing, in every public release. Public
 installers are built and signed in CI and published through the Windows runbook in
 `docs/RELEASING.md`. This page is the practical loop for producing an unsigned test installer on an
 Apple Silicon Mac and proving it on a real Windows 11 machine.

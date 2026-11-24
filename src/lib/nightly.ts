@@ -1,5 +1,5 @@
 // Features that ship only in the super-nightly build, so Kirby can try and
-// reshape them before anyone else sees them (docs/superpowers/specs/
+// reshape them before anyone else sees them (docs/archive/
 // 2026-10-30-doc-features-nightly.md). The private build launches with
 // --markie-private-release, which preload turns into privateReleaseAuthOrigin;
 // stable and beta builds never set it. The private gate mounts no document

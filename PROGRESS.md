@@ -151,3 +151,10 @@ Still to do: new Google and email secrets; move the super-nightly gateway (still
 - Update from 0.9.2: Mac `update:check -- --install` 12/12; Windows run 40616364215 12/12; Linux run 40616370851 12/12. Tagged `v0.9.3`, GitHub release created.
 - CI unit flakes seen this round, each passing on rerun: `page.large-doc` "refuses the Rich shortcut", `private-release-gate` "offers Google", `find-bar` "counts matches".
 - Mobile 0.2.0 (3): editing, new documents and "Open in Markie" (#53); uploaded to App Store Connect; Android AAB at `~/Desktop/Markie-mobile-0.2.0-3.aab`.
+
+## 2026-11-24 Docs audit
+
+- Kirby asked for every doc to be audited, because agents were planning from old plans and estimates. `docs/README.md` now lists every tracked doc as Current, Reference or Archived.
+- Archived to `docs/archive/`, each with a header saying why: the June upcoming-features roadmap, the October 14 document platform plan, the October 30 super-nightly document features plan, and the Apple sign-in plan.
+- Fixed stale facts: the Markie Fly app is deleted, Linux went stable in 0.9.2 but is still `ready` in the manifest, nothing schedules `release:promote-due`, vault Touch ID exists on macOS, CSV opens as a spreadsheet, and the cold-launch sample item is done.
+- No release, deploy or production change.

@@ -30,7 +30,7 @@ Next, open `samples/Counter.wd` and follow the [interactive Darkmown checks](dar
 | TXT, TEXT, LOG | Literal text; Unicode, supported encoding/BOM and line endings preserved. Viewing font/zoom does not alter file contents. |
 | Markdown | Existing source/rich/split behavior; main modes belong in View. Markdown stays Markdown. |
 | Darkmown WD | Literal source plus explicitly trusted, isolated offline state/buttons/calculations/local forms. Source changes revoke trust. Media, API connections and shared state are not enabled. |
-| CSV | Literal source editing and table preview, not a spreadsheet calculation engine. |
+| CSV | Opens as a spreadsheet: edit cells, sort, filter, and select a block for Sum, Average and Count. Saving rewrites only the edited cells, and the file's text is one switch away. Formulas are not evaluated. |
 | JSON, YAML, XML | Literal source editing, not schema-aware structured editing. |
 | Legacy DOC | Explicit text-only copy; original DOC stays untouched. No native DOC writer. |
 | HTML | Explicit text-only import with a loss warning. Rich HTML editing is still planned. |

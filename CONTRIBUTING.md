@@ -6,7 +6,7 @@ clone to a passing pull request.
 ## Requirements
 
 - **Node 22 or newer** (`.nvmrc` pins the version this repo is developed on)
-- **macOS or Windows** for running the desktop app; the tests, lint, and build run anywhere
+- **macOS, Windows or Linux** for running the desktop app; the tests, lint, and build run anywhere
 
 ## Setup
 
@@ -92,7 +92,7 @@ orientation for how the product is meant to behave.
 | `apps/mobile/` | Capacitor iOS and Android app |
 | `deploy/` | Self-hosting kit for the server (see `docs/SELF-HOSTING.md`) |
 | `scripts/` | Release, packaging, and audit tooling |
-| `docs/` | `RELEASING.md`, mobile store setup, plus historical plans and specs |
+| `docs/` | `RELEASING.md`, mobile store setup, specs and archived plans. `docs/README.md` lists each doc and its status |
 
 ## Notes on some files
 

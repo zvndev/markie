@@ -28,13 +28,20 @@ export function desktopAuthIssuer(authBase: string | null | undefined): string |
 }
 
 // Which desktop app the token goes back to. Markie registers markie://. The
-// Markie RS side build registers markie-rs://, so it never takes over the
-// links Markie answers. Only these two names are honoured; anything else, or
-// nothing, means Markie, which is what every existing build expects.
-export type DesktopAuthApp = "markie" | "markie-rs";
+// Markie RS side build registers markie-rs://, and its private nightly build,
+// Markie Nightly, registers markie-nightly://, so neither takes over the links
+// Markie answers, or each other's. Only these three names are honoured;
+// anything else, or nothing, means Markie, which is what every existing build
+// expects.
+export type DesktopAuthApp = "markie" | "markie-rs" | "markie-nightly";
 
 export function desktopAuthApp(raw: string | null | undefined): DesktopAuthApp {
-  return raw === "markie-rs" ? "markie-rs" : "markie";
+  return raw === "markie-rs" || raw === "markie-nightly" ? raw : "markie";
+}
+
+// The name on the "Returning you to…" page.
+export function desktopAuthAppName(app: DesktopAuthApp): string {
+  return app === "markie-rs" ? "Markie RS" : app === "markie-nightly" ? "Markie Nightly" : "Markie";
 }
 
 // A link with no state is still produced (an older app build sends none), but

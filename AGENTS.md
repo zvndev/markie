@@ -24,6 +24,8 @@ override task notes, backlog entries, and older progress logs.
 - `scripts`: release, packaging, and check scripts.
 - `deploy`: self-hosting kit for the server (see `docs/SELF-HOSTING.md`), not the Markie Cloud deploy.
 - `docs/mobile`: mobile store setup and the agent links contract.
+- `src/assets/fonts`, `src/lib/fonts`, `scripts/fonts`: the bundled fonts, their registry and the
+  script that rebuilds them (see `docs/FONTS.md`).
 - `docs/superpowers`: the document platform plan and the product specs it builds on.
 - `.autoloop/runs`: gitignored evidence output from check scripts.
 

@@ -24,6 +24,7 @@ import { inspectDocxPageBreaks, insertDocxPageBreak, removeDocxPageBreak } from 
 import { cachedTextRun, invalidateDocxDerived, validDerivedMarker } from "./docx-derived";
 import { normalizeDocxRange, replaceDocxSourceRange } from "./docx-structure";
 import { scanDocxFields } from "./docx-fields";
+import { readDocxEmbeddedFonts, type DocxEmbeddedFont } from "./docx-fonts";
 import type { RichTextRange, RichRangeResult } from "./rich-range-types";
 export * from "./docx-types";
 
@@ -786,6 +787,24 @@ export function getDocxImageBytes(document: DocxDocument, imageId: string): Uint
   const image = inspectDocxImages(state).images.find((i) => i.id === imageId);
   if (!image) throw new DocxError("invalid-image", "Unknown image identity.");
   return new Uint8Array(docxPart(state, image.partName)!);
+}
+
+const embeddedFonts = new WeakMap<Uint8Array, readonly DocxEmbeddedFont[]>();
+
+/**
+ * The fonts this Word file carries inside itself, ready to show its own text
+ * in. The same array for every snapshot of one opened file, so a caller can
+ * load them once. Display only: see docx-fonts.ts.
+ */
+export function getDocxEmbeddedFonts(document: DocxDocument): readonly DocxEmbeddedFont[] {
+  const state = states.get(document);
+  if (!state) return [];
+  let fonts = embeddedFonts.get(state.original);
+  if (!fonts) {
+    fonts = Object.freeze(readDocxEmbeddedFonts(state.entries));
+    embeddedFonts.set(state.original, fonts);
+  }
+  return fonts;
 }
 
 /** Minimal interoperable package authored from the public OPC/WordML vocabulary. */

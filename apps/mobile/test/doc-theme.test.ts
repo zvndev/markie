@@ -3,7 +3,7 @@
 // only in the phone's own tone, and nothing that is not a plain colour.
 import { describe, expect, it } from "vitest";
 import { MARKIE_DARK, MARKIE_LIGHT } from "@/lib/theme";
-import { DOC_STYLE_SCOPE, docStyleCss, docThemeStyle, plainColor } from "../src/lib/doc-theme";
+import { DOC_STYLE_SCOPE, docLookTokens, docStyleCss, docThemeStyle, plainColor } from "../src/lib/doc-theme";
 import { createApiClient } from "../src/lib/api";
 import type { HttpRequest, HttpResponse } from "../src/lib/http";
 
@@ -150,5 +150,59 @@ describe("reading the pinned look from the server", () => {
       expect(await read(client(() => { throw new Error("offline"); }).api)).toBeNull();
     }
     expect(await client(() => ({ status: 200, headers: {}, text: "{}" })).api.publicLook("short")).toBeNull();
+  });
+});
+
+// The phone bundles the same font files as the desktop (src/assets/fonts,
+// declared by installBundledFonts in main.tsx), so a pinned look set in one
+// paints in it here too.
+describe("a pinned look set in a bundled or a local font", () => {
+  it("paints a bundled face by its registry id", () => {
+    const style = docThemeStyle({ bodyFont: "atkinson", headingFont: "fraunces" }, "light");
+    expect(style?.vars["--doc-font-family"]).toMatch(/^'Atkinson Hyperlegible Next', system-ui/);
+    expect(style?.vars["--doc-heading-family"]).toMatch(/^'Fraunces', Georgia/);
+  });
+
+  it("shows the bundled fallback for a font only the owner's computer has", () => {
+    const style = docThemeStyle({ bodyFont: "local:source-serif:Hoefler Text" }, "light");
+    expect(style?.vars["--doc-font-family"]).toMatch(/^'Hoefler Text', 'Source Serif 4', Georgia/);
+  });
+
+  it("ignores a font id that is not one", () => {
+    for (const bodyFont of ["local:inter:x'; } body { display:none", "local:nope:Futura", "'; background: url(//evil.example)"]) {
+      const style = docThemeStyle({ bodyFont }, "light");
+      expect(style?.vars["--doc-font-family"] ?? "").not.toMatch(/evil|display|nope/);
+    }
+  });
+});
+
+describe("the typefaces of a pinned look on the reading screen", () => {
+  // A theme's colours with no face named, as a hand-made or cut-down pin has.
+  const COLOURS = Object.fromEntries(Object.entries(MARKIE_LIGHT.tokens).filter(([key]) => key !== "bodyFont" && key !== "headingFont"));
+
+  it("keeps the pinned tokens' own faces and takes the rest from the style", () => {
+    const tokens = docLookTokens({ ...COLOURS, bodyFont: "lora" }, { base: "editorial" }) as Record<string, unknown>;
+    expect(tokens).toMatchObject({ bodyFont: "lora", headingFont: "playfair", codeFont: "fira-code", background: MARKIE_LIGHT.tokens.background });
+    const style = docThemeStyle(tokens, "light")!;
+    expect(style.vars["--doc-font-family"]).toMatch(/^'Lora', Georgia/);
+    expect(style.vars["--doc-heading-family"]).toMatch(/^'Playfair Display', Georgia/);
+  });
+
+  it("takes every face from the style when the tokens name none", () => {
+    const style = docThemeStyle(docLookTokens(COLOURS, { base: "classic" }), "light")!;
+    expect(style.vars["--doc-font-family"]).toMatch(/^'Literata', Georgia/);
+    expect(style.vars["--doc-heading-family"]).toMatch(/^'EB Garamond', Georgia/);
+  });
+
+  it("sets the code face by a rule for the themed article, from the registry's own stack", () => {
+    const css = docStyleCss({ base: "spacious", choices: { codeFont: "jetbrains-mono" } });
+    expect(css).toBe(`${DOC_STYLE_SCOPE} :is(code, pre, kbd, samp) { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }`);
+    expect(docStyleCss({ choices: { codeFont: "literata" } })).toBe("");
+    expect(docStyleCss({ choices: { codeFont: "x'; } body { display: none" } })).toBe("");
+  });
+
+  it("leaves tokens that are not a token set as they came, and a look with no style as it was", () => {
+    for (const none of [null, undefined, "dark", 4]) expect(docLookTokens(none, { base: "compact" })).toBe(none);
+    expect(docLookTokens({ background: "#fff" }, null)).toEqual({ background: "#fff" });
   });
 });

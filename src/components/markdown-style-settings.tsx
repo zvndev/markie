@@ -85,7 +85,7 @@ export function MarkdownStyleSection() {
       <div className="mb-3">
         <h3 id={titleId} className="markie-overlay-section">Markdown style</h3>
         <div className="text-[11px] text-muted mt-1">
-          How headings, lists, tables and the rest are drawn. A style works with any template, and readers of a document you pin your look to see it too.
+          How headings, lists, tables and the rest are drawn, and in which typefaces. A style works with any template&apos;s colours. Every style but Spacious brings its own fonts; one you choose yourself under Typography is used instead.
         </div>
       </div>
 

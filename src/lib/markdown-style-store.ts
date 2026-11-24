@@ -2,7 +2,7 @@
 // store (theme.ts), so they sync with the account by the path themes already
 // use (theme-sync.ts). markdown-style.ts holds the pure transitions; this is
 // the part that reads storage, saves, and paints.
-import { loadThemeStore, saveThemeStore } from "./theme";
+import { applyTheme, findTheme, loadThemeStore, saveThemeStore } from "./theme";
 import {
   activeMarkdownStyle,
   applyMarkdownStyle,
@@ -20,7 +20,11 @@ export function loadMarkdownStyleStore(): MarkdownStyleStore {
 /** Save the style store into the theme store and paint the style it names. Returns it cleaned. */
 export function commitMarkdownStyleStore(next: MarkdownStyleStore): MarkdownStyleStore {
   const clean = markdownStyleStoreOf({ markdownStyle: next });
-  saveThemeStore({ ...loadThemeStore(), markdownStyle: clean });
+  const store = { ...loadThemeStore(), markdownStyle: clean };
+  saveThemeStore(store);
+  // A style brings its typefaces, which are painted with the theme's tokens,
+  // so the theme is painted again along with the style's own rules.
+  applyTheme(findTheme(store, store.activeId).tokens);
   applyMarkdownStyle(activeMarkdownStyle(clean));
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(MARKDOWN_STYLE_STORE_EVENT, { detail: { store: clean } }));
   return clean;

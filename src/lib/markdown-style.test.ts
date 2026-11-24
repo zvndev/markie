@@ -7,6 +7,11 @@ import {
   MARKDOWN_STYLE_APP_SCOPE,
   MARKDOWN_STYLE_CHOICES,
   MARKDOWN_STYLE_CHOICE_LABELS,
+  MARKDOWN_STYLE_FONT_KEYS,
+  markdownStyleFontCss,
+  markdownStyleFontTokens,
+  styleFontId,
+  withPaintedFonts,
   MARKDOWN_STYLE_GROUPS,
   MARKDOWN_STYLE_NUMBERS,
   MARKDOWN_STYLE_NUMBER_LABELS,
@@ -38,7 +43,9 @@ import {
   type MarkdownStyleNumberKey,
 } from "./markdown-style";
 import { MARKDOWN_STYLE_PRESET_IDS } from "./markdown-style-schema";
-import { MARKIE_DARK, chooseCustomPreset, chooseTemplate, loadThemeStore, normalizeThemeStore, saveThemeStore, type ThemeStore } from "./theme";
+import { MARKIE_DARK, TYPEFACES, chooseCustomPreset, chooseTemplate, findTemplate, findTheme, loadThemeStore, normalizeThemeStore, saveThemeStore, setTypography, typographyVars, type ThemeStore } from "./theme";
+import { TYPEFACE_LIST, codeTypefaces } from "./fonts/registry";
+import { saveCodeFont } from "./fonts/code-font";
 import { applyMarkdownStyleChoice, commitMarkdownStyleStore, loadMarkdownStyleStore } from "./markdown-style-store";
 
 afterEach(() => {
@@ -118,6 +125,11 @@ describe("markdownStyleCss", () => {
     for (const key of CHOICE_KEYS) {
       const [first, ...others] = MARKDOWN_STYLE_CHOICES[key];
       expect(markdownStyleCss({ choices: { [key]: first } }, SCOPE)).toBe("");
+      // A typeface is painted as a theme token, never as a rule here.
+      if ((MARKDOWN_STYLE_FONT_KEYS as readonly string[]).includes(key)) {
+        for (const option of others) expect(markdownStyleCss({ choices: { [key]: option } }, SCOPE)).toBe("");
+        continue;
+      }
       for (const option of others) {
         const css = markdownStyleCss({ choices: { [key]: option } }, SCOPE);
         expect(css, `${key}:${option}`).not.toBe("");
@@ -185,6 +197,85 @@ describe("markdownStyleCss", () => {
     const css = markdownStyleCss({ choices: { bulletStyle: "dash" }, numbers: { listIndent: 1.2 } }, SCOPE);
     expect(css).toContain('ul:not([data-type="taskList"]) > li:not(.task-list-item)');
     expect(css).toContain('ul:not([data-type="taskList"]), .markdown-body ol { padding-left: 1.2em; }');
+  });
+});
+
+describe("a style's typefaces", () => {
+  it("are the registry's own faces, so the lists the server checks against cannot drift", () => {
+    const ids = TYPEFACE_LIST.filter((face) => !face.localOnly).map((face) => face.id);
+    // theme.ts hands out the very same list.
+    expect(TYPEFACES).toBe(TYPEFACE_LIST);
+    expect(MARKDOWN_STYLE_CHOICES.bodyFont).toEqual(["theme", ...ids]);
+    expect(MARKDOWN_STYLE_CHOICES.headingFont).toEqual(["theme", "body", ...ids]);
+    expect(MARKDOWN_STYLE_CHOICES.codeFont).toEqual(["theme", ...codeTypefaces().filter((face) => !face.localOnly).map((face) => face.id)]);
+  });
+
+  it("are nothing for Spacious, and a pairing of bundled faces for every other preset, each its own", () => {
+    expect(markdownStyleFontTokens({ base: "spacious" })).toEqual({});
+    expect(markdownStyleFontTokens(null)).toEqual({});
+    const pairings = MARKDOWN_STYLE_PRESETS.slice(1).map((preset) => markdownStyleFontTokens({ base: preset.id }));
+    for (const fonts of pairings) {
+      for (const id of [fonts.bodyFont, fonts.codeFont]) expect(TYPEFACE_LIST.find((face) => face.id === id)?.bundled, id).toBe(true);
+      expect(fonts.headingFont === "body" || TYPEFACE_LIST.find((face) => face.id === fonts.headingFont)?.bundled).toBe(true);
+    }
+    expect(new Set(pairings.map((fonts) => fonts.bodyFont)).size).toBe(pairings.length);
+  });
+
+  it("stand in for the template's faces, and give way to a face the person chose", () => {
+    const paper = findTemplate("paper")!.light;
+    const store: ThemeStore = normalizeThemeStore({ activeId: paper.id, custom: [], templateId: "paper", markdownStyle: { activeId: "technical", profiles: [] } });
+    expect(findTheme(store, paper.id).tokens).toMatchObject({ bodyFont: "plex-sans", headingFont: "body", codeFont: "jetbrains-mono", background: paper.tokens.background });
+    // Their own typography choice is on top of the style's.
+    const own = setTypography(store, { bodyFont: "lora" });
+    expect(findTheme(own, paper.id).tokens).toMatchObject({ bodyFont: "lora", headingFont: "body" });
+    // And so is their own code font.
+    saveCodeFont("fira-code");
+    expect(findTheme(store, paper.id).tokens.codeFont).toBe("fira-code");
+    saveCodeFont("");
+    // A heading that follows the text paints no heading face of its own.
+    expect(typographyVars(findTheme(store, paper.id).tokens)["--doc-heading-family"]).toBe("");
+  });
+
+  it("leave the template's preset exactly as it was under Spacious", () => {
+    const store: ThemeStore = normalizeThemeStore({ activeId: MARKIE_DARK.id, custom: [] });
+    expect(findTheme(store, MARKIE_DARK.id)).toBe(MARKIE_DARK);
+    const paper = findTemplate("paper")!.dark;
+    expect(findTheme(normalizeThemeStore({ activeId: paper.id, custom: [], templateId: "paper" }), paper.id)).toBe(paper);
+  });
+
+  it("store a font from one computer as the bundled face it names, and nothing for junk", () => {
+    expect(styleFontId("bodyFont", "literata")).toBe("literata");
+    expect(styleFontId("bodyFont", "local:source-serif:Hoefler Text")).toBe("source-serif");
+    expect(styleFontId("codeFont", "local:jetbrains-mono:Monaco")).toBe("jetbrains-mono");
+    // A text face is not a code face.
+    expect(styleFontId("codeFont", "literata")).toBeUndefined();
+    for (const id of ["theme", "local:nope:Futura", "x'; } body { display: none", "", 4, null]) expect(styleFontId("bodyFont", id)).toBeUndefined();
+  });
+
+  it("are written into a pinned style as they are painted", () => {
+    // The style's own faces, unchanged, add nothing to it.
+    expect(withPaintedFonts({ base: "technical" }, { bodyFont: "plex-sans", headingFont: "body", codeFont: "jetbrains-mono" })).toEqual({ base: "technical" });
+    // The person's own choices are what a reader should get.
+    expect(withPaintedFonts({ base: "technical", choices: { tableStyle: "zebra" } }, { bodyFont: "local:source-serif:Hoefler Text", headingFont: "fraunces", codeFont: "fira-code" })).toEqual({
+      base: "technical",
+      choices: { tableStyle: "zebra", bodyFont: "source-serif", headingFont: "fraunces", codeFont: "fira-code" },
+    });
+    // Under Spacious with a template's faces, the style names them.
+    expect(withPaintedFonts({ base: "spacious" }, { bodyFont: "charter", headingFont: "iowan" })).toEqual({ base: "spacious", choices: { bodyFont: "charter", headingFont: "iowan" } });
+    expect(withPaintedFonts({ base: "spacious" }, {})).toEqual({ base: "spacious" });
+  });
+
+  it("are set on a container for a preview, as stacks from the registry and nothing else", () => {
+    const scope = markdownStyleContainerScope("s1");
+    expect(markdownStyleFontCss({ base: "spacious" }, scope)).toBe("");
+    const css = markdownStyleFontCss({ base: "editorial" }, scope);
+    expect(css).toContain("'Source Serif 4', Georgia");
+    expect(css).toContain(":is(h1, h2, h3, h4, h5, h6) { font-family: 'Playfair Display'");
+    expect(css).toContain(":is(code, pre, kbd, samp) { font-family: 'Fira Code'");
+    for (const line of css.split("\n")) expect(line.startsWith(scope)).toBe(true);
+    expect(parsed(css).cssRules).toHaveLength(3);
+    const hostile = markdownStyleFontCss({ choices: { bodyFont: "x'; } body { display: none", headingFont: "local:inter:Evil", codeFont: "literata" } }, scope);
+    expect(hostile).toBe("");
   });
 });
 

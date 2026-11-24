@@ -5,6 +5,11 @@ import type { MarkdownStyle } from "../../src/lib/markdown-style";
 export const GALLERY_CUSTOM_STYLE: MarkdownStyle = {
   base: "technical",
   choices: {
+    // Bundled faces, so the look is the same on every computer and link.
+    bodyFont: "lora",
+    headingFont: "fraunces",
+    codeFont: "fira-code",
+    headingNumbers: "none",
     headingRule: "short",
     headingCase: "upper-minor",
     bulletStyle: "dash",

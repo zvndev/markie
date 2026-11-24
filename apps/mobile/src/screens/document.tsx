@@ -28,7 +28,7 @@ import { docExportSource } from "../lib/export";
 import { COMMENTS_OFFLINE_NOTE, OfflineNote, useOffline } from "../components/offline-note";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
-import { docStyleCss, docThemeStyle } from "../lib/doc-theme";
+import { docLookTokens, docStyleCss, docThemeStyle } from "../lib/doc-theme";
 import type { ShareMember } from "../lib/api";
 
 interface DocumentProps {
@@ -249,7 +249,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   const isWd = doc?.format === "darkmown";
   // A CSV or TSV reads as its table, which scrolls itself both ways.
   const isCsv = doc?.format === "text" && isCsvName(doc.name);
-  const themed = useMemo(() => docThemeStyle(pinnedTheme, tone), [pinnedTheme, tone]);
+  const themed = useMemo(() => docThemeStyle(docLookTokens(pinnedTheme, pinnedStyle), tone), [pinnedTheme, pinnedStyle, tone]);
   const styleCss = useMemo(() => (themed ? docStyleCss(pinnedStyle) : ""), [themed, pinnedStyle]);
   const loadAsset = useCallback((ref: string) => {
     const source: AssetSource = target.kind === "doc" ? { kind: "doc", id: target.id } : { kind: "public", token: target.token };

@@ -129,6 +129,7 @@ import {
 import type { ThemeTokens } from "@/lib/theme";
 import { activeMarkdownStyle, applyMarkdownStyle, markdownStyleStoreOf, MARKDOWN_STYLE_PRESETS } from "@/lib/markdown-style";
 import { applyMarkdownStyleChoice } from "@/lib/markdown-style-store";
+import { pinnedLookTokens } from "@/lib/pinned-look";
 import type { AppCommand } from "@/lib/commands";
 import {
   applyTheme,
@@ -1956,7 +1957,9 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   // Owner-pinned themes override the local choice while the doc is open
   useEffect(() => {
     if (enforcedLook && !documentsOpen) {
-      applyTheme(enforcedLook.tokens);
+      // One set of tokens for the whole look: the owner's colours and spacing
+      // in the faces their style and theme settle on (pinned-look.ts).
+      applyTheme(pinnedLookTokens(enforcedLook) ?? enforcedLook.tokens);
       applyMarkdownStyle(enforcedLook.style);
       return () => {
         const store = loadThemeStore();

@@ -1,4 +1,7 @@
 import { sanitizeMarkdownStyleStore, type MarkdownStyleStore } from "./markdown-style-schema";
+import { TYPEFACE_LIST } from "./fonts/registry";
+import { loadCodeFont } from "./fonts/code-font";
+import { activeMarkdownStyle, markdownStyleFontTokens, markdownStyleStoreOf } from "./markdown-style";
 
 export interface ThemeTokens {
   background: string;
@@ -35,6 +38,10 @@ export interface ThemeTokens {
   headingFont?: string; // HEADING_SAME_AS_BODY or a TYPEFACES id
   lineHeight?: number; // unitless multiple of the body size
   paragraphGap?: number; // em between paragraphs
+  // The face for document code, a monospace TYPEFACES id. Never part of a
+  // template. It is on painted tokens when the person chose one, or their
+  // Markdown style names one, and src/lib/fonts/code-font.ts paints it.
+  codeFont?: string;
 }
 
 export type ThemeTone = "light" | "dark";
@@ -67,24 +74,11 @@ export interface ThemeTypography {
 
 export const HEADING_SAME_AS_BODY = "body";
 
-// Only faces that ship with macOS or Windows, each with fallbacks that keep the
-// same character on the other platform. Markie bundles no fonts.
-export const TYPEFACES: Array<{ id: string; label: string; stack: string; kind: "sans" | "serif" | "mono" }> = [
-  { id: "system", label: "System", stack: "var(--font-geist-sans)", kind: "sans" },
-  {
-    id: "humanist",
-    label: "Avenir",
-    stack: "'Avenir Next', Avenir, 'Segoe UI Variable Text', 'Segoe UI', 'Helvetica Neue', sans-serif",
-    kind: "sans",
-  },
-  { id: "helvetica", label: "Helvetica", stack: "'Helvetica Neue', Helvetica, Arial, sans-serif", kind: "sans" },
-  { id: "optima", label: "Optima", stack: "Optima, Candara, 'Avenir Next', 'Segoe UI', sans-serif", kind: "sans" },
-  { id: "charter", label: "Charter", stack: "Charter, 'Bitstream Charter', Georgia, 'Times New Roman', serif", kind: "serif" },
-  { id: "iowan", label: "Iowan", stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif", kind: "serif" },
-  { id: "newyork", label: "New York", stack: "ui-serif, 'New York', 'Iowan Old Style', Charter, Georgia, serif", kind: "serif" },
-  { id: "georgia", label: "Georgia", stack: "Georgia, Charter, 'Times New Roman', serif", kind: "serif" },
-  { id: "mono", label: "Monospace", stack: "var(--font-geist-mono)", kind: "mono" },
-];
+// The typefaces come from the font registry (src/lib/fonts/registry.ts), the
+// one source of ids, labels, kinds, stacks and files: the nine system faces
+// first, with the ids and stacks they have always had, then the fonts Markie
+// bundles, then any font on this computer its owner adopted.
+export const TYPEFACES: Array<{ id: string; label: string; stack: string; kind: "sans" | "serif" | "mono" }> = TYPEFACE_LIST;
 
 export function typefaceStack(id: string | undefined): string {
   return (TYPEFACES.find((face) => face.id === id) ?? TYPEFACES[0]).stack;
@@ -643,13 +637,24 @@ function findPreset(store: ThemeStore, id: string): ThemePreset | undefined {
   return allThemes(store).find((t) => t.id === id);
 }
 
-// The preset with the person's typography tweaks applied. Tweaks ride on
-// whichever preset is resolved, so every caller that paints findTheme(...)
-// (boot, pinned-theme release, share pinning) paints the same thing.
+// The preset as it is painted: the template's own tokens, then the typefaces
+// of the Markdown style in use, then the person's typography tweaks. Tweaks
+// ride on whichever preset is resolved, so every caller that paints
+// findTheme(...) (boot, pinned-theme release, share pinning) paints the same
+// thing.
+//
+// The order is the rule for fonts. A style's faces are defaults that stand in
+// for the template's; a face the person picked themselves (a typography tweak,
+// or their code font) is on top of both. Spacious names no face, so with no
+// tweaks this is the template's preset itself, as it always was.
 export function findTheme(store: ThemeStore, id: string): ThemePreset {
   const preset = findPreset(store, id) ?? MARKIE_DARK;
-  if (!store.typography || Object.keys(store.typography).length === 0) return preset;
-  return { ...preset, tokens: { ...preset.tokens, ...store.typography } };
+  const fonts = markdownStyleFontTokens(activeMarkdownStyle(markdownStyleStoreOf(store)));
+  const ownCodeFont = loadCodeFont();
+  if (ownCodeFont) fonts.codeFont = ownCodeFont;
+  const typography = store.typography ?? {};
+  if (Object.keys(fonts).length === 0 && Object.keys(typography).length === 0) return preset;
+  return { ...preset, tokens: { ...preset.tokens, ...fonts, ...typography } };
 }
 
 export function activeTemplate(store: ThemeStore): ThemeTemplate {

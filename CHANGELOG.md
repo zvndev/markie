@@ -13,19 +13,41 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Markdown styles.** Settings, Appearance now has a Markdown style beside
   the colour templates: how headings, lists, tables, quotes, code, dividers,
   pictures and links are drawn. Spacious is the look Markie has always had,
-  and Compact, Classic, Technical, Editorial and Minimal are new. A style
-  works with any template, light or dark.
+  and Compact, Classic, Technical, Editorial and Minimal are new. Each new
+  one comes with its own fonts for text, headings and code, from the fonts
+  that ship with Markie, and works with any template's colours, light or
+  dark. A font you choose yourself is still the one used.
 - **Build your own style.** Customize opens an editor with a live preview of
   a sample document. Change one element at a time (table borders, list
-  markers, numbering, heading rules, spacing and more), then save it under a
-  name. Saved styles follow your account to your other computers.
+  markers, numbering, heading rules, numbered sections, fonts, spacing and
+  more), then save it under a name. Saved styles follow your account to your other computers.
 - **Readers see my look.** In Share, the owner of a document can pin their
   theme and Markdown style to it. Everyone it is shared with, and anyone
   with its public link, then reads it that way on the web, the desktop and
-  the phone. HTML and PDF exports are drawn in the style too.
+  the phone, in the same fonts, the code font included. HTML and PDF exports
+  are drawn in the style too.
+- **Twenty fonts come with Markie.** Settings, Appearance now offers Inter,
+  Atkinson Hyperlegible, Literata, Fraunces, JetBrains Mono and fifteen more,
+  each shown in its own face. A document set in one looks the same on another
+  computer, on a shared link and on the phone. They are all open-licensed.
+- **A font for code.** Choose the monospace font code blocks use, beside the
+  body and heading fonts.
+- **Use a font from your computer.** Settings can list the fonts installed on
+  your computer. One of those shows only there: a shared link or another
+  person sees a similar font that comes with Markie.
+- **Word files keep their look when a font is missing.** A document set in
+  Calibri, Cambria, Arial, Times New Roman, Courier New or Georgia opens in a
+  font with the same letter widths when yours is not installed, so lines and
+  pages break where they did. Saving keeps the font name the file had.
+- **Fonts inside a Word file are shown.** When a Word file carries its own
+  fonts, Markie shows its text in them, and keeps them when you save.
 
 ### Changed
 
+- **PDF and HTML exports use your fonts.** An export is set in the body,
+  heading and code fonts you chose, and carries the fonts it needs inside it.
+- The font menu in Word, RTF and OpenDocument files lists the document's own
+  fonts first, then the fonts that come with Markie, then the ones installed.
 - A CSV file now opens as a table: a sticky header, row numbers, columns sized to
   what they hold, numbers lined up on the right, and long cells shown in full
   below the grid when you select them. Click a header to sort, type in the filter

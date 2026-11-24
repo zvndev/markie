@@ -25,8 +25,30 @@
 /** The built-in looks. The first is Markie's long-standing rendering. */
 export const MARKDOWN_STYLE_PRESET_IDS = ["spacious", "compact", "classic", "technical", "editorial", "minimal"] as const;
 
+// Typefaces a style may name, by id from the font registry
+// (src/lib/fonts/registry.ts): the nine system faces and the bundled library.
+// Written out here, not read from the registry, because the server validates
+// with a copy of this file alone. markdown-style-schema.test.ts holds the two
+// lists to the registry, so a family added there has to be added here.
+//
+// A font from one person's own computer (a `local:` id) is never stored in a
+// style: the bundled face it names is stored in its place.
+const TEXT_FACES = [
+  "system", "humanist", "helvetica", "optima", "charter", "iowan", "newyork", "georgia", "mono",
+  "inter", "source-sans", "plex-sans", "space-grotesk", "atkinson", "lexend", "nunito", "quicksand",
+  "source-serif", "literata", "lora", "eb-garamond", "roboto-slab", "fraunces", "playfair", "caveat",
+  "jetbrains-mono", "fira-code", "source-code", "atkinson-mono",
+] as const;
+const CODE_FACES = ["mono", "jetbrains-mono", "fira-code", "source-code", "atkinson-mono"] as const;
+
 /** Every named choice and the option ids it accepts. The first option of each is Spacious. */
 export const MARKDOWN_STYLE_CHOICES = {
+  // "theme" leaves the face to the colour template and the person's own
+  // settings, which is what Spacious does. A heading may also follow the body.
+  bodyFont: ["theme", ...TEXT_FACES],
+  headingFont: ["theme", "body", ...TEXT_FACES],
+  codeFont: ["theme", ...CODE_FACES],
+  headingNumbers: ["none", "outline"],
   headingScale: ["standard", "compact", "large", "flat"],
   headingWeight: ["bold", "medium", "light", "heavy"],
   headingCase: ["none", "upper", "upper-minor", "small-caps"],

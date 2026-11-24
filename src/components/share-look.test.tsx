@@ -43,9 +43,12 @@ describe("Readers see my look", () => {
     const toggle = await screen.findByRole("switch", { name: "Readers see my look" });
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText(/Markie theme, Editorial style/)).toBeTruthy();
-    docLookState.mockResolvedValue({ pinned: true, look: { tokens: MARKIE_DARK.tokens, style: { base: "editorial", name: "Editorial" } } });
+    // Editorial's own faces are painted, so they are in the tokens (for
+    // clients that read tokens alone) and the style needs to name none.
+    const tokens = { ...MARKIE_DARK.tokens, bodyFont: "source-serif", headingFont: "playfair", codeFont: "fira-code" };
+    docLookState.mockResolvedValue({ pinned: true, look: { tokens, style: { base: "editorial", name: "Editorial" } } });
     fireEvent.click(toggle);
-    await waitFor(() => expect(setDocLook).toHaveBeenCalledWith("doc-1", { tokens: MARKIE_DARK.tokens, style: { base: "editorial", name: "Editorial" } }));
+    await waitFor(() => expect(setDocLook).toHaveBeenCalledWith("doc-1", { tokens, style: { base: "editorial", name: "Editorial" } }));
     await waitFor(() => expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("true"));
     expect(screen.getByText("On: Markie theme, Editorial style.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
@@ -56,7 +59,8 @@ describe("Readers see my look", () => {
     docLookState.mockResolvedValue({ pinned: true, look: { tokens: MARKIE_DARK.tokens, style: { base: "editorial" } } });
     render(<ShareLook docId="doc-1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Update" }));
-    await waitFor(() => expect(setDocLook).toHaveBeenCalledWith("doc-1", { tokens: MARKIE_DARK.tokens, style: { base: "compact", name: "Compact" } }));
+    const tokens = { ...MARKIE_DARK.tokens, bodyFont: "source-sans", headingFont: "body", codeFont: "source-code" };
+    await waitFor(() => expect(setDocLook).toHaveBeenCalledWith("doc-1", { tokens, style: { base: "compact", name: "Compact" } }));
   });
 
   it("unpins, and says so when the server would not take the change", async () => {

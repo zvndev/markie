@@ -79,7 +79,7 @@ describe("the style editor", () => {
 
   it("previews a sample document and keeps each element's details behind its row", async () => {
     const editor = await open();
-    for (const label of ["Headings", "Paragraphs and spacing", "Bulleted lists", "Numbered lists", "List layout", "Task lists", "Tables", "Blockquotes", "Code", "Dividers", "Images", "Links"]) {
+    for (const label of ["Typefaces", "Headings", "Paragraphs and spacing", "Bulleted lists", "Numbered lists", "List layout", "Task lists", "Tables", "Blockquotes", "Code", "Dividers", "Images", "Links"]) {
       expect(editor.getByRole("button", { name: new RegExp(`^${label}`) }).getAttribute("aria-expanded")).toBe("false");
     }
     expect(editor.queryByRole("radiogroup", { name: "Borders" })).toBeNull();
@@ -126,6 +126,41 @@ describe("the style editor", () => {
     fireEvent.click(editor.getByRole("radio", { name: "Underlined" }));
     fireEvent.click(editor.getByRole("button", { name: "Save to Runbooks" }));
     expect(loadMarkdownStyleStore().profiles[0].style).toEqual({ base: "technical", name: "Runbooks" });
+  });
+
+  it("offers typefaces through the font picker, and paints a chosen face with the theme", async () => {
+    const editor = await open();
+    fireEvent.click(editor.getByRole("button", { name: /^Typefaces/ }));
+    // Spacious leaves every face to the template.
+    fireEvent.click(editor.getByRole("button", { name: "Text: Template's font" }));
+    fireEvent.click(editor.getByRole("menuitemradio", { name: /Literata/ }));
+    expect(document.documentElement.style.getPropertyValue("--doc-font-family")).toMatch(/^'Literata', Georgia/);
+    expect(loadMarkdownStyleStore().draft).toEqual({ base: "spacious", choices: { bodyFont: "literata" } });
+    // A code face is offered from the monospace faces only.
+    fireEvent.click(editor.getByRole("button", { name: "Code: Template's font" }));
+    expect(editor.queryByRole("menuitemradio", { name: /Literata/ })).toBeNull();
+    fireEvent.click(editor.getByRole("menuitemradio", { name: /JetBrains Mono/ }));
+    expect(loadMarkdownStyleStore().draft?.choices).toEqual({ bodyFont: "literata", codeFont: "jetbrains-mono" });
+    fireEvent.click(editor.getByRole("button", { name: "Reset to Spacious" }));
+    expect(document.documentElement.style.getPropertyValue("--doc-font-family")).toBe("var(--font-geist-sans)");
+  });
+
+  it("brings a preset's own typefaces with it, and says when the person's own choice stands instead", async () => {
+    const { loadThemeStore, saveThemeStore, setTypography } = await import("@/lib/theme");
+    const editor = await open();
+    fireEvent.click(editor.getByRole("radio", { name: "Editorial" }));
+    expect(document.documentElement.style.getPropertyValue("--doc-font-family")).toMatch(/^'Source Serif 4'/);
+    expect(document.documentElement.style.getPropertyValue("--doc-heading-family")).toMatch(/^'Playfair Display'/);
+    fireEvent.click(editor.getByRole("button", { name: /^Typefaces/ }));
+    expect(document.querySelector("[data-markdown-style-own-fonts]")).toBeNull();
+    cleanup();
+    // A font chosen in Typography is the person's own, and wins.
+    saveThemeStore(setTypography(loadThemeStore(), { bodyFont: "lora" }));
+    const again = await open();
+    fireEvent.click(again.getByRole("radio", { name: "Technical" }));
+    expect(document.documentElement.style.getPropertyValue("--doc-font-family")).toMatch(/^'Lora'/);
+    fireEvent.click(again.getByRole("button", { name: /^Typefaces/ }));
+    expect(document.querySelector("[data-markdown-style-own-fonts]")?.textContent).toContain("the text font");
   });
 
   it("closes on Escape without closing what is behind it", async () => {

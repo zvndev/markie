@@ -30,6 +30,11 @@ import {
   type MarkdownStylePresetId,
   type MarkdownStyleStore,
 } from "./markdown-style-schema";
+import { findTypeface, parseLocalTypefaceId } from "./fonts/registry";
+
+/** The three choices that name a typeface. */
+export type MarkdownStyleFontKey = "bodyFont" | "headingFont" | "codeFont";
+export const MARKDOWN_STYLE_FONT_KEYS: readonly MarkdownStyleFontKey[] = ["bodyFont", "headingFont", "codeFont"];
 
 export type {
   MarkdownStyle,
@@ -52,39 +57,60 @@ export interface MarkdownStylePreset {
   numbers: MarkdownStyleNumbers;
 }
 
+// Each preset is a look of its own, told apart at a glance: its own type
+// pairing from the bundled library (the same faces on every computer, on a
+// shared link and on the phone), and its own way with headings, tables,
+// quotes and dividers. The typefaces are defaults. A font the person chose
+// themselves, in Typography or for code, still wins (theme.ts findTheme).
 export const MARKDOWN_STYLE_PRESETS: readonly MarkdownStylePreset[] = [
   {
     id: "spacious",
     name: "Spacious",
     description: "Markie's own look: ruled headings, roomy blocks. The default.",
+    // Nothing: the template's faces, and no rule at all.
     choices: {},
     numbers: {},
   },
   {
     id: "compact",
     name: "Compact",
-    description: "Tighter everything, for notes and reference pages you scan.",
+    description: "Dense and even, for notes and reference pages you scan.",
     choices: {
+      // Source Sans 3 is narrow and even, so more fits on a line without
+      // looking squeezed; Source Code Pro is its own monospace.
+      bodyFont: "source-sans",
+      headingFont: "body",
+      codeFont: "source-code",
       headingScale: "compact",
-      headingRule: "title",
+      headingRule: "none",
       bulletStyle: "nested",
       taskDone: "dim",
+      tableStyle: "zebra",
       tableHeader: "bold",
       tableDensity: "compact",
+      tableWidth: "full",
       quoteStyle: "bar",
+      quoteAccent: "quiet",
       codeBlockStyle: "flat",
       inlineCodeStyle: "flat",
+      dividerStyle: "dotted",
     },
-    numbers: { headingSpaceAbove: 0.7, headingSpaceBelow: 0.7, blockGap: 0.7, leading: 0.9, listIndent: 1.5, listItemGap: 0.1 },
+    numbers: { headingSpaceAbove: 0.65, headingSpaceBelow: 0.6, blockGap: 0.65, leading: 0.86, listIndent: 1.4, listItemGap: 0.05, imageRadius: 4 },
   },
   {
     id: "classic",
     name: "Classic",
     description: "Set like a book: indented paragraphs, a centred title, no rules.",
     choices: {
-      headingWeight: "medium",
+      // Literata was drawn for reading books on a screen; EB Garamond gives
+      // the headings the old-style capitals of a title page.
+      bodyFont: "literata",
+      headingFont: "eb-garamond",
+      codeFont: "source-code",
+      headingScale: "large",
+      headingWeight: "light",
       headingRule: "none",
-      headingAlign: "center-title",
+      headingAlign: "center",
       paragraphStyle: "indented",
       markerColor: "text",
       tableStyle: "minimal",
@@ -99,13 +125,21 @@ export const MARKDOWN_STYLE_PRESETS: readonly MarkdownStylePreset[] = [
       captionStyle: "centered",
       linkStyle: "underline",
     },
-    numbers: { headingSpaceAbove: 1.2, imageRadius: 2 },
+    numbers: { headingSpaceAbove: 1.3, headingSpaceBelow: 1.2, leading: 1.04, imageRadius: 2 },
   },
   {
     id: "technical",
     name: "Technical",
-    description: "For docs and specs: numbered outlines, gridded tables, plain links.",
+    description: "For docs and specs: numbered sections, gridded tables, plain links.",
     choices: {
+      // IBM Plex Sans has the engineered, slightly squared shapes of a
+      // manual; JetBrains Mono keeps 0 and O, 1 and l apart in code.
+      bodyFont: "plex-sans",
+      headingFont: "body",
+      codeFont: "jetbrains-mono",
+      headingNumbers: "outline",
+      headingRule: "title",
+      headingCase: "upper-minor",
       bulletStyle: "nested",
       orderedStyle: "legal",
       markerColor: "text",
@@ -114,6 +148,8 @@ export const MARKDOWN_STYLE_PRESETS: readonly MarkdownStylePreset[] = [
       tableDensity: "compact",
       tableWidth: "full",
       quoteStyle: "card",
+      quoteAccent: "link",
+      codeBlockStyle: "bar",
       linkStyle: "underline",
     },
     numbers: { headingSpaceAbove: 1.1, imageRadius: 4 },
@@ -121,47 +157,59 @@ export const MARKDOWN_STYLE_PRESETS: readonly MarkdownStylePreset[] = [
   {
     id: "editorial",
     name: "Editorial",
-    description: "Big confident headings and pull quotes, like a published piece.",
+    description: "Big display headings and pull quotes, like a published piece.",
     choices: {
+      // Playfair Display is a high-contrast headline face; Source Serif 4
+      // under it is the plain, sturdy text face a magazine pairs it with.
+      bodyFont: "source-serif",
+      headingFont: "playfair",
+      codeFont: "fira-code",
       headingScale: "large",
       headingWeight: "heavy",
       headingCase: "upper-minor",
       headingRule: "short",
       bulletStyle: "square",
       markerColor: "accent",
-      tableHeader: "bold",
+      tableHeader: "caps",
+      tableStyle: "minimal",
       tableDensity: "roomy",
       quoteStyle: "pull",
-      codeBlockStyle: "bar",
+      codeBlockStyle: "flat",
       dividerStyle: "short",
       imageAlign: "center",
       imageFrame: "shadow",
       captionStyle: "centered",
       linkStyle: "ink",
     },
-    numbers: { headingSpaceAbove: 1.3, blockGap: 1.2, imageRadius: 4 },
+    numbers: { headingSpaceAbove: 1.4, headingSpaceBelow: 1.2, blockGap: 1.25, leading: 1.03, imageRadius: 2 },
   },
   {
     id: "minimal",
     name: "Minimal",
-    description: "Close to plain text: flat headings, dashes, almost no lines.",
+    description: "Plain text, kept plain: one monospace face, dashes, no lines.",
     choices: {
+      // One face for everything, as in a text editor. Atkinson Hyperlegible
+      // Mono was drawn to be read at length, which most monospace is not.
+      bodyFont: "atkinson-mono",
+      headingFont: "body",
+      codeFont: "atkinson-mono",
       headingScale: "flat",
-      headingWeight: "medium",
+      headingWeight: "bold",
       headingRule: "none",
       bulletStyle: "dash",
+      orderedStyle: "paren",
       taskStyle: "minimal",
-      taskDone: "dim",
+      taskDone: "strike",
       tableStyle: "minimal",
       tableHeader: "plain",
       quoteStyle: "bar",
       quoteAccent: "quiet",
-      codeBlockStyle: "flat",
+      codeBlockStyle: "bar",
       inlineCodeStyle: "plain",
       dividerStyle: "space",
       linkStyle: "dotted",
     },
-    numbers: { imageRadius: 0 },
+    numbers: { headingSpaceAbove: 0.9, leading: 0.94, imageRadius: 0 },
   },
 ];
 
@@ -247,7 +295,8 @@ export interface MarkdownStyleGroup {
 
 /** The elements of a document, in the order the editor lists them. */
 export const MARKDOWN_STYLE_GROUPS: readonly MarkdownStyleGroup[] = [
-  { id: "headings", label: "Headings", hint: "Size, weight, case, rules and the space around them", choices: ["headingScale", "headingWeight", "headingCase", "headingRule", "headingAlign"], numbers: ["headingSpaceAbove", "headingSpaceBelow"] },
+  { id: "typefaces", label: "Typefaces", hint: "The faces for text, headings and code", choices: ["bodyFont", "headingFont", "codeFont"], numbers: [] },
+  { id: "headings", label: "Headings", hint: "Size, weight, case, rules, numbers and the space around them", choices: ["headingScale", "headingWeight", "headingCase", "headingRule", "headingAlign", "headingNumbers"], numbers: ["headingSpaceAbove", "headingSpaceBelow"] },
   { id: "spacing", label: "Paragraphs and spacing", hint: "How paragraphs separate, and the rhythm between blocks", choices: ["paragraphStyle"], numbers: ["blockGap", "leading"] },
   { id: "bullets", label: "Bulleted lists", hint: "The marker in front of each item", choices: ["bulletStyle"], numbers: [] },
   { id: "numbered", label: "Numbered lists", hint: "How items are numbered, and how nested levels count", choices: ["orderedStyle"], numbers: [] },
@@ -261,7 +310,16 @@ export const MARKDOWN_STYLE_GROUPS: readonly MarkdownStyleGroup[] = [
   { id: "links", label: "Links", hint: "How a link is marked in running text", choices: ["linkStyle"], numbers: [] },
 ];
 
+/** A typeface choice's options, named as the font registry names them. */
+function faceLabels<K extends MarkdownStyleFontKey>(key: K, extra: Record<string, string>): Record<(typeof MARKDOWN_STYLE_CHOICES)[K][number], string> {
+  return Object.fromEntries((MARKDOWN_STYLE_CHOICES[key] as readonly string[]).map((id) => [id, extra[id] ?? findTypeface(id)?.label ?? id])) as Record<(typeof MARKDOWN_STYLE_CHOICES)[K][number], string>;
+}
+
 export const MARKDOWN_STYLE_CHOICE_LABELS: { [K in MarkdownStyleChoiceKey]: { label: string; options: Record<(typeof MARKDOWN_STYLE_CHOICES)[K][number], string> } } = {
+  bodyFont: { label: "Text", options: faceLabels("bodyFont", { theme: "Template's font" }) },
+  headingFont: { label: "Headings", options: faceLabels("headingFont", { theme: "Template's font", body: "Same as text" }) },
+  codeFont: { label: "Code", options: faceLabels("codeFont", { theme: "Template's font" }) },
+  headingNumbers: { label: "Numbers", options: { none: "None", outline: "1, 1.1" } },
   headingScale: { label: "Size", options: { standard: "Standard", compact: "Compact", large: "Large", flat: "Flat" } },
   headingWeight: { label: "Weight", options: { bold: "Bold", medium: "Medium", light: "Light", heavy: "Heavy" } },
   headingCase: { label: "Case", options: { none: "As written", upper: "Uppercase", "upper-minor": "Uppercase minor", "small-caps": "Small caps" } },
@@ -350,7 +408,28 @@ const weights = (h1: number, h2: number, rest: number): readonly Rule[] => [
 ];
 const doneItems = (declarations: string): readonly Rule[] => DONE_ITEMS.map((selector) => [selector, declarations] as const);
 
+// A typeface writes no rule here. It is painted the way every font is, as a
+// theme token (markdownStyleFontTokens), so the template, a person's own
+// choice and a pinned look all go through the one place that turns an id into
+// a face.
+const noRules = <K extends MarkdownStyleFontKey>(key: K): RuleTable<K> =>
+  Object.fromEntries((MARKDOWN_STYLE_CHOICES[key] as readonly string[]).map((id) => [id, []])) as unknown as RuleTable<K>;
+
 const CHOICE_RULES: { [K in MarkdownStyleChoiceKey]: RuleTable<K> } = {
+  bodyFont: noRules("bodyFont"),
+  headingFont: noRules("headingFont"),
+  codeFont: noRules("codeFont"),
+  headingNumbers: {
+    none: [],
+    // Sections are counted from the second level down; the title stands alone.
+    outline: [
+      ["&", "counter-reset: markie-h2"],
+      ["& h2", "counter-increment: markie-h2; counter-reset: markie-h3"],
+      ["& h3", "counter-increment: markie-h3"],
+      ["& h2::before", 'content: counter(markie-h2) "\\2002"; color: var(--muted); font-weight: 400'],
+      ["& h3::before", 'content: counter(markie-h2) "." counter(markie-h3) "\\2002"; color: var(--muted); font-weight: 400'],
+    ],
+  },
   headingScale: {
     standard: [],
     compact: sizes(1.6, 1.3, 1.12, 1, 0.92),
@@ -593,7 +672,7 @@ function numberRules(style: ResolvedMarkdownStyle): Rule[] {
 // property as a number or an earlier choice (indented paragraphs over the
 // block gap, a table header over a table's borders) is the one that holds.
 const CHOICE_ORDER: readonly MarkdownStyleChoiceKey[] = [
-  "headingScale", "headingWeight", "headingCase", "headingRule", "headingAlign",
+  "headingNumbers", "headingScale", "headingWeight", "headingCase", "headingRule", "headingAlign",
   "paragraphStyle",
   "bulletStyle", "orderedStyle", "markerColor",
   "taskStyle", "taskDone",
@@ -623,6 +702,78 @@ export function markdownStyleCss(style: unknown, scope: string = MARKDOWN_STYLE_
   if (rules.length === 0) return "";
   const lines = rules.map(([selectors, declarations]) => `${selectors.replaceAll("&", scope)} { ${declarations}; }`);
   if (resolved.choices.orderedStyle === "paren") lines.unshift(PAREN_COUNTER);
+  return lines.join("\n");
+}
+
+// ── Typefaces ───────────────────────────────────────────────────────────────
+
+/** The theme tokens a style's typefaces stand for. A face left to the template is absent. */
+export interface MarkdownStyleFontTokens {
+  bodyFont?: string;
+  headingFont?: string;
+  codeFont?: string;
+}
+
+/**
+ * A style's typefaces as theme tokens, to lay over a template's own. Empty
+ * for Spacious. `style` may be anything and is cleaned here.
+ */
+export function markdownStyleFontTokens(style: unknown): MarkdownStyleFontTokens {
+  const { choices } = resolveMarkdownStyle(style);
+  const tokens: MarkdownStyleFontTokens = {};
+  if (choices.bodyFont !== "theme") tokens.bodyFont = choices.bodyFont;
+  // "body" is the id the theme itself uses for a heading that follows the text.
+  if (choices.headingFont !== "theme") tokens.headingFont = choices.headingFont;
+  if (choices.codeFont !== "theme") tokens.codeFont = choices.codeFont;
+  return tokens;
+}
+
+/**
+ * The id a typeface is stored under in a style: itself when the lists know
+ * it, the bundled face it names when it is a font from one computer, and
+ * undefined for anything else.
+ */
+export function styleFontId<K extends MarkdownStyleFontKey>(key: K, id: unknown): (typeof MARKDOWN_STYLE_CHOICES)[K][number] | undefined {
+  const allowed = MARKDOWN_STYLE_CHOICES[key] as readonly string[];
+  if (typeof id !== "string" || id === "theme") return undefined;
+  if (allowed.includes(id)) return id as (typeof MARKDOWN_STYLE_CHOICES)[K][number];
+  const fallback = parseLocalTypefaceId(id)?.fallback.id;
+  return fallback && allowed.includes(fallback) ? (fallback as (typeof MARKDOWN_STYLE_CHOICES)[K][number]) : undefined;
+}
+
+/**
+ * `style` with the typefaces that are really being painted written into it:
+ * what a pinned look carries, so a reader gets the owner's faces from the
+ * style alone. `painted` are the tokens on screen (theme.ts findTheme).
+ */
+export function withPaintedFonts(style: unknown, painted: MarkdownStyleFontTokens): MarkdownStyle {
+  const base = canonicalMarkdownStyle(style);
+  const choices: Record<string, string> = { ...base.choices };
+  for (const key of MARKDOWN_STYLE_FONT_KEYS) {
+    const id = styleFontId(key, painted[key]);
+    if (id) choices[key] = id;
+    else delete choices[key];
+  }
+  return canonicalMarkdownStyle({ ...base, choices });
+}
+
+/**
+ * The rules that set a container's documents in a style's typefaces: for a
+ * preview in Settings and for a pinned page, where the faces belong to that
+ * container and not to the whole app. `scope` is the container's document
+ * selector (markdownStyleContainerScope). Empty for Spacious.
+ */
+export function markdownStyleFontCss(style: unknown, scope: string): string {
+  const fonts = markdownStyleFontTokens(style);
+  const stack = (id: string | undefined) => (id && id !== "body" ? findTypeface(id)?.stack : undefined);
+  const body = stack(fonts.bodyFont);
+  const heading = fonts.headingFont === "body" ? body : stack(fonts.headingFont);
+  const code = stack(fonts.codeFont);
+  const lines: string[] = [];
+  if (body) lines.push(`${scope} { --doc-font-family: ${body}; font-family: ${body}, system-ui, sans-serif; }`);
+  if (fonts.headingFont === "body") lines.push(`${scope} :is(h1, h2, h3, h4, h5, h6) { font-family: inherit; }`);
+  else if (heading) lines.push(`${scope} :is(h1, h2, h3, h4, h5, h6) { font-family: ${heading}; }`);
+  if (code) lines.push(`${scope} :is(code, pre, kbd, samp) { font-family: ${code}, ui-monospace, monospace; font-variant-ligatures: none; }`);
   return lines.join("\n");
 }
 

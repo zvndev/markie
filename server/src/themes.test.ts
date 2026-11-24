@@ -373,3 +373,40 @@ test("the server's copy of the style lists is the app's file", async () => {
   // Out of date? Run: (cd server && npm run markdown-style:sync)
   assert.equal(readFileSync(COPY, "utf8"), generated());
 });
+
+// ── Typefaces in a pinned style ─────────────────────────────────────────────
+
+test("a pinned style carries its typefaces to a public link, as listed ids only", async () => {
+  const docId = await sharedDoc();
+  const link = await call<{ url: string }>("POST", `/api/docs/${docId}/public-link`, owner, {});
+  const token = new URL(link.data!.url).pathname.split("/").pop()!;
+  const style = {
+    base: "technical",
+    choices: {
+      bodyFont: "literata",
+      headingFont: "body",
+      codeFont: "fira-code",
+      headingNumbers: "outline",
+    },
+  };
+  // The tokens name a code face too; a public link is handed no token outside
+  // its checked list, so the style is what carries it.
+  await call("PUT", `/api/docs/${docId}/theme`, owner, { tokens: { ...TOKENS, codeFont: "fira-code" }, style });
+  const read = await call<{ tokens: Record<string, unknown>; style: unknown }>("GET", `/s/${token}/theme`);
+  assert.deepEqual(read.data?.style, style);
+  assert.equal("codeFont" in read.data!.tokens, false);
+
+  const hostile = {
+    base: "compact",
+    choices: {
+      bodyFont: "local:inter:Evil'; } body { display: none",
+      headingFont: "x; background: url(https://evil.test/f.woff2)",
+      // A text face is not a code face, and a font on one computer is never stored.
+      codeFont: "literata",
+      headingNumbers: ATTACK,
+    },
+  };
+  await call("PUT", `/api/docs/${docId}/theme`, owner, { tokens: TOKENS, style: hostile });
+  assert.deepEqual((await call<Look>("GET", `/s/${token}/theme`)).data?.style, { base: "compact" });
+  assert.deepEqual((await call<Look>("GET", `/api/docs/${docId}/theme`, viewer)).data?.style, { base: "compact" });
+});

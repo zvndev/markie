@@ -54,6 +54,7 @@ import { SharePeopleSettings } from "./share-people";
 import { DefaultAppsSection } from "./default-apps-section";
 import { SelectChevron } from "./select-chevron";
 import { MarkdownStyleSection } from "./markdown-style-settings";
+import { FontLibraryControls } from "./font-library";
 
 export type SettingsSection = "account" | "appearance" | "files" | "advanced";
 
@@ -545,6 +546,12 @@ function AppearanceSection() {
                 onChange={(headingFont) => commit(setTypography(store, { headingFont }))}
               />
             </div>
+            {/* Font library hook (src/components/font-library.tsx): the code
+                font, and fonts installed on this computer. */}
+            <FontLibraryControls
+              onBodyFont={(bodyFont) => commit(setTypography(store, { bodyFont }))}
+              onHeadingFont={(headingFont) => commit(setTypography(store, { headingFont }))}
+            />
             <RangeRow
               label="Text size"
               value={typography.fontSize}

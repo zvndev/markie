@@ -1,7 +1,7 @@
 // A pinned look is another account's data: what of it a reader's client uses.
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { pinnedLookFrom, plainColor, safePinnedTokens } from "./pinned-look";
+import { pinnedLookFrom, pinnedLookTokens, pinnedLookType, plainColor, safePinnedTokens } from "./pinned-look";
 
 const TOKENS = { background: "#101010", surface: "#181818", surface2: "#202020", foreground: "#fafafa", muted: "#a1a1aa", border: "#333", accent: "#444", link: "#60a5fa" };
 
@@ -37,11 +37,36 @@ describe("pinnedLookFrom", () => {
   });
 
   it("reads a pin made before styles existed as tokens with no style", () => {
-    expect(pinnedLookFrom({ tokens: TOKENS })).toEqual({ tokens: TOKENS, style: null });
+    expect(pinnedLookFrom({ tokens: TOKENS })).toEqual({ tokens: TOKENS, type: {}, style: null });
   });
 
   it("cleans the style, and keeps it when the colours cannot be used", () => {
-    expect(pinnedLookFrom({ tokens: TOKENS, style: { base: "classic", choices: { tableStyle: "grid", linkStyle: "x" }, future: true } })).toEqual({ tokens: TOKENS, style: { base: "classic", choices: { tableStyle: "grid" } } });
-    expect(pinnedLookFrom({ tokens: { background: "var(--x)" }, style: { base: "classic" } })).toEqual({ tokens: null, style: { base: "classic" } });
+    expect(pinnedLookFrom({ tokens: TOKENS, style: { base: "classic", choices: { tableStyle: "grid", linkStyle: "x" }, future: true } })).toEqual({ tokens: TOKENS, type: {}, style: { base: "classic", choices: { tableStyle: "grid" } } });
+    expect(pinnedLookFrom({ tokens: { background: "var(--x)", lineHeight: 1.9 }, style: { base: "classic" } })).toEqual({ tokens: null, type: { lineHeight: 1.9 }, style: { base: "classic" } });
+  });
+});
+
+describe("the faces a pinned look is read in", () => {
+  it("keeps the pinned tokens' own text faces, and takes the code face from the style", () => {
+    const look = pinnedLookFrom({ tokens: { ...TOKENS, bodyFont: "literata", headingFont: "eb-garamond", codeFont: "source-code" }, style: { base: "technical", choices: { codeFont: "fira-code" } } })!;
+    expect(pinnedLookTokens(look)).toMatchObject({ background: "#101010", bodyFont: "literata", headingFont: "eb-garamond", codeFont: "fira-code" });
+  });
+
+  it("takes every face from the style when the tokens name none, as on a public link or an old pin", () => {
+    const look = pinnedLookFrom({ tokens: TOKENS, style: { base: "editorial" } })!;
+    expect(pinnedLookTokens(look)).toMatchObject({ bodyFont: "source-serif", headingFont: "playfair", codeFont: "fira-code" });
+    expect(pinnedLookTokens(pinnedLookFrom({ tokens: TOKENS })!)).toEqual(TOKENS);
+  });
+
+  it("gives the type alone when the colours cannot be used", () => {
+    const look = pinnedLookFrom({ tokens: { background: "url(x)", lineHeight: 1.9, bodyFont: "lora" }, style: { base: "minimal" } })!;
+    expect(pinnedLookTokens(look)).toBeNull();
+    expect(pinnedLookType(look)).toEqual({ lineHeight: 1.9, bodyFont: "lora", headingFont: "body", codeFont: "atkinson-mono" });
+  });
+
+  it("carries a hostile font id no further than a string for the theme to refuse", () => {
+    const look = pinnedLookFrom({ tokens: { ...TOKENS, bodyFont: "x'; } body { display: none", codeFont: "y".repeat(500) }, style: { choices: { codeFont: "} body {" } } })!;
+    expect(look.type.codeFont).toBeUndefined();
+    expect(pinnedLookTokens(look)?.codeFont).toBeUndefined();
   });
 });

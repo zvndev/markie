@@ -9,7 +9,7 @@
 // drifted and offers to update it.
 import { useCallback, useEffect, useState } from "react";
 import { activeTemplate, findTheme, loadThemeStore } from "@/lib/theme";
-import { activeMarkdownStyleName, markdownStyleStoreOf, pinnableMarkdownStyle, sameMarkdownStyle } from "@/lib/markdown-style";
+import { activeMarkdownStyleName, markdownStyleStoreOf, pinnableMarkdownStyle, sameMarkdownStyle, withPaintedFonts } from "@/lib/markdown-style";
 import { docLookState, setDocLook, type DocLook } from "@/lib/theme-sync";
 
 type State = "loading" | "unknown" | { pinned: boolean; look: DocLook | null };
@@ -18,8 +18,12 @@ type State = "loading" | "unknown" | { pinned: boolean; look: DocLook | null };
 function ownLook(): { look: DocLook; label: string } {
   const store = loadThemeStore();
   const styles = markdownStyleStoreOf(store);
+  const tokens = findTheme(store, store.activeId).tokens;
   return {
-    look: { tokens: findTheme(store, store.activeId).tokens, style: pinnableMarkdownStyle(styles) },
+    // The style carries the faces actually on screen (the style's own, or the
+    // ones this person chose over them), so a reader gets them from the
+    // style alone: the code face reaches a public link no other way.
+    look: { tokens, style: withPaintedFonts(pinnableMarkdownStyle(styles), tokens) },
     label: `${activeTemplate(store).name} theme, ${activeMarkdownStyleName(styles)} style`,
   };
 }

@@ -3,6 +3,7 @@
 import { getAuthToken, getServerURL } from "@/lib/auth-client";
 import { loadThemeStore, saveThemeStore, type ThemeTokens } from "@/lib/theme";
 import { sanitizeMarkdownStyle, type MarkdownStyle } from "@/lib/markdown-style-schema";
+import { adoptLocalTypefacesIn } from "@/lib/fonts/registry";
 
 async function call<T>(
   method: string,
@@ -36,6 +37,9 @@ export async function pullCloudThemes(): Promise<CloudStore | false | null> {
   const res = await call<{ store: CloudStore | null }>("GET", "/api/me/themes");
   if (!res) return null;
   if (!res.store) return false;
+  // A font chosen on another computer arrives as a local id; adopt it so the
+  // theme keeps it (it paints as its bundled fallback here).
+  adoptLocalTypefacesIn(res.store);
   saveThemeStore(res.store);
   return res.store;
 }
@@ -49,6 +53,7 @@ export async function getDocTheme(docId: string): Promise<ThemeTokens | null> {
     "GET",
     `/api/docs/${encodeURIComponent(docId)}/theme`
   );
+  adoptLocalTypefacesIn(res?.tokens);
   return res?.tokens ?? null;
 }
 

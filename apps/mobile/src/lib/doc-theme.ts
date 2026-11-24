@@ -14,9 +14,10 @@
 //
 // The result is a set of CSS variables for the element around the article,
 // so nothing outside the document changes.
+import { adoptLocalTypefacesIn } from "@/lib/fonts/registry";
 import { DEFAULT_TYPOGRAPHY, editorThemeForTokens, typographyVars, typographyOf, type ThemeTokens } from "@/lib/theme";
-import { plainColor } from "@/lib/pinned-look";
-import { markdownStyleCss } from "@/lib/markdown-style";
+import { pinnedLookFrom, pinnedLookType, plainColor } from "@/lib/pinned-look";
+import { markdownStyleCss, markdownStyleFontCss, markdownStyleFontTokens } from "@/lib/markdown-style";
 import type { Tone } from "./theme-mode";
 
 const SOLID_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -58,7 +59,23 @@ export const DOC_STYLE_SCOPE = ".m-doc-themed.m-doc-themed .markdown-body.m-mark
  * (src/lib/markdown-style.ts), so nothing the server sent is ever CSS.
  */
 export function docStyleCss(style: unknown): string {
-  return markdownStyleCss(style, DOC_STYLE_SCOPE);
+  // The code face is a rule of its own here. The text and heading faces reach
+  // the article as custom properties, with the rest of the type (docLookTokens).
+  const code = markdownStyleFontTokens(style).codeFont;
+  const faces = code ? markdownStyleFontCss({ choices: { codeFont: code } }, DOC_STYLE_SCOPE) : "";
+  return [faces, markdownStyleCss(style, DOC_STYLE_SCOPE)].filter(Boolean).join("\n");
+}
+
+/**
+ * The pinned tokens with the pinned style's faces settled into them, for
+ * docThemeStyle: the tokens' own body and heading faces stand, and the style
+ * supplies what they do not name. Anything that is not a token set is
+ * returned as it came.
+ */
+export function docLookTokens(tokens: unknown, style: unknown): unknown {
+  const look = pinnedLookFrom({ tokens, style });
+  if (!look) return tokens;
+  return { ...(tokens as object), ...pinnedLookType(look) };
 }
 
 /** What of a pinned theme the reading screen uses, or null when there is nothing usable. */
@@ -68,6 +85,9 @@ export function docThemeStyle(tokens: unknown, tone: Tone): DocThemeStyle | null
   const vars: Record<string, string> = {};
 
   // Type. typographyOf keeps faces to the desktop's own list and numbers in range.
+  // A font from the owner's computer arrives as a local id; here it paints as
+  // the bundled face that id names.
+  adoptLocalTypefacesIn(raw);
   const type = typographyVars(raw);
   if (type["--doc-font-family"]) vars["--doc-font-family"] = type["--doc-font-family"];
   if (type["--doc-heading-family"]) vars["--doc-heading-family"] = type["--doc-heading-family"];

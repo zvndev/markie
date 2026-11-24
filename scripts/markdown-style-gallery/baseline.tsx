@@ -9,6 +9,8 @@
 import "@/app/globals.css";
 import { createRoot } from "react-dom/client";
 import { applyColorMode } from "@/lib/color-mode";
+import { installBundledFonts } from "@/lib/fonts/bundled-fonts";
+import { startCodeFont } from "@/lib/fonts/code-font";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { MARKDOWN_STYLE_SAMPLE } from "./sample";
 
@@ -19,6 +21,10 @@ import.meta.glob("/src/components/markdown-style*.css", { eager: true });
 
 const tone = new URLSearchParams(window.location.search).get("tone") === "dark" ? "dark" : "light";
 localStorage.clear();
+// The app's own boot (src/main.tsx): the bundled faces are declared and the
+// code font is kept painted, before the theme is.
+installBundledFonts();
+startCodeFont();
 applyColorMode(tone);
 
 createRoot(document.getElementById("root")!).render(

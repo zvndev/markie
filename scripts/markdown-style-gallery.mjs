@@ -8,9 +8,10 @@
 //
 //   presets/<preset>-<tone>.png   the sample document in every preset, light and dark
 //   presets/contact-<tone>.png    all six side by side
+//   presets/thumbnails.png        all six at thumbnail size, light over dark
 //   editor/*.png                  the Settings section and the style editor
 //   export/*.png, *.html, *.pdf   the exported page and PDF in a style
-//   hosted/*.png                  a real public link, before and after a look is pinned
+//   hosted/*.png                  a real public link and a member's /d/ page, before and after a look is pinned
 //   spacious/*.png, report.json   the before/after pixel comparison
 //
 // The Spacious proof (--baseline) serves scripts/markdown-style-gallery/baseline.tsx
@@ -38,8 +39,9 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const out = path.join(root, ".autoloop", "runs", "markdown-styles");
 const args = new Map(process.argv.slice(2).map((arg) => { const [key, value = "1"] = arg.replace(/^--/, "").split("="); return [key, value]; }));
+// --out=<name> writes into a folder of that name under the gallery's own.
+const out = path.join(root, ".autoloop", "runs", "markdown-styles", /^[a-z0-9-]{1,32}$/.test(args.get("out") ?? "") ? args.get("out") : "");
 const only = args.has("only") ? new Set(args.get("only").split(",")) : null;
 const wants = (part) => !only || only.has(part);
 const PRESETS = ["spacious", "compact", "classic", "technical", "editorial", "minimal"];
@@ -156,6 +158,17 @@ async function contactSheet(page, files, target, columns = 3) {
   await page.screenshot({ path: target, fullPage: true });
 }
 
+/** The six presets in one row per tone, each cut to the top of its page: what tells them apart at a glance. */
+async function thumbnailSheet(page, rows, target) {
+  const cells = await Promise.all(rows.flat().map(async ({ label, file, tone }) => ({ label, tone, src: `data:image/png;base64,${(await readFile(file)).toString("base64")}` })));
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.setContent(`<!doctype html><body style="margin:0;padding:20px;background:#8a8a8a;font:600 15px system-ui;display:grid;grid-template-columns:repeat(${rows[0].length},1fr);gap:14px">
+    ${cells.map(({ label, tone, src }) => `<figure style="margin:0;border-radius:6px;overflow:hidden;background:${tone === "dark" ? "#09090b" : "#f8fafc"}"><figcaption style="padding:7px 10px;background:#111;color:#fff">${label}</figcaption><div style="height:390px;overflow:hidden"><img src="${src}" style="width:136%;margin-left:-18%;display:block"></div></figure>`).join("")}
+  </body>`);
+  await page.evaluate(() => Promise.all(Array.from(document.images, (img) => img.decode())));
+  await page.screenshot({ path: target, fullPage: true });
+}
+
 // ── Hosted ──────────────────────────────────────────────────────────────────
 
 function run(command, commandArgs, options = {}) {
@@ -222,9 +235,11 @@ async function startHostedServer(dir = root) {
     const { signUpVerified } = await import("./src/test-users.ts");
     const user = await signUpVerified({ request: (p, init) => fetch(${JSON.stringify(origin)} + p, init) }, { name: "Gallery Owner", email: "owner-" + Date.now() + "@markie.test" });
     console.log("TOKEN=" + user.token);
+    console.log("EMAIL=" + user.email);
     process.exit(0);
   `);
   const token = /TOKEN=(\S+)/.exec(output)?.[1];
+  const email = /EMAIL=(\S+)/.exec(output)?.[1];
   if (!token) throw new Error("Could not make the gallery's account.");
   const api = async (method, route, body) => {
     const res = await fetch(`${origin}${route}`, {
@@ -236,7 +251,7 @@ async function startHostedServer(dir = root) {
     if (!res.ok) throw new Error(`${method} ${route} answered ${res.status}: ${text.slice(0, 300)}`);
     return text ? JSON.parse(text) : null;
   };
-  return { origin, api, stop: async () => { child.kill("SIGTERM"); await rm(data, { recursive: true, force: true }); } };
+  return { origin, api, email, stop: async () => { child.kill("SIGTERM"); await rm(data, { recursive: true, force: true }); } };
 }
 
 // ── Run ─────────────────────────────────────────────────────────────────────
@@ -256,17 +271,21 @@ try {
   closers.push(here.close);
 
   if (wants("presets")) {
+    const rows = [];
     for (const tone of TONES) {
       const sheet = [];
       for (const preset of PRESETS) {
         await open(page, `${here.origin}${HARNESS}/harness.html?view=doc&style=${preset}&tone=${tone}`);
         const file = note(path.join(out, "presets", `${preset}-${tone}.png`));
         await page.screenshot({ path: file, fullPage: true });
-        sheet.push({ label: preset[0].toUpperCase() + preset.slice(1), file });
+        sheet.push({ label: preset[0].toUpperCase() + preset.slice(1), file, tone });
         console.log(`presets/${preset}-${tone}.png`);
       }
       await contactSheet(page, sheet, note(path.join(out, "presets", `contact-${tone}.png`)));
+      rows.push(sheet);
     }
+    await thumbnailSheet(page, rows, note(path.join(out, "presets", "thumbnails.png")));
+    console.log("presets/thumbnails.png");
   }
 
   if (wants("editor")) {
@@ -369,15 +388,46 @@ try {
       const link = await server.api("POST", `/api/docs/${id}/public-link`, {});
       return { id, url: String(link.url).replace(/^https?:\/\/[^/]+/, server.origin) };
     };
-    const capture = async (target, file) => {
+    // Every font file a page asks for, so the report can say which it used and from where.
+    // Each page is opened in a browser profile of its own, with nothing
+    // cached: a browser that already holds a font file asks for it again
+    // early, whether or not the page uses it, which would hide what a first
+    // visit really downloads.
+    report.hostedFonts = {};
+    const capture = async (target, file, signIn) => {
+      const fresh = await browser.newContext({ deviceScaleFactor: 2, colorScheme: "light" });
+      if (signIn) {
+        const answer = await fresh.request.post(`${new URL(target).origin}/api/auth/sign-in/email`, { data: signIn, headers: { Origin: new URL(target).origin } });
+        if (!answer.ok()) throw new Error(`The gallery's browser could not sign in: ${answer.status()}`);
+      }
+      const page = await fresh.newPage();
+      const fontRequests = [];
+      page.on("request", (request) => { if (/\.woff2?(\?|$)/.test(request.url())) fontRequests.push(request.url()); });
       await page.setViewportSize({ width: 1180, height: 900 });
       await page.goto(target, { waitUntil: "networkidle" });
       await page.waitForSelector("[data-web-view-content] h1", { timeout: 60_000 });
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForLoadState("networkidle");
+      // What the page is really set in: the first family of each element that a font file is loaded for.
+      report.hostedFonts[file] = {
+        requested: [...new Set(fontRequests.map((url) => url.replace(/^https?:\/\/[^/]+/, "").replace(/-[A-Za-z0-9_-]{8}\.woff2/, ".woff2")))].sort(),
+        offOrigin: fontRequests.filter((url) => !url.startsWith(new URL(target).origin)),
+        painted: await page.evaluate(() => {
+          const face = (selector) => {
+            const el = document.querySelector(`[data-web-view-content] ${selector}`);
+            if (!el) return null;
+            const first = getComputedStyle(el).fontFamily.split(",")[0].trim().replace(/^['"]|['"]$/g, "");
+            return { family: first, loaded: document.fonts.check(`16px "${first}"`) && Array.from(document.fonts).some((font) => font.family.replace(/^['"]|['"]$/g, "") === first && font.status === "loaded") };
+          };
+          return { body: face("p"), heading: face("h1"), code: face("pre code") };
+        }),
+      };
       await page.evaluate(() => Promise.all(Array.from(document.images, (img) => img.decode().catch(() => undefined))));
       await page.screenshot({ path: note(path.join(out, "hosted", file)), fullPage: false });
       await page.evaluate(() => { document.querySelector("[data-web-view-scroll]").style.overflow = "visible"; document.querySelector(".markie-view").style.height = "auto"; });
       await page.screenshot({ path: note(path.join(out, "hosted", file.replace(".png", "-full.png"))), fullPage: true });
       console.log(`hosted/${file}`);
+      await fresh.close();
     };
     const { id: docId, url } = await publish(hosted);
     const shot = (name) => capture(url, name);
@@ -387,14 +437,19 @@ try {
     // Share dialog's "Readers see my look" sends them.
     const themeModule = await readFile(path.join(root, "scripts", "markdown-style-gallery", "custom-style.ts"), "utf8");
     const style = { ...new Function(`return (${/GALLERY_CUSTOM_STYLE: MarkdownStyle = (\{[\s\S]*\});/.exec(themeModule)[1]})`)(), name: "Field manual" };
+    // The faces the owner had on screen: bundled families, in the tokens (for
+    // clients that read tokens alone) and in the style (the code face).
+    const FACES = { bodyFont: style.choices.bodyFont, headingFont: style.choices.headingFont };
     const PAPER_LIGHT = { background: "#fbf8f1", surface: "#f2ede2", surface2: "#e9e2d3", foreground: "#2b2620", muted: "#5f564a", border: "#d9cfbc", docRule: "#e2d9c7", accent: "#efe1c4", link: "#9a3b12", statusGreen: "#3f6212", statusYellow: "#7c4f00", statusRed: "#9f1d1d", statusBlue: "#1e4f8a", statusPurple: "#6b2f8a", bodyFont: "charter", headingFont: "iowan", lineHeight: 1.8, paragraphGap: 1, fontSize: 17, contentWidth: 720 };
     const STUDIO_DARK = { background: "#0d1117", surface: "#161b22", surface2: "#1c2230", foreground: "#e6edf3", muted: "#9da7b3", border: "#30363d", docRule: "#21262d", accent: "#1f3a5f", link: "#58a6ff", statusGreen: "#56d364", statusYellow: "#e3b341", statusRed: "#ff7b72", statusBlue: "#79c0ff", statusPurple: "#d2a8ff", bodyFont: "system", headingFont: "mono", lineHeight: 1.6, paragraphGap: 0.6, fontSize: 15, contentWidth: 880 };
-    await hosted.api("PUT", `/api/docs/${docId}/theme`, { tokens: PAPER_LIGHT, style });
+    await hosted.api("PUT", `/api/docs/${docId}/theme`, { tokens: { ...PAPER_LIGHT, ...FACES }, style });
     report.hostedLook = await (await fetch(url.replace(/\/?$/, "/theme"))).json();
     await shot("public-link-pinned-custom-style-paper-light.png");
-    await hosted.api("PUT", `/api/docs/${docId}/theme`, { tokens: STUDIO_DARK, style });
+    // The same document on its member page, /d/<id>, read with a signed-in browser.
+    await capture(`${hosted.origin}/d/${docId}`, "member-page-pinned-custom-style-paper-light.png", { email: hosted.email, password: "password-123" });
+    await hosted.api("PUT", `/api/docs/${docId}/theme`, { tokens: { ...STUDIO_DARK, ...FACES }, style });
     await shot("public-link-pinned-custom-style-studio-dark.png");
-    await hosted.api("PUT", `/api/docs/${docId}/theme`, { tokens: PAPER_LIGHT, style: { base: "editorial" } });
+    await hosted.api("PUT", `/api/docs/${docId}/theme`, { tokens: { ...PAPER_LIGHT, bodyFont: "source-serif", headingFont: "playfair" }, style: { base: "editorial" } });
     await shot("public-link-pinned-editorial-paper-light.png");
     // Unpinning gives the hosted page its own look back.
     await hosted.api("PUT", `/api/docs/${docId}/theme`, { tokens: null, style: null });
@@ -423,6 +478,18 @@ try {
   if (report.hostedUnpinned && (report.hostedUnpinned.mainVsBranch.different > 0 || report.hostedUnpinned.mainVsUnpinnedAgain.different > 0 || !report.hostedUnpinned.controlPinnedDiffers)) {
     console.error("The hosted page with no look pinned changed.");
     process.exitCode = 1;
+  }
+  if (report.hostedFonts) {
+    const pinned = Object.entries(report.hostedFonts).filter(([file]) => file.includes("-pinned-"));
+    // A page with no look pinned is set in the reader's own system faces and downloads no font at all.
+    const quiet = Object.entries(report.hostedFonts).filter(([file]) => !file.includes("-pinned-") && !file.includes("-main"));
+    for (const [file, fonts] of quiet) if (fonts.requested.length > 0) { console.error(`${file} downloaded fonts it does not use: ${fonts.requested.join(", ")}`); process.exitCode = 1; }
+    const bad = pinned.filter(([, fonts]) => fonts.offOrigin.length > 0 || !fonts.painted.body?.loaded || !fonts.painted.heading?.loaded || !fonts.painted.code?.loaded);
+    for (const [file, fonts] of pinned) console.log(`${file}: ${fonts.painted.body?.family} / ${fonts.painted.heading?.family} / ${fonts.painted.code?.family}, ${fonts.requested.length} font files`);
+    if (bad.length > 0) {
+      console.error(`A pinned page did not load its bundled fonts from its own origin: ${bad.map(([file]) => file).join(", ")}`);
+      process.exitCode = 1;
+    }
   }
   if (report.spacious) {
     const blind = Object.entries(report.spacious).filter(([, result]) => !result.controlCompactDiffers);

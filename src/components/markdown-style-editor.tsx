@@ -8,6 +8,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import {
   MARKDOWN_STYLE_CHOICES,
   MARKDOWN_STYLE_CHOICE_LABELS,
+  MARKDOWN_STYLE_FONT_KEYS,
   MARKDOWN_STYLE_GROUPS,
   MARKDOWN_STYLE_NUMBERS,
   MARKDOWN_STYLE_NUMBER_LABELS,
@@ -30,6 +31,10 @@ import {
   type MarkdownStyleNumberKey,
   type MarkdownStyleStore,
 } from "@/lib/markdown-style";
+import { findTypeface } from "@/lib/fonts/registry";
+import { loadCodeFont } from "@/lib/fonts/code-font";
+import { loadThemeStore } from "@/lib/theme";
+import { FontPicker, type FontChoice } from "./font-library";
 import { MarkdownStyleScope } from "./markdown-style-scope";
 import { SelectChevron } from "./select-chevron";
 
@@ -71,6 +76,8 @@ export function MarkdownStyleEditor({
   const edited = markdownStyleEdited(store);
   const profile = store.profiles.find((entry) => entry.id === store.activeId);
   const presetName = findMarkdownStylePreset(resolved.base)?.name ?? "Spacious";
+  // A face the person picked themselves stands over the style's (theme.ts findTheme).
+  const ownFonts = ownFontChoices();
 
   // The render pipeline is large and only needed here, so it loads with the editor.
   useEffect(() => {
@@ -87,6 +94,8 @@ export function MarkdownStyleEditor({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // An open font menu takes its own Escape.
+      if (event.target instanceof Element && event.target.closest('[role="menu"]')) return;
       event.stopPropagation();
       if (naming !== null) setNaming(null);
       else onClose();
@@ -101,7 +110,8 @@ export function MarkdownStyleEditor({
     if (!next) return;
     const target = preview.current?.querySelector(GROUP_TARGET[group.id] ?? "h1");
     const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    target?.scrollIntoView?.({ block: "center", behavior: reduce ? "auto" : "smooth" });
+    // The typefaces are the whole page; there is nowhere to scroll to.
+    if (group.id !== "typefaces") target?.scrollIntoView?.({ block: "center", behavior: reduce ? "auto" : "smooth" });
   };
 
   const saveAs = () => {
@@ -241,6 +251,11 @@ export function MarkdownStyleEditor({
                           onChange={(value) => onCommit(editMarkdownStyle(store, { numbers: { [key]: value } }), true)}
                         />
                       ))}
+                      {group.id === "typefaces" && ownFonts ? (
+                        <p className="text-[11px] text-muted" data-markdown-style-own-fonts="">
+                          You chose {ownFonts} yourself in Typography, and that choice is used instead. Reset it there to see this style&apos;s.
+                        </p>
+                      ) : null}
                       {group.id === "images" ? (
                         <p className="text-[11px] text-muted">A caption is italic text on the line straight after a picture.</p>
                       ) : null}
@@ -272,6 +287,13 @@ export function MarkdownStyleEditor({
   );
 }
 
+/** Which faces the person set themselves, in words, or "" for none. */
+function ownFontChoices(): string {
+  const typography = loadThemeStore().typography ?? {};
+  const own = [typography.bodyFont ? "the text font" : "", typography.headingFont ? "the heading font" : "", loadCodeFont() ? "the code font" : ""].filter(Boolean);
+  return own.length > 1 ? `${own.slice(0, -1).join(", ")} and ${own[own.length - 1]}` : (own[0] ?? "");
+}
+
 /** What a closed row says about itself: its current choices, in words. */
 function summary(group: MarkdownStyleGroup, resolved: ReturnType<typeof resolveMarkdownStyle>): string {
   const parts = group.choices.slice(0, 3).map((key) => (MARKDOWN_STYLE_CHOICE_LABELS[key].options as Record<string, string>)[resolved.choices[key]]);
@@ -279,8 +301,26 @@ function summary(group: MarkdownStyleGroup, resolved: ReturnType<typeof resolveM
   return parts.join(", ");
 }
 
+/** A typeface choice as the font picker's list: the template's own first, then every face by group. */
+function faceChoices(choice: MarkdownStyleChoiceKey): FontChoice[] {
+  const labels = MARKDOWN_STYLE_CHOICE_LABELS[choice].options as Record<string, string>;
+  return (MARKDOWN_STYLE_CHOICES[choice] as readonly string[]).map((id) => {
+    const face = findTypeface(id);
+    return { id, label: labels[id], stack: face?.stack ?? "inherit", group: face?.group };
+  });
+}
+
 function ChoiceRow({ choice, value, onChange }: { choice: MarkdownStyleChoiceKey; value: string; onChange: (value: string) => void }) {
   const { label, options } = MARKDOWN_STYLE_CHOICE_LABELS[choice];
+  // Thirty faces do not fit a row of chips: a typeface gets the font picker,
+  // each name drawn in its own face.
+  if ((MARKDOWN_STYLE_FONT_KEYS as readonly string[]).includes(choice)) {
+    return (
+      <div data-markdown-style-font={choice}>
+        <FontPicker label={label} value={value} choices={faceChoices(choice)} onChange={onChange} />
+      </div>
+    );
+  }
   return (
     <div>
       <div className="text-[11px] text-muted mb-1.5">{label}</div>

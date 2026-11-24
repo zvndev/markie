@@ -324,6 +324,11 @@ export interface PDFOptions {
    * such an export is the same bytes it always was.
    */
   markdownStyle?: unknown;
+  /**
+   * The stylesheet src/lib/fonts/export-fonts.ts makes: the bundled faces the
+   * document uses, inside the sheet, and the rules that apply them.
+   */
+  fontCss?: string;
 }
 
 // A style's rules read the app's theme variables. An exported page has none,
@@ -431,17 +436,34 @@ function neutralizeBodyBreakouts(html: string): string {
   return html.replace(/<(\/?)(style|script)\b/gi, "&lt;$1$2");
 }
 
+//
+// `fontCss` is the stylesheet src/lib/fonts/export-fonts.ts makes: the bundled
+// fonts the document uses, inside the file, and the rules that apply them. It
+// comes after the theme's own rules so it wins, and it is CSS Markie wrote
+// from registry ids, never a document's text.
+/** The options an export was asked for. A bare string is the font stylesheet, as callers passed it before options existed. */
+function pdfOptions(extra: PDFOptions | string): PDFOptions {
+  return typeof extra === "string" ? { fontCss: extra } : extra;
+}
+
+/** The font stylesheet in a style element of its own, after the page's, or "" for none. */
+function fontBlock(options: PDFOptions): string {
+  return options.fontCss ? `\n<style>${options.fontCss.replace(/<\/(style)/gi, "<\\/$1")}</style>` : "";
+}
+
 export async function buildPDFHTML(
   markdownHTML: string,
   theme: PDFTheme,
-  options: PDFOptions = {}
+  extra: PDFOptions | string = {}
 ): Promise<string> {
-  return pdfDocument(await getPDFStyles(theme, options), markdownHTML);
+  const options = pdfOptions(extra);
+  return pdfDocument(`${await getPDFStyles(theme, options)}${fontBlock(options)}`, markdownHTML);
 }
 
 // The KaTeX-less variant. Same document, same guards.
-export function buildPDFHTMLSync(markdownHTML: string, theme: PDFTheme, options: PDFOptions = {}): string {
-  return pdfDocument(getPDFStylesSync(theme, options), markdownHTML);
+export function buildPDFHTMLSync(markdownHTML: string, theme: PDFTheme, extra: PDFOptions | string = {}): string {
+  const options = pdfOptions(extra);
+  return pdfDocument(`${getPDFStylesSync(theme, options)}${fontBlock(options)}`, markdownHTML);
 }
 
 function pdfDocument(styles: string, markdownHTML: string): string {

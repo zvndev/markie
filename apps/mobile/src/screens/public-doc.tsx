@@ -12,7 +12,7 @@ import { docExportSource } from "../lib/export";
 import { publicLinkErrorCopy } from "../lib/public-link";
 import { displayName } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
-import { docStyleCss, docThemeStyle } from "../lib/doc-theme";
+import { docLookTokens, docStyleCss, docThemeStyle } from "../lib/doc-theme";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
 import { CsvTable } from "@/components/csv-table/csv-table";
@@ -85,7 +85,7 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
 
   const doc = state.status === "ready" ? state.doc : null;
   const isWd = doc?.format === "darkmown";
-  const themed = useMemo(() => docThemeStyle(pinned?.tokens, tone), [pinned, tone]);
+  const themed = useMemo(() => docThemeStyle(docLookTokens(pinned?.tokens, pinned?.style), tone), [pinned, tone]);
   const styleCss = useMemo(() => (themed ? docStyleCss(pinned?.style) : ""), [themed, pinned]);
   // A CSV or TSV reads as its table, which scrolls itself both ways.
   const isCsv = doc?.format === "text" && isCsvName(doc.name);

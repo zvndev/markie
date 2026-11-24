@@ -298,8 +298,15 @@ export function FormattingToolbar({
         className="markie-overlay-field text-[11px] h-7 px-1.5 shrink-0"
       >
         {selecting && <option value="">{fontPlaceholder}</option>}
-        {fonts.map((f) => (
-          <option key={f.id} value={f.id}>{f.label}</option>
+        {fonts.filter((f) => !f.group).map((f) => (
+          <option key={f.id} value={f.id} style={f.stack ? { fontFamily: f.stack } : undefined}>{f.label}</option>
+        ))}
+        {[...new Set(fonts.map((f) => f.group).filter((group): group is string => !!group))].map((group) => (
+          <optgroup key={group} label={group}>
+            {fonts.filter((f) => f.group === group).map((f) => (
+              <option key={f.id} value={f.id} style={f.stack ? { fontFamily: f.stack } : undefined}>{f.label}</option>
+            ))}
+          </optgroup>
         ))}
       </select>
       </OverflowTools>

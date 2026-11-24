@@ -8,10 +8,13 @@
 import "@/app/globals.css";
 import { createRoot } from "react-dom/client";
 import { applyColorMode } from "@/lib/color-mode";
+import { installBundledFonts } from "@/lib/fonts/bundled-fonts";
+import { startCodeFont } from "@/lib/fonts/code-font";
+import { exportFontCss } from "@/lib/fonts/export-fonts";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
 import { MARKDOWN_STYLE_PRESETS, activeMarkdownStyle, saveMarkdownStyleAs, editMarkdownStyle, chooseMarkdownStyle, type MarkdownStyleStore } from "@/lib/markdown-style";
 import { commitMarkdownStyleStore, loadMarkdownStyleStore } from "@/lib/markdown-style-store";
-import { buildPDFHTMLSync } from "@/lib/pdf-styles";
+import { buildPDFHTML } from "@/lib/pdf-styles";
 import { MarkdownStyleSection } from "@/components/markdown-style-settings";
 import { GALLERY_CUSTOM_STYLE } from "./custom-style";
 import { MARKDOWN_STYLE_SAMPLE } from "./sample";
@@ -22,6 +25,9 @@ const view = params.get("view") ?? "doc";
 const styleId = params.get("style") ?? "spacious";
 
 localStorage.clear();
+// The app's own boot (src/main.tsx).
+installBundledFonts();
+startCodeFont();
 applyColorMode(tone);
 
 // The store a person would have after choosing this style in Settings.
@@ -38,10 +44,14 @@ const html = renderMarkdownHTML(MARKDOWN_STYLE_SAMPLE);
 const ready = () => void document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(() => (document.body.dataset.ready = "1"))));
 
 if (view === "export") {
-  const page = buildPDFHTMLSync(html, params.get("theme") === "dark" ? "dark" : "light", { markdownStyle: activeMarkdownStyle(store) });
-  document.open();
-  document.write(page.replace("</body>", '<script>document.body.dataset.ready = "1";</script></body>'));
-  document.close();
+  // The export as the app makes it (src/lib/use-export.ts): the style's rules,
+  // and the bundled faces it is set in, inside the file.
+  void exportFontCss(html).then(async (fontCss) => {
+    const page = await buildPDFHTML(html, params.get("theme") === "dark" ? "dark" : "light", { markdownStyle: activeMarkdownStyle(store), fontCss });
+    document.open();
+    document.write(page.replace("</body>", '<script>document.fonts.ready.then(function () { document.body.dataset.ready = "1"; });</script></body>'));
+    document.close();
+  });
 } else if (view === "settings") {
   createRoot(document.getElementById("root")!).render(
     <div className="markie-shell" style={{ minHeight: "100vh", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 32 }}>

@@ -31,6 +31,9 @@ import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
 import { docLookTokens, docStyleCss, docThemeStyle } from "../lib/doc-theme";
 import type { ShareMember } from "../lib/api";
 
+// A web address in a CSV cell opens outside the app, as a link in a document does.
+const openCsvLink = (url: string) => { void openExternal(url).catch(() => undefined); };
+
 interface DocumentProps {
   api: ApiClient;
   target: LinkTarget;
@@ -282,7 +285,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           <OfflineNote api={api} doc={doc} onChanged={() => void load()} onGone={onRecent} onUnauthorized={onUnauthorized} />
           {doc.format === "markdown" ? <div ref={articleHost} className={themed ? `m-doc-themed${themed.colors ? " has-colors" : ""}` : undefined} style={themed ? (themed.vars as CSSProperties) : undefined}>{styleCss ? <style data-doc-style="">{styleCss}</style> : null}<MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
           {doc.format === "text" && !isCsv ? <pre className="m-text-doc">{doc.content}</pre> : null}
-          {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={doc.content} name={doc.name} readOnly compact /></div> : null}
+          {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={doc.content} name={doc.name} readOnly compact onOpenLink={openCsvLink} /></div> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>
       ) : null}

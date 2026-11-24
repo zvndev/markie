@@ -1,18 +1,24 @@
-/* The CSV table (csv-table.tsx). Built from the app's own tokens, so it follows
-   every theme, light and dark; the hosted read view maps its own palette in
-   at the bottom. */
+/* The CSV sheet (csv-table.tsx): a spreadsheet's chrome around a lossless
+   table. Built from the app's own tokens, so it follows every theme, light and
+   dark; the hosted read view maps its own palette in at the bottom. */
 .csv-table {
   --csv-bg: var(--background);
   --csv-fg: var(--foreground);
   --csv-muted: var(--muted);
-  --csv-line: color-mix(in srgb, var(--border) 78%, transparent);
-  --csv-head: color-mix(in srgb, var(--surface) 92%, var(--foreground) 3%);
-  --csv-bar: var(--surface);
   --csv-accent: var(--blue);
-  --csv-stripe: color-mix(in srgb, var(--foreground) 2.6%, var(--csv-bg));
-  --csv-hover: color-mix(in srgb, var(--foreground) 5%, var(--csv-bg));
-  --csv-select: color-mix(in srgb, var(--csv-accent) 15%, var(--csv-bg));
-  --csv-row: 30px;
+  --csv-negative: var(--status-red, #dc2626);
+  --csv-bar: var(--surface);
+  /* Gridlines are solid colours, never see-through, so a line is one crisp pixel on any fill. */
+  --csv-line: color-mix(in srgb, var(--border) 88%, var(--csv-bg));
+  --csv-line-faint: color-mix(in srgb, var(--csv-line) 50%, var(--csv-bg));
+  --csv-rule: color-mix(in srgb, var(--csv-fg) 34%, var(--csv-bg));
+  /* The letters and the row numbers, and the header row, each a step off the page. */
+  --csv-chrome: color-mix(in srgb, var(--csv-fg) 5%, var(--csv-bg));
+  --csv-head: color-mix(in srgb, var(--csv-fg) 8%, var(--csv-bg));
+  --csv-select: color-mix(in srgb, var(--csv-accent) 13%, var(--csv-bg));
+  --csv-chrome-select: color-mix(in srgb, var(--csv-accent) 22%, var(--csv-chrome));
+  --csv-row: 24px;
+  --csv-letters: 20px;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -23,6 +29,11 @@
   color: var(--csv-fg);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+
+.csv-table,
+.csv-table *,
+.csv-table *::before,
+.csv-table *::after { box-sizing: border-box; }
 
 /* ---- toolbar */
 .csv-table-bar {
@@ -134,26 +145,95 @@
   outline-offset: 1px;
 }
 
-.csv-table-summary {
-  margin-left: auto;
-  color: var(--csv-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+/* ---- name box and formula bar */
+.csv-table-formula {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  height: 28px;
+  border-bottom: 1px solid var(--csv-line);
+  background: var(--csv-bg);
+  font-size: 13px;
 }
 
-/* ---- grid */
+.csv-table-ref {
+  flex: none;
+  width: 76px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--csv-line);
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--csv-fg);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+span.csv-table-ref {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+input.csv-table-ref:focus { box-shadow: inset 0 0 0 2px var(--csv-accent); }
+input.csv-table-ref[aria-invalid="true"] { color: var(--csv-negative); }
+
+.csv-table-fx {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 0 9px 1px;
+  border-right: 1px solid var(--csv-line);
+  color: var(--csv-muted);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  font-style: italic;
+  user-select: none;
+}
+
+.csv-table-value {
+  flex: 1;
+  min-width: 0;
+  height: 27px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--csv-fg);
+  font: inherit;
+  line-height: 27px;
+  text-overflow: ellipsis;
+  white-space: pre;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+textarea.csv-table-value { scrollbar-width: none; }
+textarea.csv-table-value::-webkit-scrollbar { display: none; }
+textarea.csv-table-value:focus { box-shadow: inset 0 0 0 2px var(--csv-accent); }
+
+/* ---- the sheet */
 .csv-table-scroll {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
   outline: none;
+  background: var(--csv-bg);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
+.csv-table-letters,
 .csv-table-head,
 .csv-table-row {
   display: grid;
@@ -161,14 +241,111 @@
   min-width: 100%;
 }
 
-.csv-table-head {
+/* The column letters: frozen to the top, above everything. */
+.csv-table-letters {
   position: sticky;
   top: 0;
-  z-index: 3;
-  height: calc(var(--csv-row) + 1px);
+  z-index: 5;
+  height: var(--csv-letters);
+  background: var(--csv-chrome);
+}
+
+.csv-table-corner,
+.csv-table-letter {
+  border-right: 1px solid var(--csv-line);
   border-bottom: 1px solid var(--csv-line);
+  background: var(--csv-chrome);
+}
+
+.csv-table-corner {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  cursor: default;
+}
+
+/* The select-all corner, marked the way a spreadsheet marks it. */
+.csv-table-corner::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border: solid transparent;
+  border-width: 0 0 8px 8px;
+  border-bottom-color: color-mix(in srgb, var(--csv-muted) 55%, var(--csv-chrome));
+}
+
+.csv-table-corner:hover::after { border-bottom-color: var(--csv-muted); }
+
+.csv-table-letter {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  min-width: 0;
+  color: var(--csv-muted);
+  font-size: 0.85em;
+  font-weight: 500;
+  user-select: none;
+}
+
+.csv-table-letter.is-fill {
+  align-items: center;
+  overflow: hidden;
+  border-color: var(--csv-line-faint);
+  color: color-mix(in srgb, var(--csv-muted) 60%, var(--csv-chrome));
+}
+
+.csv-table-letter-pick {
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.csv-table-letter:not(.is-selected):hover { background: color-mix(in srgb, var(--csv-fg) 9%, var(--csv-bg)); }
+
+.csv-table-letter-sort {
+  position: absolute;
+  top: 0;
+  right: 5px;
+  bottom: 0;
+  width: 14px;
+  color: var(--csv-muted);
+  font-size: 0.9em;
+  opacity: 0;
+}
+
+.csv-table-letter-sort::before { content: "\2195"; }
+.csv-table-letter-sort[data-sort="asc"]::before { content: "\25B2"; color: var(--csv-accent); font-size: 0.7em; }
+.csv-table-letter-sort[data-sort="desc"]::before { content: "\25BC"; color: var(--csv-accent); font-size: 0.7em; }
+.csv-table-letter:hover .csv-table-letter-sort,
+.csv-table-letter.is-sorted .csv-table-letter-sort,
+.csv-table--compact .csv-table-letter-sort { opacity: 1; }
+
+/* The letter over the selection and the number beside it light up. */
+.csv-table-letter.is-selected,
+.csv-table-num.is-selected {
+  background: var(--csv-chrome-select);
+  color: var(--csv-fg);
+  font-weight: 600;
+}
+
+.csv-table-letter.is-selected { box-shadow: inset 0 -2px 0 var(--csv-accent); }
+.csv-table-num.is-selected { box-shadow: inset -2px 0 0 var(--csv-accent); }
+
+/* The header row: frozen under the letters, bold, filled, with a heavier rule below. */
+.csv-table-head {
+  position: sticky;
+  top: var(--csv-letters);
+  z-index: 4;
+  height: var(--csv-row);
   background: var(--csv-head);
 }
+
+.csv-table-head .csv-table-num,
+.csv-table-th { border-bottom: 2px solid var(--csv-rule); }
 
 .csv-table-body { position: relative; min-width: 100%; }
 
@@ -179,35 +356,24 @@
   background: var(--csv-bg);
 }
 
-.csv-table-row.is-odd { background: var(--csv-stripe); }
-.csv-table-row.is-editing { z-index: 2; }
+.csv-table-row.is-editing { z-index: 3; }
 
-.csv-table-corner,
 .csv-table-num {
   position: sticky;
   left: 0;
-  z-index: 1;
-  border-right: 1px solid var(--csv-line);
-  background: var(--csv-head);
-}
-
-.csv-table-corner { z-index: 2; }
-
-.csv-table-num {
+  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 0 8px 0 4px;
+  justify-content: center;
+  overflow: hidden;
+  border-right: 1px solid var(--csv-line);
+  border-bottom: 1px solid var(--csv-line);
+  background: var(--csv-chrome);
   color: var(--csv-muted);
   font-size: 0.85em;
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
   cursor: default;
   user-select: none;
-}
-
-.csv-table-num.is-selected {
-  background: color-mix(in srgb, var(--csv-accent) 18%, var(--csv-head));
-  color: var(--csv-fg);
 }
 
 .csv-table-th {
@@ -215,8 +381,11 @@
   display: flex;
   min-width: 0;
   border-right: 1px solid var(--csv-line);
-  font-weight: 600;
+  background: var(--csv-head);
+  font-weight: 650;
 }
+
+.csv-table-th.is-fill { border-right-color: var(--csv-line-faint); }
 
 .csv-table-sort {
   display: flex;
@@ -224,7 +393,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  padding: 0 10px;
+  padding: 0 8px;
   color: inherit;
   font: inherit;
   text-align: left;
@@ -263,10 +432,11 @@
   background: linear-gradient(90deg, transparent 3px, var(--csv-accent) 3px, var(--csv-accent) 5px, transparent 5px);
 }
 
+/* A cell: one crisp line on its right and below it, no stripes. */
 .csv-table-cell {
   position: relative;
   min-width: 0;
-  padding: 0 10px;
+  padding: 0 8px;
   overflow: hidden;
   border-right: 1px solid var(--csv-line);
   border-bottom: 1px solid var(--csv-line);
@@ -277,41 +447,87 @@
   user-select: none;
 }
 
-.csv-table-cell.is-number {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+/* How a value reads. Display only: the file keeps what was typed. */
+.csv-table-cell.is-number,
+.csv-table-cell.is-date { text-align: right; }
+.csv-table-cell.is-boolean { font-size: 0.92em; font-weight: 500; letter-spacing: 0.03em; text-align: center; }
+.csv-table-cell.is-negative { color: var(--csv-negative); }
+
+.csv-table-link {
+  color: var(--csv-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--csv-accent) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
-.csv-table-row:hover .csv-table-cell:not(.is-selected) { background: var(--csv-hover); }
+.csv-table-link:hover { text-decoration-color: currentColor; }
+
+/* The empty sheet past the data: the same grid, fainter. */
+.csv-table-cell.is-fill {
+  border-color: var(--csv-line-faint);
+  cursor: default;
+}
+
+.csv-table-row.is-fill .csv-table-num { color: color-mix(in srgb, var(--csv-muted) 60%, var(--csv-chrome)); }
+
+/* The selection: a tinted block, and the active cell clear inside a 2px ring. */
 .csv-table-cell.is-selected { background: var(--csv-select); }
+.csv-table-th.is-selected { background: color-mix(in srgb, var(--csv-accent) 16%, var(--csv-head)); }
+.csv-table-cell.is-selected.is-cursor { background: var(--csv-bg); }
 
-.csv-table-cell.is-cursor,
-.csv-table-th.is-cursor {
-  outline: 2px solid var(--csv-accent);
-  outline-offset: -2px;
+.csv-table-cell.is-cursor {
+  border-color: var(--csv-accent);
+  box-shadow: inset 2px 2px 0 var(--csv-accent), inset -1px -1px 0 var(--csv-accent);
 }
 
-.csv-table-th.is-selected { background: color-mix(in srgb, var(--csv-accent) 18%, var(--csv-head)); }
+.csv-table-th.is-cursor {
+  border-color: var(--csv-accent);
+  box-shadow: inset 2px 2px 0 var(--csv-accent), inset -1px 0 0 var(--csv-accent);
+}
+
+.csv-table-range {
+  position: absolute;
+  z-index: 1;
+  border: 1px solid var(--csv-accent);
+  pointer-events: none;
+}
+
+.csv-table-range.is-single { border-color: transparent; }
+.csv-table-range.is-open { border-top: 0; }
+
+/* The small square at the corner of the selection. */
+.csv-table-handle {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--csv-bg);
+  background: var(--csv-accent);
+}
+
+.csv-table-range.is-editing .csv-table-handle { display: none; }
+
 .csv-table-cell.is-editing,
-.csv-table-th.is-editing { overflow: visible; z-index: 2; }
+.csv-table-th.is-editing { overflow: visible; z-index: 2; box-shadow: none; }
 
 .csv-table-editor {
   position: absolute;
-  top: -1px;
-  left: -1px;
+  top: 0;
+  left: 0;
   z-index: 4;
-  box-sizing: border-box;
-  width: calc(100% + 2px);
+  width: calc(100% + 1px);
   min-width: 120px;
-  min-height: calc(var(--csv-row) + 1px);
-  padding: calc((var(--csv-row) - 1.25em) / 2) 9px;
+  min-height: var(--csv-row);
+  padding: calc((var(--csv-row) - 1.25em - 4px) / 2) 6px;
   border: 2px solid var(--csv-accent);
-  border-radius: 2px;
+  border-radius: 0;
   outline: 0;
   resize: none;
   background: var(--csv-bg);
   color: var(--csv-fg);
-  box-shadow: 0 6px 18px color-mix(in srgb, #000 22%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 22%, transparent);
   font: inherit;
   font-weight: 400;
   line-height: 1.25;
@@ -322,52 +538,92 @@
 }
 
 .csv-table-empty {
-  position: sticky;
+  position: absolute;
   left: 0;
   margin: 0;
-  padding: 28px 16px;
+  padding: 18px 16px;
   color: var(--csv-muted);
   font-size: 13px;
   text-align: center;
+  pointer-events: none;
 }
 
-/* ---- status line */
-.csv-table-status {
+/* ---- sheet tab and status bar */
+.csv-table-foot {
   display: flex;
   flex: none;
-  align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  padding: 0 12px;
+  align-items: stretch;
+  gap: 14px;
+  height: 28px;
+  padding-right: 12px;
+  overflow: hidden;
   border-top: 1px solid var(--csv-line);
   background: var(--csv-bar);
   color: var(--csv-muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.csv-table-ref {
-  flex: none;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--csv-fg) 8%, transparent);
+.csv-table-foot > * {
+  display: flex;
+  align-items: center;
+}
+
+.csv-table-tabs {
+  flex: 0 1 auto;
+  align-items: stretch;
+  min-width: 0;
+  max-width: min(50%, 300px);
+  padding-left: 10px;
+}
+
+/* The one sheet: a tab hanging from the grid, as in Excel and Numbers. */
+.csv-table-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: -1px;
+  padding: 0 12px 1px 10px;
+  border: 1px solid var(--csv-line);
+  border-top-color: var(--csv-bg);
+  border-bottom: 0;
+  background: var(--csv-bg);
+  box-shadow: inset 0 -2px 0 var(--csv-accent);
   color: var(--csv-fg);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 11px;
+  font-weight: 600;
 }
 
-.csv-table-value {
-  flex: 1;
+.csv-table-tab svg { flex: none; color: var(--csv-accent); }
+
+.csv-table-tab-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--csv-fg);
   text-overflow: ellipsis;
-  white-space: nowrap;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
-.csv-table-hint { color: var(--csv-muted); }
-.csv-table-detail { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.csv-table-summary { flex: none; }
+.csv-table-spacer { flex: 1 1 0; min-width: 0; }
+
+.csv-table-stats {
+  flex: none;
+  gap: 14px;
+}
+
+.csv-table-stats b {
+  margin-left: 5px;
+  color: var(--csv-fg);
+  font-weight: 600;
+}
+
+.csv-table-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ---- the raw file */
 .csv-table-text-host {
@@ -394,30 +650,31 @@
 }
 
 /* ---- phone */
-.csv-table--compact { --csv-row: 38px; }
+.csv-table--compact { --csv-row: 32px; --csv-letters: 24px; }
 .csv-table--compact .csv-table-bar { padding: 8px 12px; font-size: 13px; }
 .csv-table--compact .csv-table-switch button { min-height: 30px; padding: 0 14px; font-size: 13px; }
 .csv-table--compact .csv-table-filter { flex: 1 1 120px; height: 34px; }
 .csv-table--compact .csv-table-filter input { font-size: 16px; }
-.csv-table--compact .csv-table-summary { font-size: 12px; }
-.csv-table--compact .csv-table-status { min-height: 36px; font-size: 13px; }
-.csv-table--compact .csv-table-row:hover .csv-table-cell:not(.is-selected) { background: transparent; }
-.csv-table--compact .csv-table-resize { display: none; }
+.csv-table--compact .csv-table-formula { height: 34px; font-size: 14px; }
+.csv-table--compact .csv-table-ref { width: 64px; }
+.csv-table--compact .csv-table-value { height: 33px; line-height: 33px; }
+.csv-table--compact .csv-table-foot { height: 34px; gap: 10px; }
+.csv-table--compact .csv-table-letter:not(.is-selected):hover { background: var(--csv-chrome); }
 
 /* ---- the hosted read view has its own palette (src/web/doc-view.css) */
 .markie-view .csv-table {
   --csv-bg: var(--view-surface-strong);
   --csv-fg: var(--view-text);
   --csv-muted: var(--view-muted);
-  --csv-line: var(--view-line);
-  --csv-head: color-mix(in srgb, var(--view-bg) 70%, var(--view-surface-strong));
+  --csv-line: color-mix(in srgb, var(--view-line) 92%, var(--view-text));
   --csv-bar: color-mix(in srgb, var(--view-bg) 55%, var(--view-surface-strong));
   --csv-accent: #2f6fde;
+  --csv-negative: #c8321f;
 }
 
-:root[data-theme-tone="dark"] .markie-view .csv-table { --csv-accent: #7aa7ff; }
+:root[data-theme-tone="dark"] .markie-view .csv-table { --csv-accent: #7aa7ff; --csv-negative: #ff8a78; }
 
 @media print {
-  .csv-table-bar, .csv-table-status { display: none; }
+  .csv-table-bar, .csv-table-formula, .csv-table-foot { display: none; }
   .csv-table-scroll { overflow: visible; }
 }

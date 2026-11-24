@@ -21,6 +21,9 @@ import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, ShareIcon } from "../components/icons";
 import { ExportSheet } from "../components/share-sheet";
 
+// A web address in a CSV cell opens outside the app, as a link in a document does.
+const openCsvLink = (url: string) => { void openExternal(url).catch(() => undefined); };
+
 interface PublicDocProps {
   /** A client with no token, on the server the link names. */
   api: ApiClient;
@@ -136,7 +139,7 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
               </div>
               {doc.format === "markdown" ? <div className={themed ? `m-doc-themed${themed.colors ? " has-colors" : ""}` : undefined} style={themed ? (themed.vars as CSSProperties) : undefined}>{styleCss ? <style data-doc-style="">{styleCss}</style> : null}<MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /></div> : null}
               {doc.format === "text" && !isCsv ? <pre className="m-text-doc">{doc.content}</pre> : null}
-              {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={doc.content} name={doc.name} readOnly compact /></div> : null}
+              {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={doc.content} name={doc.name} readOnly compact onOpenLink={openCsvLink} /></div> : null}
               {doc.format === "darkmown" ? <DarkmownView docKey={`s:${target.token}`} source={doc.content} tone={tone} /> : null}
             </>
           ) : null}

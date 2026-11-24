@@ -143,7 +143,7 @@ rm -rf "/Applications/Markie Nightly.app"
 ditto "$HOME/Library/Application Support/Markie Nightly/updates/previous/Markie Nightly.app" "/Applications/Markie Nightly.app"
 ```
 
-One previous bundle is kept, the one replaced by the last update. Any older version can be reinstalled from its ZIP with the `ditto -x -k` line above; a ZIP stays on the gateway and in `rust/target/nightly/<version>/`.
+One previous bundle is kept, the one replaced by the last update. It is kept only when the data folder and the app are on the same volume, which they are for an app in `/Applications`. Any older version can be reinstalled from its ZIP with the `ditto -x -k` line above; a ZIP stays on the gateway and in `rust/target/nightly/<version>/`.
 
 While `paused` exists the app checks only when asked. Then build the fix as the next `N` from a good commit, publish it, and remove the file:
 

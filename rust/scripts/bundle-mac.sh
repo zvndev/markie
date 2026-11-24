@@ -103,7 +103,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 # Never markie://: that scheme belongs to the Electron app. And each variant
 # claims only its own scheme, so the two Rust builds never answer for each other.
-SCHEMES="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "$APP/Contents/Info.plist" | grep -E '^ *markie' | tr -d ' ' | sort | tr '\n' ' ')"
+SCHEMES="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "$APP/Contents/Info.plist" | { grep -E '^ *markie' || true; } | tr -d ' ' | sort | tr '\n' ' ')"
 if [[ "$SCHEMES" != "$SCHEME " ]]; then
   echo "Info.plist claims '$SCHEMES', expected only $SCHEME" >&2; exit 1
 fi

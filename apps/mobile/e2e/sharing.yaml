@@ -23,10 +23,18 @@ appId: com.zvn.markie.mobile
 - waitForAnimationToEnd
 - tapOn: "Share"
 - extendedWaitUntil:
-    visible: "People with access"
+    visible: "Send the link"
     timeout: 10000
+- assertVisible: "Copy of the file.*"
+- assertVisible: "PDF, dark.*"
 - waitForAnimationToEnd
 - takeScreenshot: ${OUT}/${NAME}-19-share
+# The Export group sits above the people, so they are below the fold.
+- scrollUntilVisible:
+    element: "People with access"
+    direction: DOWN
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-19-share-access
 - scrollUntilVisible:
     element: ".*new.hire.*"
     direction: DOWN

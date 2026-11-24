@@ -38,3 +38,4 @@ export const UserPlusIcon = (p: IconProps) => <Icon {...p}><circle cx="10" cy="8
 export const InboxIcon =(p: IconProps) => <Icon {...p}><path d="M4 13.5 6.5 5h11l2.5 8.5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19Z" /><path d="M4 13.5h4.5l1 2.5h5l1-2.5H20" /></Icon>;
 export const FolderIcon = (p: IconProps) => <Icon {...p}><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" /></Icon>;
 export const PhoneIcon = (p: IconProps) => <Icon {...p}><rect x="6.5" y="2.5" width="11" height="19" rx="2.6" /><path d="M10.5 18.3h3" /></Icon>;
+export const EyeIcon = (p: IconProps) => <Icon {...p}><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="2.8" /></Icon>;

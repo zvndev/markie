@@ -12,13 +12,27 @@ appId: com.zvn.markie.mobile
     visible: ".*Launch brief.*"
     timeout: 15000
 - tapOn: "Settings"
+# Android reads a row as one string ("Your server10.0.2.2:8790").
 - extendedWaitUntil:
-    visible: "Sign out"
+    visible: "Your server.*"
     timeout: 10000
 # Follow the device's appearance, which screenshots.sh sets per pass.
 - tapOn: "System"
+# Notifications show only where the build can receive them: always on iOS,
+# and on Android only when it was built with a Firebase project.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - assertVisible: "Comments and replies"
 - waitForAnimationToEnd
 - takeScreenshot: ${OUT}/${NAME}-7-settings
+# Notifications and "On this phone" put Sign out below the fold.
+- scrollUntilVisible:
+    element: "Sign out"
+    direction: DOWN
+- waitForAnimationToEnd
+- takeScreenshot: ${OUT}/${NAME}-7-settings-end
 - tapOn: "Sign out"
 - tapOn: "Sign out"
 - extendedWaitUntil:
@@ -46,9 +60,8 @@ appId: com.zvn.markie.mobile
 - waitForAnimationToEnd
 - takeScreenshot: ${OUT}/${NAME}-12-public-link-signed-out
 # Sign in from the reader: the share waits, and the way back to it is offered.
-- tapOn:
-    text: "Sign in"
-    index: 1
+# The back button reads "Back to Sign in", so the bar's button is the only exact match.
+- tapOn: "Sign in"
 - extendedWaitUntil:
     visible: "Sign in to Markie"
     timeout: 10000

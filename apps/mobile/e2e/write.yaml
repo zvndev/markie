@@ -19,7 +19,8 @@ appId: com.zvn.markie.mobile
 - tapOn: "New document"
 # The desktop's chooser: every format it offers.
 - tapOn: "New Markdown document"
-- tapOn: "Untitled"
+# iOS shows the placeholder; Android reads the field by its label and note.
+- tapOn: "Untitled|Name Saved to Markie Cloud.*"
 - inputText: "Grocery list"
 - tapOn: "Next"
 - tapOn: "Source"

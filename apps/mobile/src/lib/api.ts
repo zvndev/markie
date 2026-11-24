@@ -50,13 +50,36 @@ export class ApiError extends Error {
   readonly code: string;
   /** The server's own words, when it gave any. Shown under a plain sentence. */
   readonly serverMessage: string | null;
-  constructor(status: number, message: string, code = "", serverMessage: string | null = null) {
+  /** Seconds the server asked the phone to wait (Retry-After on a 429), when it said. */
+  readonly retryAfter: number | null;
+  constructor(status: number, message: string, code = "", serverMessage: string | null = null, retryAfter: number | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.serverMessage = serverMessage;
+    this.retryAfter = retryAfter;
   }
+}
+
+/**
+ * Retry-After as whole seconds. Only the seconds form is read: a date would
+ * be measured against the phone's clock, which nothing here trusts. An older
+ * server sends no header at all, and the answer is null.
+ */
+export function retryAfterSeconds(headers: Record<string, string>): number | null {
+  const raw = headers["retry-after"];
+  if (typeof raw !== "string" || !/^\d{1,6}$/.test(raw.trim())) return null;
+  const seconds = Number(raw.trim());
+  return seconds > 0 ? Math.min(seconds, 3600) : null;
+}
+
+/** "Try again in 40 seconds." With no number from the server, the old fixed line. */
+export function waitWords(seconds: number | null): string {
+  if (seconds === null) return "Wait a minute and try again.";
+  if (seconds < 90) return `Try again in ${seconds === 1 ? "1 second" : `${seconds} seconds`}.`;
+  const minutes = Math.ceil(seconds / 60);
+  return `Try again in ${minutes} minutes.`;
 }
 
 export interface ApiClientOptions {
@@ -126,14 +149,14 @@ export function createApiClient(options: ApiClientOptions) {
     const response = await send(method, path, init);
     const data = parseJson(response.text);
     if (response.status >= 200 && response.status < 300) return { response, data };
-    throw errorFor(response.status, data);
+    throw errorFor(response.status, data, response.headers);
   }
 
-  function errorFor(status: number, data: unknown): ApiError {
+  function errorFor(status: number, data: unknown, headers: Record<string, string> = {}): ApiError {
     const words = serverWords(data);
     if (status >= 300 && status < 400) return new ApiError(status, "The server tried to send this request somewhere else. Check the server address.", words.code, words.message);
     if (status === 401) return new ApiError(401, "Your session has ended. Sign in again.", words.code, words.message);
-    if (status === 429) return new ApiError(429, "Too many requests. Wait a minute and try again.", words.code, words.message);
+    if (status === 429) return new ApiError(429, `Too many requests. ${waitWords(retryAfterSeconds(headers))}`, words.code, words.message, retryAfterSeconds(headers));
     if (status >= 500) return new ApiError(status, "The server ran into a problem. Try again in a moment.", words.code, words.message);
     return new ApiError(status, words.message ?? "Something went wrong. Try again.", words.code, words.message);
   }
@@ -144,7 +167,9 @@ export function createApiClient(options: ApiClientOptions) {
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;
       const refusal = signupRefusal(error.status, { code: error.code });
-      throw new ApiError(error.status, refusal ?? authErrorMessage(error.status, context), error.code, error.serverMessage);
+      // A rate-limited sign-in says how long, when the server did (Retry-After).
+      const words = error.status === 429 && error.retryAfter !== null ? `Too many attempts. ${waitWords(error.retryAfter)}` : authErrorMessage(error.status, context);
+      throw new ApiError(error.status, refusal ?? words, error.code, error.serverMessage, error.retryAfter);
     }
   }
 
@@ -201,7 +226,8 @@ export function createApiClient(options: ApiClientOptions) {
         result = await json("POST", "/api/auth/sign-in/email", { body: { email, password }, auth: false });
       } catch (error) {
         if (!(error instanceof ApiError)) throw error;
-        throw new ApiError(error.status, passwordRefusal(error.status, error.code), error.code, error.serverMessage);
+        const words = error.status === 429 && error.retryAfter !== null ? `Too many attempts. ${waitWords(error.retryAfter)}` : passwordRefusal(error.status, error.code);
+        throw new ApiError(error.status, words, error.code, error.serverMessage, error.retryAfter);
       }
       const body = (result.data && typeof result.data === "object" ? result.data : {}) as { token?: unknown; user?: unknown };
       const token = result.response.headers["set-auth-token"] || (typeof body.token === "string" ? body.token : "");
@@ -432,6 +458,23 @@ export function createApiClient(options: ApiClientOptions) {
       const url = publicUrlOrNull(raw);
       if (!url) throw new ApiError(502, "The server's public link wasn't readable.");
       return url;
+    },
+
+    /**
+     * The theme the owner pinned to this document, as the server stores it
+     * (server/src/themes.ts), or null. It is decoration: a server without the
+     * route, a refusal or no network all answer null, and nothing is shown.
+     * What may be used from it is decided in lib/doc-theme.ts.
+     */
+    async docTheme(id: string): Promise<unknown> {
+      if (!DOC_ID.test(id)) return null;
+      try {
+        const { data } = await json("GET", `/api/docs/${encodeURIComponent(id)}/theme`, { timeoutMs: 10_000 });
+        const tokens = (data as { tokens?: unknown } | null)?.tokens;
+        return tokens && typeof tokens === "object" ? tokens : null;
+      } catch {
+        return null;
+      }
     },
 
     /** Turns the public link on (or returns the one that exists). */

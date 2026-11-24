@@ -6,7 +6,7 @@
 // A Markdown document takes comments right here, with or without a live room:
 // open threads are highlighted on the words they quote, and a selection
 // becomes a new thread (components/comments-sheet.tsx ReadingCommentsSheet).
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
 import { quoteOf, type Quote } from "@/lib/quote-anchor";
 import { ApiError, documentErrorCopy, type ApiClient, type AssetSource } from "../lib/api";
@@ -20,12 +20,13 @@ import { Screen } from "../components/screen";
 import { MarkdownView, showThreadMark, type MarkdownComments, type ThreadQuote } from "../components/markdown-view";
 import { ACCESS_LOST_BODY, ACCESS_LOST_TITLE, ReadingCommentsSheet, useThreads, type ReadingDraft } from "../components/comments-sheet";
 import { DarkmownView } from "../components/darkmown-view";
-import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
+import { AlertIcon, CommentIcon, EyeIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
 import { ExportSheet, ShareSheet } from "../components/share-sheet";
 import { docExportSource } from "../lib/export";
 import { COMMENTS_OFFLINE_NOTE, OfflineNote, useOffline } from "../components/offline-note";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
+import { docThemeStyle } from "../lib/doc-theme";
 import type { ShareMember } from "../lib/api";
 
 interface DocumentProps {
@@ -41,10 +42,8 @@ interface DocumentProps {
   /** Back to the list, past any documents in between. */
   onRecent: () => void;
   onOpen: (target: LinkTarget) => void;
-  /** Opens the editor on the version shown. */
+  /** Opens the editor on the version shown. For a viewer it is the live document, read-only. */
   onEdit: (doc: CloudDoc) => void;
-  /** Opened the live document for its comments, before the reading screen had its own. Unused now. */
-  onComments?: (doc: CloudDoc) => void;
   /** Who is signed in, for the share sheet. */
   me: { email: string; name: string };
   onUnauthorized: () => void;
@@ -66,6 +65,8 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   const [related, setRelated] = useState<Map<string, string>>(new Map());
   const [notice, setNotice] = useState<string | null>(null);
   const run = useRef(0);
+  // The theme its owner pinned to it, raw from the server (lib/doc-theme.ts decides what is used).
+  const [pinnedTheme, setPinnedTheme] = useState<unknown>(null);
   // This account was on the document and no longer is: found out by a comment the server refused.
   const [lost, setLost] = useState(false);
   const docKey = target.kind === "doc" ? `d:${target.id}` : `s:${target.token}`;
@@ -81,6 +82,11 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       if (target.kind === "doc") void api.shares(target.id).then((list) => { if (current === run.current) setMembers(list); }, () => undefined);
       // Asked for a Live Doc too: an older or self-hosted server may have given
       // it a public link, and the owner must see it to turn it off.
+      // Members read a Markdown document the way its owner styled it. The
+      // owner keeps their own look, as on the desktop. Never an error: a
+      // server with no such route, or no network, leaves the phone's own theme.
+      if (target.kind === "doc" && doc.role !== "owner" && doc.format === "markdown") void api.docTheme(target.id).then((tokens) => { if (current === run.current) setPinnedTheme(tokens); }, () => undefined);
+      else setPinnedTheme(null);
       if (target.kind === "doc" && doc.role === "owner") void api.publicLink(target.id).then((url) => { if (current === run.current) setPublicUrl(url); }, () => undefined);
     } catch (error) {
       if (current !== run.current) return;
@@ -200,11 +206,21 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   // still reads from the store; the sheet says comments need a connection,
   // and nothing is offered that could only fail.
   const offlineNow = useOffline(api)?.offline ?? false;
+  // A viewer can't edit, but can watch the people who can: the same live
+  // document, read-only, where their changes arrive as they type. It sits
+  // where the pencil would be. (The Comments button used to be the only way
+  // in; comments moved to this screen and the way in went with them.)
+  const canFollowLive = !!doc && target.kind === "doc" && doc.role === "viewer" && doc.version !== null && !doc.publicToken
+    && liveKind(doc.name, doc.format) !== null && doc.content.length <= LIVE_MAX_CHARS;
   const actions = doc && !lost ? (
     <>
       {canEditDoc(doc) ? (
         <button type="button" className="m-nav-icon" aria-label="Edit" onClick={() => onEdit(doc)}>
           <PencilIcon size={22} />
+        </button>
+      ) : canFollowLive && !offlineNow ? (
+        <button type="button" className="m-nav-icon" aria-label="Follow live" onClick={() => onEdit(doc)}>
+          <EyeIcon size={23} />
         </button>
       ) : null}
       {commentable && !lost ? (
@@ -226,6 +242,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   ) : null;
 
   const isWd = doc?.format === "darkmown";
+  const themed = useMemo(() => docThemeStyle(pinnedTheme, tone), [pinnedTheme, tone]);
   const loadAsset = useCallback((ref: string) => {
     const source: AssetSource = target.kind === "doc" ? { kind: "doc", id: target.id } : { kind: "public", token: target.token };
     return api.asset(source, ref).catch(() => null);
@@ -255,7 +272,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
         <>
           <DocMeta doc={doc} members={members} publicUrl={publicUrl} />
           <OfflineNote api={api} doc={doc} onChanged={() => void load()} onGone={onRecent} onUnauthorized={onUnauthorized} />
-          {doc.format === "markdown" ? <div ref={articleHost}><MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
+          {doc.format === "markdown" ? <div ref={articleHost} className={themed ? `m-doc-themed${themed.colors ? " has-colors" : ""}` : undefined} style={themed ? (themed.vars as CSSProperties) : undefined}><MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
           {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>

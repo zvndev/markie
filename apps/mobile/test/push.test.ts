@@ -298,6 +298,57 @@ describe("push: the token's life", () => {
   });
 });
 
+describe("push: a server from before the device routes", () => {
+  // Markie Cloud is exactly this until its next deploy: POST /api/me/devices
+  // answers 404. The app must stay quiet and usable: one try per token, no
+  // loop, nothing thrown, and Settings still opens.
+  function olderServer() {
+    const requests: HttpRequest[] = [];
+    const transport: HttpTransport = async (request) => {
+      requests.push(request);
+      if (request.url.includes("/api/me/devices")) return { status: 404, headers: {}, text: "404 Not Found" };
+      return { status: 200, headers: {}, text: "{}" };
+    };
+    const api = createApiClient({ origin: "https://api.markiedocs.com", transport, getToken: () => "t".repeat(32) });
+    return { api, requests, devices: () => requests.filter((request) => request.url.includes("/api/me/devices")) };
+  }
+
+  it("tries once, throws nothing, and does not try again on its own", async () => {
+    const { push } = controller({ stored: enabledPrefs(), phone: { permission: "granted" } });
+    const server = olderServer();
+    push.start(() => undefined);
+    push.setApi(server.api);
+    await settle();
+    expect(server.devices()).toHaveLength(1);
+    // Time passes, the same client is handed over again (a re-render): still one.
+    push.setApi(server.api);
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(server.devices()).toHaveLength(1);
+    const state = await push.state();
+    expect(state).toMatchObject({ available: true, enabled: true, delivers: null });
+    // No "failed" wording: the ordinary line.
+    expect(pushFooter(state)).toBe("A notification says who commented. It never includes the comment or the document's name.");
+  });
+
+  it("asks for permission after a first comment as usual, and the comment itself is untouched", async () => {
+    const { push, calls } = controller();
+    const server = olderServer();
+    const base = fakeApi();
+    const api = push.watch({ ...base.api, registerDevice: server.api.registerDevice, removeDevice: server.api.removeDevice });
+    push.start(() => undefined);
+    push.setApi(api);
+    await settle();
+    expect(await api.createThread("doc-1")).toBe("thread-1");
+    await settle();
+    expect(calls).toContain("request");
+    expect(server.devices()).toHaveLength(1);
+    // Turning it off and signing out against the same server are quiet too.
+    await expect(push.disable()).resolves.toMatchObject({ enabled: false });
+    await expect(push.signOut(server.api)).resolves.toBeUndefined();
+  });
+});
+
 describe("push: a tapped notification", () => {
   it("hands its link to the app, and nothing that is not a link", async () => {
     const { push, emit, listening } = controller();

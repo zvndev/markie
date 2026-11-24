@@ -264,6 +264,7 @@ function fakeApi(seat: Seat) {
     docLinks: vi.fn(async () => new Map()),
     shares: vi.fn(async () => seat.members ?? [{ userId: "u2", email: "carol@example.com", name: "Carol", role: "viewer", pending: false }]),
     publicLink: vi.fn(async () => null),
+    docTheme: vi.fn(async () => null),
     asset: vi.fn(async () => null),
     threads: vi.fn(async () => state.threads),
     createThread: vi.fn(async (_id: string, anchor: unknown, body: string) => {
@@ -454,6 +455,36 @@ describe("the reading screen", () => {
     expect(page.querySelector(".markdown-body")).not.toBeNull();
   });
 
+  it("gives a viewer a way to follow the document live, where an editor has the pencil", async () => {
+    const { DocumentScreen } = await import("../src/screens/document");
+    const at = async (role: Seat["role"], extra: Partial<Seat> = {}) => {
+      const fake = fakeApi({ role, threads: [], ...extra });
+      const onEdit = vi.fn();
+      const page = await mount(createElement(DocumentScreen, {
+        api: fake.api as never, target: { kind: "doc", id: "doc-1", origin: "https://api.markiedocs.com" } as never,
+        backLabel: "Recent", tone: "light" as never, onBack: () => {}, onRecent: () => {}, onOpen: () => {}, onEdit,
+        me: { email: "carol@example.com", name: "Carol" }, onUnauthorized: () => {},
+      }));
+      return { page, onEdit };
+    };
+    const viewer = await at("viewer");
+    expect(viewer.page.querySelector('[aria-label="Edit"]')).toBeNull();
+    const follow = viewer.page.querySelector('[aria-label="Follow live"]')!;
+    expect(follow).not.toBeNull();
+    tap(follow);
+    // The same door as Edit: the app opens the live document, which is read-only for a viewer.
+    expect(viewer.onEdit).toHaveBeenCalledTimes(1);
+    expect(viewer.onEdit.mock.calls[0][0]).toMatchObject({ id: "doc-1", role: "viewer" });
+    act(() => root?.unmount()); host?.remove();
+    const editor = await at("editor");
+    expect(editor.page.querySelector('[aria-label="Edit"]')).not.toBeNull();
+    expect(editor.page.querySelector('[aria-label="Follow live"]')).toBeNull();
+    act(() => root?.unmount()); host?.remove();
+    // Nothing is live about a Live Doc's source or a public link.
+    const wd = await at("viewer", { format: "darkmown", name: "Counter.wd" });
+    expect(wd.page.querySelector('[aria-label="Follow live"]')).toBeNull();
+  });
+
   it("offers no comments on a text file, a public link, or the owner's own unshared document", async () => {
     const text = await screen({ role: "viewer", threads: [], format: "text", name: "notes.txt" });
     expect(text.page.querySelector('button[aria-label^="Comments"]')).toBeNull();
@@ -499,6 +530,26 @@ describe("a tapped notification's thread", () => {
     const { page } = await screen(seat(), undefined, "no-such-thread");
     expect(sheet()).toBeNull();
     expect(page.querySelector(".markdown-body")?.textContent).toContain("The budget is tight");
+  });
+
+  it("moves to another thread when a second notification names one, with the document already open", async () => {
+    // app.tsx hands the open screen the new link (lib/doc-stack.ts "retarget").
+    const { DocumentScreen } = await import("../src/screens/document");
+    const fake = fakeApi(seat());
+    const props = (thread: string) => ({
+      api: fake.api as never, target: { kind: "doc", id: "doc-1", origin: "https://api.markiedocs.com", thread } as never,
+      backLabel: "Recent", tone: "light" as never, onBack: () => {}, onRecent: () => {}, onOpen: () => {}, onEdit: () => {},
+      me: { email: "carol@example.com", name: "Carol" }, onUnauthorized: () => {},
+    });
+    await mount(createElement(DocumentScreen, props("t1")));
+    expect(sheet()!.querySelector('[data-thread="t1"]')?.classList.contains("is-shown")).toBe(true);
+    await act(async () => { root!.render(createElement(DocumentScreen, props("t2"))); });
+    await settle();
+    expect(sheet()).not.toBeNull();
+    expect(sheet()!.querySelector('[data-thread="t2"]')?.classList.contains("is-shown")).toBe(true);
+    expect(sheet()!.querySelector('[data-thread="t1"]')?.classList.contains("is-shown")).toBe(false);
+    // One screen, one document: nothing was stacked or fetched as a second copy.
+    expect(document.querySelectorAll(".markdown-body")).toHaveLength(1);
   });
 
   it("opens nothing without a thread in the link", async () => {

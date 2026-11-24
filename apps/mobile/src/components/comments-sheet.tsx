@@ -302,7 +302,8 @@ function ThreadsSheet({ api, docId, located, loaded, error, refresh, meId, meEma
     card.scrollIntoView?.({ block: "center" });
     card.classList.add("is-shown");
     const timer = setTimeout(() => card.classList.remove("is-shown"), 1600);
-    return () => clearTimeout(timer);
+    // Moving on to another thread ends this one's flash at once, so two are never lit.
+    return () => { clearTimeout(timer); card.classList.remove("is-shown"); };
     // Not `located`: a refresh must not scroll the sheet back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusThreadId, loaded, showResolved]);

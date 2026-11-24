@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, createApiClient, documentErrorCopy } from "../src/lib/api";
+import { ApiError, createApiClient, documentErrorCopy, retryAfterSeconds, waitWords } from "../src/lib/api";
 import { NetworkError, type HttpRequest, type HttpResponse, type HttpTransport } from "../src/lib/http";
 
 const ORIGIN = "https://api.markiedocs.com";
@@ -54,6 +54,12 @@ describe("api client: sign in", () => {
     await expect(client(403, { code: "EMAIL_NOT_VERIFIED", message: "Email not verified" }).signInPassword("me@example.com", "right"))
       .rejects.toThrow("This email hasn't been confirmed yet. Sign in with an email code to confirm it.");
     await expect(client(429, {}).signInPassword("me@example.com", "x")).rejects.toThrow("Too many attempts. Wait a minute and try again.");
+    // A server that says how long (Retry-After, server/src/retry-after.ts) is quoted.
+    const limited = createApiClient({ origin: ORIGIN, transport: fake(() => ({ status: 429, headers: { "retry-after": "42" }, json: { message: "Too many requests. Please try again later." } })).transport });
+    await expect(limited.signInPassword("me@example.com", "x")).rejects.toThrow("Too many attempts. Try again in 42 seconds.");
+    await expect(limited.sendCode("me@example.com")).rejects.toMatchObject({ status: 429, retryAfter: 42, message: "Too many attempts. Try again in 42 seconds." });
+    await expect(limited.verifyCode("me@example.com", "123456")).rejects.toThrow("Too many attempts. Try again in 42 seconds.");
+    await expect(limited.recent()).rejects.toThrow("Too many requests. Try again in 42 seconds.");
     await expect(client(200, { user: { email: "me@example.com" } }).signInPassword("me@example.com", "x")).rejects.toMatchObject({ status: 502 });
   });
 
@@ -273,5 +279,25 @@ describe("api client: requests to share (server/src/share-people.ts)", () => {
     const api = createApiClient({ origin: ORIGIN, transport, getToken: () => TOKEN });
     expect(await api.addShare("doc-1", "bob@markie.test", "editor")).toBe("requested");
     expect((await api.shares("doc-1"))[0]).toMatchObject({ userId: "bob", pending: false, waiting: true });
+  });
+});
+
+describe("how long to wait after a 429", () => {
+  it("reads whole seconds and nothing else", () => {
+    expect(retryAfterSeconds({ "retry-after": "30" })).toBe(30);
+    expect(retryAfterSeconds({ "retry-after": " 7 " })).toBe(7);
+    expect(retryAfterSeconds({ "retry-after": "999999" })).toBe(3600);
+    // An older server sends none; a date is measured against a clock we don't trust.
+    for (const none of [{}, { "retry-after": "" }, { "retry-after": "0" }, { "retry-after": "-5" }, { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }, { "retry-after": "1.5" }, { "x-retry-after": "9" }]) {
+      expect(retryAfterSeconds(none as Record<string, string>)).toBeNull();
+    }
+  });
+
+  it("says it in plain words", () => {
+    expect(waitWords(null)).toBe("Wait a minute and try again.");
+    expect(waitWords(1)).toBe("Try again in 1 second.");
+    expect(waitWords(45)).toBe("Try again in 45 seconds.");
+    expect(waitWords(120)).toBe("Try again in 2 minutes.");
+    expect(waitWords(601)).toBe("Try again in 11 minutes.");
   });
 });

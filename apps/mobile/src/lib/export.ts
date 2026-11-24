@@ -308,12 +308,15 @@ export function printJobFor(source: ExportSource, html: string, theme: PDFTheme,
   const body = source.body;
   if (body.kind === "office") {
     const layout = body.document!.pageLayout;
-    return {
-      html,
-      page: { width: layout.widthPoints, height: layout.heightPoints },
-      margins: { top: layout.marginTopPoints, right: layout.marginRightPoints, bottom: layout.marginBottomPoints, left: layout.marginLeftPoints },
-      background: "#ffffff",
-    };
+    // The print page states its own margins (`@page`, docx-print.ts). Android
+    // prints with Chromium, which honours them, so the print job itself asks
+    // for none: given both, the job never finished on an Android 16 emulator
+    // and the row timed out. WebKit ignores `@page` margins, so on iOS they
+    // are the job's.
+    const margins = platform === "android"
+      ? NO_MARGINS
+      : { top: layout.marginTopPoints, right: layout.marginRightPoints, bottom: layout.marginBottomPoints, left: layout.marginLeftPoints };
+    return { html, page: { width: layout.widthPoints, height: layout.heightPoints }, margins, background: "#ffffff" };
   }
   const still = body.kind === "darkmown";
   const background = PAGE_BACKGROUND[still ? "darkmown" : "markdown"][theme];

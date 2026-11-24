@@ -5,11 +5,8 @@
 # Run with: maestro --device <id> test -e OUT=<dir> -e NAME=ios-light e2e/screens.yaml
 appId: com.zvn.markie.mobile
 ---
-- launchApp:
-    stopApp: true
-- extendedWaitUntil:
-    visible: ".*Launch brief.*"
-    timeout: 15000
+# Tried again when the launch stalls or adb refuses the stop (launch-recent.yaml).
+- runFlow: launch-recent.yaml
 - waitForAnimationToEnd
 - takeScreenshot: ${OUT}/${NAME}-2-recent
 - tapOn: ".*Launch brief.*"
@@ -43,6 +40,10 @@ appId: com.zvn.markie.mobile
 - takeScreenshot: ${OUT}/${NAME}-11-image
 - tapOn: "Back to Recent"
 - waitForAnimationToEnd
+# Documents made by e2e/write.yaml can push it below the fold.
+- scrollUntilVisible:
+    element: ".*Counter.*"
+    direction: DOWN
 - tapOn: ".*Counter.*"
 - extendedWaitUntil:
     visible: "Trust this document"

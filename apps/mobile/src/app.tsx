@@ -28,6 +28,7 @@ import { loadPreferredOrigin, savePreferredOrigin } from "./lib/server-origin";
 import { loadThemeMode, paintTone, resolveTone, saveThemeMode, systemPrefersDark, type ThemeMode } from "./lib/theme-mode";
 import { openExternal, setSystemBars } from "./lib/native";
 import { pushController } from "./lib/push";
+import { openDecision } from "./lib/doc-stack";
 import { Navigator, type StackEntry } from "./components/navigator";
 import { SignInScreen } from "./screens/sign-in";
 import { clearRecentCache, RecentScreen } from "./screens/recent";
@@ -209,11 +210,10 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
     const route: Route = { key: nextKey("doc"), kind: "doc", target: resolved.target, name, sharedBy };
     setRoutes((stack) => {
       const top = stack[stack.length - 1];
-      if (top.kind === "doc" && sameTarget(top.target, resolved.target)) {
-        // Already open. A notification about another thread still shows it.
-        const thread = threadOf(resolved.target);
-        return thread && thread !== threadOf(top.target) ? [...stack.slice(0, -1), { ...top, target: resolved.target }] : stack;
-      }
+      // Already open: a notification about another thread still shows it (lib/doc-stack.ts).
+      const decision = openDecision(top.kind === "doc" ? top.target : null, resolved.target);
+      if (decision === "keep") return stack;
+      if (decision === "retarget" && top.kind === "doc") return [...stack.slice(0, -1), { ...top, target: resolved.target }];
       return replaceStack ? [ROOT, route] : [...stack, route];
     });
   }, [showToast]);
@@ -728,11 +728,6 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
             const draft: EditorDraft = { kind: "cloud", id: doc.id, name: doc.name, format: doc.format, content: doc.content, version: doc.version, role: doc.role };
             setRoutes((stack) => [...stack, { key: nextKey("edit"), kind: "edit", draft }]);
           }}
-          onComments={(doc) => {
-            if (doc.version === null) return;
-            const draft: EditorDraft = { kind: "cloud", id: doc.id, name: doc.name, format: doc.format, content: doc.content, version: doc.version, role: doc.role === "viewer" ? "viewer" : doc.role, openComments: true };
-            setRoutes((stack) => [...stack, { key: nextKey("edit"), kind: "edit", draft }]);
-          }}
           me={{ email: session.email, name: session.name }}
           reloadKey={route.reloadKey}
           onUnauthorized={onUnauthorized}
@@ -759,15 +754,6 @@ export function MarkieMobileApp({ transport, secure, native }: AppProps) {
       {toast ? <div className="m-toast" role="status">{toast}</div> : null}
     </>
   );
-}
-
-function sameTarget(a: LinkTarget, b: LinkTarget): boolean {
-  if (a.kind !== b.kind || a.origin !== b.origin) return false;
-  return a.kind === "doc" ? a.id === (b as typeof a).id : a.token === (b as typeof a).token;
-}
-
-function threadOf(target: LinkTarget): string | null {
-  return target.kind === "doc" ? target.thread ?? null : null;
 }
 
 function labelFor(route: Route): string {

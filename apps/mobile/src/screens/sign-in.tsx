@@ -65,6 +65,10 @@ export function SignInScreen({ transport, secure, initialOrigin, pendingLink, on
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // A notice from the app (a Google or Apple sign-in that didn't finish, a
+  // session that ended) is the newer word. The hint that the browser is
+  // still being waited on would contradict it, so it goes.
+  useEffect(() => { if (notice) setInfo(null); }, [notice]);
   const codeInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (step === "code") codeInput.current?.focus(); }, [step]);

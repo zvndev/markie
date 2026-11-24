@@ -6,7 +6,12 @@ appId: com.zvn.markie.mobile
 ---
 - launchApp:
     stopApp: true
-- tapOn: "Advanced.*"
+# Advanced stays open once another server was chosen, and a second tap would close it.
+- runFlow:
+    when:
+      notVisible: "https?://.*"
+    commands:
+      - tapOn: "Advanced.*"
 - tapOn: "https?://.*"
 - eraseText: 60
 - inputText: "http://localhost:8790"

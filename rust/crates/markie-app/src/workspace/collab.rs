@@ -390,7 +390,9 @@ impl Workspace {
         self.apply_lock(cx);
         let large = self.doc.as_ref().is_some_and(|d| d.large);
         let readonly = role == Role::Viewer;
-        let want = !large && !self.collab.live_unavailable && !members.is_empty();
+        // A CSV syncs as a file: the server keeps no text room for one, and a
+        // rich room would rewrite the file as a paragraph (page.tsx).
+        let want = !large && !self.is_csv_doc() && !self.collab.live_unavailable && !members.is_empty();
         let running = self.collab.live.as_ref().map(|l| (l.session.doc_id() == cloud.doc_id, l.readonly));
         match running {
             Some((true, ro)) if want && ro == readonly => {}

@@ -1,6 +1,6 @@
 # Markie RS parity score
 
-The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move), then on 2026-11-24 branch `t3/markie-rs-styles-fonts` (Electron's Markdown styles and font library: 16 new rows, 11 of them met).
+The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-csv-table` (editors 7.10 to 7.18 added for the CSV table of Electron PR #149: eight PASS, one NEEDS-CAPTURE), then on 2026-11-24 branch `t3/markie-rs-styles-fonts` (Electron's Markdown styles and font library, PRs #150 and #151: 16 new rows across four audits).
 
 ## Overall
 
@@ -8,12 +8,12 @@ The overall score across the five audits, and the rules behind it. Updated 2026-
 |---|---|---|---|
 | [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 55 | 54 | 98.2% |
 | [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 83 | 78 | 94.0% |
-| [Editors, autosave, history](AUDIT-EDITORS.md) | 53 | 48 | 90.6% |
+| [Editors, autosave, history](AUDIT-EDITORS.md) | 62 | 56 | 90.3% |
 | [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 100 | 97 | 97.0% |
 | [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 61 | 58 | 95.1% |
-| **Total** | **352** | **335** | **95.2%** |
+| **Total** | **361** | **343** | **95.0%** |
 
-The total was 324 of 336 (96.4%) before Electron shipped Markdown styles and the font library. Those added 16 rows; 11 are met and 5 are open, so the share fell while the count met rose.
+The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 11 are met.
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -37,7 +37,7 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
 
 Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 
-## What is still open (17 rows)
+## What is still open (18 rows)
 
 | Rows | What closes them |
 |---|---|
@@ -45,9 +45,10 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Cloud 21.1.1, 21.3.1 and labels 21.1, 21.3 | One real Google or Apple sign-in into Markie RS. Server `markie-api` 8ed421211f04 is deployed. |
 | Editors 8.6 and group 8.0 | One real trackpad pinch by Kirby |
 | Editors 7.9 | The 50 MB timing, run with the speed comparison on a quiet Mac |
-| Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
-| Library 28.S4, 28.S5, 28.F2 | Set the Markdown style section, the style editor and the open font menus beside Electron's (scene `style-settings`; steps in the audit) |
+| Editors 7.18 | A scheduled screen session of about 15 minutes: the CSV table with a real pointer, keyboard and clipboard, and one frame beside Electron's |
+| Library 28.S4, 28.S5, 28.F2 | A scheduled screen session of about 15 minutes: the Markdown style section, the style editor and the font menus with a real pointer, beside Electron's. The checks are written in each audit row |
 | Cloud 30.L2 | Draw "Readers see my look" against a server that has `docs.enforced_style` |
-| Export 23.S2 | Finish the style in the PDF (inline code, tasks, pictures, table density, list spacing) and compare a style PDF with Electron's |
+| Export 23.S2 | Finish the style in the PDF and compare a style PDF with Electron's |
+| Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
 
-If every row above closes except editors 7.4 and 7.0, the score is 350 of 352, which is 99.4%.
+If every row above closes except the last two, the score is 359 of 361, which is 99.4%.

@@ -136,7 +136,7 @@ impl Workspace {
             return;
         };
         if let Some(OpenDoc { kind: DocKind::Text { .. }, .. }) = &self.doc {
-            self.pending_editor_text = Some(text.clone());
+            self.pending_editor_text = Some(self.editor_text(&text, cx));
             if self.rich_active() {
                 self.load_rich(&text, cx);
             }

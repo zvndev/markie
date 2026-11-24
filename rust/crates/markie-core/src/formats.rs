@@ -135,7 +135,8 @@ pub fn kind_for_extension(ext: &str) -> FormatKind {
         "md" | "markdown" | "mdx" => FormatKind::Markdown,
         "wd" => FormatKind::Darkmown,
         "txt" | "text" | "log" => FormatKind::Text,
-        "csv" => FormatKind::Csv,
+        // A .tsv is the same table with tabs between its cells (csv_table.rs).
+        "csv" | "tsv" => FormatKind::Csv,
         "json" => FormatKind::Json,
         "yaml" | "yml" => FormatKind::Yaml,
         "xml" => FormatKind::Xml,

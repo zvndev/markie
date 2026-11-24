@@ -1,5 +1,7 @@
 # Markie in Rust: can it do everything?
 
+> Archived 2026-11-24. Its question (can Rust do everything) is answered and the app is built, and parts of it no longer match the code, such as Sparkle for updates. Superseded by [PLATFORMS.md](../PLATFORMS.md) and [NIGHTLY.md](../NIGHTLY.md). Kept for history: do not plan from it.
+
 Date: 2026-11-21. Branch: `rust/markie-rs`. Code: `rust/`.
 
 ## Answer

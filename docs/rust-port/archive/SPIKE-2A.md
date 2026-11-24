@@ -1,5 +1,7 @@
 # Phase 2a: rich editor spike
 
+> Archived 2026-11-24. The spike ended GO and phase 2b built the editor, so its remaining-work list and estimate are spent. Superseded by [RICH-EDITOR.md](../RICH-EDITOR.md). Kept for history: do not plan from it.
+
 Date: 2026-11-21. Circular: ENG-8731. Code: `rust/crates/markie-rich`.
 
 ## Verdict: GO

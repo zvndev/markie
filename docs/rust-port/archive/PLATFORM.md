@@ -1,5 +1,7 @@
 # Markie RS: platform pieces
 
+> Archived 2026-11-24. It is a branch report from 2026-11-22, written when Markie RS was only a side build with no updater, no first-run import and no release channel, and its name was easy to confuse with PLATFORMS.md. Superseded by [AUDIT-OFFICE-PLATFORM.md](../AUDIT-OFFICE-PLATFORM.md) for the status of sections 20, 22, 27 and 31, and by [NIGHTLY.md](../NIGHTLY.md). Kept for history: do not plan from it.
+
 Date: 2026-11-22. Branch: `t3/markie-rs-platform-parity`, merged into `rust/markie-rs` by the parent.
 
 This covers PARITY.md sections 20 (deep links, default apps and OS integration), 22 (the vault), 27 (crash reporting and logs) and 31 (miscellany), plus single-instance behaviour and the window's size and position.

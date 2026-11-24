@@ -1,5 +1,5 @@
 //! Phase 2a UI proof: a block editor of styled text runs over the
-//! `markie-rich` model (approach a in docs/rust-port/SPIKE-2A.md).
+//! `markie-rich` model (approach a in docs/rust-port/archive/SPIKE-2A.md).
 //!
 //!   cargo run -p markie-rich --features gui --example rich_editor -- <file.md>
 //!

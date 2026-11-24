@@ -1,6 +1,6 @@
 # Phase 2b: the native rich editor
 
-Date: 2026-11-21. Circular: ENG-8732. Builds on Phase 2a (`SPIKE-2A.md`).
+Date: 2026-11-21. Circular: ENG-8732. Builds on Phase 2a ([archive/SPIKE-2A.md](archive/SPIKE-2A.md)).
 
 View mode in Markie RS is now a native rich editor. It edits Markdown in place and saves through the app's own autosave. Every block the user did not change keeps its bytes.
 
@@ -100,6 +100,8 @@ The fuzz test's whole-document read-back is 660 of 797 runs. The rest are runs t
 
 ## Known gaps
 
+As of 2026-11-21. Several have closed since. For what is open now, see [AUDIT-EDITORS.md](AUDIT-EDITORS.md) and [SCORE.md](SCORE.md).
+
 - The input method path is wired but not driven by a real input method. Scripted key events cannot compose text. Kirby should try Japanese or Chinese input once.
 - No accessibility tree for the editor yet. VoiceOver reads nothing in View.
 - No context menu, spell check, drag and drop of text, or picture paste and drop.
@@ -112,20 +114,6 @@ The fuzz test's whole-document read-back is 660 of 797 runs. The rest are runs t
 - Two lists of the same kind that end up in adjacent blocks read back as one list. TipTap has the same limit.
 - Local undo is not yet yrs's `UndoManager`. Phase 3 should switch when edits go through the room.
 - Opening a long document measures every block once on the first frame.
-
-## Estimate for what is left
-
-Agentic wall-clock time, agents in parallel:
-
-| Track | Time |
-|---|---|
-| Accessibility tree, context menu, spell check | 1 to 1.5 days |
-| Table column tools, picture paste and drop, Vimeo thumbnails, remote picture cache | 1 day |
-| Inline formula editing in place | 0.5 day |
-| Input method testing with Kirby, fixes | 0.5 day plus Kirby's time |
-| Kirby's feel review and fixes | 1 day |
-
-The real limits are Kirby's review of how typing feels, and serial GPUI builds. Collaboration (rooms, cursors, yrs undo) is phase 3 and is not in these numbers.
 
 ## How to run it
 

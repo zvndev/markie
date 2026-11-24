@@ -1,5 +1,7 @@
 # Markie RS: the Rust rewrite plan
 
+> Archived 2026-11-24. It was the first plan for Markie RS as a side build, and its phase estimates (the 1.5 to 2 week platform phase, Windows and Linux included, among them) were sized before the Mac port existed and are wrong. Superseded by [PLATFORMS.md](../PLATFORMS.md) for the plan and [SCORE.md](../SCORE.md) for parity. Kept for history: do not plan from it.
+
 Date: 2026-11-21. Branch: `rust/markie-rs`. Worktree: `/Users/macbookpro-kirby/Desktop/Coding/ZVN/markie-rs`.
 
 Markie RS is a side build. It rebuilds desktop Markie in native Rust next to the shipping Electron app, and replaces it only if Kirby decides so at the end.

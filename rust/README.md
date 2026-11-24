@@ -1,9 +1,10 @@
 # Markie RS
 
-The native Rust build of desktop Markie. A side project on branch `rust/markie-rs`. It is not part of the Electron release pipeline.
+The native Rust build of desktop Markie, on branch `rust/markie-rs`. It is taking over from Electron on the Mac. Built with `--features nightly` it is Markie itself on the Mac super-nightly channel. The default build is the dev app, `Markie RS.app`, with its own name and data. It is not part of the Electron release pipeline.
 
-- Research and the answer to "can Rust do everything": `docs/rust-port/RESEARCH.md`
-- Phases, finish lines and estimates: `docs/rust-port/PLAN.md`
+- Every Rust-port doc, with its status (current, reference or archived): `docs/rust-port/README.md`. Check it before planning from a doc.
+- The platform plan: `docs/rust-port/PLATFORMS.md`
+- The parity score: `docs/rust-port/SCORE.md`
 - What desktop Markie does today, feature by feature: `docs/rust-port/PARITY.md`
 - Markdown styles and the font library, and how their data is regenerated from Electron: `docs/rust-port/STYLES-FONTS.md`
 - The nightly: this app as Markie itself on the Mac super-nightly channel, how Electron Markie updates into it, the first-run import and the roll back: `docs/rust-port/NIGHTLY.md`
@@ -17,6 +18,7 @@ The native Rust build of desktop Markie. A side project on branch `rust/markie-r
 | `scripts/bundle-mac.sh` | Builds `target/release/Markie RS.app` for local testing. |
 | `crates/markie-update` | The updater of the Mac app on the super-nightly channel: feed, download, verification, atomic swap. No UI. |
 | `crates/markie-migrate` | Reads a copy of an Electron Markie profile. The first-run import (`markie-app` `electron_import.rs`) is built on it. |
+| The other `crates/markie-*` | The rich editor (`markie-rich`, `markie-editor`), math, the Office engine and page view, export, the cloud client, the vault, web islands and the agent bridge. The docs index names the doc for each. |
 | `scripts/nightly-release.sh`, `scripts/nightly-publish.mjs`, `scripts/mac-info-plist.mjs` | Build, sign, notarize, zip and publish the Mac app (`--features nightly`) on the super-nightly channel. Runbook: `docs/rust-port/NIGHTLY.md`. |
 | `rust-toolchain.toml` | Pins Rust 1.99 for this folder only. GPUI Kit needs it. |
 
@@ -39,6 +41,10 @@ cargo run -p markie-app -- path/to/file.md
 | ⌘N | New document |
 | ⌘S | Save |
 | ⌘E | Switch View and Source |
-| ⌘K or ⌘P | Search documents |
+| ⌘1, ⌘2, ⌘3 | View, Source, Split |
+| ⌘K | Command palette |
+| ⇧⌘F | Search all documents |
+| ⌘P | Print |
+| ⌘L | Show or hide the Library |
 | ⌘R | Rescan |
 | ⇧⌘L | Light or dark |

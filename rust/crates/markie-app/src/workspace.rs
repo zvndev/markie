@@ -607,8 +607,25 @@ impl Workspace {
         self.step_page_width(false, cx);
     }
 
+    /// The first-run import again, by hand. It only ever adds what is not
+    /// here yet (electron_import.rs), so asking twice is harmless. The dev
+    /// build has no Electron profile of its own to read and says so.
     fn on_import(&mut self, _: &ImportFromMarkie, window: &mut Window, cx: &mut Context<Self>) {
-        window.push_notification("Markie RS does not read the installed Markie profile.", cx);
+        use crate::electron_import as import;
+        let may = import::applies(std::env::var_os("MARKIE_RS_DATA_DIR").is_some(), account::server_config().dev);
+        let (Some(profile), Some(registry), true) = (import::source(), self.registry.as_ref(), may) else {
+            window.push_notification("Markie RS does not read the installed Markie profile.", cx);
+            return;
+        };
+        let tokens = account::shared_tokens();
+        let summary = import::import(&profile, &import::Targets { registry, tokens: &*tokens, data_dir: &paths::data_dir() });
+        import::record(registry, &summary);
+        let said = summary.notice().unwrap_or_else(|| {
+            if summary.source_missing { "No Markie profile was found to bring anything over from." } else { "Nothing new to bring over from Markie." }.to_string()
+        });
+        self.refresh_lists(cx);
+        window.push_notification(said, cx);
+        cx.notify();
     }
 
     fn on_toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {

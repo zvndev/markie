@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import {
   APP_NAME, BUNDLE_ID, BUNDLE_NAME, FEED_NAME, GATEWAY_ORIGIN, IDENTITY, LANE_PREFIX, REQUIREMENT, TEAM_ID,
   artifactName, assertSigningAuthority, createFeed, feedText, gatewayOrigin, inspectZip, nightlySettings, outputDirectory,
-  parseFeed, publishFiles, runCli, systemTools, uploadUrl, verifyRelease, versionAbove, LAST_ELECTRON_SUPER_NIGHTLY,
+  parseChannelFeed, parseFeed, publishFiles, repointFeed, runCli, systemTools, uploadUrl, verifyRelease, versionAbove, LAST_ELECTRON_SUPER_NIGHTLY,
 } from "./nightly-publish.mjs";
 import { infoPlist, plistXml } from "./mac-info-plist.mjs";
 
@@ -377,7 +377,7 @@ test("the command line takes one word, the key only from the environment, and ne
   try {
     const env = { MARKIE_NIGHTLY_VERSION: VERSION, MARKIE_PRIVATE_API_ORIGIN: GATEWAY_ORIGIN, MARKIE_NIGHTLY_OUTPUT_DIR: r.output, MARKIE_PRIVATE_PUBLISH_KEY: KEY };
     const options = { provenance: clean, tools: fakeTools() };
-    for (const args of [[], ["publish", KEY], ["publish", "--key", KEY], ["upload"], ["verify", "--skip-signature"], ["feed", "verify"]]) {
+    for (const args of [[], ["publish", KEY], ["publish", "--key", KEY], ["upload"], ["verify", "--skip-signature"], ["feed", "verify"], ["repoint", "/tmp/super-nightly-mac.yml"]]) {
       await assert.rejects(runCli(args, env, path.join(r.root, "repo", "rust"), options), /Usage: node rust\/scripts\/nightly-publish\.mjs/);
     }
     const fed = await runCli(["feed"], env, path.join(r.root, "repo", "rust"), options);
@@ -396,4 +396,51 @@ test("the command line takes one word, the key only from the environment, and ne
     // A dirty tree stops every command before anything is read or sent.
     await assert.rejects(runCli(["publish"], env, path.join(r.root, "repo", "rust"), { ...options, provenance: { gitCommit: COMMIT, gitDirty: true } }), /clean, exact commit/);
   } finally { r.cleanup(); }
+});
+
+test("the roll back re-points the channel at a feed it carried before, and uploads nothing else", macOnly, async () => {
+  const r = release(), gateway = await mockGateway();
+  try {
+    // The channel as it will be: an Electron build, then the Rust build published over it.
+    const electronVersion = "0.9.8-super-nightly.2", electronName = `Markie-${electronVersion}-arm64.zip`, electronZip = Buffer.from("synthetic electron zip");
+    const electronFeed = Buffer.from(`version: ${electronVersion}\nfiles:\n  - url: ${electronName}\n    sha512: ${sha(electronZip)}\n    size: ${electronZip.length}\npath: ${electronName}\nsha512: ${sha(electronZip)}\nreleaseDate: '2026-11-24T17:59:58.201Z'\n`);
+    gateway.stored.set(electronName, electronZip);
+    createFeed(r.settings);
+    await publishFiles(r.settings, verifyRelease(r.settings, fakeTools()), KEY, gateway.fetchImpl);
+    assert.match(gateway.stored.get(FEED_NAME).toString(), new RegExp(`^version: ${VERSION.replaceAll(".", "\\.")}\n`));
+    gateway.log.length = 0;
+
+    assert.deepEqual(parseChannelFeed(electronFeed), { version: electronVersion, files: [electronName] });
+    const pointed = await repointFeed(electronFeed, GATEWAY_ORIGIN, KEY, gateway.fetchImpl);
+    assert.deepEqual(pointed, { version: electronVersion, files: [electronName], status: 200 });
+    // One request: the feed. Both ZIPs are where they were.
+    assert.deepEqual(gateway.log.map((entry) => [entry.method, entry.url, entry.status]), [["PUT", LANE_PREFIX + FEED_NAME, 200]]);
+    assert.deepEqual(gateway.stored.get(FEED_NAME), electronFeed);
+    assert.deepEqual(gateway.stored.get(electronName), electronZip);
+    assert.deepEqual(gateway.stored.get(ZIP_NAME), readFileSync(r.zip));
+
+    // A feed for a build the gateway does not hold is refused by the gateway, and the channel stays put.
+    const never = Buffer.from(electronFeed.toString().replaceAll(electronVersion, "0.9.8-super-nightly.3"));
+    await assert.rejects(repointFeed(never, GATEWAY_ORIGIN, KEY, gateway.fetchImpl), /refused the feed \(400\); the channel still points where it did/);
+    assert.deepEqual(gateway.stored.get(FEED_NAME), electronFeed);
+    // Only feeds of this channel's shape, only to the reviewed gateway, only with a key.
+    for (const bad of [
+      electronFeed.toString().replace(`- url: ${electronName}`, "- url: Markie-0.9.8-arm64.zip"), electronFeed.toString().replace(`version: ${electronVersion}`, "version: 0.9.8"),
+      electronFeed.toString().replace(`- url: ${electronName}`, `- url: ../${electronName}`), electronFeed.toString().replace(`path: ${electronName}`, "path: latest-mac.yml"),
+      electronFeed.toString().replaceAll("arm64", "x64"), electronFeed.toString() + "stagingPercentage: 10\n", "",
+    ]) await assert.rejects(repointFeed(Buffer.from(bad), GATEWAY_ORIGIN, KEY, async () => { throw new Error("must not be reached"); }), (error) => !/must not be reached/.test(error.message));
+    await assert.rejects(repointFeed(electronFeed, "https://evil.example", KEY, async () => { throw new Error("must not be reached"); }), /reviewed private gateway/);
+    await assert.rejects(repointFeed(electronFeed, GATEWAY_ORIGIN, "", async () => { throw new Error("must not be reached"); }), /MARKIE_PRIVATE_PUBLISH_KEY is required/);
+
+    // From the command line: the feed file by absolute path in the environment, never an argument.
+    const kept = path.join(r.root, FEED_NAME);
+    writeFileSync(kept, electronFeed);
+    const env = { MARKIE_PRIVATE_API_ORIGIN: GATEWAY_ORIGIN, MARKIE_PRIVATE_PUBLISH_KEY: KEY, MARKIE_NIGHTLY_REPOINT_FEED: kept };
+    const result = await runCli(["repoint"], env, path.join(r.root, "repo", "rust"), { fetch: gateway.fetchImpl });
+    assert.deepEqual(result, { command: "repoint", destination: `${GATEWAY_ORIGIN}${LANE_PREFIX}`, channelNowAt: electronVersion, files: [electronName] });
+    assert.ok(!JSON.stringify(result).includes(KEY));
+    for (const file of [undefined, "relative/super-nightly-mac.yml", path.join(r.root, "some-other.yml")]) {
+      await assert.rejects(runCli(["repoint"], { ...env, MARKIE_NIGHTLY_REPOINT_FEED: file }, path.join(r.root, "repo", "rust"), { fetch: gateway.fetchImpl }), /MARKIE_NIGHTLY_REPOINT_FEED must be the absolute path/);
+    }
+  } finally { await gateway.close(); r.cleanup(); }
 });

@@ -25,7 +25,12 @@ pub fn electron_registry_path() -> Option<PathBuf> {
 }
 
 pub fn import_from_electron(source: &Path, into: &Registry) -> Result<ImportSummary> {
-    let tmp = std::env::temp_dir().join(format!("markie-rs-import-{}", std::process::id()));
+    // A folder of this call's own: two imports at once must never read each
+    // other's copy.
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = std::env::temp_dir().join(format!("markie-rs-import-{}-{call}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp)?;
     let copy = tmp.join("registry.db");
     std::fs::copy(source, &copy).context("copying the Markie registry")?;

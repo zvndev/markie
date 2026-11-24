@@ -14,11 +14,13 @@
  *   - every file is hashed again right before its upload;
  *   - no redirect is followed, and there is no public fallback.
  *
- *   node rust/scripts/nightly-publish.mjs <feed|verify|publish>
+ *   node rust/scripts/nightly-publish.mjs <feed|verify|publish|repoint>
  *
  * Environment: MARKIE_NIGHTLY_VERSION (X.Y.Z-super-nightly.N), MARKIE_PRIVATE_API_ORIGIN
  * (exactly the gateway origin), MARKIE_PRIVATE_PUBLISH_KEY (publish only),
  * MARKIE_NIGHTLY_OUTPUT_DIR (optional; default rust/target/nightly/<version>).
+ * `repoint` is the roll back: it replaces the channel's feed with one kept from
+ * an earlier publish, named by MARKIE_NIGHTLY_REPOINT_FEED, and uploads nothing else.
  * No dependencies beyond Node.
  *
  * Mac only. Windows stays on Electron, and nothing here names its feeds.
@@ -134,8 +136,8 @@ export function createFeed(settings) {
 
 const scalar = (input) => ((input.startsWith("'") && input.endsWith("'")) || (input.startsWith('"') && input.endsWith('"'))) && input.length >= 2 ? input.slice(1, -1) : input;
 
-/** As the gateway's parseFeed, narrowed to this lane's one artifact. */
-export function parseFeed(bytes, settings) {
+/** The gateway's feed grammar (`parseFeed` in server/src/private-releases.ts): fields and files, nothing else. */
+function readFeed(bytes) {
   assert(bytes.length > 0 && bytes.length <= MAX_FEED_BYTES, "The feed is outside its size bounds.");
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\r\n/g, "\n");
   assert(!/[\x00-\x08\x0b-\x1f\x7f]/.test(text), "The feed has a control character.");
@@ -156,14 +158,53 @@ export function parseFeed(bytes, settings) {
     assert(field && !top.has(field[1]), "The feed has an unknown or repeated field.");
     inFiles = false; top.set(field[1], scalar(field[2]));
   }
+  assert(!top.has("releaseDate") || Number.isFinite(Date.parse(top.get("releaseDate"))), "The feed's release date is not valid.");
+  return { top, files };
+}
+
+/** The feed of one version this publisher wrote: exactly this version's arm64 ZIP. */
+export function parseFeed(bytes, settings) {
+  const { top, files } = readFeed(bytes);
   const name = artifactName(settings.version);
   assert(top.get("version") === settings.version, "The feed is for another version.");
   assert(files.length === 1 && files[0].url === name && top.get("path") === name, "The feed must name exactly this version's ZIP.");
   const { sha512, size } = files[0];
   assert(typeof sha512 === "string" && HASH.test(sha512) && top.get("sha512") === sha512, "The feed's SHA-512 is not valid.");
   assert(typeof size === "string" && /^[1-9]\d*$/.test(size) && Number(size) <= LIMIT, "The feed's size is not valid.");
-  assert(!top.has("releaseDate") || Number.isFinite(Date.parse(top.get("releaseDate"))), "The feed's release date is not valid.");
   return { version: settings.version, name, sha512, size: Number(size) };
+}
+
+/** Any feed this channel has carried, Electron's or this app's: the roll back re-points the channel at one. */
+export function parseChannelFeed(bytes) {
+  const { top, files } = readFeed(bytes);
+  const version = top.get("version");
+  assert(typeof version === "string" && VERSION.test(version), "The feed's version is not X.Y.Z-super-nightly.N.");
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), names = new RegExp(`^Markie-${escaped}-(?:arm64|x64)\\.zip$`);
+  assert(files.length >= 1 && files.length <= 2 && new Set(files.map((f) => f.url)).size === files.length, "The feed must list one ZIP per architecture.");
+  for (const file of files) {
+    assert(names.test(file.url), "The feed names a file that is not this version's ZIP.");
+    assert(typeof file.sha512 === "string" && HASH.test(file.sha512) && typeof file.size === "string" && /^[1-9]\d*$/.test(file.size) && Number(file.size) <= LIMIT, "The feed's SHA-512 or size is not valid.");
+  }
+  const legacy = files.find((f) => f.url === top.get("path"));
+  assert(legacy && legacy.sha512 === top.get("sha512"), "The feed's path and SHA-512 must name one of its files.");
+  assert(files.some((f) => f.url === artifactName(version)), "The feed has no arm64 ZIP.");
+  return { version, files: files.map((f) => f.url) };
+}
+
+/** Replace the channel's feed with one it carried before. The ZIPs stay as
+ * they are; the gateway accepts the feed only if it already holds every file
+ * the feed names, at that size and SHA-512. Nothing else is uploaded. */
+export async function repointFeed(feedBytes, apiOrigin, key, fetchImpl = fetch) {
+  assert(typeof key === "string" && key.length >= 32 && key.length <= 256 && !/[\s\x00-\x1f]/.test(key), "MARKIE_PRIVATE_PUBLISH_KEY is required to publish.");
+  const feed = parseChannelFeed(feedBytes);
+  const url = uploadUrl({ version: feed.version, apiOrigin }, FEED_NAME);
+  const response = await fetchImpl(url, {
+    method: "PUT", redirect: "error", credentials: "omit",
+    headers: { "x-markie-publish-key": key, "x-markie-sha512": digest(feedBytes), "Content-Length": String(feedBytes.length), "Content-Type": "application/yaml" },
+    body: feedBytes,
+  });
+  assert(response.ok, `The gateway refused the feed (${response.status}); the channel still points where it did.`);
+  return { version: feed.version, files: feed.files, status: response.status };
 }
 
 /** The ZIP's table of contents: every entry inside the bundle, none through a link. */
@@ -283,7 +324,14 @@ export async function publishFiles(settings, verified, key, fetchImpl = fetch) {
 }
 
 export async function runCli(args = process.argv.slice(2), env = process.env, root = rustDir, options = {}) {
-  assert(args.length === 1 && ["feed", "verify", "publish"].includes(args[0]), "Usage: node rust/scripts/nightly-publish.mjs <feed|verify|publish>. Version, gateway and key come from the environment.");
+  assert(args.length === 1 && ["feed", "verify", "publish", "repoint"].includes(args[0]), "Usage: node rust/scripts/nightly-publish.mjs <feed|verify|publish|repoint>. Version, gateway and key come from the environment.");
+  if (args[0] === "repoint") {
+    // The roll back: no build is involved, only a feed file kept from an earlier publish.
+    const file = env.MARKIE_NIGHTLY_REPOINT_FEED;
+    assert(typeof file === "string" && path.isAbsolute(file) && path.basename(file) === FEED_NAME, `MARKIE_NIGHTLY_REPOINT_FEED must be the absolute path of a kept ${FEED_NAME}.`);
+    const pointed = await repointFeed(readFileSync(file), gatewayOrigin(env.MARKIE_PRIVATE_API_ORIGIN), env.MARKIE_PRIVATE_PUBLISH_KEY, options.fetch ?? fetch);
+    return { command: "repoint", destination: GATEWAY_ORIGIN + LANE_PREFIX, channelNowAt: pointed.version, files: pointed.files };
+  }
   const tools = options.tools ?? systemTools;
   const settings = nightlySettings(env, root, options.provenance ?? readProvenance(root, tools));
   if (args[0] === "feed") createFeed(settings);

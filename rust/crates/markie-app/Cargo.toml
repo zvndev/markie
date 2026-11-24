@@ -22,6 +22,7 @@ markie-editor = { path = "../markie-editor" }
 markie-rich = { path = "../markie-rich" }
 yrs = "=0.28.2"
 markie-vault = { path = "../markie-vault" }
+markie-migrate = { path = "../markie-migrate" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
 getrandom = "0.3"
 regex = "1"
@@ -67,6 +68,7 @@ scene = ["dep:gpui-scene", "dep:gpui-scene-macos"]
 
 [dev-dependencies]
 tempfile.workspace = true
+rusqlite.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -10,6 +10,7 @@ mod actions;
 mod deeplinks;
 mod doc_worker;
 mod default_apps;
+mod electron_import;
 mod icons;
 mod instance;
 mod library;
@@ -170,6 +171,9 @@ fn main() {
         instance::Claim::Handed => return,
         instance::Claim::Primary(rx) => rx,
     };
+    // The Mac app's first launch: bring over what Electron Markie knew, before
+    // any window reads the settings. A no-op in every other build and run.
+    electron_import::at_first_launch();
     // A markie-rs:// link in argv (Windows and Linux hand links over this
     // way) waits for the window; everything else is a file to open.
     let mut launch_links: Vec<String> = args.iter().filter(|a| a.starts_with(deeplinks::SCHEME)).cloned().collect();
@@ -308,6 +312,10 @@ fn main() {
             }
             watchdog::start(cx);
             watchdog::trace_appkit_input();
+            // Once, after the first launch's import: say what came over.
+            if let Some(notice) = electron_import::take_notice() {
+                let _ = window_handle.update(cx, |_, window, cx| gpui_kit::component::WindowExt::push_notification(window, notice, cx));
+            }
             // The nightly only: the launch check, the one every few hours
             // and App › Check for Updates…. A no-op in every other build.
             updates::start(window_handle, cx);

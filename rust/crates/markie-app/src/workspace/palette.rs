@@ -147,7 +147,9 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         cmd("Outline", "View", Some("⌥⌘O"), "sections headings rail toc", action(ToggleOutline)),
         cmd("Add Folder to Library…", "File", Some("⇧⌘O"), "workspace root", action(OpenFolder)),
         cmd("Rescan Documents", "File", Some("⌘R"), "index refresh", action(Rescan)),
-        cmd("Import Recents and Stars from Markie", "File", None, "electron migrate", action(ImportFromMarkie)),
+        // The Mac app brings everything it can use (electron_import.rs); the dev
+        // build keeps Electron's own wording and brings nothing.
+        cmd(if markie_core::paths::NIGHTLY { "Import from Markie" } else { "Import Recents and Stars from Markie" }, "File", None, "electron migrate settings vault", action(ImportFromMarkie)),
         cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
         cmd(&format!("About {}", markie_core::paths::APP_NAME), "Help", None, "version", action(ShowAbout)),
     ]);

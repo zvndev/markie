@@ -17,6 +17,16 @@ export const CLOUD_API_ORIGIN = "https://api.markiedocs.com";
 export const CLOUD_API_LEGACY_ORIGINS: readonly string[] = ["https://api-production-602f.up.railway.app"];
 export const CLOUD_API_ORIGINS: readonly string[] = [CLOUD_API_ORIGIN, ...CLOUD_API_LEGACY_ORIGINS];
 
+// Hosts the official deployment is reached on. It never turns a server
+// official: it only says whether a server that believes it is Markie Cloud is
+// also at one of Markie Cloud's addresses (the boot warning in deployment.ts,
+// and the phone sign-in's way back in well-known.ts).
+export const OFFICIAL_HOSTS: ReadonlySet<string> = new Set([
+  ...CLOUD_API_ORIGINS.map((origin) => new URL(origin).host),
+  "markiedocs.com",
+  "www.markiedocs.com",
+]);
+
 /**
  * The other origins an official deployment's API is reached on, when
  * BETTER_AUTH_URL is one of Markie Cloud's: before the move that is

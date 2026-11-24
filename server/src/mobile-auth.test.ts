@@ -966,6 +966,10 @@ test("on Markie Cloud the button is a link only the real app can be handed", asy
   assert.equal(verifiedReturnOrigin({ official: true, origin: "https://markiedocs.com", docsOrigin: null }), "https://api.markiedocs.com");
   assert.equal(verifiedReturnOrigin({ official: true, origin: "https://api.markiedocs.com", docsOrigin: "https://docs.elsewhere.example" }), "https://markiedocs.com");
   assert.equal(verifiedReturnOrigin({ official: false, origin: "https://markie.example.com", docsOrigin: "https://markiedocs.com" }), null, "a self-hosted server has no host the app claims");
+  // MARKIE_OFFICIAL unset reads as official, so a server can believe it is
+  // Markie Cloud at an address that is not. It gets no verified link either.
+  assert.equal(verifiedReturnOrigin({ official: true, origin: "http://localhost:8787", docsOrigin: null }), null, "a local server is not at a Markie Cloud address");
+  assert.equal(verifiedReturnOrigin({ official: true, origin: "https://markie.example.com", docsOrigin: "https://markiedocs.com" }), null, "nor is a self-hosted one that forgot MARKIE_OFFICIAL=0");
 
   const id = userId("phone-google@example.org");
   assert.ok(id);

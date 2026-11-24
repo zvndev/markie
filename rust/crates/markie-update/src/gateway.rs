@@ -158,7 +158,7 @@ pub(crate) mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     pub(crate) const TOKEN: &str = "synthetic-owner-token";
-    const V: &str = "0.1.0-rs-nightly.7";
+    const V: &str = "0.1.0-super-nightly.7";
     const ZIP: &[u8] = b"synthetic zip bytes, not a real archive";
 
     /// A mock gateway on its own runtime, so the blocking client can call it
@@ -182,7 +182,7 @@ pub(crate) mod tests {
         }
         /// The owner's feed and artifact, as the real gateway serves them.
         pub fn publish(&self, version: &str, zip: &[u8]) {
-            let name = format!("Markie-Nightly-{version}-arm64.zip");
+            let name = format!("Markie-{version}-arm64.zip");
             self.mount(
                 Mock::given(method("GET"))
                     .and(path(format!("{LANE_PREFIX}{FEED_NAME}")))

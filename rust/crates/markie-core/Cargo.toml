@@ -7,9 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-# The private "Markie Nightly" variant: its own name, bundle id, data folder,
-# URL scheme and Keychain service, so it runs beside the dev "Markie RS" build
-# and Electron Markie. docs/rust-port/NIGHTLY.md.
+# The Mac app on the super-nightly channel: Markie's own name, bundle id and
+# markie:// scheme, with a data folder of its own. Without it, the dev side
+# build "Markie RS". src/paths.rs, docs/rust-port/NIGHTLY.md.
 nightly = []
 
 [dependencies]

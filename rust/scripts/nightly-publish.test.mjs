@@ -10,28 +10,22 @@ import { spawnSync } from "node:child_process";
 import {
   APP_NAME, BUNDLE_ID, BUNDLE_NAME, FEED_NAME, GATEWAY_ORIGIN, IDENTITY, LANE_PREFIX, REQUIREMENT, TEAM_ID,
   artifactName, assertSigningAuthority, createFeed, feedText, gatewayOrigin, inspectZip, nightlySettings, outputDirectory,
-  parseFeed, publishFiles, runCli, systemTools, uploadUrl, verifyRelease,
+  parseFeed, publishFiles, runCli, systemTools, uploadUrl, verifyRelease, versionAbove, LAST_ELECTRON_SUPER_NIGHTLY,
 } from "./nightly-publish.mjs";
+import { infoPlist, plistXml } from "./mac-info-plist.mjs";
 
-const VERSION = "0.1.0-rs-nightly.7", COMMIT = "a".repeat(40), ZIP_NAME = artifactName(VERSION);
+const VERSION = "0.10.0-super-nightly.7", COMMIT = "a".repeat(40), ZIP_NAME = artifactName(VERSION);
 // A synthetic publish key: the right shape, and nobody's secret.
 const KEY = "synthetic-publish-key-0123456789-abcdefghijklmnopqrstuvwxyz";
 const sha = (data) => createHash("sha512").update(data).digest("base64");
 const clean = { gitCommit: COMMIT, gitDirty: false };
 const macOnly = { skip: process.platform !== "darwin" && "needs macOS ditto and plutil" };
 
-function plistFor({ bundleId = BUNDLE_ID, version = VERSION, schemes = ["markie-nightly"], extra = "" } = {}) {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleName</key><string>${APP_NAME}</string>
-<key>CFBundleIdentifier</key><string>${bundleId}</string>
-<key>CFBundleExecutable</key><string>markie-rs</string>
-<key>CFBundleShortVersionString</key><string>${version}</string>
-<key>CFBundleVersion</key><string>${version}</string>
-<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array>${schemes.map((s) => `<string>${s}</string>`).join("")}</array></dict></array>
-${extra}</dict></plist>
-`;
+/** Markie's Info.plist as the bundle script writes it, with one thing changed for a wrong case. */
+function plistFor({ version = VERSION, change = () => {} } = {}) {
+  const plist = infoPlist("nightly", version);
+  change(plist);
+  return plistXml(plist);
 }
 
 /** An output folder as nightly-release.sh leaves it: the ZIP of a bundle. Not signed. */
@@ -47,7 +41,7 @@ function release(options = {}) {
   const zip = path.join(output, ZIP_NAME);
   const made = spawnSync("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, zip]);
   assert.equal(made.status, 0);
-  const settings = { version: VERSION, apiOrigin: GATEWAY_ORIGIN, gitCommit: COMMIT, channel: "rs-nightly", output };
+  const settings = { version: VERSION, apiOrigin: GATEWAY_ORIGIN, gitCommit: COMMIT, channel: "super-nightly", output };
   return { root, output, zip, settings, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -99,9 +93,13 @@ test("settings need an exact nightly version, a clean commit and the reviewed ga
     const rust = path.join(root, "rust"); mkdirSync(rust);
     const env = { MARKIE_NIGHTLY_VERSION: VERSION, MARKIE_PRIVATE_API_ORIGIN: GATEWAY_ORIGIN };
     const settings = nightlySettings(env, rust, clean);
-    assert.deepEqual(settings, { version: VERSION, apiOrigin: GATEWAY_ORIGIN, gitCommit: COMMIT, channel: "rs-nightly", output: path.join(rust, "target", "nightly", VERSION) });
-    for (const version of [undefined, "", "0.1.0", "0.1.0-super-nightly.7", "0.1.0-rs-nightly", "0.1.0-rs-nightly.07", "0.1.0-rs-nightly.7.1", "0.1.0-rs-nightly.x", "v0.1.0-rs-nightly.7", "0.1.0-rs-nightly.7\n"]) {
-      assert.throws(() => nightlySettings({ ...env, MARKIE_NIGHTLY_VERSION: version }, rust, clean), /X\.Y\.Z-rs-nightly\.N/, String(version));
+    assert.deepEqual(settings, { version: VERSION, apiOrigin: GATEWAY_ORIGIN, gitCommit: COMMIT, channel: "super-nightly", output: path.join(rust, "target", "nightly", VERSION) });
+    for (const version of [undefined, "", "0.10.0", "0.10.0-rs-nightly.7", "0.10.0-super-nightly", "0.10.0-super-nightly.07", "0.10.0-super-nightly.7.1", "0.10.0-super-nightly.x", "v0.10.0-super-nightly.7", "0.10.0-super-nightly.7\n"]) {
+      assert.throws(() => nightlySettings({ ...env, MARKIE_NIGHTLY_VERSION: version }, rust, clean), /X\.Y\.Z-super-nightly\.N/, String(version));
+    }
+    // A version the installed Electron super-nightly would not take as an update.
+    for (const version of [LAST_ELECTRON_SUPER_NIGHTLY, "0.9.8-super-nightly.1", "0.9.7-super-nightly.99", "0.1.0-super-nightly.7"]) {
+      assert.throws(() => nightlySettings({ ...env, MARKIE_NIGHTLY_VERSION: version }, rust, clean), /must be above 0\.9\.8-super-nightly\.2/, version);
     }
     assert.throws(() => nightlySettings(env, rust, { gitCommit: COMMIT, gitDirty: true }), /clean, exact commit/);
     assert.throws(() => nightlySettings(env, rust, { gitCommit: "abc123", gitDirty: false }), /clean, exact commit/);
@@ -119,9 +117,9 @@ test("the destination is closed: one origin, one prefix, two file names", () => 
   ]) assert.throws(() => gatewayOrigin(origin), Error, String(origin));
   const settings = { version: VERSION, apiOrigin: GATEWAY_ORIGIN };
   assert.equal(uploadUrl(settings, ZIP_NAME), `${GATEWAY_ORIGIN}${LANE_PREFIX}${ZIP_NAME}`);
-  assert.equal(uploadUrl(settings, FEED_NAME), `${GATEWAY_ORIGIN}/private-releases/rs-nightly/rs-nightly-mac.yml`);
-  for (const name of ["super-nightly-mac.yml", "rs-nightly.yml", artifactName("0.1.0-rs-nightly.8"), `../super-nightly/${ZIP_NAME}`, `${ZIP_NAME}?x=1`, `${ZIP_NAME}#x`, `${ZIP_NAME}.blockmap`, "Markie-0.9.4-super-nightly.1-arm64-mac.zip", ""]) {
-    assert.throws(() => uploadUrl(settings, name), /Only the rs-nightly feed/, name);
+  assert.equal(uploadUrl(settings, FEED_NAME), `${GATEWAY_ORIGIN}/private-releases/super-nightly/super-nightly-mac.yml`);
+  for (const name of ["rs-nightly-mac.yml", "super-nightly.yml", "latest-mac.yml", "latest.yml", artifactName("0.10.0-super-nightly.8"), `../rs-nightly/${ZIP_NAME}`, `${ZIP_NAME}?x=1`, `${ZIP_NAME}#x`, `${ZIP_NAME}.blockmap`, `Markie-${VERSION}-x64.zip`, `Markie-${VERSION}-x64.exe`, `Markie-Nightly-${VERSION}-arm64.zip`, ""]) {
+    assert.throws(() => uploadUrl(settings, name), /Only the super-nightly Mac feed/, name);
   }
   assert.throws(() => uploadUrl({ version: VERSION, apiOrigin: "https://evil.example" }, ZIP_NAME), /reviewed private gateway/);
 });
@@ -148,7 +146,7 @@ test("the feed is the gateway's subset and names exactly this version's ZIP", ()
   assert.equal(text, `version: ${VERSION}\nfiles:\n  - url: ${ZIP_NAME}\n    sha512: ${hash}\n    size: ${data.length}\npath: ${ZIP_NAME}\nsha512: ${hash}\nreleaseDate: '2026-11-24T18:00:00.000Z'\n`);
   assert.deepEqual(parseFeed(Buffer.from(text), settings), { version: VERSION, name: ZIP_NAME, sha512: hash, size: data.length });
   for (const bad of [
-    text.replace(`version: ${VERSION}`, "version: 0.1.0-rs-nightly.8"), text.replace(`- url: ${ZIP_NAME}`, `- url: https://evil.example/${ZIP_NAME}`),
+    text.replace(`version: ${VERSION}`, "version: 0.10.0-super-nightly.8"), text.replace(`- url: ${ZIP_NAME}`, `- url: https://evil.example/${ZIP_NAME}`),
     text.replace(`- url: ${ZIP_NAME}`, `- url: ../${ZIP_NAME}`), text.replace(`path: ${ZIP_NAME}`, "path: latest-mac.yml"),
     text.replace(`size: ${data.length}`, "size: 0"), text.replace(`size: ${data.length}`, `size: ${512 * 1024 * 1024 + 1}`), text.replace(`    sha512: ${hash}`, "    sha512: nope"),
     text.replace(`\nsha512: ${hash}`, `\nsha512: ${sha("other")}`), text + "path: duplicate.zip\n", text.replace("files:", "files: &anchor"), text.replace("releaseDate:", "unknownField:"),
@@ -159,8 +157,8 @@ test("the feed is the gateway's subset and names exactly this version's ZIP", ()
 test("a ZIP may hold only the bundle, and nothing written through a link", () => {
   const inside = `${BUNDLE_NAME}/Contents/Info.plist`;
   assert.deepEqual(inspectZip(storedZip([{ name: `${BUNDLE_NAME}/`, mode: 0o040755 }, { name: inside, data: "x" }, { name: `${BUNDLE_NAME}/Contents/Current`, data: "A", mode: 0o120755 }])), { entries: 3, expanded: 2, links: 1 });
-  for (const name of ["evil.sh", `markie nightly.app/Contents/Info.plist`, `${BUNDLE_NAME}/Contents/R\u00e9sum\u00e9.txt`, `../${inside}`, `${BUNDLE_NAME}/../../evil`, `${BUNDLE_NAME}/./x`, `${BUNDLE_NAME}//x`, `/Applications/${inside}`, `${BUNDLE_NAME}\\x`, "Markie.app/Contents/Info.plist", `__MACOSX/${BUNDLE_NAME}/._x`, BUNDLE_NAME]) {
-    assert.throws(() => inspectZip(storedZip([{ name: inside, data: "x" }, { name, data: "x" }])), /outside Markie Nightly\.app/, name);
+  for (const name of ["evil.sh", `markie.app/Contents/Info.plist`, `${BUNDLE_NAME}/Contents/R\u00e9sum\u00e9.txt`, `../${inside}`, `${BUNDLE_NAME}/../../evil`, `${BUNDLE_NAME}/./x`, `${BUNDLE_NAME}//x`, `/Applications/${inside}`, `${BUNDLE_NAME}\\x`, "Markie Nightly.app/Contents/Info.plist", "Markie RS.app/Contents/Info.plist", `__MACOSX/${BUNDLE_NAME}/._x`, BUNDLE_NAME]) {
+    assert.throws(() => inspectZip(storedZip([{ name: inside, data: "x" }, { name, data: "x" }])), /outside Markie\.app/, name);
   }
   assert.throws(() => inspectZip(storedZip([{ name: `${BUNDLE_NAME}/Contents/Resources`, data: "/tmp", mode: 0o120755 }, { name: `${BUNDLE_NAME}/Contents/Resources/evil`, data: "x" }])), /through a link/);
   assert.throws(() => inspectZip(storedZip([{ name: inside, data: "a" }, { name: inside, data: "b" }])), /repeats an entry/);
@@ -173,14 +171,14 @@ test("a ZIP may hold only the bundle, and nothing written through a link", () =>
 
 test("the signing authority must be the reviewed certificate, team and hardened runtime", () => {
   assert.doesNotThrow(() => assertSigningAuthority(goodDisplay));
-  assert.throws(() => assertSigningAuthority(goodDisplay.replace(`Identifier=${BUNDLE_ID}`, "Identifier=com.zvn.markie")), /not signed as/);
+  assert.throws(() => assertSigningAuthority(goodDisplay.replace(`Identifier=${BUNDLE_ID}`, "Identifier=com.zvn.markie.nightly")), /not signed as/);
   assert.throws(() => assertSigningAuthority(goodDisplay.replace(`TeamIdentifier=${TEAM_ID}`, "TeamIdentifier=AAAAAAAAAA")), /signing team/);
   assert.throws(() => assertSigningAuthority(goodDisplay.replace(`TeamIdentifier=${TEAM_ID}`, "TeamIdentifier=not set")), /signing team/);
   assert.throws(() => assertSigningAuthority(goodDisplay.replace(`Authority=${IDENTITY}`, `Authority=Apple Development: Kirby Campbell (${TEAM_ID})`)), /Developer ID Application/);
   // A Developer ID further down the chain does not make the leaf one.
   assert.throws(() => assertSigningAuthority(goodDisplay.replace(`Authority=${IDENTITY}`, `Authority=Someone Else\nAuthority=${IDENTITY}`)), /Developer ID Application/);
   assert.throws(() => assertSigningAuthority(goodDisplay.replace("flags=0x10000(runtime)", "flags=0x2(adhoc)")), /hardened runtime/);
-  assert.match(REQUIREMENT, /identifier "com\.zvn\.markie\.nightly" and anchor apple generic .* certificate leaf\[subject\.OU\] = "3VU8SG5TD9"/);
+  assert.match(REQUIREMENT, /^identifier "com\.zvn\.markie" and anchor apple generic .* certificate leaf\[subject\.OU\] = "3VU8SG5TD9"$/);
 });
 
 test("verify passes a right release and names each wrong one", macOnly, () => {
@@ -195,13 +193,13 @@ test("verify passes a right release and names each wrong one", macOnly, () => {
       { name: FEED_NAME, file: path.join(r.output, FEED_NAME), size: feedBytes.length, sha512: sha(feedBytes) },
     ] });
     const calls = tools.calls.join("\n");
-    assert.match(calls, /codesign --verify --deep --strict -R =identifier "com\.zvn\.markie\.nightly"/);
+    assert.match(calls, /codesign --verify --deep --strict --all-architectures -R =identifier "com\.zvn\.markie" and/);
     assert.match(calls, /spctl --assess --type execute/);
     assert.match(calls, /xcrun stapler validate/);
     // Nothing from the ZIP runs before the signature checks.
     assert.ok(tools.calls.findIndex((c) => c.endsWith("markie-rs --version")) > tools.calls.findIndex((c) => c.startsWith("/usr/bin/xcrun")));
     for (const [change, message] of [
-      [{ sealed: false }, /code signature is not valid/], [{ ours: false }, /reviewed Developer ID team/], [{ gatekeeper: false }, /Gatekeeper/], [{ stapled: false }, /not stapled/],
+      [{ sealed: false }, /code signature is not valid/], [{ ours: false }, /Electron Markie's designated requirement/], [{ gatekeeper: false }, /Gatekeeper/], [{ stapled: false }, /not stapled/],
       [{ display: goodDisplay.replace(TEAM_ID + "\n", "AAAAAAAAAA\n") }, /signing team/],
     ]) assert.throws(() => verifyRelease(r.settings, fakeTools(change)), message);
     assert.throws(() => verifyRelease({ ...r.settings, gitCommit: "b".repeat(40) }, fakeTools()), /not built from the checked-out commit/);
@@ -219,18 +217,33 @@ test("verify passes a right release and names each wrong one", macOnly, () => {
   } finally { r.cleanup(); }
 });
 
-test("verify refuses another app, another version, other schemes and file types inside a right-named ZIP", macOnly, () => {
-  for (const [options, message] of [
-    [{ bundleId: "com.zvn.markie" }, /not Markie Nightly/], [{ bundleId: "com.zvn.markie.rs" }, /not Markie Nightly/],
-    [{ version: "0.1.0-rs-nightly.6" }, /another version/], [{ schemes: ["markie"] }, /markie-nightly:\/\/ and no other/],
-    [{ schemes: ["markie-nightly", "markie"] }, /no other scheme/], [{ schemes: ["markie-rs"] }, /markie-nightly:\/\//],
-    [{ extra: "<key>CFBundleDocumentTypes</key><array><dict/></array>\n" }, /claims no file types/],
-    [{ reportedVersion: "0.1.0-rs-nightly.6" }, /not built from the checked-out commit at this version/],
+test("verify refuses another app, another version, or any other scheme or file types inside a right-named ZIP", macOnly, () => {
+  for (const [label, options, message] of [
+    ["the retired side identity", { change: (p) => { p.CFBundleIdentifier = "com.zvn.markie.nightly"; } }, /not Markie\./],
+    ["the dev build", { change: (p) => { p.CFBundleIdentifier = "com.zvn.markie.rs"; p.CFBundleName = "Markie RS"; } }, /not Markie\./],
+    ["another version", { version: "0.10.0-super-nightly.6" }, /another version/],
+    ["the dev scheme", { change: (p) => { p.CFBundleURLTypes[0].CFBundleURLSchemes = ["markie-rs"]; } }, /not Markie's/],
+    ["a second scheme", { change: (p) => { p.CFBundleURLTypes[0].CFBundleURLSchemes.push("other"); } }, /not Markie's/],
+    ["no document types", { change: (p) => { delete p.CFBundleDocumentTypes; } }, /not Markie's/],
+    ["one document type fewer", { change: (p) => { p.CFBundleDocumentTypes.pop(); } }, /not Markie's/],
+    ["a document type taken at a higher rank", { change: (p) => { p.CFBundleDocumentTypes[2].LSHandlerRank = "Owner"; } }, /not Markie's/],
+    ["an added key", { change: (p) => { p.LSUIElement = true; } }, /not Markie's/],
+    ["a binary of another version", { reportedVersion: "0.10.0-super-nightly.6" }, /not built from the checked-out commit at this version/],
   ]) {
     const r = release(options);
-    try { createFeed(r.settings); assert.throws(() => verifyRelease(r.settings, fakeTools()), message, JSON.stringify(options)); }
+    try { createFeed(r.settings); assert.throws(() => verifyRelease(r.settings, fakeTools()), message, label); }
     finally { r.cleanup(); }
   }
+});
+
+test("a Rust build must be above the last Electron build on the channel", () => {
+  assert.equal(LAST_ELECTRON_SUPER_NIGHTLY, "0.9.8-super-nightly.2");
+  for (const higher of ["0.9.8-super-nightly.3", "0.9.9-super-nightly.0", "0.10.0-super-nightly.1", "0.10.0-super-nightly.0", "1.0.0-super-nightly.0"]) assert.equal(versionAbove(higher, LAST_ELECTRON_SUPER_NIGHTLY), true, higher);
+  for (const notHigher of ["0.9.8-super-nightly.2", "0.9.8-super-nightly.1", "0.9.7-super-nightly.50", "0.1.0-super-nightly.9"]) assert.equal(versionAbove(notHigher, LAST_ELECTRON_SUPER_NIGHTLY), false, notHigher);
+  // Numbers, not text: 0.10 is above 0.9, and build 10 is above build 9.
+  assert.equal(versionAbove("0.10.0-super-nightly.1", "0.9.99-super-nightly.99"), true);
+  assert.equal(versionAbove("0.10.0-super-nightly.10", "0.10.0-super-nightly.9"), true);
+  assert.throws(() => versionAbove("0.10.0", LAST_ELECTRON_SUPER_NIGHTLY), /X\.Y\.Z-super-nightly\.N/);
 });
 
 test("publish sends the ZIP first and the feed last, to the closed destination, with the key only in its header", macOnly, async () => {
@@ -285,7 +298,7 @@ test("publish stops before the feed when anything is wrong", macOnly, async () =
     step = await attempt(() => { throw new TypeError("fetch failed"); });
     assert.match(step.error.message, /fetch failed/); assert.deepEqual(step.urls, [ZIP_NAME]);
     // Artifacts verified for another version or commit, or in another order.
-    step = await attempt(() => new Response("{}", { status: 201 }), { ...verified, version: "0.1.0-rs-nightly.8" });
+    step = await attempt(() => new Response("{}", { status: 201 }), { ...verified, version: "0.10.0-super-nightly.8" });
     assert.match(step.error.message, /verified for this version and commit/); assert.deepEqual(step.urls, []);
     step = await attempt(() => new Response("{}", { status: 201 }), { ...verified, files: [verified.files[1], verified.files[0]] });
     assert.match(step.error.message, /then the feed, and nothing else/); assert.deepEqual(step.urls, []);

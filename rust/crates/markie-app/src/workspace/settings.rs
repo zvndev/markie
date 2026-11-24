@@ -243,7 +243,7 @@ fn render_files(t: &Tokens) -> AnyElement {
                         .child(if status.markie {
                             div().text_size(px(11.5)).text_color(t.muted).child("Markie").into_any_element()
                         } else {
-                            disabled_button("Use Markie RS", t).into_any_element()
+                            disabled_button(&format!("Use {}", markie_core::paths::APP_NAME), t).into_any_element()
                         })
                 })),
         )
@@ -252,7 +252,7 @@ fn render_files(t: &Tokens) -> AnyElement {
                 .mt(px(8.))
                 .text_size(px(11.5))
                 .text_color(t.muted)
-                .child(crate::default_apps::SIDE_BUILD_NOTE),
+                .child(crate::default_apps::note()),
         )
         .into_any_element()
 }

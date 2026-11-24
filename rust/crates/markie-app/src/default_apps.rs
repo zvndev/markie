@@ -1,9 +1,10 @@
 //! Settings › Files, "Open with Markie": `electron/default-apps.js` and
 //! `src/components/default-apps-section.tsx`.
 //!
-//! Markie RS is a side build and claims no file types, so the section shows
-//! the same formats and who opens them today, with every claim button
-//! disabled and the reason written in place. Reading the current handler is
+//! The dev build Markie RS claims no file types, so the section shows the same
+//! formats and who opens them today, with every claim button disabled and the
+//! reason written in place. The Mac app (the `nightly` feature) is Markie and
+//! declares its document types; claiming a format from here is not built yet. Reading the current handler is
 //! the same LaunchServices call Electron's Swift makes, made directly.
 
 pub const MARKIE_BUNDLE_ID: &str = "com.zvn.markie";
@@ -40,6 +41,14 @@ pub const FORMATS: &[Format] = &[
 
 /// Why nothing here can be claimed. Shown in place of Electron's intro line.
 pub const SIDE_BUILD_NOTE: &str = "Markie RS is a side build, so it claims no file types. A double-click in Finder keeps opening files in Markie. Open a file here with Open… or Open With.";
+/// The Mac app declares Markie's document types, so a default already set to
+/// Markie keeps working. Setting one from here is not built yet.
+pub const MAIN_BUILD_NOTE: &str = "Formats already set to open with Markie keep doing so. To make Markie the default for another format, choose Get Info on a file in Finder, then Open With and Change All.";
+
+/// The line under the list, for this build.
+pub fn note() -> &'static str {
+    if markie_core::paths::NIGHTLY { MAIN_BUILD_NOTE } else { SIDE_BUILD_NOTE }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormatStatus {

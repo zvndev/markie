@@ -35,15 +35,19 @@ use markie_core::registry::Registry;
 use super::Workspace;
 use crate::actions::{Open, OpenAccount, OpenSettings, ShowCloud};
 
-/// The Keychain service this build keeps its session under: "Markie RS", or
-/// "Markie Nightly" for the nightly. Never "Markie".
-pub const KEYCHAIN_SERVICE: &str = markie_core::paths::APP_NAME;
+/// The Keychain service this build keeps its session under: its profile name,
+/// "Markie RS" or "Markie Nightly". Never an item of Electron Markie's.
+pub const KEYCHAIN_SERVICE: &str = markie_core::paths::PROFILE_NAME;
 /// The service used while the app talks to a local test server, so test
 /// sessions can never be mistaken for Kirby's real one.
 pub const TEST_KEYCHAIN_SERVICE: &str = if markie_core::paths::NIGHTLY { "Markie Nightly Test" } else { "Markie RS Test" };
 /// The registry setting that turns on Google and Apple. Off until Markie Cloud
 /// answers `app=markie-rs` with a `markie-rs://` link (zvndev/markie#136).
 pub const BROWSER_SIGN_IN_SETTING: &str = "cloud_browser_sign_in";
+/// Markie Cloud has always handed sign-ins back on `markie://`, which the
+/// nightly answers, so Google and Apple are on there from the start. The dev
+/// build's `markie-rs://` needs a server that knows it, so it stays opt-in.
+pub const BROWSER_SIGN_IN_DEFAULT: bool = markie_core::paths::NIGHTLY;
 
 // ------------------------------------------------------------------ server
 
@@ -218,7 +222,7 @@ impl AccountStore {
             .map_err(|e| eprintln!("markie-rs: cloud client unavailable: {e}"))
             .ok();
         let registry = Registry::open(&markie_core::paths::data_dir().join("registry.db")).ok();
-        let browser_sign_in = registry.as_ref().and_then(|r| r.setting(BROWSER_SIGN_IN_SETTING).ok().flatten()).is_some_and(|v| v == "on");
+        let browser_sign_in = registry.as_ref().and_then(|r| r.setting(BROWSER_SIGN_IN_SETTING).ok().flatten()).map_or(BROWSER_SIGN_IN_DEFAULT, |v| v == "on");
         Self {
             rt,
             client,

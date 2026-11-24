@@ -5,7 +5,7 @@
 //! Electron's labels, separators and shortcuts.
 //!
 //! Left out on purpose: the developer tools item, and Check for Updates… in
-//! every build but an installed Markie Nightly (updates.rs), the only one
+//! every build but the installed nightly (updates.rs), the only one
 //! with an updater. Commands Markie RS has that Electron keeps
 //! elsewhere (Rename, Move, Trash, Copy Path, Cloud, Vault, Rescan) stay in
 //! the command palette and their shortcuts, not in the menu bar.
@@ -25,7 +25,7 @@ pub struct MenuState {
     /// A Word, RTF or ODT document is open: document-menu.js labels the
     /// Export submenu's light PDF "Export PDF…" for it.
     pub word: bool,
-    /// This build updates itself (Markie Nightly, installed): the app menu
+    /// This build updates itself (the nightly, installed): the app menu
     /// has Check for Updates…. `install` sets it; callers leave it alone.
     pub updates: bool,
 }

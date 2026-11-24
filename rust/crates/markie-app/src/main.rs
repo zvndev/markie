@@ -1,10 +1,10 @@
 //! Markie RS: the native Rust build of the Markie desktop app.
 //!
-//! A side build. It has its own name, bundle id and data folder, and nothing
-//! in the Electron release pipeline knows it exists. The dev build "Markie RS"
-//! has no updater; the private "Markie Nightly" variant (the `nightly`
-//! feature, docs/rust-port/NIGHTLY.md) updates itself from the private
-//! gateway (updates.rs).
+//! Two builds (markie-core paths.rs). The dev build "Markie RS" is a side
+//! build: its own name, bundle id and data folder, no updater. With the
+//! `nightly` feature this is Markie, the Mac app on the super-nightly channel:
+//! Markie's identity, a data folder of its own, an updater (updates.rs) and a
+//! first-run import from Electron Markie's profile (docs/rust-port/NIGHTLY.md).
 
 mod actions;
 mod deeplinks;
@@ -308,7 +308,7 @@ fn main() {
             }
             watchdog::start(cx);
             watchdog::trace_appkit_input();
-            // Markie Nightly only: the launch check, the one every few hours
+            // The nightly only: the launch check, the one every few hours
             // and App › Check for Updates…. A no-op in every other build.
             updates::start(window_handle, cx);
             cx.on_action(move |_: &logs::RevealCrashLog, cx| {

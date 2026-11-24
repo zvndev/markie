@@ -11,18 +11,20 @@ const bundled = join(here, "mcp", "markie-mcp.mjs");
 const server = pathToFileURL(resolve(process.env.MARKIE_RS_MCP_SERVER ||
   (existsSync(bundled) ? bundled : join(here, "../../../../mcp/markie-mcp.mjs"))));
 const client = new URL("./agent-client.mjs", server);
-// Which build this adapter belongs to. A bundle that is not "Markie RS" (the
-// nightly) says so in app-identity.json beside this file, written by the
-// bundle script and covered by the bundle's signature.
-let appName = "Markie RS";
+// Which build this adapter belongs to: the name the app answers with, and the
+// name of its data folder. The Mac app ("Markie", data in "Markie Nightly" on
+// the super-nightly channel) says so in app-identity.json beside this file,
+// written by the bundle script and covered by the bundle's signature. Only
+// that exact pair is honoured; anything else is the dev build.
+let appName = "Markie RS", profileName = "Markie RS";
 try {
-  const named = JSON.parse(readFileSync(join(here, "app-identity.json"), "utf8")).appName;
-  if (named === "Markie Nightly") appName = named;
+  const identity = JSON.parse(readFileSync(join(here, "app-identity.json"), "utf8"));
+  if (identity.appName === "Markie" && identity.profileName === "Markie Nightly") ({ appName, profileName } = identity);
 } catch { /* The dev build and a source checkout have no such file. */ }
 const base = process.platform === "darwin"
   ? join(homedir(), "Library", "Application Support")
   : process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-const directory = resolve(process.env.MARKIE_RS_DATA_DIR || join(base, appName), "agent");
+const directory = resolve(process.env.MARKIE_RS_DATA_DIR || join(base, profileName), "agent");
 let realDirectory;
 try { realDirectory = realpathSync(directory); } catch { realDirectory = directory; }
 

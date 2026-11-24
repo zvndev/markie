@@ -1,4 +1,4 @@
-//! Is the unpacked bundle really Markie Nightly, signed by the right team?
+//! Is the unpacked bundle really Markie, signed by the right team?
 //!
 //! macOS answers that, not this code: `codesign` checks the signature against
 //! a requirement naming the bundle id, Apple's Developer ID chain and the
@@ -41,7 +41,7 @@ pub struct Expect {
 }
 
 impl Expect {
-    pub fn nightly(version: &crate::NightlyVersion) -> Self {
+    pub fn markie(version: &crate::NightlyVersion) -> Self {
         Self { bundle_id: crate::BUNDLE_ID.into(), team_id: crate::TEAM_ID.into(), version: version.to_string() }
     }
 
@@ -234,22 +234,22 @@ pub(crate) mod tests {
     use std::os::unix::process::ExitStatusExt as _;
     use std::process::ExitStatus;
 
-    pub(crate) const VERSION: &str = "0.1.0-rs-nightly.7";
+    pub(crate) const VERSION: &str = "0.1.0-super-nightly.7";
 
     pub(crate) fn expect() -> Expect {
-        Expect::nightly(&crate::NightlyVersion::parse(VERSION).unwrap())
+        Expect::markie(&crate::NightlyVersion::parse(VERSION).unwrap())
     }
 
     pub(crate) fn display(identifier: &str, team: &str, authority: &str, flags: &str) -> String {
         format!(
-            "Executable=/tmp/x/Markie Nightly.app/Contents/MacOS/markie-rs\nIdentifier={identifier}\nFormat=app bundle with Mach-O thin (arm64)\n\
+            "Executable=/tmp/x/Markie.app/Contents/MacOS/markie-rs\nIdentifier={identifier}\nFormat=app bundle with Mach-O thin (arm64)\n\
              CodeDirectory v=20500 size=1234 flags={flags} hashes=30+7 location=embedded\nAuthority={authority}\n\
              Authority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTimestamp=24 Nov 2026 at 12:00:00\nTeamIdentifier={team}\n"
         )
     }
 
     pub(crate) fn good_display() -> String {
-        display("com.zvn.markie.nightly", "3VU8SG5TD9", "Developer ID Application: Kirby Campbell (3VU8SG5TD9)", "0x10000(runtime)")
+        display("com.zvn.markie", "3VU8SG5TD9", "Developer ID Application: Kirby Campbell (3VU8SG5TD9)", "0x10000(runtime)")
     }
 
     /// Stands in for the system tools: real `ditto` and `plutil` (they read
@@ -310,10 +310,10 @@ pub(crate) mod tests {
     #[test]
     fn reads_codesigns_description() {
         let s = parse_signature(&good_display());
-        assert_eq!(s.identifier.as_deref(), Some("com.zvn.markie.nightly"));
+        assert_eq!(s.identifier.as_deref(), Some("com.zvn.markie"));
         assert_eq!(s.team.as_deref(), Some("3VU8SG5TD9"));
         assert!(s.developer_id && s.hardened_runtime);
-        let adhoc = parse_signature("Identifier=com.zvn.markie.nightly\nCodeDirectory v=20400 size=1 flags=0x2(adhoc) hashes=1+1 location=embedded\nSignature=adhoc\nTeamIdentifier=not set\n");
+        let adhoc = parse_signature("Identifier=com.zvn.markie\nCodeDirectory v=20400 size=1 flags=0x2(adhoc) hashes=1+1 location=embedded\nSignature=adhoc\nTeamIdentifier=not set\n");
         assert_eq!(adhoc.team.as_deref(), Some("not set"));
         assert!(!adhoc.developer_id && !adhoc.hardened_runtime);
         // A Developer ID named further down the chain, or in a later repeated
@@ -329,7 +329,7 @@ pub(crate) mod tests {
     #[test]
     fn the_requirement_names_the_bundle_the_chain_and_the_team() {
         let requirement = expect().requirement();
-        assert!(requirement.contains("identifier \"com.zvn.markie.nightly\""));
+        assert!(requirement.contains("identifier \"com.zvn.markie\""));
         assert!(requirement.contains("anchor apple generic"));
         assert!(requirement.contains("certificate leaf[subject.OU] = \"3VU8SG5TD9\""));
         assert!(requirement.contains("1.2.840.113635.100.6.1.13"), "the Developer ID Application leaf extension");
@@ -338,12 +338,12 @@ pub(crate) mod tests {
     #[test]
     fn a_right_bundle_passes_and_each_wrong_one_is_named() {
         let dir = tempfile::tempdir().unwrap();
-        let app = fixture(dir.path(), "com.zvn.markie.nightly", VERSION, "new");
+        let app = fixture(dir.path(), "com.zvn.markie", VERSION, "new");
         let tools = FakeTools::good();
         assert_eq!(verify(&tools, &app, &expect()), Ok(()));
         let calls = tools.calls.borrow().join("\n");
         assert!(calls.contains("--verify --deep --strict"), "{calls}");
-        assert!(calls.contains("-R =identifier \"com.zvn.markie.nightly\""), "{calls}");
+        assert!(calls.contains("-R =identifier \"com.zvn.markie\""), "{calls}");
         assert!(calls.contains("/usr/sbin/spctl --assess --type execute"), "{calls}");
 
         let failing = |change: fn(&mut FakeTools)| {
@@ -354,21 +354,21 @@ pub(crate) mod tests {
         assert_eq!(failing(|t| t.sealed = false), Err(BundleError::Signature));
         assert_eq!(failing(|t| t.ours = false), Err(BundleError::Team));
         assert_eq!(failing(|t| t.gatekeeper = false), Err(BundleError::Gatekeeper));
-        assert_eq!(failing(|t| t.display = display("com.zvn.markie.nightly", "AAAAAAAAAA", "Developer ID Application: Someone Else (AAAAAAAAAA)", "0x10000(runtime)")), Err(BundleError::Team));
-        assert_eq!(failing(|t| t.display = display("com.zvn.markie.nightly", "not set", "", "0x2(adhoc)")), Err(BundleError::Team));
-        assert_eq!(failing(|t| t.display = display("com.zvn.markie.nightly", "3VU8SG5TD9", "Apple Development: Kirby Campbell (3VU8SG5TD9)", "0x10000(runtime)")), Err(BundleError::Team));
-        assert_eq!(failing(|t| t.display = display("com.zvn.markie", "3VU8SG5TD9", "Developer ID Application: Kirby Campbell (3VU8SG5TD9)", "0x10000(runtime)")), Err(BundleError::Identity));
-        assert_eq!(failing(|t| t.display = display("com.zvn.markie.nightly", "3VU8SG5TD9", "Developer ID Application: Kirby Campbell (3VU8SG5TD9)", "0x0(none)")), Err(BundleError::Signature));
+        assert_eq!(failing(|t| t.display = display("com.zvn.markie", "AAAAAAAAAA", "Developer ID Application: Someone Else (AAAAAAAAAA)", "0x10000(runtime)")), Err(BundleError::Team));
+        assert_eq!(failing(|t| t.display = display("com.zvn.markie", "not set", "", "0x2(adhoc)")), Err(BundleError::Team));
+        assert_eq!(failing(|t| t.display = display("com.zvn.markie", "3VU8SG5TD9", "Apple Development: Kirby Campbell (3VU8SG5TD9)", "0x10000(runtime)")), Err(BundleError::Team));
+        assert_eq!(failing(|t| t.display = display("com.zvn.markie.nightly", "3VU8SG5TD9", "Developer ID Application: Kirby Campbell (3VU8SG5TD9)", "0x10000(runtime)")), Err(BundleError::Identity));
+        assert_eq!(failing(|t| t.display = display("com.zvn.markie", "3VU8SG5TD9", "Developer ID Application: Kirby Campbell (3VU8SG5TD9)", "0x0(none)")), Err(BundleError::Signature));
     }
 
     #[test]
     fn the_plist_must_carry_this_identity_and_the_feeds_version() {
         let tools = FakeTools::good();
         for (bundle_id, version, want) in [
-            ("com.zvn.markie", VERSION, BundleError::Identity),
+            ("com.zvn.markie.nightly", VERSION, BundleError::Identity),
             ("com.zvn.markie.rs", VERSION, BundleError::Identity),
-            ("com.zvn.markie.nightly", "0.1.0-rs-nightly.6", BundleError::Version { expected: VERSION.into(), found: "0.1.0-rs-nightly.6".into() }),
-            ("com.zvn.markie.nightly", "0.1.0", BundleError::Version { expected: VERSION.into(), found: "0.1.0".into() }),
+            ("com.zvn.markie", "0.1.0-super-nightly.6", BundleError::Version { expected: VERSION.into(), found: "0.1.0-super-nightly.6".into() }),
+            ("com.zvn.markie", "0.1.0", BundleError::Version { expected: VERSION.into(), found: "0.1.0".into() }),
         ] {
             let dir = tempfile::tempdir().unwrap();
             let app = fixture(dir.path(), bundle_id, version, "x");
@@ -376,12 +376,12 @@ pub(crate) mod tests {
         }
         // A missing executable, a missing plist, and a wrongly named bundle.
         let dir = tempfile::tempdir().unwrap();
-        let app = fixture(dir.path(), "com.zvn.markie.nightly", VERSION, "x");
+        let app = fixture(dir.path(), "com.zvn.markie", VERSION, "x");
         std::fs::remove_file(app.join("Contents/MacOS/markie-rs")).unwrap();
         assert_eq!(verify(&tools, &app, &expect()), Err(BundleError::Shape));
         std::fs::remove_file(app.join("Contents/Info.plist")).unwrap();
         assert_eq!(verify(&tools, &app, &expect()), Err(BundleError::Shape));
-        let renamed = dir.path().join("Markie.app");
+        let renamed = dir.path().join("Markie Nightly.app");
         std::fs::rename(&app, &renamed).unwrap();
         assert_eq!(verify(&tools, &renamed, &expect()), Err(BundleError::Shape));
     }
@@ -389,7 +389,7 @@ pub(crate) mod tests {
     #[test]
     fn links_that_leave_the_bundle_are_refused() {
         let dir = tempfile::tempdir().unwrap();
-        let app = fixture(dir.path(), "com.zvn.markie.nightly", VERSION, "x");
+        let app = fixture(dir.path(), "com.zvn.markie", VERSION, "x");
         std::os::unix::fs::symlink("marker.txt", app.join("Contents/Resources/inside")).unwrap();
         assert_eq!(contained(&app), Ok(()));
         let outside = dir.path().join("outside.txt");
@@ -413,9 +413,9 @@ pub(crate) mod tests {
     fn unpacks_only_an_archive_holding_exactly_the_bundle() {
         use crate::archive::tests::{file, zip};
         let dir = tempfile::tempdir().unwrap();
-        let plist = "Markie Nightly.app/Contents/Info.plist";
+        let plist = "Markie.app/Contents/Info.plist";
         let good = dir.path().join("good.zip");
-        std::fs::write(&good, zip(&[file("Markie Nightly.app/", b""), file("Markie Nightly.app/Contents/", b""), file(plist, b"<plist/>")])).unwrap();
+        std::fs::write(&good, zip(&[file("Markie.app/", b""), file("Markie.app/Contents/", b""), file(plist, b"<plist/>")])).unwrap();
         let app = unpack(&SystemTools, &good, &dir.path().join("good")).unwrap();
         assert_eq!(std::fs::read(app.join("Contents/Info.plist")).unwrap(), b"<plist/>");
         #[cfg(unix)]
@@ -433,7 +433,7 @@ pub(crate) mod tests {
     #[test]
     fn the_real_tools_refuse_unsigned_adhoc_and_tampered_bundles() {
         let dir = tempfile::tempdir().unwrap();
-        let app = fixture(dir.path(), "com.zvn.markie.nightly", VERSION, "x");
+        let app = fixture(dir.path(), "com.zvn.markie", VERSION, "x");
         assert_eq!(verify(&SystemTools, &app, &expect()), Err(BundleError::Signature), "unsigned");
 
         let signed = Command::new(CODESIGN).args(["--force", "--sign", "-", "--options", "runtime"]).arg(&app).output().unwrap();

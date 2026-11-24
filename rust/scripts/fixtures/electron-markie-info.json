@@ -1,0 +1,256 @@
+{
+  "CFBundleDocumentTypes": [
+    {
+      "CFBundleTypeName": "Markdown document",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default",
+      "LSItemContentTypes": [
+        "net.daringfireball.markdown"
+      ]
+    },
+    {
+      "CFBundleTypeName": "Darkmown document",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Owner",
+      "LSItemContentTypes": [
+        "com.zvn.markie.darkmown"
+      ]
+    },
+    {
+      "CFBundleTypeName": "Plain text",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate",
+      "LSItemContentTypes": [
+        "public.plain-text"
+      ]
+    },
+    {
+      "CFBundleTypeName": "Word document",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate",
+      "LSItemContentTypes": [
+        "org.openxmlformats.wordprocessingml.document"
+      ]
+    },
+    {
+      "CFBundleTypeName": "Rich Text document",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate",
+      "LSItemContentTypes": [
+        "public.rtf"
+      ]
+    },
+    {
+      "CFBundleTypeName": "OpenDocument text",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate",
+      "LSItemContentTypes": [
+        "org.oasis-open.opendocument.text"
+      ]
+    },
+    {
+      "CFBundleTypeName": "Structured text",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate",
+      "LSItemContentTypes": [
+        "public.comma-separated-values-text",
+        "public.json",
+        "public.yaml",
+        "public.xml"
+      ]
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "md"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Markdown",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "markdown"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Markdown",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "mdx"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "MDX",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "csv"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "CSV",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "docx"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Word document",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "doc"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Legacy Word document import",
+      "CFBundleTypeRole": "Viewer",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "txt"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Plain text",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "text",
+        "log"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Plain text",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "wd"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Darkmown document",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "json"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "JSON",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "yaml",
+        "yml"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "YAML",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "xml"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "XML",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Alternate"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "rtf"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "Rich text import",
+      "CFBundleTypeRole": "Viewer",
+      "LSHandlerRank": "Default"
+    },
+    {
+      "CFBundleTypeExtensions": [
+        "odt"
+      ],
+      "CFBundleTypeIconFile": "icon.icns",
+      "CFBundleTypeName": "OpenDocument text import",
+      "CFBundleTypeRole": "Viewer",
+      "LSHandlerRank": "Default"
+    }
+  ],
+  "CFBundleIconFile": "icon.icns",
+  "CFBundleIdentifier": "com.zvn.markie",
+  "CFBundleName": "Markie",
+  "CFBundleURLTypes": [
+    {
+      "CFBundleTypeRole": "Editor",
+      "CFBundleURLName": "Markie",
+      "CFBundleURLSchemes": [
+        "markie"
+      ]
+    }
+  ],
+  "LSApplicationCategoryType": "public.app-category.developer-tools",
+  "LSMinimumSystemVersion": "12.0",
+  "NSHumanReadableCopyright": "Copyright © 2026 ZVN",
+  "UTExportedTypeDeclarations": [
+    {
+      "UTTypeConformsTo": [
+        "public.plain-text"
+      ],
+      "UTTypeDescription": "Darkmown document",
+      "UTTypeIdentifier": "com.zvn.markie.darkmown",
+      "UTTypeTagSpecification": {
+        "public.filename-extension": [
+          "wd"
+        ]
+      }
+    }
+  ],
+  "UTImportedTypeDeclarations": [
+    {
+      "UTTypeConformsTo": [
+        "public.plain-text"
+      ],
+      "UTTypeDescription": "Markdown document",
+      "UTTypeIdentifier": "net.daringfireball.markdown",
+      "UTTypeReferenceURL": "https://daringfireball.net/projects/markdown/",
+      "UTTypeTagSpecification": {
+        "public.filename-extension": [
+          "md",
+          "markdown",
+          "mdx"
+        ],
+        "public.mime-type": [
+          "text/markdown"
+        ]
+      }
+    },
+    {
+      "UTTypeConformsTo": [
+        "public.plain-text"
+      ],
+      "UTTypeDescription": "YAML document",
+      "UTTypeIdentifier": "public.yaml",
+      "UTTypeTagSpecification": {
+        "public.filename-extension": [
+          "yaml",
+          "yml"
+        ],
+        "public.mime-type": [
+          "application/yaml"
+        ]
+      }
+    }
+  ]
+}

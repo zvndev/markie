@@ -3,7 +3,7 @@
 //! The download already matches the feed's SHA-512, and the bundle inside is
 //! signature-checked after unpacking. This check sits between the two so that
 //! unpacking itself cannot write outside the folder it was given: every entry
-//! must sit inside `Markie Nightly.app/`, and nothing may be written through a
+//! must sit inside `Markie.app/`, and nothing may be written through a
 //! symlink. Only the central directory is read; no entry is decompressed.
 
 use std::collections::HashSet;
@@ -41,7 +41,7 @@ fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// Whether a name stays inside the bundle: `Markie Nightly.app/…`, no empty,
+/// Whether a name stays inside the bundle: `Markie.app/…`, no empty,
 /// `.` or `..` parts, no backslash, and plain printable ASCII only. The Mac's
 /// disk treats names that differ by letter case or by Unicode form as one
 /// file, so only ASCII names can be compared here the way the disk will.
@@ -224,11 +224,11 @@ pub(crate) mod tests {
     #[test]
     fn a_bundle_shaped_archive_passes() {
         let contents = check(&[
-            file("Markie Nightly.app/", b""),
-            file("Markie Nightly.app/Contents/", b""),
-            file("Markie Nightly.app/Contents/Info.plist", b"<plist/>"),
-            file("Markie Nightly.app/Contents/MacOS/markie-rs", b"binary"),
-            link("Markie Nightly.app/Contents/Frameworks/Current", "A"),
+            file("Markie.app/", b""),
+            file("Markie.app/Contents/", b""),
+            file("Markie.app/Contents/Info.plist", b"<plist/>"),
+            file("Markie.app/Contents/MacOS/markie-rs", b"binary"),
+            link("Markie.app/Contents/Frameworks/Current", "A"),
         ])
         .unwrap();
         assert_eq!(contents, Contents { entries: 5, expanded_bytes: 15, symlinks: 1 });
@@ -238,61 +238,61 @@ pub(crate) mod tests {
     fn anything_outside_the_bundle_is_refused() {
         for name in [
             "evil.sh",
-            "../Markie Nightly.app/Contents/Info.plist",
-            "Markie Nightly.app/../../Library/LaunchAgents/evil.plist",
-            "Markie Nightly.app/Contents/../../evil",
-            "Markie Nightly.app/./Contents/Info.plist",
-            "Markie Nightly.app//Contents/Info.plist",
-            "/Applications/Markie Nightly.app/Contents/Info.plist",
-            "Markie Nightly.app\\Contents\\Info.plist",
-            "Markie Nightly.app/Contents/a\\..\\b",
-            "Markie Nightly.app/Contents/new\nline",
-            "Markie Nightly.app",
-            "Markie Nightly.app.evil/Contents/Info.plist",
-            "Markie.app/Contents/Info.plist",
+            "../Markie.app/Contents/Info.plist",
+            "Markie.app/../../Library/LaunchAgents/evil.plist",
+            "Markie.app/Contents/../../evil",
+            "Markie.app/./Contents/Info.plist",
+            "Markie.app//Contents/Info.plist",
+            "/Applications/Markie.app/Contents/Info.plist",
+            "Markie.app\\Contents\\Info.plist",
+            "Markie.app/Contents/a\\..\\b",
+            "Markie.app/Contents/new\nline",
+            "Markie.app",
+            "Markie.app.evil/Contents/Info.plist",
+            "Markie Nightly.app/Contents/Info.plist",
             "Markie RS.app/Contents/Info.plist",
-            "__MACOSX/Markie Nightly.app/._Info.plist",
-            "markie nightly.app/Contents/Info.plist",
-            "Markie Nightly.app/Contents/Re\u{301}sume\u{301}.txt",
-            "Markie Nightly.app/Contents/R\u{e9}sum\u{e9}.txt",
-            "Markie Nightly.app/Contents/tab\there",
+            "__MACOSX/Markie.app/._Info.plist",
+            "markie.app/Contents/Info.plist",
+            "Markie.app/Contents/Re\u{301}sume\u{301}.txt",
+            "Markie.app/Contents/R\u{e9}sum\u{e9}.txt",
+            "Markie.app/Contents/tab\there",
             "",
         ] {
-            assert_eq!(check(&[file("Markie Nightly.app/Contents/Info.plist", b"ok"), file(name, b"x")]), Err(ArchiveError::Escape), "{name:?}");
+            assert_eq!(check(&[file("Markie.app/Contents/Info.plist", b"ok"), file(name, b"x")]), Err(ArchiveError::Escape), "{name:?}");
         }
     }
 
     #[test]
     fn nothing_is_unpacked_through_a_symlink() {
         assert_eq!(
-            check(&[link("Markie Nightly.app/Contents/Resources", "/tmp"), file("Markie Nightly.app/Contents/Resources/evil", b"x")]),
+            check(&[link("Markie.app/Contents/Resources", "/tmp"), file("Markie.app/Contents/Resources/evil", b"x")]),
             Err(ArchiveError::Escape)
         );
         // Order does not matter, and a directory entry of the same name is a repeat.
         assert_eq!(
-            check(&[file("Markie Nightly.app/Contents/Resources/evil", b"x"), link("Markie Nightly.app/Contents/Resources", "/tmp")]),
+            check(&[file("Markie.app/Contents/Resources/evil", b"x"), link("Markie.app/Contents/Resources", "/tmp")]),
             Err(ArchiveError::Escape)
         );
         assert_eq!(
-            check(&[link("Markie Nightly.app/Contents/Resources", "/tmp"), file("Markie Nightly.app/Contents/Resources/", b"")]),
+            check(&[link("Markie.app/Contents/Resources", "/tmp"), file("Markie.app/Contents/Resources/", b"")]),
             Err(ArchiveError::Entry)
         );
         let long = "a".repeat(4096);
-        assert_eq!(check(&[link("Markie Nightly.app/Contents/link", &long)]), Err(ArchiveError::Entry));
+        assert_eq!(check(&[link("Markie.app/Contents/link", &long)]), Err(ArchiveError::Entry));
         // The disk ignores letter case: "resources/evil" lands under the link "Resources".
         assert_eq!(
-            check(&[link("Markie Nightly.app/Contents/Resources", "/tmp"), file("Markie Nightly.app/Contents/resources/evil", b"x")]),
+            check(&[link("Markie.app/Contents/Resources", "/tmp"), file("Markie.app/Contents/resources/evil", b"x")]),
             Err(ArchiveError::Escape)
         );
         assert_eq!(
-            check(&[file("Markie Nightly.app/Contents/Info.plist", b"a"), file("Markie Nightly.app/Contents/info.PLIST", b"b")]),
+            check(&[file("Markie.app/Contents/Info.plist", b"a"), file("Markie.app/Contents/info.PLIST", b"b")]),
             Err(ArchiveError::Entry)
         );
     }
 
     #[test]
     fn repeats_encryption_and_bad_framing_are_refused() {
-        let plist = "Markie Nightly.app/Contents/Info.plist";
+        let plist = "Markie.app/Contents/Info.plist";
         assert_eq!(check(&[file(plist, b"a"), file(plist, b"b")]), Err(ArchiveError::Entry));
         assert_eq!(check(&[Entry { name: plist, data: b"a", symlink: false, flags: 1 }]), Err(ArchiveError::Entry));
         assert_eq!(check(&[]), Err(ArchiveError::Bounds));
@@ -316,8 +316,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_zip_bomb_by_declared_size_is_refused() {
-        let plist = "Markie Nightly.app/Contents/Info.plist";
-        let mut bytes = zip(&[file(plist, b"a"), file("Markie Nightly.app/Contents/b", b"b"), file("Markie Nightly.app/Contents/c", b"c")]);
+        let plist = "Markie.app/Contents/Info.plist";
+        let mut bytes = zip(&[file(plist, b"a"), file("Markie.app/Contents/b", b"b"), file("Markie.app/Contents/c", b"c")]);
         // Rewrite each central entry's unpacked size to just under 4 GiB.
         let mut at = 0;
         while let Some(found) = bytes[at..].windows(4).position(|w| w == [0x50, 0x4b, 0x01, 0x02]) {

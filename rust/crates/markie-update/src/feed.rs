@@ -1,10 +1,11 @@
-//! The rs-nightly feed, read as strictly as the gateway writes it.
+//! The super-nightly feed, read as strictly as the gateway accepts it.
 //!
-//! The file is the small YAML subset the gateway itself accepts on publish
-//! (`parseFeed` in zvndev/markie server/src/private-releases.ts): no tags, no
-//! anchors, no nesting beyond the one `files` list. Anything else is refused
-//! rather than guessed at, so a feed this app acts on is one the gateway
-//! validated.
+//! The file is electron-builder's update feed, in the small YAML subset the
+//! gateway itself accepts on publish (`parseFeed` in zvndev/markie
+//! server/src/private-releases.ts): no tags, no anchors, no nesting beyond the
+//! one `files` list. electron-updater in an installed Electron super-nightly
+//! reads the same file. Anything else is refused rather than guessed at, so a
+//! feed this app acts on is one the gateway validated.
 
 use crate::version::NightlyVersion;
 
@@ -13,15 +14,16 @@ pub const MAX_FEED_BYTES: usize = 64 * 1024;
 /// The gateway's cap on one artifact: 512 MiB.
 pub const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 
-/// The one file an rs-nightly version consists of.
+/// The file this Mac takes from a version: the arm64 ZIP, named as
+/// electron-builder names it (`${productName}-${version}-${arch}.${ext}`).
 pub fn artifact_name(version: &NightlyVersion) -> String {
-    format!("Markie-Nightly-{version}-arm64.zip")
+    format!("Markie-{version}-arm64.zip")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Feed {
     pub version: NightlyVersion,
-    /// `Markie-Nightly-<version>-arm64.zip`, never a path or a URL.
+    /// `Markie-<version>-arm64.zip`, never a path or a URL.
     pub artifact: String,
     /// Base64 SHA-512 of the artifact.
     pub sha512: String,
@@ -135,15 +137,31 @@ pub fn parse(bytes: &[u8]) -> Result<Feed, FeedError> {
 
     let version = version.and_then(NightlyVersion::parse).ok_or(FeedError::Version)?;
     let expected = artifact_name(&version);
-    // One version is one file, so the list is exactly that file, and the
-    // top-level `path` and `sha512` (electron-builder's legacy pair) repeat it.
-    let [entry] = files.as_slice() else { return Err(FeedError::Artifact) };
-    if entry.url != expected || path != Some(expected.as_str()) {
+    // A feed may list more than one file (an Electron build can carry an x64
+    // ZIP too). Every name must be a plain file name, none repeated, and this
+    // Mac's file, the arm64 ZIP of this version, must be there.
+    let plain = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 200
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            && !name.starts_with(['.', '-'])
+            && !name.contains("..")
+    };
+    if files.is_empty() || !files.iter().all(|f| plain(f.url)) {
         return Err(FeedError::Artifact);
     }
+    for (at, file) in files.iter().enumerate() {
+        if files[..at].iter().any(|earlier| earlier.url == file.url) {
+            return Err(FeedError::Duplicate);
+        }
+    }
+    let entry = files.iter().find(|f| f.url == expected).ok_or(FeedError::Artifact)?;
     let sha512 = entry.sha512.filter(|s| is_sha512(s)).ok_or(FeedError::Integrity)?;
     let size = entry.size.and_then(size).ok_or(FeedError::Integrity)?;
-    if top_sha != Some(sha512) {
+    // The top-level `path` and `sha512` (electron-builder's legacy pair) name
+    // one of the listed files, with that file's hash.
+    let legacy = files.iter().find(|f| Some(f.url) == path).ok_or(FeedError::Artifact)?;
+    if top_sha.is_none() || top_sha != legacy.sha512 {
         return Err(FeedError::Integrity);
     }
     if release_date.is_some_and(|d| d.len() > 40 || !d.bytes().all(|b| b.is_ascii_alphanumeric() || b"-:.+".contains(&b))) {
@@ -164,7 +182,7 @@ pub(crate) mod tests {
 
     /// The text the publisher writes and the gateway serves.
     pub(crate) fn feed_text(version: &str, data: &[u8]) -> String {
-        let name = format!("Markie-Nightly-{version}-arm64.zip");
+        let name = format!("Markie-{version}-arm64.zip");
         let hash = sha(data);
         format!(
             "version: {version}\nfiles:\n  - url: {name}\n    sha512: {hash}\n    size: {}\npath: {name}\nsha512: {hash}\nreleaseDate: '2026-11-24T18:00:00.000Z'\n",
@@ -172,14 +190,14 @@ pub(crate) mod tests {
         )
     }
 
-    const V: &str = "0.1.0-rs-nightly.7";
+    const V: &str = "0.1.0-super-nightly.7";
     const DATA: &[u8] = b"synthetic nightly bytes";
 
     #[test]
     fn reads_the_feed_the_publisher_writes() {
         let feed = parse(feed_text(V, DATA).as_bytes()).unwrap();
         assert_eq!(feed.version.to_string(), V);
-        assert_eq!(feed.artifact, "Markie-Nightly-0.1.0-rs-nightly.7-arm64.zip");
+        assert_eq!(feed.artifact, "Markie-0.1.0-super-nightly.7-arm64.zip");
         assert_eq!(feed.sha512, sha(DATA));
         assert_eq!(feed.size, DATA.len() as u64);
         // Windows line endings and no release date read the same.
@@ -192,23 +210,42 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn takes_the_arm64_zip_from_a_feed_that_lists_more_than_one_file() {
+        // An Electron super-nightly built for both architectures.
+        let (arm, intel) = (b"arm64 bytes".as_slice(), b"x64 bytes, longer".as_slice());
+        let text = format!(
+            "version: {V}\nfiles:\n  - url: Markie-{V}-x64.zip\n    sha512: {x}\n    size: {xs}\n  - url: Markie-{V}-arm64.zip\n    sha512: {a}\n    size: {as_}\npath: Markie-{V}-x64.zip\nsha512: {x}\nreleaseDate: '2026-11-24T18:00:00.000Z'\n",
+            x = sha(intel), xs = intel.len(), a = sha(arm), as_ = arm.len()
+        );
+        let feed = parse(text.as_bytes()).unwrap();
+        assert_eq!(feed.artifact, format!("Markie-{V}-arm64.zip"));
+        assert_eq!((feed.sha512.as_str(), feed.size), (sha(arm).as_str(), arm.len() as u64));
+        // With no arm64 file there is nothing for this Mac.
+        let intel_only = feed_text(V, DATA).replace("-arm64.zip", "-x64.zip");
+        assert_eq!(parse(intel_only.as_bytes()), Err(FeedError::Artifact));
+        // The legacy pair must still name a listed file with its own hash.
+        assert_eq!(parse(text.replace(&format!("path: Markie-{V}-x64.zip"), "path: other.zip").as_bytes()), Err(FeedError::Artifact));
+        assert_eq!(parse(text.replace(&format!("\nsha512: {}", sha(intel)), &format!("\nsha512: {}", sha(arm))).as_bytes()), Err(FeedError::Integrity));
+    }
+
+    #[test]
     fn refuses_every_feed_the_gateway_would_refuse() {
         let good = feed_text(V, DATA);
-        let name = "Markie-Nightly-0.1.0-rs-nightly.7-arm64.zip";
+        let name = "Markie-0.1.0-super-nightly.7-arm64.zip";
         let hash = sha(DATA);
         let cases: Vec<(String, FeedError)> = vec![
             (good.replace(&format!("version: {V}"), "version: 0.1.0"), FeedError::Version),
-            (good.replace(&format!("version: {V}"), "version: 0.1.0-super-nightly.7"), FeedError::Version),
-            (good.replace(&format!("version: {V}"), "version: 0.1.0-rs-nightly.8"), FeedError::Artifact),
+            (good.replace(&format!("version: {V}"), "version: 0.1.0-rs-nightly.7"), FeedError::Version),
+            (good.replace(&format!("version: {V}"), "version: 0.1.0-super-nightly.8"), FeedError::Artifact),
             (good.replace(&format!("version: {V}\n"), ""), FeedError::Version),
             (good.replace(&format!("- url: {name}"), &format!("- url: https://evil.example/{name}")), FeedError::Artifact),
             (good.replace(&format!("- url: {name}"), &format!("- url: ../{name}")), FeedError::Artifact),
-            (good.replace(&format!("- url: {name}"), "- url: Markie-0.9.4-super-nightly.1-arm64-mac.zip"), FeedError::Artifact),
+            (good.replace(&format!("- url: {name}"), "- url: Markie-0.9.4-rs-nightly.1-arm64-mac.zip"), FeedError::Artifact),
             (good.replace(&format!("path: {name}"), "path: latest-mac.yml"), FeedError::Artifact),
             (good.replace(&format!("path: {name}\n"), ""), FeedError::Artifact),
             (good.replace("files:\n", ""), FeedError::Syntax),
             (good.replace(&format!("  - url: {name}\n    sha512: {hash}\n    size: {}\n", DATA.len()), ""), FeedError::Artifact),
-            (good.replace("files:\n", &format!("files:\n  - url: {name}\n    sha512: {hash}\n    size: {}\n", DATA.len())), FeedError::Artifact),
+            (good.replace("files:\n", &format!("files:\n  - url: {name}\n    sha512: {hash}\n    size: {}\n", DATA.len())), FeedError::Duplicate),
             (good.replace(&format!("size: {}", DATA.len()), "size: 0"), FeedError::Integrity),
             (good.replace(&format!("size: {}", DATA.len()), "size: 023"), FeedError::Integrity),
             (good.replace(&format!("size: {}", DATA.len()), "size: -23"), FeedError::Integrity),

@@ -184,8 +184,8 @@ mod tests {
 
     #[test]
     fn finds_the_bundle_an_executable_runs_from() {
-        assert_eq!(bundle_of(Path::new("/Applications/Markie Nightly.app/Contents/MacOS/markie-rs")), Some(PathBuf::from("/Applications/Markie Nightly.app")));
-        for loose in ["/repo/rust/target/debug/markie-rs", "/Applications/Markie Nightly.app/Contents/Resources/markie-rs", "/x/MacOS/markie-rs", "/Markie Nightly/Contents/MacOS/markie-rs", "markie-rs"] {
+        assert_eq!(bundle_of(Path::new("/Applications/Markie.app/Contents/MacOS/markie-rs")), Some(PathBuf::from("/Applications/Markie.app")));
+        for loose in ["/repo/rust/target/debug/markie-rs", "/Applications/Markie.app/Contents/Resources/markie-rs", "/x/MacOS/markie-rs", "/Markie Nightly/Contents/MacOS/markie-rs", "markie-rs"] {
             assert_eq!(bundle_of(Path::new(loose)), None, "{loose}");
         }
     }

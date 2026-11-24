@@ -123,7 +123,7 @@ pub fn vault_path() -> PathBuf {
 }
 
 pub fn keychain_service() -> String {
-    format!("{} Vault", markie_core::paths::APP_NAME)
+    format!("{} Vault", markie_core::paths::PROFILE_NAME)
 }
 
 /// `failureCopy` in vault-panel.tsx.

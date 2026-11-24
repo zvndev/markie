@@ -1,21 +1,27 @@
 #!/usr/bin/env node
-/** Markie Nightly: write the feed, verify the release, publish it to the private gateway.
+/** Markie, the Mac app, on the super-nightly channel: write the feed, verify the
+ * release, publish it to the private gateway.
  *
- * The same rules as the Electron lane's scripts/private-release.mjs, for the
- * rs-nightly lane (docs/rust-port/NIGHTLY.md):
+ * The channel is Electron Markie's super-nightly lane, unchanged on the server:
+ * the same prefix, the same feed name and format, the same artifact name. An
+ * installed Electron super-nightly reads this feed with electron-updater and
+ * installs the ZIP over itself through Squirrel.Mac. The rules are those of
+ * the Electron lane's scripts/private-release.mjs (docs/rust-port/NIGHTLY.md):
  *   - the publish key comes only from MARKIE_PRIVATE_PUBLISH_KEY, never from
  *     an argument, and is never printed;
- *   - one closed destination, <gateway>/private-releases/rs-nightly/:filename;
+ *   - one closed destination, <gateway>/private-releases/super-nightly/:filename;
  *   - the immutable ZIP goes first (If-None-Match: *), the feed last;
  *   - every file is hashed again right before its upload;
  *   - no redirect is followed, and there is no public fallback.
  *
  *   node rust/scripts/nightly-publish.mjs <feed|verify|publish>
  *
- * Environment: MARKIE_NIGHTLY_VERSION (X.Y.Z-rs-nightly.N), MARKIE_PRIVATE_API_ORIGIN
+ * Environment: MARKIE_NIGHTLY_VERSION (X.Y.Z-super-nightly.N), MARKIE_PRIVATE_API_ORIGIN
  * (exactly the gateway origin), MARKIE_PRIVATE_PUBLISH_KEY (publish only),
  * MARKIE_NIGHTLY_OUTPUT_DIR (optional; default rust/target/nightly/<version>).
  * No dependencies beyond Node.
+ *
+ * Mac only. Windows stays on Electron, and nothing here names its feeds.
  */
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -23,20 +29,26 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { isDeepStrictEqual } from "node:util";
+import { infoPlist } from "./mac-info-plist.mjs";
 
 const rustDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const GATEWAY_ORIGIN = "https://markie-nightly.zvndev.com";
-export const LANE_PREFIX = "/private-releases/rs-nightly/";
-export const FEED_NAME = "rs-nightly-mac.yml";
-export const BUNDLE_ID = "com.zvn.markie.nightly";
-export const BUNDLE_NAME = "Markie Nightly.app";
-export const APP_NAME = "Markie Nightly";
+export const LANE_PREFIX = "/private-releases/super-nightly/";
+export const FEED_NAME = "super-nightly-mac.yml";
+export const BUNDLE_ID = "com.zvn.markie";
+export const BUNDLE_NAME = "Markie.app";
+export const APP_NAME = "Markie";
+/** The last Electron build on this channel. A Rust build must be above it, or
+ * the Electron app that is installed never sees it as an update. */
+export const LAST_ELECTRON_SUPER_NIGHTLY = "0.9.8-super-nightly.2";
 export const TEAM_ID = "3VU8SG5TD9";
 export const IDENTITY = `Developer ID Application: Kirby Campbell (${TEAM_ID})`;
 const LIMIT = 512 * 1024 * 1024, MAX_FEED_BYTES = 64 * 1024;
-const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-rs-nightly\.(?:0|[1-9]\d*)$/;
+const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-super-nightly\.(0|[1-9]\d*)$/;
 const HASH = /^[A-Za-z0-9+/]{86}==$/;
-/** The requirement the updater checks before it swaps a download in. */
+/** Electron Markie's designated requirement: what Squirrel.Mac in an installed
+ * Electron build, and this app's own updater, check a download against. */
 export const REQUIREMENT = `identifier "${BUNDLE_ID}" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "${TEAM_ID}"`;
 
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
@@ -81,15 +93,24 @@ export function outputDirectory(root, requested, version) {
 
 export function nightlySettings(env = process.env, root = rustDir, provenance = readProvenance(root)) {
   const version = env.MARKIE_NIGHTLY_VERSION;
-  assert(typeof version === "string" && VERSION.test(version), "MARKIE_NIGHTLY_VERSION must be X.Y.Z-rs-nightly.N.");
+  assert(typeof version === "string" && VERSION.test(version), "MARKIE_NIGHTLY_VERSION must be X.Y.Z-super-nightly.N.");
+  assert(versionAbove(version, LAST_ELECTRON_SUPER_NIGHTLY), `The version must be above ${LAST_ELECTRON_SUPER_NIGHTLY}, the last Electron build on this channel.`);
   assert(/^[a-f0-9]{40}$/.test(provenance.gitCommit) && provenance.gitDirty === false, "A nightly is verified and published from one clean, exact commit.");
-  return { version, apiOrigin: gatewayOrigin(env.MARKIE_PRIVATE_API_ORIGIN), gitCommit: provenance.gitCommit, channel: "rs-nightly", output: outputDirectory(root, env.MARKIE_NIGHTLY_OUTPUT_DIR, version) };
+  return { version, apiOrigin: gatewayOrigin(env.MARKIE_PRIVATE_API_ORIGIN), gitCommit: provenance.gitCommit, channel: "super-nightly", output: outputDirectory(root, env.MARKIE_NIGHTLY_OUTPUT_DIR, version) };
 }
 
-export const artifactName = (version) => `Markie-Nightly-${version}-arm64.zip`;
+export const artifactName = (version) => `Markie-${version}-arm64.zip`;
+
+/** Whether `a` is a higher version than `b`, both X.Y.Z-super-nightly.N: semver order for this shape. */
+export function versionAbove(a, b) {
+  const [left, right] = [a, b].map((v) => VERSION.exec(v)?.slice(1).map(Number));
+  assert(left && right, "Both versions must be X.Y.Z-super-nightly.N.");
+  for (let i = 0; i < 4; i++) if (left[i] !== right[i]) return left[i] > right[i];
+  return false;
+}
 
 export function uploadUrl(settings, name) {
-  assert(name === FEED_NAME || name === artifactName(settings.version), "Only the rs-nightly feed and this version's ZIP may be uploaded.");
+  assert(name === FEED_NAME || name === artifactName(settings.version), "Only the super-nightly Mac feed and this version's ZIP may be uploaded.");
   const origin = gatewayOrigin(settings.apiOrigin), url = new URL(LANE_PREFIX + name, origin);
   assert(url.origin === origin && url.pathname === LANE_PREFIX + name && !url.search && !url.hash, "The upload destination left its closed prefix.");
   return url.href;
@@ -206,14 +227,20 @@ export function verifyRelease(settings, tools = systemTools) {
     assert(tools.run("/usr/bin/ditto", ["-x", "-k", file, temporary]).ok, "The ZIP could not be unpacked.");
     assert(readdirSync(temporary).length === 1, "The ZIP unpacks to more than the app.");
     const app = path.join(temporary, BUNDLE_NAME), plist = path.join(app, "Contents", "Info.plist");
-    const value = (key) => { const r = tools.run("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", plist]); return r.ok ? r.stdout.trim() : null; };
-    assert(value("CFBundleIdentifier") === BUNDLE_ID && value("CFBundleName") === APP_NAME, "The app in the ZIP is not Markie Nightly.");
-    assert(value("CFBundleShortVersionString") === settings.version && value("CFBundleVersion") === settings.version, "The app in the ZIP is another version.");
-    assert(value("CFBundleURLTypes.0.CFBundleURLSchemes.0") === "markie-nightly" && value("CFBundleURLTypes.0.CFBundleURLSchemes.1") === null && value("CFBundleURLTypes.1") === null, "The app must claim markie-nightly:// and no other scheme.");
-    for (const key of ["CFBundleDocumentTypes", "UTExportedTypeDeclarations", "UTImportedTypeDeclarations"]) assert(value(key) === null, "Markie Nightly claims no file types.");
+    // The whole Info.plist is what the generator writes for this version:
+    // Markie's identity, markie://, and Markie's document types, entry for entry.
+    const read = tools.run("/usr/bin/plutil", ["-convert", "json", "-o", "-", plist]);
+    assert(read.ok, "The app's Info.plist could not be read.");
+    const info = JSON.parse(read.stdout);
+    assert(info.CFBundleIdentifier === BUNDLE_ID && info.CFBundleName === APP_NAME, "The app in the ZIP is not Markie.");
+    assert(info.CFBundleShortVersionString === settings.version && info.CFBundleVersion === settings.version, "The app in the ZIP is another version.");
+    // The copyright line carries the build year, so it is left out of the comparison.
+    const comparable = ({ NSHumanReadableCopyright: _year, ...rest }) => rest;
+    assert(isDeepStrictEqual(comparable(info), comparable(infoPlist("nightly", settings.version))), "The app's Info.plist is not Markie's: its URL scheme and document types must be exactly Electron Markie's.");
     // Signature first: nothing from the ZIP runs before macOS vouches for it.
     assert(tools.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]).ok, "The app's code signature is not valid.");
-    assert(tools.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R", `=${REQUIREMENT}`, app]).ok, "The app is not signed by the reviewed Developer ID team.");
+    // As Squirrel.Mac checks it inside a running Electron Markie: nested code, strict, every architecture.
+    assert(tools.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--all-architectures", "-R", `=${REQUIREMENT}`, app]).ok, "The app does not satisfy Electron Markie's designated requirement; an installed Electron build would refuse it.");
     const authority = tools.run("/usr/bin/codesign", ["--display", "--verbose=4", app]);
     assert(authority.ok, "The signing authority could not be read.");
     assertSigningAuthority(authority.stderr);

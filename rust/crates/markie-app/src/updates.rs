@@ -1,4 +1,4 @@
-//! Markie Nightly's updates: when to check, and what to tell the user.
+//! Markie's updates on the super-nightly channel: when to check, and what to tell the user.
 //!
 //! Only the nightly build (`paths::NIGHTLY`) running from its `.app` bundle
 //! with its real data folder updates itself. The dev "Markie RS" build, a
@@ -77,7 +77,7 @@ fn check(plan: &Plan) -> Result<Outcome, UpdateError> {
     // The Markie Cloud session this app already holds; never a test server's.
     let tokens = crate::workspace::account::shared_tokens();
     let token = markie_cloud::tokens::session_for(&*tokens, markie_cloud::DEFAULT_SERVER).map(|session| session.token);
-    let Some(gateway) = Gateway::production(&format!("MarkieNightly/{}", paths::APP_VERSION)) else {
+    let Some(gateway) = Gateway::production(&format!("Markie/{}", paths::APP_VERSION)) else {
         return Err(UpdateError::Io(std::io::Error::other("no HTTPS client")));
     };
     let pending = *PENDING.lock().unwrap_or_else(|e| e.into_inner());
@@ -234,8 +234,8 @@ mod tests {
     use markie_update::{NightlyVersion, Outcome, UpdateError};
     use std::path::{Path, PathBuf};
 
-    const EXE: &str = "/Applications/Markie Nightly.app/Contents/MacOS/markie-rs";
-    const V: &str = "0.1.0-rs-nightly.7";
+    const EXE: &str = "/Applications/Markie.app/Contents/MacOS/markie-rs";
+    const V: &str = "0.1.0-super-nightly.7";
 
     fn version(text: &str) -> NightlyVersion {
         NightlyVersion::parse(text).unwrap()
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn only_the_installed_nightly_updates_itself() {
         let plan = decide(true, Some(Path::new(EXE)), false, false, V).unwrap();
-        assert_eq!(plan, Plan { target: PathBuf::from("/Applications/Markie Nightly.app"), current: version(V) });
+        assert_eq!(plan, Plan { target: PathBuf::from("/Applications/Markie.app"), current: version(V) });
         // The dev build, a scratch data folder, a test server, a bare binary
         // from `cargo run`, and a version that is not a nightly's.
         assert_eq!(decide(false, Some(Path::new(EXE)), false, false, V), None);
@@ -283,7 +283,7 @@ mod tests {
         let say = |result: Result<Outcome, UpdateError>| notice(&result, true);
         assert!(matches!(say(Ok(Outcome::SignedOut)), Notice::Info { message, .. } if message.contains("Sign in to Markie Cloud")));
         assert_eq!(say(Ok(Outcome::NotAvailable)), Notice::Info { message: "No update is available.".into(), detail: None });
-        assert!(matches!(say(Ok(Outcome::UpToDate { current: version(V) })), Notice::Info { message, detail } if message.ends_with("is up to date.") && detail.as_deref() == Some("Version 0.1.0-rs-nightly.7")));
+        assert!(matches!(say(Ok(Outcome::UpToDate { current: version(V) })), Notice::Info { message, detail } if message.ends_with("is up to date.") && detail.as_deref() == Some("Version 0.1.0-super-nightly.7")));
         assert_eq!(say(Ok(Outcome::RestartPending { version: version(V) })), Notice::Ready { version: V.into() });
         assert_eq!(say(Ok(Outcome::Installed { version: version(V), previous: None })), Notice::Ready { version: V.into() });
         assert!(matches!(say(Err(UpdateError::Gateway(GatewayError::Offline))), Notice::Problem { detail, .. } if detail.contains("could not be reached")));
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_relaunch_helper_takes_the_pid_and_path_as_arguments() {
-        let app = Path::new("/Applications/Markie Nightly.app; rm -rf ~ \"$(reboot)\"");
+        let app = Path::new("/Applications/Markie.app; rm -rf ~ \"$(reboot)\"");
         let command = relaunch_command(4242, app);
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(command.get_program(), "/bin/sh");

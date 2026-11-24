@@ -92,7 +92,7 @@ impl Updater<'_> {
         self.gateway.download(token, feed, &zip)?;
         archive::inspect(&mut std::fs::File::open(&zip)?)?;
         let app = bundle::unpack(self.tools, &zip, &staging.join("unpacked"))?;
-        let expect = Expect::nightly(&feed.version);
+        let expect = Expect::markie(&feed.version);
         bundle::verify(self.tools, &app, &expect)?;
         let recheck = |copy: &Path| bundle::verify(self.tools, copy, &expect).map_err(|e| e.to_string());
         let installed = swap::install(&app, &self.target, &self.work_dir.join("previous"), &recheck)?;
@@ -108,7 +108,7 @@ mod tests {
     use crate::{BUNDLE_NAME, LANE_PREFIX};
     use std::process::Command;
 
-    const OLD: &str = "0.1.0-rs-nightly.6";
+    const OLD: &str = "0.1.0-super-nightly.6";
 
     struct Scene {
         dir: tempfile::TempDir,
@@ -136,7 +136,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let apps = dir.path().join("Applications");
         std::fs::create_dir_all(&apps).unwrap();
-        let target = fixture(&apps, "com.zvn.markie.nightly", OLD, "old");
+        let target = fixture(&apps, "com.zvn.markie", OLD, "old");
         let work_dir = dir.path().join("data/updates");
         Scene { dir, target, work_dir, mocked: Mocked::start() }
     }
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn a_newer_signed_nightly_is_downloaded_verified_and_swapped_in() {
         let s = scene();
-        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie.nightly", VERSION, "new"));
+        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
         let outcome = s.run(&FakeTools::good(), Some(TOKEN), None).unwrap();
         let previous = s.work_dir.join("previous").join(BUNDLE_NAME);
         assert_eq!(outcome, Outcome::Installed { version: NightlyVersion::parse(VERSION).unwrap(), previous: Some(previous.clone()) });
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn signed_out_or_not_the_owner_is_quietly_no_update() {
         let s = scene();
-        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie.nightly", VERSION, "new"));
+        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
         assert_eq!(s.run(&FakeTools::good(), None, None).unwrap(), Outcome::SignedOut);
         assert_eq!(s.run(&FakeTools::good(), Some("not a sendable token"), None).unwrap(), Outcome::SignedOut);
         assert!(s.mocked.requests().is_empty(), "signed out asks the gateway nothing");
@@ -191,9 +191,9 @@ mod tests {
 
     #[test]
     fn the_same_or_an_older_feed_changes_nothing() {
-        for published in [OLD, "0.1.0-rs-nightly.5", "0.0.9-rs-nightly.99"] {
+        for published in [OLD, "0.1.0-super-nightly.5", "0.0.9-super-nightly.99"] {
             let s = scene();
-            s.mocked.publish(published, &zipped(s.dir.path(), "com.zvn.markie.nightly", published, "new"));
+            s.mocked.publish(published, &zipped(s.dir.path(), "com.zvn.markie", published, "new"));
             assert_eq!(s.run(&FakeTools::good(), Some(TOKEN), None).unwrap(), Outcome::UpToDate { current: NightlyVersion::parse(OLD).unwrap() });
             assert_eq!(s.mocked.requests().len(), 1, "no download for {published}");
             s.untouched();
@@ -206,18 +206,18 @@ mod tests {
             ("signature", |t| t.sealed = false),
             ("team", |t| t.ours = false),
             ("gatekeeper", |t| t.gatekeeper = false),
-            ("adhoc", |t| t.display = crate::bundle::tests::display("com.zvn.markie.nightly", "not set", "", "0x2(adhoc)")),
+            ("adhoc", |t| t.display = crate::bundle::tests::display("com.zvn.markie", "not set", "", "0x2(adhoc)")),
         ];
         for (name, change) in wrong {
             let s = scene();
-            s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie.nightly", VERSION, "new"));
+            s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
             let mut tools = FakeTools::good();
             change(&mut tools);
             assert!(matches!(s.run(&tools, Some(TOKEN), None), Err(UpdateError::Bundle(_))), "{name}");
             s.untouched();
         }
         // The wrong app, or a version other than the feed's, inside a ZIP whose hash is right.
-        for (bundle_id, inner) in [("com.zvn.markie", VERSION), ("com.zvn.markie.rs", VERSION), ("com.zvn.markie.nightly", "0.1.0-rs-nightly.99")] {
+        for (bundle_id, inner) in [("com.zvn.markie.nightly", VERSION), ("com.zvn.markie.rs", VERSION), ("com.zvn.markie", "0.1.0-super-nightly.99")] {
             let s = scene();
             s.mocked.publish(VERSION, &zipped(s.dir.path(), bundle_id, inner, "new"));
             assert!(matches!(s.run(&FakeTools::good(), Some(TOKEN), None), Err(UpdateError::Bundle(_))), "{bundle_id} {inner}");
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn the_real_macos_tools_refuse_an_unsigned_download() {
         let s = scene();
-        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie.nightly", VERSION, "new"));
+        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
         let gateway = s.mocked.gateway();
         let updater = Updater { gateway: &gateway, tools: &bundle::SystemTools, current: NightlyVersion::parse(OLD).unwrap(), target: s.target.clone(), work_dir: s.work_dir.clone() };
         assert!(matches!(updater.run(Some(TOKEN), None), Err(UpdateError::Bundle(BundleError::Signature))));
@@ -242,12 +242,12 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
         let s = scene();
-        let real = zipped(s.dir.path(), "com.zvn.markie.nightly", VERSION, "new");
+        let real = zipped(s.dir.path(), "com.zvn.markie", VERSION, "new");
         let mut served = real.clone();
         let middle = served.len() / 2;
         served[middle] ^= 0xff;
         s.mocked.mount(Mock::given(method("GET")).and(path(format!("{LANE_PREFIX}{FEED_NAME}"))).respond_with(ResponseTemplate::new(200).set_body_string(feed_text(VERSION, &real))));
-        s.mocked.mount(Mock::given(method("GET")).and(path(format!("{LANE_PREFIX}Markie-Nightly-{VERSION}-arm64.zip"))).respond_with(ResponseTemplate::new(200).set_body_bytes(served)));
+        s.mocked.mount(Mock::given(method("GET")).and(path(format!("{LANE_PREFIX}Markie-{VERSION}-arm64.zip"))).respond_with(ResponseTemplate::new(200).set_body_bytes(served)));
         let tools = FakeTools::good();
         assert!(matches!(s.run(&tools, Some(TOKEN), None), Err(UpdateError::Gateway(GatewayError::Integrity))));
         assert!(tools.calls.borrow().is_empty(), "nothing was unpacked or inspected");
@@ -258,7 +258,7 @@ mod tests {
     fn an_archive_reaching_outside_the_bundle_is_refused_before_unpacking() {
         use crate::archive::tests::{file, zip};
         let s = scene();
-        let evil = zip(&[file("Markie Nightly.app/Contents/Info.plist", b"x"), file("Markie Nightly.app/../../escaped.txt", b"x")]);
+        let evil = zip(&[file("Markie.app/Contents/Info.plist", b"x"), file("Markie.app/../../escaped.txt", b"x")]);
         s.mocked.publish(VERSION, &evil);
         let tools = FakeTools::good();
         assert!(matches!(s.run(&tools, Some(TOKEN), None), Err(UpdateError::Archive(archive::ArchiveError::Escape))));
@@ -272,8 +272,8 @@ mod tests {
         let mut s = scene();
         let translocated = s.dir.path().join("AppTranslocation/ABCD/d");
         std::fs::create_dir_all(&translocated).unwrap();
-        s.target = fixture(&translocated, "com.zvn.markie.nightly", OLD, "old");
-        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie.nightly", VERSION, "new"));
+        s.target = fixture(&translocated, "com.zvn.markie", OLD, "old");
+        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
         assert!(matches!(s.run(&FakeTools::good(), Some(TOKEN), None), Err(UpdateError::Swap(SwapError::Translocated))));
         assert_eq!(s.mocked.requests().len(), 1, "refused before the download");
         s.untouched();
@@ -282,7 +282,7 @@ mod tests {
     /// The updater's own checks, on a real release ZIP, before it is published:
     /// what an installed nightly will do with this exact file, short of the swap.
     ///
-    ///   MARKIE_NIGHTLY_ZIP=<path to Markie-Nightly-X.Y.Z-rs-nightly.N-arm64.zip> \
+    ///   MARKIE_NIGHTLY_ZIP=<path to Markie-X.Y.Z-super-nightly.N-arm64.zip> \
     ///     cargo test -p markie-update the_updater_accepts_the_release_zip -- --ignored
     #[test]
     #[ignore = "needs MARKIE_NIGHTLY_ZIP: a signed, notarized release ZIP"]
@@ -290,15 +290,15 @@ mod tests {
         let zip = PathBuf::from(std::env::var_os("MARKIE_NIGHTLY_ZIP").expect("set MARKIE_NIGHTLY_ZIP to the release ZIP"));
         let name = zip.file_name().and_then(|n| n.to_str()).expect("a file name");
         let version = name
-            .strip_prefix("Markie-Nightly-")
+            .strip_prefix("Markie-")
             .and_then(|n| n.strip_suffix("-arm64.zip"))
             .and_then(NightlyVersion::parse)
-            .expect("the ZIP must be named Markie-Nightly-<version>-arm64.zip");
+            .expect("the ZIP must be named Markie-<version>-arm64.zip");
         assert_eq!(crate::feed::artifact_name(&version), name);
         let contents = archive::inspect(&mut std::fs::File::open(&zip).unwrap()).expect("the ZIP's table of contents");
         let dir = tempfile::tempdir().unwrap();
         let app = bundle::unpack(&bundle::SystemTools, &zip, &dir.path().join("unpacked")).expect("unpacking");
-        bundle::verify(&bundle::SystemTools, &app, &Expect::nightly(&version)).expect("an installed nightly would refuse this ZIP");
+        bundle::verify(&bundle::SystemTools, &app, &Expect::markie(&version)).expect("an installed nightly would refuse this ZIP");
         eprintln!("accepted {name}: {} entries, {} bytes unpacked", contents.entries, contents.expanded_bytes);
     }
 

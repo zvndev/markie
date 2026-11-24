@@ -60,8 +60,8 @@ gpui-kit = { version = "=0.10.0", features = [
 gpui-scene = { package = "gpui-pre", version = "=0.3.12", optional = true, default-features = false, features = ["test-support"] }
 
 [features]
-# The private "Markie Nightly" build: identity in markie-core, updater on.
-# Built by scripts/nightly-release.sh, never by default.
+# The Mac app on the super-nightly channel: identity in markie-core, updater
+# and first-run import on. Built by scripts/nightly-release.sh, never by default.
 nightly = ["markie-core/nightly"]
 scene = ["dep:gpui-scene", "dep:gpui-scene-macos"]
 

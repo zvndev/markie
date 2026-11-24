@@ -1,0 +1,5680 @@
+{
+ "styles": [
+  {
+   "raw": {
+    "base": "spacious"
+   },
+   "sanitized": {
+    "base": "spacious"
+   },
+   "canonical": {
+    "base": "spacious"
+   },
+   "resolved": {
+    "base": "spacious",
+    "choices": {
+     "bodyFont": "theme",
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "headingNumbers": "none",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "underline",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "disc",
+     "orderedStyle": "decimal",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "lines",
+     "tableHeader": "caps",
+     "tableDensity": "comfortable",
+     "tableWidth": "auto",
+     "quoteStyle": "panel",
+     "quoteAccent": "accent",
+     "codeBlockStyle": "card",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "hover"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 1,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 8
+    }
+   },
+   "css": "",
+   "appCss": "",
+   "fontTokens": {},
+   "fontCss": "",
+   "painted": {
+    "base": "spacious",
+    "choices": {
+     "headingFont": "body"
+    }
+   }
+  },
+  {
+   "raw": {
+    "base": "compact"
+   },
+   "sanitized": {
+    "base": "compact"
+   },
+   "canonical": {
+    "base": "compact"
+   },
+   "resolved": {
+    "base": "compact",
+    "choices": {
+     "bodyFont": "source-sans",
+     "headingFont": "body",
+     "codeFont": "source-code",
+     "headingNumbers": "none",
+     "headingScale": "compact",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "none",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "nested",
+     "orderedStyle": "decimal",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "dim",
+     "tableStyle": "zebra",
+     "tableHeader": "bold",
+     "tableDensity": "compact",
+     "tableWidth": "full",
+     "quoteStyle": "bar",
+     "quoteAccent": "quiet",
+     "codeBlockStyle": "flat",
+     "inlineCodeStyle": "flat",
+     "dividerStyle": "dotted",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "hover"
+    },
+    "numbers": {
+     "headingSpaceAbove": 0.65,
+     "headingSpaceBelow": 0.6,
+     "blockGap": 0.65,
+     "leading": 0.86,
+     "listIndent": 1.4,
+     "listItemGap": 0.05,
+     "imageRadius": 4
+    }
+   },
+   "css": ".markdown-body { line-height: calc(var(--doc-line-height, 1.75) * 0.86); }\n.markdown-body p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 0.65); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 0.65); }\n.markdown-body blockquote, .markdown-body pre, .markdown-body table, .markdown-body img { margin-top: 0.65em; margin-bottom: 0.65em; }\n.markdown-body ul, .markdown-body ol { margin-top: 0.39em; margin-bottom: 0.39em; }\n.markdown-body hr { margin-top: 1.3em; margin-bottom: 1.3em; }\n.markdown-body blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body h1 { margin-top: 0.975em; }\n.markdown-body h2 { margin-top: 0.91em; }\n.markdown-body h3 { margin-top: 0.845em; }\n.markdown-body h4 { margin-top: 0.78em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 0.65em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body h1 { margin-bottom: 0.36em; }\n.markdown-body h2 { margin-bottom: 0.3em; }\n.markdown-body h3 { margin-bottom: 0.24em; }\n.markdown-body h4 { margin-bottom: 0.24em; }\n.markdown-body h5, .markdown-body h6 { margin-bottom: 0.18em; }\n.markdown-body ul:not([data-type=\"taskList\"]), .markdown-body ol { padding-left: 1.4em; }\n.markdown-body .task-list-item { margin-left: -1.1em; }\n.markdown-body li { margin-top: 0.05em; margin-bottom: 0.05em; }\n.markdown-body img { border-radius: 4px; }\n.markdown-body h1 { font-size: 1.6em; }\n.markdown-body h2 { font-size: 1.3em; }\n.markdown-body h3 { font-size: 1.12em; }\n.markdown-body h4 { font-size: 1em; }\n.markdown-body h5, .markdown-body h6 { font-size: 0.92em; }\n.markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body .task-list-item:has(> input:checked) { color: var(--muted); }\n.markdown-body .task-list-item:has(> p:first-child > input:checked) { color: var(--muted); }\n.markdown-body ul[data-type=\"taskList\"] > li[data-checked=\"true\"] > div { color: var(--muted); }\n.markdown-body tbody td { border-bottom-color: transparent; }\n.markdown-body tbody tr:nth-child(even) { background: var(--surface); }\n.markdown-body thead th, .markdown-body tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body thead th, .markdown-body tbody th { padding: 0.3em 0.65em; }\n.markdown-body tbody td { padding: 0.28em 0.65em; }\n.markdown-body table { display: table; width: 100%; }\n.markdown-body blockquote { border-left-color: var(--muted); }\n.markdown-body blockquote { background: none; border-radius: 0; padding: 0.1em 1em; }\n.markdown-body pre { border: none; border-radius: 6px; }\n.markdown-body :not(pre) > code { border: none; color: var(--foreground); }\n.markdown-body hr { height: 0; background: none; border-top: 2px dotted color-mix(in srgb, var(--muted) 60%, transparent); }",
+   "appCss": ".markdown-body:not([data-md-style] .markdown-body) { line-height: calc(var(--doc-line-height, 1.75) * 0.86); }\n.markdown-body:not([data-md-style] .markdown-body) p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 0.65); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 0.65); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote, .markdown-body:not([data-md-style] .markdown-body) pre, .markdown-body:not([data-md-style] .markdown-body) table, .markdown-body:not([data-md-style] .markdown-body) img { margin-top: 0.65em; margin-bottom: 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) ul, .markdown-body:not([data-md-style] .markdown-body) ol { margin-top: 0.39em; margin-bottom: 0.39em; }\n.markdown-body:not([data-md-style] .markdown-body) hr { margin-top: 1.3em; margin-bottom: 1.3em; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 0.975em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 0.91em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 0.845em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 0.78em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-bottom: 0.36em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-bottom: 0.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-bottom: 0.24em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-bottom: 0.24em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-bottom: 0.18em; }\n.markdown-body:not([data-md-style] .markdown-body) ul:not([data-type=\"taskList\"]), .markdown-body:not([data-md-style] .markdown-body) ol { padding-left: 1.4em; }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item { margin-left: -1.1em; }\n.markdown-body:not([data-md-style] .markdown-body) li { margin-top: 0.05em; margin-bottom: 0.05em; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 4px; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-size: 1.6em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-size: 1.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { font-size: 1.12em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { font-size: 1em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { font-size: 0.92em; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item:has(> input:checked) { color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item:has(> p:first-child > input:checked) { color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) ul[data-type=\"taskList\"] > li[data-checked=\"true\"] > div { color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { border-bottom-color: transparent; }\n.markdown-body:not([data-md-style] .markdown-body) tbody tr:nth-child(even) { background: var(--surface); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { padding: 0.3em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { padding: 0.28em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) table { display: table; width: 100%; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left-color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { background: none; border-radius: 0; padding: 0.1em 1em; }\n.markdown-body:not([data-md-style] .markdown-body) pre { border: none; border-radius: 6px; }\n.markdown-body:not([data-md-style] .markdown-body) :not(pre) > code { border: none; color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) hr { height: 0; background: none; border-top: 2px dotted color-mix(in srgb, var(--muted) 60%, transparent); }",
+   "fontTokens": {
+    "bodyFont": "source-sans",
+    "headingFont": "body",
+    "codeFont": "source-code"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'Source Sans 3', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-family: 'Source Sans 3', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, system-ui, sans-serif; }\n[data-md-style=\"x\"] .markdown-body :is(h1, h2, h3, h4, h5, h6) { font-family: inherit; }\n[data-md-style=\"x\"] .markdown-body :is(code, pre, kbd, samp) { font-family: 'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }",
+   "painted": {
+    "base": "compact"
+   }
+  },
+  {
+   "raw": {
+    "base": "classic"
+   },
+   "sanitized": {
+    "base": "classic"
+   },
+   "canonical": {
+    "base": "classic"
+   },
+   "resolved": {
+    "base": "classic",
+    "choices": {
+     "bodyFont": "literata",
+     "headingFont": "eb-garamond",
+     "codeFont": "source-code",
+     "headingNumbers": "none",
+     "headingScale": "large",
+     "headingWeight": "light",
+     "headingCase": "none",
+     "headingRule": "none",
+     "headingAlign": "center",
+     "paragraphStyle": "indented",
+     "bulletStyle": "disc",
+     "orderedStyle": "decimal",
+     "markerColor": "text",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "minimal",
+     "tableHeader": "bold",
+     "tableDensity": "comfortable",
+     "tableWidth": "centered",
+     "quoteStyle": "italic",
+     "quoteAccent": "quiet",
+     "codeBlockStyle": "bordered",
+     "inlineCodeStyle": "bordered",
+     "dividerStyle": "ornament",
+     "imageAlign": "center",
+     "imageFrame": "none",
+     "captionStyle": "centered",
+     "linkStyle": "underline"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.3,
+     "headingSpaceBelow": 1.2,
+     "blockGap": 1,
+     "leading": 1.04,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 2
+    }
+   },
+   "css": ".markdown-body { line-height: calc(var(--doc-line-height, 1.75) * 1.04); }\n.markdown-body h1 { margin-top: 1.95em; }\n.markdown-body h2 { margin-top: 1.82em; }\n.markdown-body h3 { margin-top: 1.69em; }\n.markdown-body h4 { margin-top: 1.56em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 1.3em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body h1 { margin-bottom: 0.72em; }\n.markdown-body h2 { margin-bottom: 0.6em; }\n.markdown-body h3 { margin-bottom: 0.48em; }\n.markdown-body h4 { margin-bottom: 0.48em; }\n.markdown-body h5, .markdown-body h6 { margin-bottom: 0.36em; }\n.markdown-body img { border-radius: 2px; }\n.markdown-body h1 { font-size: 2.5em; }\n.markdown-body h2 { font-size: 1.8em; }\n.markdown-body h3 { font-size: 1.35em; }\n.markdown-body h4 { font-size: 1.15em; }\n.markdown-body h1 { font-weight: 400; }\n.markdown-body h2 { font-weight: 400; }\n.markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-weight: 500; }\n.markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body h1, .markdown-body h2, .markdown-body h3 { text-align: center; }\n.markdown-body h1::after, .markdown-body h2::after { margin-left: auto; margin-right: auto; }\n.markdown-body p { margin-top: 0; margin-bottom: 0; text-indent: 1.5em; }\n.markdown-body > p:first-child, .markdown-body :is(h1, h2, h3, h4, h5, h6, hr, blockquote, pre, table, ul, ol, div) + p, .markdown-body li p, .markdown-body blockquote p, .markdown-body td p, .markdown-body th p { text-indent: 0; }\n.markdown-body p + :is(h1, h2, h3, h4, h5, h6) { margin-top: 1.6em; }\n.markdown-body blockquote p + p { margin-top: 0.5em; }\n.markdown-body li::marker { color: var(--foreground); }\n.markdown-body thead th, .markdown-body tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body tbody td { border-bottom: none; }\n.markdown-body tbody tr:hover { background: none; }\n.markdown-body thead th, .markdown-body tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body table { width: fit-content; margin-left: auto; margin-right: auto; }\n.markdown-body blockquote { border-left-color: var(--muted); }\n.markdown-body blockquote { background: none; border-radius: 0; padding: 0.1em 1.1em; font-style: italic; color: var(--foreground); }\n.markdown-body pre { background: transparent !important; }\n.markdown-body :not(pre) > code { background: none; color: var(--foreground); }\n.markdown-body hr { height: auto; background: none; text-align: center; overflow: visible; }\n.markdown-body hr::after { content: \"\\2022\\2003\\2022\\2003\\2022\"; color: var(--muted); font-size: 0.9em; line-height: 1; }\n.markdown-body > img, .markdown-body p > img:only-child, .markdown-body p > img:first-child:has(+ em:last-child), .markdown-body p > img:first-child:has(+ br + em:last-child) { display: block; margin-left: auto; margin-right: auto; }\n.markdown-body p > img + em, .markdown-body p > img + br + em { display: block; margin-top: -0.5em; text-align: center; font-size: 0.86em; color: var(--muted); }\n.markdown-body a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "appCss": ".markdown-body:not([data-md-style] .markdown-body) { line-height: calc(var(--doc-line-height, 1.75) * 1.04); }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 1.95em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 1.82em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 1.69em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 1.56em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 1.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-bottom: 0.72em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-bottom: 0.6em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-bottom: 0.48em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-bottom: 0.48em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-bottom: 0.36em; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 2px; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-size: 2.5em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-size: 1.8em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { font-size: 1.35em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { font-size: 1.15em; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h3, .markdown-body:not([data-md-style] .markdown-body) h4, .markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { font-weight: 500; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2, .markdown-body:not([data-md-style] .markdown-body) h3 { text-align: center; }\n.markdown-body:not([data-md-style] .markdown-body) h1::after, .markdown-body:not([data-md-style] .markdown-body) h2::after { margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) p { margin-top: 0; margin-bottom: 0; text-indent: 1.5em; }\n.markdown-body:not([data-md-style] .markdown-body) > p:first-child, .markdown-body:not([data-md-style] .markdown-body) :is(h1, h2, h3, h4, h5, h6, hr, blockquote, pre, table, ul, ol, div) + p, .markdown-body:not([data-md-style] .markdown-body) li p, .markdown-body:not([data-md-style] .markdown-body) blockquote p, .markdown-body:not([data-md-style] .markdown-body) td p, .markdown-body:not([data-md-style] .markdown-body) th p { text-indent: 0; }\n.markdown-body:not([data-md-style] .markdown-body) p + :is(h1, h2, h3, h4, h5, h6) { margin-top: 1.6em; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote p + p { margin-top: 0.5em; }\n.markdown-body:not([data-md-style] .markdown-body) li::marker { color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { border-bottom: none; }\n.markdown-body:not([data-md-style] .markdown-body) tbody tr:hover { background: none; }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body:not([data-md-style] .markdown-body) table { width: fit-content; margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left-color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { background: none; border-radius: 0; padding: 0.1em 1.1em; font-style: italic; color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) pre { background: transparent !important; }\n.markdown-body:not([data-md-style] .markdown-body) :not(pre) > code { background: none; color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) hr { height: auto; background: none; text-align: center; overflow: visible; }\n.markdown-body:not([data-md-style] .markdown-body) hr::after { content: \"\\2022\\2003\\2022\\2003\\2022\"; color: var(--muted); font-size: 0.9em; line-height: 1; }\n.markdown-body:not([data-md-style] .markdown-body) > img, .markdown-body:not([data-md-style] .markdown-body) p > img:only-child, .markdown-body:not([data-md-style] .markdown-body) p > img:first-child:has(+ em:last-child), .markdown-body:not([data-md-style] .markdown-body) p > img:first-child:has(+ br + em:last-child) { display: block; margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) p > img + em, .markdown-body:not([data-md-style] .markdown-body) p > img + br + em { display: block; margin-top: -0.5em; text-align: center; font-size: 0.86em; color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "fontTokens": {
+    "bodyFont": "literata",
+    "headingFont": "eb-garamond",
+    "codeFont": "source-code"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'Literata', Georgia, 'Times New Roman', serif; font-family: 'Literata', Georgia, 'Times New Roman', serif, system-ui, sans-serif; }\n[data-md-style=\"x\"] .markdown-body :is(h1, h2, h3, h4, h5, h6) { font-family: 'EB Garamond', Georgia, 'Times New Roman', serif; }\n[data-md-style=\"x\"] .markdown-body :is(code, pre, kbd, samp) { font-family: 'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }",
+   "painted": {
+    "base": "classic",
+    "choices": {
+     "headingFont": "body"
+    }
+   }
+  },
+  {
+   "raw": {
+    "base": "technical"
+   },
+   "sanitized": {
+    "base": "technical"
+   },
+   "canonical": {
+    "base": "technical"
+   },
+   "resolved": {
+    "base": "technical",
+    "choices": {
+     "bodyFont": "plex-sans",
+     "headingFont": "body",
+     "codeFont": "jetbrains-mono",
+     "headingNumbers": "outline",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "upper-minor",
+     "headingRule": "title",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "nested",
+     "orderedStyle": "legal",
+     "markerColor": "text",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "grid",
+     "tableHeader": "filled",
+     "tableDensity": "compact",
+     "tableWidth": "full",
+     "quoteStyle": "card",
+     "quoteAccent": "link",
+     "codeBlockStyle": "bar",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "underline"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.1,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 1,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 4
+    }
+   },
+   "css": ".markdown-body h1 { margin-top: 1.65em; }\n.markdown-body h2 { margin-top: 1.54em; }\n.markdown-body h3 { margin-top: 1.43em; }\n.markdown-body h4 { margin-top: 1.32em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 1.1em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body img { border-radius: 4px; }\n.markdown-body { counter-reset: markie-h2; }\n.markdown-body h2 { counter-increment: markie-h2; counter-reset: markie-h3; }\n.markdown-body h3 { counter-increment: markie-h3; }\n.markdown-body h2::before { content: counter(markie-h2) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body h3::before { content: counter(markie-h2) \".\" counter(markie-h3) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body h4, .markdown-body h5, .markdown-body h6 { text-transform: uppercase; letter-spacing: 0.08em; }\n.markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body ol { counter-reset: markie-ol; }\n.markdown-body ol > li { counter-increment: markie-ol; }\n.markdown-body ol > li::marker { content: counters(markie-ol, \".\") \". \"; }\n.markdown-body li::marker { color: var(--foreground); }\n.markdown-body thead th, .markdown-body tbody th, .markdown-body tbody td { border: 1px solid var(--doc-rule); }\n.markdown-body thead th, .markdown-body tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 600; color: var(--foreground); background: var(--accent); }\n.markdown-body thead th, .markdown-body tbody th { padding: 0.3em 0.65em; }\n.markdown-body tbody td { padding: 0.28em 0.65em; }\n.markdown-body table { display: table; width: 100%; }\n.markdown-body blockquote { border-left-color: var(--blue); }\n.markdown-body blockquote { border: 1px solid var(--doc-rule); border-radius: 8px; padding: 0.7em 1.1em; }\n.markdown-body pre { border: none; border-left: 3px solid var(--muted); border-radius: 0; }\n.markdown-body a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "appCss": ".markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 1.65em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 1.54em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 1.43em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 1.32em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 1.1em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 4px; }\n.markdown-body:not([data-md-style] .markdown-body) { counter-reset: markie-h2; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { counter-increment: markie-h2; counter-reset: markie-h3; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { counter-increment: markie-h3; }\n.markdown-body:not([data-md-style] .markdown-body) h2::before { content: counter(markie-h2) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h3::before { content: counter(markie-h2) \".\" counter(markie-h3) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h4, .markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { text-transform: uppercase; letter-spacing: 0.08em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body:not([data-md-style] .markdown-body) ol { counter-reset: markie-ol; }\n.markdown-body:not([data-md-style] .markdown-body) ol > li { counter-increment: markie-ol; }\n.markdown-body:not([data-md-style] .markdown-body) ol > li::marker { content: counters(markie-ol, \".\") \". \"; }\n.markdown-body:not([data-md-style] .markdown-body) li::marker { color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th, .markdown-body:not([data-md-style] .markdown-body) tbody td { border: 1px solid var(--doc-rule); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 600; color: var(--foreground); background: var(--accent); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { padding: 0.3em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { padding: 0.28em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) table { display: table; width: 100%; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left-color: var(--blue); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border: 1px solid var(--doc-rule); border-radius: 8px; padding: 0.7em 1.1em; }\n.markdown-body:not([data-md-style] .markdown-body) pre { border: none; border-left: 3px solid var(--muted); border-radius: 0; }\n.markdown-body:not([data-md-style] .markdown-body) a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "fontTokens": {
+    "bodyFont": "plex-sans",
+    "headingFont": "body",
+    "codeFont": "jetbrains-mono"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, system-ui, sans-serif; }\n[data-md-style=\"x\"] .markdown-body :is(h1, h2, h3, h4, h5, h6) { font-family: inherit; }\n[data-md-style=\"x\"] .markdown-body :is(code, pre, kbd, samp) { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }",
+   "painted": {
+    "base": "technical"
+   }
+  },
+  {
+   "raw": {
+    "base": "editorial"
+   },
+   "sanitized": {
+    "base": "editorial"
+   },
+   "canonical": {
+    "base": "editorial"
+   },
+   "resolved": {
+    "base": "editorial",
+    "choices": {
+     "bodyFont": "source-serif",
+     "headingFont": "playfair",
+     "codeFont": "fira-code",
+     "headingNumbers": "none",
+     "headingScale": "large",
+     "headingWeight": "heavy",
+     "headingCase": "upper-minor",
+     "headingRule": "short",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "square",
+     "orderedStyle": "decimal",
+     "markerColor": "accent",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "minimal",
+     "tableHeader": "caps",
+     "tableDensity": "roomy",
+     "tableWidth": "auto",
+     "quoteStyle": "pull",
+     "quoteAccent": "accent",
+     "codeBlockStyle": "flat",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "short",
+     "imageAlign": "center",
+     "imageFrame": "shadow",
+     "captionStyle": "centered",
+     "linkStyle": "ink"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.4,
+     "headingSpaceBelow": 1.2,
+     "blockGap": 1.25,
+     "leading": 1.03,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 2
+    }
+   },
+   "css": ".markdown-body { line-height: calc(var(--doc-line-height, 1.75) * 1.03); }\n.markdown-body p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 1.25); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 1.25); }\n.markdown-body blockquote, .markdown-body pre, .markdown-body table, .markdown-body img { margin-top: 1.25em; margin-bottom: 1.25em; }\n.markdown-body ul, .markdown-body ol { margin-top: 0.75em; margin-bottom: 0.75em; }\n.markdown-body hr { margin-top: 2.5em; margin-bottom: 2.5em; }\n.markdown-body blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body h1 { margin-top: 2.1em; }\n.markdown-body h2 { margin-top: 1.96em; }\n.markdown-body h3 { margin-top: 1.82em; }\n.markdown-body h4 { margin-top: 1.68em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 1.4em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body h1 { margin-bottom: 0.72em; }\n.markdown-body h2 { margin-bottom: 0.6em; }\n.markdown-body h3 { margin-bottom: 0.48em; }\n.markdown-body h4 { margin-bottom: 0.48em; }\n.markdown-body h5, .markdown-body h6 { margin-bottom: 0.36em; }\n.markdown-body img { border-radius: 2px; }\n.markdown-body h1 { font-size: 2.5em; }\n.markdown-body h2 { font-size: 1.8em; }\n.markdown-body h3 { font-size: 1.35em; }\n.markdown-body h4 { font-size: 1.15em; }\n.markdown-body h1 { font-weight: 800; }\n.markdown-body h2 { font-weight: 750; }\n.markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-weight: 700; }\n.markdown-body h4, .markdown-body h5, .markdown-body h6 { text-transform: uppercase; letter-spacing: 0.08em; }\n.markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body h1::after, .markdown-body h2::after { content: \"\"; display: block; width: 2.2em; height: 3px; margin-top: 0.35em; border-radius: 2px; background: var(--blue); }\n.markdown-body ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body li::marker { color: var(--blue); }\n.markdown-body thead th, .markdown-body tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body tbody td { border-bottom: none; }\n.markdown-body tbody tr:hover { background: none; }\n.markdown-body thead th, .markdown-body tbody th { padding: 0.8em 1.2em; }\n.markdown-body tbody td { padding: 0.75em 1.2em; }\n.markdown-body blockquote { border-left: none; background: none; border-radius: 0; padding: 0.4em 2em; text-align: center; font-style: italic; font-size: 1.2em; line-height: 1.5; color: var(--foreground); }\n.markdown-body pre { border: none; border-radius: 6px; }\n.markdown-body hr { width: 22%; min-width: 4em; margin-left: auto; margin-right: auto; }\n.markdown-body > img, .markdown-body p > img:only-child, .markdown-body p > img:first-child:has(+ em:last-child), .markdown-body p > img:first-child:has(+ br + em:last-child) { display: block; margin-left: auto; margin-right: auto; }\n.markdown-body img { box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); }\n.markdown-body p > img + em, .markdown-body p > img + br + em { display: block; margin-top: -0.5em; text-align: center; font-size: 0.86em; color: var(--muted); }\n.markdown-body a:not([data-doc-link=\"none\"]) { color: var(--foreground); border-bottom: 1px solid var(--blue); }",
+   "appCss": ".markdown-body:not([data-md-style] .markdown-body) { line-height: calc(var(--doc-line-height, 1.75) * 1.03); }\n.markdown-body:not([data-md-style] .markdown-body) p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 1.25); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 1.25); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote, .markdown-body:not([data-md-style] .markdown-body) pre, .markdown-body:not([data-md-style] .markdown-body) table, .markdown-body:not([data-md-style] .markdown-body) img { margin-top: 1.25em; margin-bottom: 1.25em; }\n.markdown-body:not([data-md-style] .markdown-body) ul, .markdown-body:not([data-md-style] .markdown-body) ol { margin-top: 0.75em; margin-bottom: 0.75em; }\n.markdown-body:not([data-md-style] .markdown-body) hr { margin-top: 2.5em; margin-bottom: 2.5em; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 2.1em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 1.96em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 1.82em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 1.68em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 1.4em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-bottom: 0.72em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-bottom: 0.6em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-bottom: 0.48em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-bottom: 0.48em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-bottom: 0.36em; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 2px; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-size: 2.5em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-size: 1.8em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { font-size: 1.35em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { font-size: 1.15em; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-weight: 800; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-weight: 750; }\n.markdown-body:not([data-md-style] .markdown-body) h3, .markdown-body:not([data-md-style] .markdown-body) h4, .markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { font-weight: 700; }\n.markdown-body:not([data-md-style] .markdown-body) h4, .markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { text-transform: uppercase; letter-spacing: 0.08em; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1::after, .markdown-body:not([data-md-style] .markdown-body) h2::after { content: \"\"; display: block; width: 2.2em; height: 3px; margin-top: 0.35em; border-radius: 2px; background: var(--blue); }\n.markdown-body:not([data-md-style] .markdown-body) ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body:not([data-md-style] .markdown-body) li::marker { color: var(--blue); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { border-bottom: none; }\n.markdown-body:not([data-md-style] .markdown-body) tbody tr:hover { background: none; }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { padding: 0.8em 1.2em; }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { padding: 0.75em 1.2em; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left: none; background: none; border-radius: 0; padding: 0.4em 2em; text-align: center; font-style: italic; font-size: 1.2em; line-height: 1.5; color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) pre { border: none; border-radius: 6px; }\n.markdown-body:not([data-md-style] .markdown-body) hr { width: 22%; min-width: 4em; margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) > img, .markdown-body:not([data-md-style] .markdown-body) p > img:only-child, .markdown-body:not([data-md-style] .markdown-body) p > img:first-child:has(+ em:last-child), .markdown-body:not([data-md-style] .markdown-body) p > img:first-child:has(+ br + em:last-child) { display: block; margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) img { box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); }\n.markdown-body:not([data-md-style] .markdown-body) p > img + em, .markdown-body:not([data-md-style] .markdown-body) p > img + br + em { display: block; margin-top: -0.5em; text-align: center; font-size: 0.86em; color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) a:not([data-doc-link=\"none\"]) { color: var(--foreground); border-bottom: 1px solid var(--blue); }",
+   "fontTokens": {
+    "bodyFont": "source-serif",
+    "headingFont": "playfair",
+    "codeFont": "fira-code"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif; font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif, system-ui, sans-serif; }\n[data-md-style=\"x\"] .markdown-body :is(h1, h2, h3, h4, h5, h6) { font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; }\n[data-md-style=\"x\"] .markdown-body :is(code, pre, kbd, samp) { font-family: 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }",
+   "painted": {
+    "base": "editorial",
+    "choices": {
+     "headingFont": "body"
+    }
+   }
+  },
+  {
+   "raw": {
+    "base": "minimal"
+   },
+   "sanitized": {
+    "base": "minimal"
+   },
+   "canonical": {
+    "base": "minimal"
+   },
+   "resolved": {
+    "base": "minimal",
+    "choices": {
+     "bodyFont": "atkinson-mono",
+     "headingFont": "body",
+     "codeFont": "atkinson-mono",
+     "headingNumbers": "none",
+     "headingScale": "flat",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "none",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "dash",
+     "orderedStyle": "paren",
+     "markerColor": "muted",
+     "taskStyle": "minimal",
+     "taskDone": "strike",
+     "tableStyle": "minimal",
+     "tableHeader": "plain",
+     "tableDensity": "comfortable",
+     "tableWidth": "auto",
+     "quoteStyle": "bar",
+     "quoteAccent": "quiet",
+     "codeBlockStyle": "bar",
+     "inlineCodeStyle": "plain",
+     "dividerStyle": "space",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "dotted"
+    },
+    "numbers": {
+     "headingSpaceAbove": 0.9,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 0.94,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 0
+    }
+   },
+   "css": "@counter-style markie-paren { system: extends decimal; suffix: \") \"; }\n.markdown-body { line-height: calc(var(--doc-line-height, 1.75) * 0.94); }\n.markdown-body h1 { margin-top: 1.35em; }\n.markdown-body h2 { margin-top: 1.26em; }\n.markdown-body h3 { margin-top: 1.17em; }\n.markdown-body h4 { margin-top: 1.08em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 0.9em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body img { border-radius: 0px; }\n.markdown-body h1 { font-size: 1.4em; }\n.markdown-body h2 { font-size: 1.2em; }\n.markdown-body h3 { font-size: 1.05em; }\n.markdown-body h4 { font-size: 1em; }\n.markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: \"\\2013\\2002\"; }\n.markdown-body ol > li { list-style-type: markie-paren; }\n.markdown-body input[type=\"checkbox\"] { border-width: 1.5px; border-color: var(--muted); }\n.markdown-body input[type=\"checkbox\"]:checked, .markdown-body .ProseMirror ul[data-type=\"taskList\"] li > label input[type=\"checkbox\"]:checked { background: transparent; border-color: var(--blue); color: var(--blue); }\n.markdown-body .task-list-item:has(> input:checked) { color: var(--muted); text-decoration: line-through; }\n.markdown-body .task-list-item:has(> p:first-child > input:checked) { color: var(--muted); text-decoration: line-through; }\n.markdown-body ul[data-type=\"taskList\"] > li[data-checked=\"true\"] > div { color: var(--muted); text-decoration: line-through; }\n.markdown-body thead th, .markdown-body tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body tbody td { border-bottom: none; }\n.markdown-body tbody tr:hover { background: none; }\n.markdown-body thead th, .markdown-body tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 500; color: var(--muted); background: none; }\n.markdown-body blockquote { border-left-color: var(--muted); }\n.markdown-body blockquote { background: none; border-radius: 0; padding: 0.1em 1em; }\n.markdown-body pre { border: none; border-left: 3px solid var(--muted); border-radius: 0; }\n.markdown-body :not(pre) > code { border: none; background: none; padding: 0; }\n.markdown-body hr { height: 0; background: none; }\n.markdown-body a:not([data-doc-link=\"none\"]) { border-bottom: 1px dotted var(--blue); }",
+   "appCss": "@counter-style markie-paren { system: extends decimal; suffix: \") \"; }\n.markdown-body:not([data-md-style] .markdown-body) { line-height: calc(var(--doc-line-height, 1.75) * 0.94); }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 1.35em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 1.26em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 1.17em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 1.08em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 0.9em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 0px; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-size: 1.4em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-size: 1.2em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { font-size: 1.05em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { font-size: 1em; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: \"\\2013\\2002\"; }\n.markdown-body:not([data-md-style] .markdown-body) ol > li { list-style-type: markie-paren; }\n.markdown-body:not([data-md-style] .markdown-body) input[type=\"checkbox\"] { border-width: 1.5px; border-color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) input[type=\"checkbox\"]:checked, .markdown-body:not([data-md-style] .markdown-body) .ProseMirror ul[data-type=\"taskList\"] li > label input[type=\"checkbox\"]:checked { background: transparent; border-color: var(--blue); color: var(--blue); }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item:has(> input:checked) { color: var(--muted); text-decoration: line-through; }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item:has(> p:first-child > input:checked) { color: var(--muted); text-decoration: line-through; }\n.markdown-body:not([data-md-style] .markdown-body) ul[data-type=\"taskList\"] > li[data-checked=\"true\"] > div { color: var(--muted); text-decoration: line-through; }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { border-bottom: none; }\n.markdown-body:not([data-md-style] .markdown-body) tbody tr:hover { background: none; }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 500; color: var(--muted); background: none; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left-color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { background: none; border-radius: 0; padding: 0.1em 1em; }\n.markdown-body:not([data-md-style] .markdown-body) pre { border: none; border-left: 3px solid var(--muted); border-radius: 0; }\n.markdown-body:not([data-md-style] .markdown-body) :not(pre) > code { border: none; background: none; padding: 0; }\n.markdown-body:not([data-md-style] .markdown-body) hr { height: 0; background: none; }\n.markdown-body:not([data-md-style] .markdown-body) a:not([data-doc-link=\"none\"]) { border-bottom: 1px dotted var(--blue); }",
+   "fontTokens": {
+    "bodyFont": "atkinson-mono",
+    "headingFont": "body",
+    "codeFont": "atkinson-mono"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'Atkinson Hyperlegible Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-family: 'Atkinson Hyperlegible Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, system-ui, sans-serif; }\n[data-md-style=\"x\"] .markdown-body :is(h1, h2, h3, h4, h5, h6) { font-family: inherit; }\n[data-md-style=\"x\"] .markdown-body :is(code, pre, kbd, samp) { font-family: 'Atkinson Hyperlegible Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }",
+   "painted": {
+    "base": "minimal"
+   }
+  },
+  {
+   "raw": {
+    "base": "compact",
+    "name": "  My\u0000 notes  ",
+    "choices": {
+     "tableStyle": "grid",
+     "bogus": "x",
+     "headingRule": "nope",
+     "bodyFont": "inter",
+     "codeFont": "inter"
+    },
+    "numbers": {
+     "leading": 9,
+     "blockGap": 0.123456,
+     "listIndent": "2",
+     "imageRadius": -3
+    }
+   },
+   "sanitized": {
+    "base": "compact",
+    "name": "My notes",
+    "choices": {
+     "bodyFont": "inter",
+     "tableStyle": "grid"
+    },
+    "numbers": {
+     "blockGap": 0.4,
+     "leading": 1.25,
+     "imageRadius": 0
+    }
+   },
+   "canonical": {
+    "base": "compact",
+    "name": "My notes",
+    "choices": {
+     "bodyFont": "inter",
+     "tableStyle": "grid"
+    },
+    "numbers": {
+     "blockGap": 0.4,
+     "leading": 1.25,
+     "imageRadius": 0
+    }
+   },
+   "resolved": {
+    "base": "compact",
+    "choices": {
+     "bodyFont": "inter",
+     "headingFont": "body",
+     "codeFont": "source-code",
+     "headingNumbers": "none",
+     "headingScale": "compact",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "none",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "nested",
+     "orderedStyle": "decimal",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "dim",
+     "tableStyle": "grid",
+     "tableHeader": "bold",
+     "tableDensity": "compact",
+     "tableWidth": "full",
+     "quoteStyle": "bar",
+     "quoteAccent": "quiet",
+     "codeBlockStyle": "flat",
+     "inlineCodeStyle": "flat",
+     "dividerStyle": "dotted",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "hover"
+    },
+    "numbers": {
+     "headingSpaceAbove": 0.65,
+     "headingSpaceBelow": 0.6,
+     "blockGap": 0.4,
+     "leading": 1.25,
+     "listIndent": 1.4,
+     "listItemGap": 0.05,
+     "imageRadius": 0
+    }
+   },
+   "css": ".markdown-body { line-height: calc(var(--doc-line-height, 1.75) * 1.25); }\n.markdown-body p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 0.4); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 0.4); }\n.markdown-body blockquote, .markdown-body pre, .markdown-body table, .markdown-body img { margin-top: 0.4em; margin-bottom: 0.4em; }\n.markdown-body ul, .markdown-body ol { margin-top: 0.24em; margin-bottom: 0.24em; }\n.markdown-body hr { margin-top: 0.8em; margin-bottom: 0.8em; }\n.markdown-body blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body h1 { margin-top: 0.975em; }\n.markdown-body h2 { margin-top: 0.91em; }\n.markdown-body h3 { margin-top: 0.845em; }\n.markdown-body h4 { margin-top: 0.78em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 0.65em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body h1 { margin-bottom: 0.36em; }\n.markdown-body h2 { margin-bottom: 0.3em; }\n.markdown-body h3 { margin-bottom: 0.24em; }\n.markdown-body h4 { margin-bottom: 0.24em; }\n.markdown-body h5, .markdown-body h6 { margin-bottom: 0.18em; }\n.markdown-body ul:not([data-type=\"taskList\"]), .markdown-body ol { padding-left: 1.4em; }\n.markdown-body .task-list-item { margin-left: -1.1em; }\n.markdown-body li { margin-top: 0.05em; margin-bottom: 0.05em; }\n.markdown-body img { border-radius: 0px; }\n.markdown-body h1 { font-size: 1.6em; }\n.markdown-body h2 { font-size: 1.3em; }\n.markdown-body h3 { font-size: 1.12em; }\n.markdown-body h4 { font-size: 1em; }\n.markdown-body h5, .markdown-body h6 { font-size: 0.92em; }\n.markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body .task-list-item:has(> input:checked) { color: var(--muted); }\n.markdown-body .task-list-item:has(> p:first-child > input:checked) { color: var(--muted); }\n.markdown-body ul[data-type=\"taskList\"] > li[data-checked=\"true\"] > div { color: var(--muted); }\n.markdown-body thead th, .markdown-body tbody th, .markdown-body tbody td { border: 1px solid var(--doc-rule); }\n.markdown-body thead th, .markdown-body tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body thead th, .markdown-body tbody th { padding: 0.3em 0.65em; }\n.markdown-body tbody td { padding: 0.28em 0.65em; }\n.markdown-body table { display: table; width: 100%; }\n.markdown-body blockquote { border-left-color: var(--muted); }\n.markdown-body blockquote { background: none; border-radius: 0; padding: 0.1em 1em; }\n.markdown-body pre { border: none; border-radius: 6px; }\n.markdown-body :not(pre) > code { border: none; color: var(--foreground); }\n.markdown-body hr { height: 0; background: none; border-top: 2px dotted color-mix(in srgb, var(--muted) 60%, transparent); }",
+   "appCss": ".markdown-body:not([data-md-style] .markdown-body) { line-height: calc(var(--doc-line-height, 1.75) * 1.25); }\n.markdown-body:not([data-md-style] .markdown-body) p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 0.4); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 0.4); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote, .markdown-body:not([data-md-style] .markdown-body) pre, .markdown-body:not([data-md-style] .markdown-body) table, .markdown-body:not([data-md-style] .markdown-body) img { margin-top: 0.4em; margin-bottom: 0.4em; }\n.markdown-body:not([data-md-style] .markdown-body) ul, .markdown-body:not([data-md-style] .markdown-body) ol { margin-top: 0.24em; margin-bottom: 0.24em; }\n.markdown-body:not([data-md-style] .markdown-body) hr { margin-top: 0.8em; margin-bottom: 0.8em; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 0.975em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 0.91em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 0.845em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 0.78em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-bottom: 0.36em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-bottom: 0.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-bottom: 0.24em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-bottom: 0.24em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-bottom: 0.18em; }\n.markdown-body:not([data-md-style] .markdown-body) ul:not([data-type=\"taskList\"]), .markdown-body:not([data-md-style] .markdown-body) ol { padding-left: 1.4em; }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item { margin-left: -1.1em; }\n.markdown-body:not([data-md-style] .markdown-body) li { margin-top: 0.05em; margin-bottom: 0.05em; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 0px; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-size: 1.6em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-size: 1.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { font-size: 1.12em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { font-size: 1em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { font-size: 0.92em; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item:has(> input:checked) { color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item:has(> p:first-child > input:checked) { color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) ul[data-type=\"taskList\"] > li[data-checked=\"true\"] > div { color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th, .markdown-body:not([data-md-style] .markdown-body) tbody td { border: 1px solid var(--doc-rule); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { padding: 0.3em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { padding: 0.28em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) table { display: table; width: 100%; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left-color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { background: none; border-radius: 0; padding: 0.1em 1em; }\n.markdown-body:not([data-md-style] .markdown-body) pre { border: none; border-radius: 6px; }\n.markdown-body:not([data-md-style] .markdown-body) :not(pre) > code { border: none; color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) hr { height: 0; background: none; border-top: 2px dotted color-mix(in srgb, var(--muted) 60%, transparent); }",
+   "fontTokens": {
+    "bodyFont": "inter",
+    "headingFont": "body",
+    "codeFont": "source-code"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, system-ui, sans-serif; }\n[data-md-style=\"x\"] .markdown-body :is(h1, h2, h3, h4, h5, h6) { font-family: inherit; }\n[data-md-style=\"x\"] .markdown-body :is(code, pre, kbd, samp) { font-family: 'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }",
+   "painted": {
+    "base": "compact",
+    "name": "My notes",
+    "choices": {
+     "tableStyle": "grid"
+    },
+    "numbers": {
+     "blockGap": 0.4,
+     "leading": 1.25,
+     "imageRadius": 0
+    }
+   }
+  },
+  {
+   "raw": {
+    "base": "unknown",
+    "choices": {
+     "orderedStyle": "paren",
+     "linkStyle": "ink"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.3,
+     "headingSpaceBelow": 0.7,
+     "listIndent": 2.2,
+     "listItemGap": 0,
+     "imageRadius": 12,
+     "blockGap": 1.35,
+     "leading": 1.1
+    }
+   },
+   "sanitized": {
+    "base": "spacious",
+    "choices": {
+     "orderedStyle": "paren",
+     "linkStyle": "ink"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.3,
+     "headingSpaceBelow": 0.7,
+     "blockGap": 1.35,
+     "leading": 1.1,
+     "listIndent": 2.2,
+     "listItemGap": 0,
+     "imageRadius": 12
+    }
+   },
+   "canonical": {
+    "base": "spacious",
+    "choices": {
+     "orderedStyle": "paren",
+     "linkStyle": "ink"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.3,
+     "headingSpaceBelow": 0.7,
+     "blockGap": 1.35,
+     "leading": 1.1,
+     "listIndent": 2.2,
+     "listItemGap": 0,
+     "imageRadius": 12
+    }
+   },
+   "resolved": {
+    "base": "spacious",
+    "choices": {
+     "bodyFont": "theme",
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "headingNumbers": "none",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "underline",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "disc",
+     "orderedStyle": "paren",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "lines",
+     "tableHeader": "caps",
+     "tableDensity": "comfortable",
+     "tableWidth": "auto",
+     "quoteStyle": "panel",
+     "quoteAccent": "accent",
+     "codeBlockStyle": "card",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "ink"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.3,
+     "headingSpaceBelow": 0.7,
+     "blockGap": 1.35,
+     "leading": 1.1,
+     "listIndent": 2.2,
+     "listItemGap": 0,
+     "imageRadius": 12
+    }
+   },
+   "css": "@counter-style markie-paren { system: extends decimal; suffix: \") \"; }\n.markdown-body { line-height: calc(var(--doc-line-height, 1.75) * 1.1); }\n.markdown-body p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 1.35); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 1.35); }\n.markdown-body blockquote, .markdown-body pre, .markdown-body table, .markdown-body img { margin-top: 1.35em; margin-bottom: 1.35em; }\n.markdown-body ul, .markdown-body ol { margin-top: 0.81em; margin-bottom: 0.81em; }\n.markdown-body hr { margin-top: 2.7em; margin-bottom: 2.7em; }\n.markdown-body blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body h1 { margin-top: 1.95em; }\n.markdown-body h2 { margin-top: 1.82em; }\n.markdown-body h3 { margin-top: 1.69em; }\n.markdown-body h4 { margin-top: 1.56em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 1.3em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body h1 { margin-bottom: 0.42em; }\n.markdown-body h2 { margin-bottom: 0.35em; }\n.markdown-body h3 { margin-bottom: 0.28em; }\n.markdown-body h4 { margin-bottom: 0.28em; }\n.markdown-body h5, .markdown-body h6 { margin-bottom: 0.21em; }\n.markdown-body ul:not([data-type=\"taskList\"]), .markdown-body ol { padding-left: 2.2em; }\n.markdown-body .task-list-item { margin-left: -1.9em; }\n.markdown-body li { margin-top: 0em; margin-bottom: 0em; }\n.markdown-body img { border-radius: 12px; }\n.markdown-body ol > li { list-style-type: markie-paren; }\n.markdown-body a:not([data-doc-link=\"none\"]) { color: var(--foreground); border-bottom: 1px solid var(--blue); }",
+   "appCss": "@counter-style markie-paren { system: extends decimal; suffix: \") \"; }\n.markdown-body:not([data-md-style] .markdown-body) { line-height: calc(var(--doc-line-height, 1.75) * 1.1); }\n.markdown-body:not([data-md-style] .markdown-body) p { margin-top: calc(var(--doc-paragraph-gap, 0.8em) * 1.35); margin-bottom: calc(var(--doc-paragraph-gap, 0.8em) * 1.35); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote, .markdown-body:not([data-md-style] .markdown-body) pre, .markdown-body:not([data-md-style] .markdown-body) table, .markdown-body:not([data-md-style] .markdown-body) img { margin-top: 1.35em; margin-bottom: 1.35em; }\n.markdown-body:not([data-md-style] .markdown-body) ul, .markdown-body:not([data-md-style] .markdown-body) ol { margin-top: 0.81em; margin-bottom: 0.81em; }\n.markdown-body:not([data-md-style] .markdown-body) hr { margin-top: 2.7em; margin-bottom: 2.7em; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote p { margin-top: 0.3em; margin-bottom: 0.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 1.95em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 1.82em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 1.69em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 1.56em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 1.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-bottom: 0.42em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-bottom: 0.35em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-bottom: 0.28em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-bottom: 0.28em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-bottom: 0.21em; }\n.markdown-body:not([data-md-style] .markdown-body) ul:not([data-type=\"taskList\"]), .markdown-body:not([data-md-style] .markdown-body) ol { padding-left: 2.2em; }\n.markdown-body:not([data-md-style] .markdown-body) .task-list-item { margin-left: -1.9em; }\n.markdown-body:not([data-md-style] .markdown-body) li { margin-top: 0em; margin-bottom: 0em; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 12px; }\n.markdown-body:not([data-md-style] .markdown-body) ol > li { list-style-type: markie-paren; }\n.markdown-body:not([data-md-style] .markdown-body) a:not([data-doc-link=\"none\"]) { color: var(--foreground); border-bottom: 1px solid var(--blue); }",
+   "fontTokens": {},
+   "fontCss": "",
+   "painted": {
+    "base": "spacious",
+    "choices": {
+     "headingFont": "body",
+     "orderedStyle": "paren",
+     "linkStyle": "ink"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.3,
+     "headingSpaceBelow": 0.7,
+     "blockGap": 1.35,
+     "leading": 1.1,
+     "listIndent": 2.2,
+     "listItemGap": 0,
+     "imageRadius": 12
+    }
+   }
+  },
+  {
+   "raw": {
+    "base": "classic",
+    "choices": {
+     "headingFont": "eb-garamond",
+     "bodyFont": "literata",
+     "quoteStyle": "panel"
+    },
+    "numbers": {
+     "leading": 1.04
+    }
+   },
+   "sanitized": {
+    "base": "classic",
+    "choices": {
+     "bodyFont": "literata",
+     "headingFont": "eb-garamond",
+     "quoteStyle": "panel"
+    },
+    "numbers": {
+     "leading": 1.04
+    }
+   },
+   "canonical": {
+    "base": "classic",
+    "choices": {
+     "quoteStyle": "panel"
+    }
+   },
+   "resolved": {
+    "base": "classic",
+    "choices": {
+     "bodyFont": "literata",
+     "headingFont": "eb-garamond",
+     "codeFont": "source-code",
+     "headingNumbers": "none",
+     "headingScale": "large",
+     "headingWeight": "light",
+     "headingCase": "none",
+     "headingRule": "none",
+     "headingAlign": "center",
+     "paragraphStyle": "indented",
+     "bulletStyle": "disc",
+     "orderedStyle": "decimal",
+     "markerColor": "text",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "minimal",
+     "tableHeader": "bold",
+     "tableDensity": "comfortable",
+     "tableWidth": "centered",
+     "quoteStyle": "panel",
+     "quoteAccent": "quiet",
+     "codeBlockStyle": "bordered",
+     "inlineCodeStyle": "bordered",
+     "dividerStyle": "ornament",
+     "imageAlign": "center",
+     "imageFrame": "none",
+     "captionStyle": "centered",
+     "linkStyle": "underline"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.3,
+     "headingSpaceBelow": 1.2,
+     "blockGap": 1,
+     "leading": 1.04,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 2
+    }
+   },
+   "css": ".markdown-body { line-height: calc(var(--doc-line-height, 1.75) * 1.04); }\n.markdown-body h1 { margin-top: 1.95em; }\n.markdown-body h2 { margin-top: 1.82em; }\n.markdown-body h3 { margin-top: 1.69em; }\n.markdown-body h4 { margin-top: 1.56em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 1.3em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body h1 { margin-bottom: 0.72em; }\n.markdown-body h2 { margin-bottom: 0.6em; }\n.markdown-body h3 { margin-bottom: 0.48em; }\n.markdown-body h4 { margin-bottom: 0.48em; }\n.markdown-body h5, .markdown-body h6 { margin-bottom: 0.36em; }\n.markdown-body img { border-radius: 2px; }\n.markdown-body h1 { font-size: 2.5em; }\n.markdown-body h2 { font-size: 1.8em; }\n.markdown-body h3 { font-size: 1.35em; }\n.markdown-body h4 { font-size: 1.15em; }\n.markdown-body h1 { font-weight: 400; }\n.markdown-body h2 { font-weight: 400; }\n.markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-weight: 500; }\n.markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body h1, .markdown-body h2, .markdown-body h3 { text-align: center; }\n.markdown-body h1::after, .markdown-body h2::after { margin-left: auto; margin-right: auto; }\n.markdown-body p { margin-top: 0; margin-bottom: 0; text-indent: 1.5em; }\n.markdown-body > p:first-child, .markdown-body :is(h1, h2, h3, h4, h5, h6, hr, blockquote, pre, table, ul, ol, div) + p, .markdown-body li p, .markdown-body blockquote p, .markdown-body td p, .markdown-body th p { text-indent: 0; }\n.markdown-body p + :is(h1, h2, h3, h4, h5, h6) { margin-top: 1.6em; }\n.markdown-body blockquote p + p { margin-top: 0.5em; }\n.markdown-body li::marker { color: var(--foreground); }\n.markdown-body thead th, .markdown-body tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body tbody td { border-bottom: none; }\n.markdown-body tbody tr:hover { background: none; }\n.markdown-body thead th, .markdown-body tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body table { width: fit-content; margin-left: auto; margin-right: auto; }\n.markdown-body blockquote { border-left-color: var(--muted); }\n.markdown-body pre { background: transparent !important; }\n.markdown-body :not(pre) > code { background: none; color: var(--foreground); }\n.markdown-body hr { height: auto; background: none; text-align: center; overflow: visible; }\n.markdown-body hr::after { content: \"\\2022\\2003\\2022\\2003\\2022\"; color: var(--muted); font-size: 0.9em; line-height: 1; }\n.markdown-body > img, .markdown-body p > img:only-child, .markdown-body p > img:first-child:has(+ em:last-child), .markdown-body p > img:first-child:has(+ br + em:last-child) { display: block; margin-left: auto; margin-right: auto; }\n.markdown-body p > img + em, .markdown-body p > img + br + em { display: block; margin-top: -0.5em; text-align: center; font-size: 0.86em; color: var(--muted); }\n.markdown-body a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "appCss": ".markdown-body:not([data-md-style] .markdown-body) { line-height: calc(var(--doc-line-height, 1.75) * 1.04); }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 1.95em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 1.82em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 1.69em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 1.56em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 1.3em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { margin-bottom: 0.72em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-bottom: 0.6em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-bottom: 0.48em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-bottom: 0.48em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-bottom: 0.36em; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 2px; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-size: 2.5em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-size: 1.8em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { font-size: 1.35em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { font-size: 1.15em; }\n.markdown-body:not([data-md-style] .markdown-body) h1 { font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h3, .markdown-body:not([data-md-style] .markdown-body) h4, .markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { font-weight: 500; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) h1, .markdown-body:not([data-md-style] .markdown-body) h2, .markdown-body:not([data-md-style] .markdown-body) h3 { text-align: center; }\n.markdown-body:not([data-md-style] .markdown-body) h1::after, .markdown-body:not([data-md-style] .markdown-body) h2::after { margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) p { margin-top: 0; margin-bottom: 0; text-indent: 1.5em; }\n.markdown-body:not([data-md-style] .markdown-body) > p:first-child, .markdown-body:not([data-md-style] .markdown-body) :is(h1, h2, h3, h4, h5, h6, hr, blockquote, pre, table, ul, ol, div) + p, .markdown-body:not([data-md-style] .markdown-body) li p, .markdown-body:not([data-md-style] .markdown-body) blockquote p, .markdown-body:not([data-md-style] .markdown-body) td p, .markdown-body:not([data-md-style] .markdown-body) th p { text-indent: 0; }\n.markdown-body:not([data-md-style] .markdown-body) p + :is(h1, h2, h3, h4, h5, h6) { margin-top: 1.6em; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote p + p { margin-top: 0.5em; }\n.markdown-body:not([data-md-style] .markdown-body) li::marker { color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { background: none; border-bottom: 1px solid var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { border-bottom: none; }\n.markdown-body:not([data-md-style] .markdown-body) tbody tr:hover { background: none; }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 650; color: var(--foreground); background: none; }\n.markdown-body:not([data-md-style] .markdown-body) table { width: fit-content; margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left-color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) pre { background: transparent !important; }\n.markdown-body:not([data-md-style] .markdown-body) :not(pre) > code { background: none; color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) hr { height: auto; background: none; text-align: center; overflow: visible; }\n.markdown-body:not([data-md-style] .markdown-body) hr::after { content: \"\\2022\\2003\\2022\\2003\\2022\"; color: var(--muted); font-size: 0.9em; line-height: 1; }\n.markdown-body:not([data-md-style] .markdown-body) > img, .markdown-body:not([data-md-style] .markdown-body) p > img:only-child, .markdown-body:not([data-md-style] .markdown-body) p > img:first-child:has(+ em:last-child), .markdown-body:not([data-md-style] .markdown-body) p > img:first-child:has(+ br + em:last-child) { display: block; margin-left: auto; margin-right: auto; }\n.markdown-body:not([data-md-style] .markdown-body) p > img + em, .markdown-body:not([data-md-style] .markdown-body) p > img + br + em { display: block; margin-top: -0.5em; text-align: center; font-size: 0.86em; color: var(--muted); }\n.markdown-body:not([data-md-style] .markdown-body) a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "fontTokens": {
+    "bodyFont": "literata",
+    "headingFont": "eb-garamond",
+    "codeFont": "source-code"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'Literata', Georgia, 'Times New Roman', serif; font-family: 'Literata', Georgia, 'Times New Roman', serif, system-ui, sans-serif; }\n[data-md-style=\"x\"] .markdown-body :is(h1, h2, h3, h4, h5, h6) { font-family: 'EB Garamond', Georgia, 'Times New Roman', serif; }\n[data-md-style=\"x\"] .markdown-body :is(code, pre, kbd, samp) { font-family: 'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace, ui-monospace, monospace; font-variant-ligatures: none; }",
+   "painted": {
+    "base": "classic",
+    "choices": {
+     "headingFont": "body",
+     "quoteStyle": "panel"
+    }
+   }
+  },
+  {
+   "raw": {
+    "base": "technical",
+    "choices": {
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "bodyFont": "local:inter:Futura"
+    }
+   },
+   "sanitized": {
+    "base": "technical",
+    "choices": {
+     "headingFont": "theme",
+     "codeFont": "theme"
+    }
+   },
+   "canonical": {
+    "base": "technical",
+    "choices": {
+     "headingFont": "theme",
+     "codeFont": "theme"
+    }
+   },
+   "resolved": {
+    "base": "technical",
+    "choices": {
+     "bodyFont": "plex-sans",
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "headingNumbers": "outline",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "upper-minor",
+     "headingRule": "title",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "nested",
+     "orderedStyle": "legal",
+     "markerColor": "text",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "grid",
+     "tableHeader": "filled",
+     "tableDensity": "compact",
+     "tableWidth": "full",
+     "quoteStyle": "card",
+     "quoteAccent": "link",
+     "codeBlockStyle": "bar",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "underline"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1.1,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 1,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 4
+    }
+   },
+   "css": ".markdown-body h1 { margin-top: 1.65em; }\n.markdown-body h2 { margin-top: 1.54em; }\n.markdown-body h3 { margin-top: 1.43em; }\n.markdown-body h4 { margin-top: 1.32em; }\n.markdown-body h5, .markdown-body h6 { margin-top: 1.1em; }\n.markdown-body h1:first-child { margin-top: 0; }\n.markdown-body img { border-radius: 4px; }\n.markdown-body { counter-reset: markie-h2; }\n.markdown-body h2 { counter-increment: markie-h2; counter-reset: markie-h3; }\n.markdown-body h3 { counter-increment: markie-h3; }\n.markdown-body h2::before { content: counter(markie-h2) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body h3::before { content: counter(markie-h2) \".\" counter(markie-h3) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body h4, .markdown-body h5, .markdown-body h6 { text-transform: uppercase; letter-spacing: 0.08em; }\n.markdown-body h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body ol { counter-reset: markie-ol; }\n.markdown-body ol > li { counter-increment: markie-ol; }\n.markdown-body ol > li::marker { content: counters(markie-ol, \".\") \". \"; }\n.markdown-body li::marker { color: var(--foreground); }\n.markdown-body thead th, .markdown-body tbody th, .markdown-body tbody td { border: 1px solid var(--doc-rule); }\n.markdown-body thead th, .markdown-body tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 600; color: var(--foreground); background: var(--accent); }\n.markdown-body thead th, .markdown-body tbody th { padding: 0.3em 0.65em; }\n.markdown-body tbody td { padding: 0.28em 0.65em; }\n.markdown-body table { display: table; width: 100%; }\n.markdown-body blockquote { border-left-color: var(--blue); }\n.markdown-body blockquote { border: 1px solid var(--doc-rule); border-radius: 8px; padding: 0.7em 1.1em; }\n.markdown-body pre { border: none; border-left: 3px solid var(--muted); border-radius: 0; }\n.markdown-body a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "appCss": ".markdown-body:not([data-md-style] .markdown-body) h1 { margin-top: 1.65em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { margin-top: 1.54em; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { margin-top: 1.43em; }\n.markdown-body:not([data-md-style] .markdown-body) h4 { margin-top: 1.32em; }\n.markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { margin-top: 1.1em; }\n.markdown-body:not([data-md-style] .markdown-body) h1:first-child { margin-top: 0; }\n.markdown-body:not([data-md-style] .markdown-body) img { border-radius: 4px; }\n.markdown-body:not([data-md-style] .markdown-body) { counter-reset: markie-h2; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { counter-increment: markie-h2; counter-reset: markie-h3; }\n.markdown-body:not([data-md-style] .markdown-body) h3 { counter-increment: markie-h3; }\n.markdown-body:not([data-md-style] .markdown-body) h2::before { content: counter(markie-h2) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h3::before { content: counter(markie-h2) \".\" counter(markie-h3) \"\\2002\"; color: var(--muted); font-weight: 400; }\n.markdown-body:not([data-md-style] .markdown-body) h4, .markdown-body:not([data-md-style] .markdown-body) h5, .markdown-body:not([data-md-style] .markdown-body) h6 { text-transform: uppercase; letter-spacing: 0.08em; }\n.markdown-body:not([data-md-style] .markdown-body) h2 { border-bottom: none; padding-bottom: 0; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: circle; }\n.markdown-body:not([data-md-style] .markdown-body) ul ul ul:not([data-type=\"taskList\"]) > li:not(.task-list-item) { list-style-type: square; }\n.markdown-body:not([data-md-style] .markdown-body) ol { counter-reset: markie-ol; }\n.markdown-body:not([data-md-style] .markdown-body) ol > li { counter-increment: markie-ol; }\n.markdown-body:not([data-md-style] .markdown-body) ol > li::marker { content: counters(markie-ol, \".\") \". \"; }\n.markdown-body:not([data-md-style] .markdown-body) li::marker { color: var(--foreground); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th, .markdown-body:not([data-md-style] .markdown-body) tbody td { border: 1px solid var(--doc-rule); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 600; color: var(--foreground); background: var(--accent); }\n.markdown-body:not([data-md-style] .markdown-body) thead th, .markdown-body:not([data-md-style] .markdown-body) tbody th { padding: 0.3em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) tbody td { padding: 0.28em 0.65em; }\n.markdown-body:not([data-md-style] .markdown-body) table { display: table; width: 100%; }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border-left-color: var(--blue); }\n.markdown-body:not([data-md-style] .markdown-body) blockquote { border: 1px solid var(--doc-rule); border-radius: 8px; padding: 0.7em 1.1em; }\n.markdown-body:not([data-md-style] .markdown-body) pre { border: none; border-left: 3px solid var(--muted); border-radius: 0; }\n.markdown-body:not([data-md-style] .markdown-body) a:not([data-doc-link=\"none\"]) { border-bottom: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); }",
+   "fontTokens": {
+    "bodyFont": "plex-sans"
+   },
+   "fontCss": "[data-md-style=\"x\"] .markdown-body { --doc-font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, system-ui, sans-serif; }",
+   "painted": {
+    "base": "technical"
+   }
+  },
+  {
+   "raw": "not a style",
+   "sanitized": null,
+   "canonical": {
+    "base": "spacious"
+   },
+   "resolved": {
+    "base": "spacious",
+    "choices": {
+     "bodyFont": "theme",
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "headingNumbers": "none",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "underline",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "disc",
+     "orderedStyle": "decimal",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "lines",
+     "tableHeader": "caps",
+     "tableDensity": "comfortable",
+     "tableWidth": "auto",
+     "quoteStyle": "panel",
+     "quoteAccent": "accent",
+     "codeBlockStyle": "card",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "hover"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 1,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 8
+    }
+   },
+   "css": "",
+   "appCss": "",
+   "fontTokens": {},
+   "fontCss": "",
+   "painted": {
+    "base": "spacious",
+    "choices": {
+     "headingFont": "body"
+    }
+   }
+  },
+  {
+   "raw": null,
+   "sanitized": null,
+   "canonical": {
+    "base": "spacious"
+   },
+   "resolved": {
+    "base": "spacious",
+    "choices": {
+     "bodyFont": "theme",
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "headingNumbers": "none",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "underline",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "disc",
+     "orderedStyle": "decimal",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "lines",
+     "tableHeader": "caps",
+     "tableDensity": "comfortable",
+     "tableWidth": "auto",
+     "quoteStyle": "panel",
+     "quoteAccent": "accent",
+     "codeBlockStyle": "card",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "hover"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 1,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 8
+    }
+   },
+   "css": "",
+   "appCss": "",
+   "fontTokens": {},
+   "fontCss": "",
+   "painted": {
+    "base": "spacious",
+    "choices": {
+     "headingFont": "body"
+    }
+   }
+  },
+  {
+   "raw": [],
+   "sanitized": null,
+   "canonical": {
+    "base": "spacious"
+   },
+   "resolved": {
+    "base": "spacious",
+    "choices": {
+     "bodyFont": "theme",
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "headingNumbers": "none",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "underline",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "disc",
+     "orderedStyle": "decimal",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "lines",
+     "tableHeader": "caps",
+     "tableDensity": "comfortable",
+     "tableWidth": "auto",
+     "quoteStyle": "panel",
+     "quoteAccent": "accent",
+     "codeBlockStyle": "card",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "hover"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 1,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 8
+    }
+   },
+   "css": "",
+   "appCss": "",
+   "fontTokens": {},
+   "fontCss": "",
+   "painted": {
+    "base": "spacious",
+    "choices": {
+     "headingFont": "body"
+    }
+   }
+  },
+  {
+   "raw": {
+    "choices": []
+   },
+   "sanitized": {
+    "base": "spacious"
+   },
+   "canonical": {
+    "base": "spacious"
+   },
+   "resolved": {
+    "base": "spacious",
+    "choices": {
+     "bodyFont": "theme",
+     "headingFont": "theme",
+     "codeFont": "theme",
+     "headingNumbers": "none",
+     "headingScale": "standard",
+     "headingWeight": "bold",
+     "headingCase": "none",
+     "headingRule": "underline",
+     "headingAlign": "left",
+     "paragraphStyle": "block",
+     "bulletStyle": "disc",
+     "orderedStyle": "decimal",
+     "markerColor": "muted",
+     "taskStyle": "box",
+     "taskDone": "plain",
+     "tableStyle": "lines",
+     "tableHeader": "caps",
+     "tableDensity": "comfortable",
+     "tableWidth": "auto",
+     "quoteStyle": "panel",
+     "quoteAccent": "accent",
+     "codeBlockStyle": "card",
+     "inlineCodeStyle": "chip",
+     "dividerStyle": "line",
+     "imageAlign": "inline",
+     "imageFrame": "none",
+     "captionStyle": "inline",
+     "linkStyle": "hover"
+    },
+    "numbers": {
+     "headingSpaceAbove": 1,
+     "headingSpaceBelow": 1,
+     "blockGap": 1,
+     "leading": 1,
+     "listIndent": 1.8,
+     "listItemGap": 0.3,
+     "imageRadius": 8
+    }
+   },
+   "css": "",
+   "appCss": "",
+   "fontTokens": {},
+   "fontCss": "",
+   "painted": {
+    "base": "spacious",
+    "choices": {
+     "headingFont": "body"
+    }
+   }
+  }
+ ],
+ "stores": [
+  {
+   "raw": null,
+   "steps": [
+    {
+     "label": "start",
+     "store": {
+      "activeId": "spacious",
+      "profiles": []
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Spacious"
+     },
+     "name": "Spacious",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious"
+     }
+    },
+    {
+     "label": "edit",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "groupChanged:true",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "resetGroup",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveAs",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "edit2",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora",
+        "quoteStyle": "card"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact 2 (edited)"
+     },
+     "name": "Compact 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2 (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveEdits",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicatePreset",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicateProfile",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "rename",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "choose",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "edit3",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "editorial",
+       "numbers": {
+        "blockGap": 1.5
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "numbers": {
+       "blockGap": 1.5
+      },
+      "name": "Spacious 2 (edited)"
+     },
+     "name": "Spacious 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2 (edited)",
+      "numbers": {
+       "blockGap": 1.5
+      }
+     }
+    },
+    {
+     "label": "discard",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "delete",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    },
+    {
+     "label": "chooseUnknown",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    }
+   ]
+  },
+  {
+   "raw": {},
+   "steps": [
+    {
+     "label": "start",
+     "store": {
+      "activeId": "spacious",
+      "profiles": []
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Spacious"
+     },
+     "name": "Spacious",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious"
+     }
+    },
+    {
+     "label": "edit",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "groupChanged:true",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "resetGroup",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveAs",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "edit2",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "spacious",
+       "choices": {
+        "bodyFont": "lora",
+        "quoteStyle": "card"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "spacious",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact 2 (edited)"
+     },
+     "name": "Compact 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2 (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveEdits",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicatePreset",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicateProfile",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "rename",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "spacious",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "choose",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "edit3",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "editorial",
+       "numbers": {
+        "blockGap": 1.5
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "numbers": {
+       "blockGap": 1.5
+      },
+      "name": "Spacious 2 (edited)"
+     },
+     "name": "Spacious 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2 (edited)",
+      "numbers": {
+       "blockGap": 1.5
+      }
+     }
+    },
+    {
+     "label": "discard",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "delete",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    },
+    {
+     "label": "chooseUnknown",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "spacious",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    }
+   ]
+  },
+  {
+   "raw": {
+    "activeId": "compact",
+    "profiles": []
+   },
+   "steps": [
+    {
+     "label": "start",
+     "store": {
+      "activeId": "compact",
+      "profiles": []
+     },
+     "active": {
+      "base": "compact",
+      "name": "Compact"
+     },
+     "name": "Compact",
+     "edited": false,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact"
+     }
+    },
+    {
+     "label": "edit",
+     "store": {
+      "activeId": "compact",
+      "profiles": [],
+      "draft": {
+       "base": "compact",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "compact",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact (edited)"
+     },
+     "name": "Compact (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "groupChanged:true",
+     "store": {
+      "activeId": "compact",
+      "profiles": [],
+      "draft": {
+       "base": "compact",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "compact",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact (edited)"
+     },
+     "name": "Compact (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "resetGroup",
+     "store": {
+      "activeId": "compact",
+      "profiles": [],
+      "draft": {
+       "base": "compact",
+       "choices": {
+        "bodyFont": "lora"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "compact",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact (edited)"
+     },
+     "name": "Compact (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact (edited)",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveAs",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "edit2",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "compact",
+       "choices": {
+        "bodyFont": "lora",
+        "quoteStyle": "card"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "compact",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact 2 (edited)"
+     },
+     "name": "Compact 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact 2 (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveEdits",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicatePreset",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicateProfile",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "rename",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "compact",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "choose",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "edit3",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "editorial",
+       "numbers": {
+        "blockGap": 1.5
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "numbers": {
+       "blockGap": 1.5
+      },
+      "name": "Spacious 2 (edited)"
+     },
+     "name": "Spacious 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2 (edited)",
+      "numbers": {
+       "blockGap": 1.5
+      }
+     }
+    },
+    {
+     "label": "discard",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "delete",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    },
+    {
+     "label": "chooseUnknown",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "compact",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    }
+   ]
+  },
+  {
+   "raw": {
+    "activeId": "style-a",
+    "profiles": [
+     {
+      "id": "style-a",
+      "name": "Mine",
+      "style": {
+       "base": "classic",
+       "choices": {
+        "tableStyle": "grid"
+       }
+      }
+     },
+     {
+      "id": "style-a",
+      "name": "dup",
+      "style": {
+       "base": "compact"
+      }
+     },
+     {
+      "id": "Bad Id",
+      "name": "x",
+      "style": {
+       "base": "compact"
+      }
+     },
+     {
+      "id": "compact",
+      "name": "x",
+      "style": {
+       "base": "compact"
+      }
+     },
+     {
+      "id": "style-b",
+      "name": "",
+      "style": {
+       "base": "minimal",
+       "numbers": {
+        "leading": 1.2
+       }
+      }
+     }
+    ],
+    "draft": {
+     "base": "classic",
+     "choices": {
+      "tableStyle": "zebra"
+     }
+    }
+   },
+   "steps": [
+    {
+     "label": "start",
+     "store": {
+      "activeId": "style-a",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       }
+      ],
+      "draft": {
+       "base": "classic",
+       "choices": {
+        "tableStyle": "zebra"
+       }
+      }
+     },
+     "active": {
+      "base": "classic",
+      "choices": {
+       "tableStyle": "zebra"
+      },
+      "name": "Mine (edited)"
+     },
+     "name": "Mine (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "classic",
+      "name": "Mine (edited)",
+      "choices": {
+       "tableStyle": "zebra"
+      }
+     }
+    },
+    {
+     "label": "edit",
+     "store": {
+      "activeId": "style-a",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       }
+      ],
+      "draft": {
+       "base": "classic",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "classic",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Mine (edited)"
+     },
+     "name": "Mine (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "classic",
+      "name": "Mine (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "groupChanged:true",
+     "store": {
+      "activeId": "style-a",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       }
+      ],
+      "draft": {
+       "base": "classic",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "classic",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Mine (edited)"
+     },
+     "name": "Mine (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "classic",
+      "name": "Mine (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "resetGroup",
+     "store": {
+      "activeId": "style-a",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       }
+      ],
+      "draft": {
+       "base": "classic",
+       "choices": {
+        "bodyFont": "lora"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "classic",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Mine (edited)"
+     },
+     "name": "Mine (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "classic",
+      "name": "Mine (edited)",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveAs",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "edit2",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "classic",
+       "choices": {
+        "bodyFont": "lora",
+        "quoteStyle": "card"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "classic",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact 2 (edited)"
+     },
+     "name": "Compact 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "classic",
+      "name": "Compact 2 (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveEdits",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicatePreset",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicateProfile",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "rename",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "classic",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "choose",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "edit3",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "editorial",
+       "numbers": {
+        "blockGap": 1.5
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "numbers": {
+       "blockGap": 1.5
+      },
+      "name": "Spacious 2 (edited)"
+     },
+     "name": "Spacious 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2 (edited)",
+      "numbers": {
+       "blockGap": 1.5
+      }
+     }
+    },
+    {
+     "label": "discard",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "delete",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    },
+    {
+     "label": "chooseUnknown",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-a",
+        "name": "Mine",
+        "style": {
+         "base": "classic",
+         "choices": {
+          "tableStyle": "grid"
+         },
+         "name": "Mine"
+        }
+       },
+       {
+        "id": "style-b",
+        "name": "Untitled style",
+        "style": {
+         "base": "minimal",
+         "numbers": {
+          "leading": 1.2
+         },
+         "name": "Untitled style"
+        }
+       },
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "classic",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    }
+   ]
+  },
+  {
+   "raw": {
+    "activeId": "gone",
+    "profiles": "x",
+    "draft": {
+     "base": "editorial"
+    }
+   },
+   "steps": [
+    {
+     "label": "start",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "editorial"
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious (edited)"
+     }
+    },
+    {
+     "label": "edit",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "editorial",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "groupChanged:true",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "editorial",
+       "choices": {
+        "bodyFont": "lora",
+        "tableStyle": "grid"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "tableStyle": "grid"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "resetGroup",
+     "store": {
+      "activeId": "spacious",
+      "profiles": [],
+      "draft": {
+       "base": "editorial",
+       "choices": {
+        "bodyFont": "lora"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Spacious (edited)"
+     },
+     "name": "Spacious (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious (edited)",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveAs",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "edit2",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "editorial",
+       "choices": {
+        "bodyFont": "lora",
+        "quoteStyle": "card"
+       },
+       "numbers": {
+        "leading": 1.1
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      },
+      "name": "Compact 2 (edited)"
+     },
+     "name": "Compact 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Compact 2 (edited)",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "saveEdits",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicatePreset",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "duplicateProfile",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Editorial copy",
+        "style": {
+         "base": "editorial",
+         "name": "Editorial copy"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "rename",
+     "store": {
+      "activeId": "style-new",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     },
+     "name": "Compact 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Compact 2",
+      "choices": {
+       "bodyFont": "lora",
+       "quoteStyle": "card"
+      },
+      "numbers": {
+       "leading": 1.1
+      }
+     }
+    },
+    {
+     "label": "choose",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "edit3",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ],
+      "draft": {
+       "base": "editorial",
+       "numbers": {
+        "blockGap": 1.5
+       }
+      }
+     },
+     "active": {
+      "base": "editorial",
+      "numbers": {
+       "blockGap": 1.5
+      },
+      "name": "Spacious 2 (edited)"
+     },
+     "name": "Spacious 2 (edited)",
+     "edited": true,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2 (edited)",
+      "numbers": {
+       "blockGap": 1.5
+      }
+     }
+    },
+    {
+     "label": "discard",
+     "store": {
+      "activeId": "style-dup",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup",
+        "name": "Spacious 2",
+        "style": {
+         "base": "editorial",
+         "name": "Spacious 2"
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     },
+     "name": "Spacious 2",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Spacious 2"
+     }
+    },
+    {
+     "label": "delete",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    },
+    {
+     "label": "chooseUnknown",
+     "store": {
+      "activeId": "editorial",
+      "profiles": [
+       {
+        "id": "style-new",
+        "name": "Compact 2",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       },
+       {
+        "id": "style-dup2",
+        "name": "Compact 2 copy",
+        "style": {
+         "base": "editorial",
+         "name": "Compact 2 copy",
+         "choices": {
+          "bodyFont": "lora",
+          "quoteStyle": "card"
+         },
+         "numbers": {
+          "leading": 1.1
+         }
+        }
+       }
+      ]
+     },
+     "active": {
+      "base": "editorial",
+      "name": "Editorial"
+     },
+     "name": "Editorial",
+     "edited": false,
+     "pinnable": {
+      "base": "editorial",
+      "name": "Editorial"
+     }
+    }
+   ]
+  }
+ ],
+ "names": [
+  {
+   "raw": "  a\tb  ",
+   "clean": "a b"
+  },
+  {
+   "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "clean": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "raw": 5,
+   "clean": "fb"
+  },
+  {
+   "raw": " ",
+   "clean": "fb"
+  },
+  {
+   "raw": "Ünï cödé",
+   "clean": "Ünï cödé"
+  }
+ ],
+ "numberFormats": {
+  "headingSpaceAbove": [
+   [
+    0.4,
+    "0.40×"
+   ],
+   [
+    0.65,
+    "0.65×"
+   ],
+   [
+    1,
+    "1.00×"
+   ],
+   [
+    1.25,
+    "1.25×"
+   ],
+   [
+    1.4,
+    "1.40×"
+   ],
+   [
+    1.8,
+    "1.80×"
+   ],
+   [
+    2,
+    "2.00×"
+   ],
+   [
+    3,
+    "3.00×"
+   ],
+   [
+    8,
+    "8.00×"
+   ]
+  ],
+  "headingSpaceBelow": [
+   [
+    0.4,
+    "0.40×"
+   ],
+   [
+    0.65,
+    "0.65×"
+   ],
+   [
+    1,
+    "1.00×"
+   ],
+   [
+    1.25,
+    "1.25×"
+   ],
+   [
+    1.4,
+    "1.40×"
+   ],
+   [
+    1.8,
+    "1.80×"
+   ],
+   [
+    2,
+    "2.00×"
+   ],
+   [
+    3,
+    "3.00×"
+   ],
+   [
+    8,
+    "8.00×"
+   ]
+  ],
+  "blockGap": [
+   [
+    0.4,
+    "0.40×"
+   ],
+   [
+    0.65,
+    "0.65×"
+   ],
+   [
+    1,
+    "1.00×"
+   ],
+   [
+    1.25,
+    "1.25×"
+   ],
+   [
+    1.4,
+    "1.40×"
+   ],
+   [
+    1.8,
+    "1.80×"
+   ],
+   [
+    2,
+    "2.00×"
+   ],
+   [
+    3,
+    "3.00×"
+   ],
+   [
+    8,
+    "8.00×"
+   ]
+  ],
+  "leading": [
+   [
+    0.4,
+    "0.40×"
+   ],
+   [
+    0.65,
+    "0.65×"
+   ],
+   [
+    1,
+    "1.00×"
+   ],
+   [
+    1.25,
+    "1.25×"
+   ],
+   [
+    1.4,
+    "1.40×"
+   ],
+   [
+    1.8,
+    "1.80×"
+   ],
+   [
+    2,
+    "2.00×"
+   ],
+   [
+    3,
+    "3.00×"
+   ],
+   [
+    8,
+    "8.00×"
+   ]
+  ],
+  "listIndent": [
+   [
+    0.4,
+    "0.4 em"
+   ],
+   [
+    0.65,
+    "0.65 em"
+   ],
+   [
+    1,
+    "1 em"
+   ],
+   [
+    1.25,
+    "1.25 em"
+   ],
+   [
+    1.4,
+    "1.4 em"
+   ],
+   [
+    1.8,
+    "1.8 em"
+   ],
+   [
+    2,
+    "2 em"
+   ],
+   [
+    3,
+    "3 em"
+   ],
+   [
+    8,
+    "8 em"
+   ]
+  ],
+  "listItemGap": [
+   [
+    0.4,
+    "0.4 em"
+   ],
+   [
+    0.65,
+    "0.65 em"
+   ],
+   [
+    1,
+    "1 em"
+   ],
+   [
+    1.25,
+    "1.25 em"
+   ],
+   [
+    1.4,
+    "1.4 em"
+   ],
+   [
+    1.8,
+    "1.8 em"
+   ],
+   [
+    2,
+    "2 em"
+   ],
+   [
+    3,
+    "3 em"
+   ],
+   [
+    8,
+    "8 em"
+   ]
+  ],
+  "imageRadius": [
+   [
+    0.4,
+    "0 px"
+   ],
+   [
+    0.65,
+    "1 px"
+   ],
+   [
+    1,
+    "1 px"
+   ],
+   [
+    1.25,
+    "1 px"
+   ],
+   [
+    1.4,
+    "1 px"
+   ],
+   [
+    1.8,
+    "2 px"
+   ],
+   [
+    2,
+    "2 px"
+   ],
+   [
+    3,
+    "3 px"
+   ],
+   [
+    8,
+    "8 px"
+   ]
+  ]
+ },
+ "profileIds": [
+  {
+   "taken": [],
+   "seed": 1700000000000,
+   "id": "style-loyw3v28"
+  },
+  {
+   "taken": [
+    "style-loyw3v28"
+   ],
+   "seed": 1700000000000,
+   "id": "style-loyw3v28-2"
+  }
+ ],
+ "local": [
+  {
+   "family": "Futura",
+   "kind": "sans",
+   "id": "local:inter:Futura"
+  },
+  {
+   "family": "Calibri",
+   "kind": "sans",
+   "id": "local:carlito:Calibri"
+  },
+  {
+   "family": "Courier New",
+   "kind": "mono",
+   "id": "local:cousine:Courier New"
+  },
+  {
+   "family": "  Gill   Sans ",
+   "kind": "sans",
+   "id": "local:inter:Gill Sans"
+  },
+  {
+   "family": "Bad;Name",
+   "kind": "sans",
+   "id": null
+  },
+  {
+   "family": ".SF NS",
+   "kind": "sans",
+   "id": null
+  },
+  {
+   "family": "A",
+   "kind": "sans",
+   "id": "local:inter:A"
+  },
+  {
+   "family": "Fira Mono",
+   "kind": "mono",
+   "id": "local:jetbrains-mono:Fira Mono"
+  }
+ ],
+ "localParse": [
+  {
+   "id": "local:inter:Futura",
+   "family": "Futura",
+   "fallback": "inter"
+  },
+  {
+   "id": "local:nope:Futura",
+   "family": null,
+   "fallback": null
+  },
+  {
+   "id": "local:inter:",
+   "family": null,
+   "fallback": null
+  },
+  {
+   "id": "local:inter: Futura",
+   "family": null,
+   "fallback": null
+  },
+  {
+   "id": "local:carlito:Calibri",
+   "family": "Calibri",
+   "fallback": "carlito"
+  },
+  {
+   "id": "inter",
+   "family": null,
+   "fallback": null
+  }
+ ],
+ "office": [
+  {
+   "name": "Calibri",
+   "stack": "'Calibri', 'Carlito'",
+   "aliased": "'markie\\2d doc\\2d 1', 'Calibri', 'Carlito'",
+   "substitute": "carlito"
+  },
+  {
+   "name": "Times New Roman",
+   "stack": "'Times New Roman', 'Tinos'",
+   "aliased": "'markie\\2d doc\\2d 1', 'Times New Roman', 'Tinos'",
+   "substitute": "tinos"
+  },
+  {
+   "name": "Wingdings",
+   "stack": "'Wingdings'",
+   "aliased": "'markie\\2d doc\\2d 1', 'Wingdings'",
+   "substitute": null
+  },
+  {
+   "name": "",
+   "stack": "",
+   "aliased": "",
+   "substitute": null
+  },
+  {
+   "name": "x\u0001",
+   "stack": "",
+   "aliased": "",
+   "substitute": null
+  },
+  {
+   "name": "It's",
+   "stack": "'It\\27 s'",
+   "aliased": "'markie\\2d doc\\2d 1', 'It\\27 s'",
+   "substitute": null
+  }
+ ],
+ "styleFontIds": [
+  {
+   "id": "inter",
+   "body": "inter",
+   "heading": "inter",
+   "code": null
+  },
+  {
+   "id": "local:inter:Futura",
+   "body": "inter",
+   "heading": "inter",
+   "code": null
+  },
+  {
+   "id": "theme",
+   "body": null,
+   "heading": null,
+   "code": null
+  },
+  {
+   "id": "body",
+   "body": null,
+   "heading": "body",
+   "code": null
+  },
+  {
+   "id": "mono",
+   "body": "mono",
+   "heading": "mono",
+   "code": "mono"
+  },
+  {
+   "id": "nope",
+   "body": null,
+   "heading": null,
+   "code": null
+  }
+ ]
+}

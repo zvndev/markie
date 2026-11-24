@@ -1,0 +1,842 @@
+{
+ "system": [
+  {
+   "id": "system",
+   "label": "System",
+   "stack": "var(--font-geist-sans)",
+   "kind": "sans",
+   "group": "system"
+  },
+  {
+   "id": "humanist",
+   "label": "Avenir",
+   "stack": "'Avenir Next', Avenir, 'Segoe UI Variable Text', 'Segoe UI', 'Helvetica Neue', sans-serif",
+   "kind": "sans",
+   "group": "system"
+  },
+  {
+   "id": "helvetica",
+   "label": "Helvetica",
+   "stack": "'Helvetica Neue', Helvetica, Arial, sans-serif",
+   "kind": "sans",
+   "group": "system"
+  },
+  {
+   "id": "optima",
+   "label": "Optima",
+   "stack": "Optima, Candara, 'Avenir Next', 'Segoe UI', sans-serif",
+   "kind": "sans",
+   "group": "system"
+  },
+  {
+   "id": "charter",
+   "label": "Charter",
+   "stack": "Charter, 'Bitstream Charter', Georgia, 'Times New Roman', serif",
+   "kind": "serif",
+   "group": "system"
+  },
+  {
+   "id": "iowan",
+   "label": "Iowan",
+   "stack": "'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif",
+   "kind": "serif",
+   "group": "system"
+  },
+  {
+   "id": "newyork",
+   "label": "New York",
+   "stack": "ui-serif, 'New York', 'Iowan Old Style', Charter, Georgia, serif",
+   "kind": "serif",
+   "group": "system"
+  },
+  {
+   "id": "georgia",
+   "label": "Georgia",
+   "stack": "Georgia, Charter, 'Times New Roman', serif",
+   "kind": "serif",
+   "group": "system"
+  },
+  {
+   "id": "mono",
+   "label": "Monospace",
+   "stack": "var(--font-geist-mono)",
+   "kind": "mono",
+   "group": "system"
+  }
+ ],
+ "groupLabels": {
+  "system": "System",
+  "sans": "Sans serif",
+  "serif": "Serif",
+  "mono": "Monospace",
+  "rounded": "Rounded",
+  "readable": "Easy to read",
+  "display": "With personality",
+  "local": "Only on this computer"
+ },
+ "bundled": [
+  {
+   "id": "inter",
+   "family": "Inter",
+   "license": "OFL-1.1",
+   "licenseFile": "inter/LICENSE.txt",
+   "version": "4.001",
+   "kind": "sans",
+   "group": "sans",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Inter', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "inter/Inter.woff2",
+     "style": "normal",
+     "weight": "100 900",
+     "bytes": 113572,
+     "sha256": "7049990eef8573735967c70c25b52812c1cfef177043219f309a1c4673dd1be8"
+    },
+    {
+     "file": "inter/Inter-Italic.woff2",
+     "style": "italic",
+     "weight": "100 900",
+     "bytes": 123276,
+     "sha256": "6e8726fa57e56aa0c68aaf75ab192e09e6048465d31975fc6902af83b98c0d41"
+    }
+   ]
+  },
+  {
+   "id": "source-sans",
+   "family": "Source Sans 3",
+   "license": "OFL-1.1",
+   "licenseFile": "source-sans/LICENSE.txt",
+   "version": "3.052",
+   "kind": "sans",
+   "group": "sans",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Source Sans 3', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "source-sans/SourceSans3.woff2",
+     "style": "normal",
+     "weight": "200 900",
+     "bytes": 75792,
+     "sha256": "0188b4871aa4a1770608be66e55d2d1afbda67b506e28b73265811a17b269ffe"
+    },
+    {
+     "file": "source-sans/SourceSans3-Italic.woff2",
+     "style": "italic",
+     "weight": "200 900",
+     "bytes": 74316,
+     "sha256": "5af30471fd16ea74ef89c2536c5c4889259cdcdc1913ae02d8deaeda55e86997"
+    }
+   ]
+  },
+  {
+   "id": "plex-sans",
+   "family": "IBM Plex Sans",
+   "license": "OFL-1.1",
+   "licenseFile": "plex-sans/LICENSE.txt",
+   "version": "3.201",
+   "kind": "sans",
+   "group": "sans",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "plex-sans/IBMPlexSans.woff2",
+     "style": "normal",
+     "weight": "100 700",
+     "bytes": 60024,
+     "sha256": "305ac6b36e3ba3beb05c8325f89aba182d0472016955f002d23902abe991af1a"
+    },
+    {
+     "file": "plex-sans/IBMPlexSans-Italic.woff2",
+     "style": "italic",
+     "weight": "100 700",
+     "bytes": 66668,
+     "sha256": "b957b4764eb1a493bde6282d2510b74948350e86c6dece89fdc54c14a4f6588a"
+    }
+   ]
+  },
+  {
+   "id": "space-grotesk",
+   "family": "Space Grotesk",
+   "license": "OFL-1.1",
+   "licenseFile": "space-grotesk/LICENSE.txt",
+   "version": "2.000",
+   "kind": "sans",
+   "group": "display",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Space Grotesk', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "space-grotesk/SpaceGrotesk.woff2",
+     "style": "normal",
+     "weight": "300 700",
+     "bytes": 36272,
+     "sha256": "316bc77fe63cf127bd62c6da68faa87b387a34dc0731cecfe5f6ba076052c65d"
+    }
+   ]
+  },
+  {
+   "id": "atkinson",
+   "family": "Atkinson Hyperlegible Next",
+   "license": "OFL-1.1",
+   "licenseFile": "atkinson/LICENSE.txt",
+   "version": "2.001",
+   "kind": "sans",
+   "group": "readable",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Atkinson Hyperlegible Next', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "atkinson/AtkinsonHyperlegibleNext.woff2",
+     "style": "normal",
+     "weight": "200 800",
+     "bytes": 43008,
+     "sha256": "e14bfb5f547e742aee488dcf81cb2e53840d7fdd477460aaee78c2fac23de00f"
+    },
+    {
+     "file": "atkinson/AtkinsonHyperlegibleNext-Italic.woff2",
+     "style": "italic",
+     "weight": "200 800",
+     "bytes": 47064,
+     "sha256": "a95db473b88d4135debc80205fb204cfdfe6ff9af2c26b16ad09749e261701a5"
+    }
+   ]
+  },
+  {
+   "id": "lexend",
+   "family": "Lexend",
+   "license": "OFL-1.1",
+   "licenseFile": "lexend/LICENSE.txt",
+   "version": "1.007",
+   "kind": "sans",
+   "group": "readable",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Lexend', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "lexend/Lexend.woff2",
+     "style": "normal",
+     "weight": "100 900",
+     "bytes": 55960,
+     "sha256": "736992a9139739496a001a508610719ec765431f5faf7e9bd303fbabeaf393f1"
+    }
+   ]
+  },
+  {
+   "id": "nunito",
+   "family": "Nunito",
+   "license": "OFL-1.1",
+   "licenseFile": "nunito/LICENSE.txt",
+   "version": "3.602",
+   "kind": "sans",
+   "group": "rounded",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Nunito', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "nunito/Nunito.woff2",
+     "style": "normal",
+     "weight": "200 1000",
+     "bytes": 59136,
+     "sha256": "a9bee7e2516249235eb643a215125e8ec8322d6531afbf5802c1f4df766534a7"
+    },
+    {
+     "file": "nunito/Nunito-Italic.woff2",
+     "style": "italic",
+     "weight": "200 1000",
+     "bytes": 63908,
+     "sha256": "fa5392612c98041ecacf500b3e30e7224054176282c720a245271f136a88b971"
+    }
+   ]
+  },
+  {
+   "id": "quicksand",
+   "family": "Quicksand",
+   "license": "OFL-1.1",
+   "licenseFile": "quicksand/LICENSE.txt",
+   "version": "3.006",
+   "kind": "sans",
+   "group": "rounded",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Quicksand', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "quicksand/Quicksand.woff2",
+     "style": "normal",
+     "weight": "300 700",
+     "bytes": 40792,
+     "sha256": "08efd78d59d62bc38b40b6928b8562cc9e75b15a6e743e3942d3902792413701"
+    }
+   ]
+  },
+  {
+   "id": "source-serif",
+   "family": "Source Serif 4",
+   "license": "OFL-1.1",
+   "licenseFile": "source-serif/LICENSE.txt",
+   "version": "4.004",
+   "kind": "serif",
+   "group": "serif",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Source Serif 4', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "source-serif/SourceSerif4.woff2",
+     "style": "normal",
+     "weight": "200 900",
+     "bytes": 77480,
+     "sha256": "f11d1b9634ee26ad2342200076f045999ad598867274f6f9e2ac08957ee8e5f1"
+    },
+    {
+     "file": "source-serif/SourceSerif4-Italic.woff2",
+     "style": "italic",
+     "weight": "200 900",
+     "bytes": 79912,
+     "sha256": "1e38e63a7f290c9183e481e24a0c41f41efdbaf252194f8b11f09d72150a5133"
+    }
+   ]
+  },
+  {
+   "id": "literata",
+   "family": "Literata",
+   "license": "OFL-1.1",
+   "licenseFile": "literata/LICENSE.txt",
+   "version": "3.103",
+   "kind": "serif",
+   "group": "serif",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Literata', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "literata/Literata.woff2",
+     "style": "normal",
+     "weight": "200 900",
+     "bytes": 90596,
+     "sha256": "fd02bd105d85cbc8b0990449b4d017b7b0ac63152804f5302c1e720b0733a490"
+    },
+    {
+     "file": "literata/Literata-Italic.woff2",
+     "style": "italic",
+     "weight": "200 900",
+     "bytes": 92580,
+     "sha256": "71bdbfdcbbbec3b7d66784ad83dad1444afc81d20401c9347b45166dcc2b843a"
+    }
+   ]
+  },
+  {
+   "id": "lora",
+   "family": "Lora",
+   "license": "OFL-1.1",
+   "licenseFile": "lora/LICENSE.txt",
+   "version": "3.008",
+   "kind": "serif",
+   "group": "serif",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Lora', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "lora/Lora.woff2",
+     "style": "normal",
+     "weight": "400 700",
+     "bytes": 47328,
+     "sha256": "551ca8e833182220504e074594d669ccc029368f8ee169982d15b4bc5fe68cdd"
+    },
+    {
+     "file": "lora/Lora-Italic.woff2",
+     "style": "italic",
+     "weight": "400 700",
+     "bytes": 50604,
+     "sha256": "d68a7f40c01db9cc619cc82ca88f71747e1856551fe54fcb942ec3da079bce83"
+    }
+   ]
+  },
+  {
+   "id": "eb-garamond",
+   "family": "EB Garamond",
+   "license": "OFL-1.1",
+   "licenseFile": "eb-garamond/LICENSE.txt",
+   "version": "1.003",
+   "kind": "serif",
+   "group": "serif",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'EB Garamond', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "eb-garamond/EBGaramond.woff2",
+     "style": "normal",
+     "weight": "400 800",
+     "bytes": 139252,
+     "sha256": "f96d760e42e5b533a653943f24f6bec76124378ce81405c7a52f1946986c5e07"
+    },
+    {
+     "file": "eb-garamond/EBGaramond-Italic.woff2",
+     "style": "italic",
+     "weight": "400 800",
+     "bytes": 116408,
+     "sha256": "0d7386397b57a58f0d9db4fe24bc3635374656c339a178e428d26cb6dbd5385c"
+    }
+   ]
+  },
+  {
+   "id": "roboto-slab",
+   "family": "Roboto Slab",
+   "license": "Apache-2.0",
+   "licenseFile": "roboto-slab/LICENSE.txt",
+   "version": "2.002",
+   "kind": "serif",
+   "group": "serif",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Roboto Slab', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "roboto-slab/RobotoSlab.woff2",
+     "style": "normal",
+     "weight": "100 900",
+     "bytes": 42156,
+     "sha256": "e869f41d31c7b99ad4ce3e413a80302ba376f6e0de566d79e1d995e3d38ba131"
+    }
+   ]
+  },
+  {
+   "id": "fraunces",
+   "family": "Fraunces",
+   "license": "OFL-1.1",
+   "licenseFile": "fraunces/LICENSE.txt",
+   "version": "1.000",
+   "kind": "serif",
+   "group": "display",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Fraunces', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "fraunces/Fraunces.woff2",
+     "style": "normal",
+     "weight": "100 900",
+     "bytes": 53348,
+     "sha256": "8017913b108d1e105ef7c0b237ad7f2b117278eeb4979997f78d36d7beeb3caf"
+    },
+    {
+     "file": "fraunces/Fraunces-Italic.woff2",
+     "style": "italic",
+     "weight": "100 900",
+     "bytes": 64956,
+     "sha256": "c52484f2407d80861d21b21e3203ed85359b73142552fac42e04c80ce2a1c9d8"
+    }
+   ]
+  },
+  {
+   "id": "playfair",
+   "family": "Playfair Display",
+   "license": "OFL-1.1",
+   "licenseFile": "playfair/LICENSE.txt",
+   "version": "1.203",
+   "kind": "serif",
+   "group": "display",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Playfair Display', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "playfair/PlayfairDisplay.woff2",
+     "style": "normal",
+     "weight": "400 900",
+     "bytes": 49240,
+     "sha256": "99348ac95e85a44714b1512239c3989430a8e2c6d0f28b1ba5f4e67eff73d046"
+    },
+    {
+     "file": "playfair/PlayfairDisplay-Italic.woff2",
+     "style": "italic",
+     "weight": "400 900",
+     "bytes": 48048,
+     "sha256": "a4c020171c3d3439e5992b6df1f8f6899ddc02abaea45254c08a0d449c534645"
+    }
+   ]
+  },
+  {
+   "id": "caveat",
+   "family": "Caveat",
+   "license": "OFL-1.1",
+   "licenseFile": "caveat/LICENSE.txt",
+   "version": "2.000",
+   "kind": "sans",
+   "group": "display",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Caveat', 'Bradley Hand', 'Segoe Print', cursive",
+   "files": [
+    {
+     "file": "caveat/Caveat.woff2",
+     "style": "normal",
+     "weight": "400 700",
+     "bytes": 86228,
+     "sha256": "ec30fa1cb99775b4f7df392a323c58bde582b4a214da10b07ab3c121ccbcf375"
+    }
+   ]
+  },
+  {
+   "id": "jetbrains-mono",
+   "family": "JetBrains Mono",
+   "license": "OFL-1.1",
+   "licenseFile": "jetbrains-mono/LICENSE.txt",
+   "version": "2.211",
+   "kind": "mono",
+   "group": "mono",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+   "files": [
+    {
+     "file": "jetbrains-mono/JetBrainsMono.woff2",
+     "style": "normal",
+     "weight": "100 800",
+     "bytes": 45296,
+     "sha256": "c2f68a2a9ab4994bc73270921083fa0bb3ea98929a3a0726524f4fc4b3f10fd2"
+    },
+    {
+     "file": "jetbrains-mono/JetBrainsMono-Italic.woff2",
+     "style": "italic",
+     "weight": "100 800",
+     "bytes": 48552,
+     "sha256": "5a8b55f36b2937c9ee7d5dd90c4c5a52950b47c37e1663abe86815e9a3e30d2b"
+    }
+   ]
+  },
+  {
+   "id": "fira-code",
+   "family": "Fira Code",
+   "license": "OFL-1.1",
+   "licenseFile": "fira-code/LICENSE.txt",
+   "version": "5.002",
+   "kind": "mono",
+   "group": "mono",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+   "files": [
+    {
+     "file": "fira-code/FiraCode.woff2",
+     "style": "normal",
+     "weight": "300 700",
+     "bytes": 40820,
+     "sha256": "99cc6e7af6755aa4a7c1811bbb9f119cc9aa25da2b333f4a2a052380ddf9cc98"
+    }
+   ]
+  },
+  {
+   "id": "source-code",
+   "family": "Source Code Pro",
+   "license": "OFL-1.1",
+   "licenseFile": "source-code/LICENSE.txt",
+   "version": "1.026",
+   "kind": "mono",
+   "group": "mono",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+   "files": [
+    {
+     "file": "source-code/SourceCodePro.woff2",
+     "style": "normal",
+     "weight": "200 900",
+     "bytes": 45228,
+     "sha256": "7f926616474ea50550e5817e3cca0691985291a713b46c6ac7b1075378c9f37f"
+    },
+    {
+     "file": "source-code/SourceCodePro-Italic.woff2",
+     "style": "italic",
+     "weight": "200 900",
+     "bytes": 47224,
+     "sha256": "c5395b85b77c498443ce1418dcee8cf8cb93459c681a435694da675cc3693a55"
+    }
+   ]
+  },
+  {
+   "id": "atkinson-mono",
+   "family": "Atkinson Hyperlegible Mono",
+   "license": "OFL-1.1",
+   "licenseFile": "atkinson-mono/LICENSE.txt",
+   "version": "2.001",
+   "kind": "mono",
+   "group": "mono",
+   "role": "library",
+   "standsInFor": [],
+   "stack": "'Atkinson Hyperlegible Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+   "files": [
+    {
+     "file": "atkinson-mono/AtkinsonHyperlegibleMono.woff2",
+     "style": "normal",
+     "weight": "200 800",
+     "bytes": 22240,
+     "sha256": "bff98d08d59ed6c4d9496431edb0e9f49fb87410f0dbb62ae39408219d669018"
+    },
+    {
+     "file": "atkinson-mono/AtkinsonHyperlegibleMono-Italic.woff2",
+     "style": "italic",
+     "weight": "200 800",
+     "bytes": 24000,
+     "sha256": "eb629c20b4e0a109bf15ee98d732748cc764e8447c163aae8f7802e0d829d9d3"
+    }
+   ]
+  },
+  {
+   "id": "carlito",
+   "family": "Carlito",
+   "license": "OFL-1.1",
+   "licenseFile": "carlito/LICENSE.txt",
+   "version": "1.104",
+   "kind": "sans",
+   "group": "sans",
+   "role": "substitute",
+   "standsInFor": [
+    "calibri"
+   ],
+   "stack": "'Carlito', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "carlito/Carlito-Regular.woff2",
+     "style": "normal",
+     "weight": "400",
+     "bytes": 64156,
+     "sha256": "012d6d5811385b89a12057ac42064376aa2307790d4471e59a885ec1975cf2a6"
+    },
+    {
+     "file": "carlito/Carlito-Italic.woff2",
+     "style": "italic",
+     "weight": "400",
+     "bytes": 68912,
+     "sha256": "a08736b2c32e6b793eea913ffa042a63814dfc9a0a8e81ee103fbd2f96f81c1f"
+    },
+    {
+     "file": "carlito/Carlito-Bold.woff2",
+     "style": "normal",
+     "weight": "700",
+     "bytes": 66124,
+     "sha256": "a7dfdb732f7c12b5f192fbf3a639ec9745dc106ad3c7ae3e2984e5f3f1928f45"
+    },
+    {
+     "file": "carlito/Carlito-BoldItalic.woff2",
+     "style": "italic",
+     "weight": "700",
+     "bytes": 70316,
+     "sha256": "9c974b1d1385e97ff3b7d0ea6127d27b80fb377cebe009cd94486c428bf969fd"
+    }
+   ]
+  },
+  {
+   "id": "caladea",
+   "family": "Caladea",
+   "license": "OFL-1.1",
+   "licenseFile": "caladea/LICENSE.txt",
+   "version": "1.001",
+   "kind": "serif",
+   "group": "serif",
+   "role": "substitute",
+   "standsInFor": [
+    "cambria"
+   ],
+   "stack": "'Caladea', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "caladea/Caladea-Regular.woff2",
+     "style": "normal",
+     "weight": "400",
+     "bytes": 17608,
+     "sha256": "aa67703d05b45ef3025f45592d33383c6357b38f9a3895ea9272e31a8af04e73"
+    },
+    {
+     "file": "caladea/Caladea-Italic.woff2",
+     "style": "italic",
+     "weight": "400",
+     "bytes": 18896,
+     "sha256": "d5a15cb15cdd2442c0fbb627b0eb9048f39eab269759fab921dd3402081b5726"
+    },
+    {
+     "file": "caladea/Caladea-Bold.woff2",
+     "style": "normal",
+     "weight": "700",
+     "bytes": 17336,
+     "sha256": "06438cf74ccd9c2507e99f4cea500fed5d52a5d34187682b8bd254183ccdd232"
+    },
+    {
+     "file": "caladea/Caladea-BoldItalic.woff2",
+     "style": "italic",
+     "weight": "700",
+     "bytes": 18740,
+     "sha256": "40f390229553a057c7751f5478f0ed7897fcf35171d50ddc07de72939d609ce6"
+    }
+   ]
+  },
+  {
+   "id": "arimo",
+   "family": "Arimo",
+   "license": "OFL-1.1",
+   "licenseFile": "arimo/LICENSE.txt",
+   "version": "1.341",
+   "kind": "sans",
+   "group": "sans",
+   "role": "substitute",
+   "standsInFor": [
+    "arial",
+    "arial mt",
+    "arialmt",
+    "helvetica",
+    "helvetica neue",
+    "liberation sans"
+   ],
+   "stack": "'Arimo', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+   "files": [
+    {
+     "file": "arimo/Arimo.woff2",
+     "style": "normal",
+     "weight": "400 700",
+     "bytes": 108700,
+     "sha256": "35de12c04c27db92d0a5b2f0800a9528af5f9ea72e58366bed5fe9991b09b8a4"
+    },
+    {
+     "file": "arimo/Arimo-Italic.woff2",
+     "style": "italic",
+     "weight": "400 700",
+     "bytes": 126168,
+     "sha256": "799655d8b155b6b6268f9280d511d05d7c9a45225363987773080310590f1583"
+    }
+   ]
+  },
+  {
+   "id": "tinos",
+   "family": "Tinos",
+   "license": "OFL-1.1",
+   "licenseFile": "tinos/LICENSE.txt",
+   "version": "1.340",
+   "kind": "serif",
+   "group": "serif",
+   "role": "substitute",
+   "standsInFor": [
+    "times new roman",
+    "times",
+    "liberation serif"
+   ],
+   "stack": "'Tinos', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "tinos/Tinos-Regular.woff2",
+     "style": "normal",
+     "weight": "400",
+     "bytes": 52696,
+     "sha256": "714a03df05a5c5c88e2dc5141903d6f9290d1af5f5ad24232fbe9e62925537bb"
+    },
+    {
+     "file": "tinos/Tinos-Italic.woff2",
+     "style": "italic",
+     "weight": "400",
+     "bytes": 61572,
+     "sha256": "edaae164a2abe4c8e43361a544f8f94686dfd5be224df9a286b0d13965b04eab"
+    },
+    {
+     "file": "tinos/Tinos-Bold.woff2",
+     "style": "normal",
+     "weight": "700",
+     "bytes": 57144,
+     "sha256": "c4505faa4a2719102e1e775049fd0eb1e4637690f8ff78dd60a4f2a990be04fa"
+    },
+    {
+     "file": "tinos/Tinos-BoldItalic.woff2",
+     "style": "italic",
+     "weight": "700",
+     "bytes": 60544,
+     "sha256": "c33e6bf5730b02125a9e1cc9200f897e6c2b571ad7b7aecde235511fab8dae99"
+    }
+   ]
+  },
+  {
+   "id": "cousine",
+   "family": "Cousine",
+   "license": "OFL-1.1",
+   "licenseFile": "cousine/LICENSE.txt",
+   "version": "1.241",
+   "kind": "mono",
+   "group": "mono",
+   "role": "substitute",
+   "standsInFor": [
+    "courier new",
+    "courier",
+    "liberation mono"
+   ],
+   "stack": "'Cousine', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+   "files": [
+    {
+     "file": "cousine/Cousine-Regular.woff2",
+     "style": "normal",
+     "weight": "400",
+     "bytes": 38376,
+     "sha256": "9167e50072a4239f93e8364ff4c859e19b70579b9d04d58d2871589aaa41c269"
+    },
+    {
+     "file": "cousine/Cousine-Italic.woff2",
+     "style": "italic",
+     "weight": "400",
+     "bytes": 43536,
+     "sha256": "2371695b45e63f26cdbcf68fea41ab22db6a2b378351e5068918a06463c7f16c"
+    },
+    {
+     "file": "cousine/Cousine-Bold.woff2",
+     "style": "normal",
+     "weight": "700",
+     "bytes": 38248,
+     "sha256": "fefb49b7fdadb88b514e0c3560b909c4f7b271d6455b1c42cb46f1c1f13f7f1b"
+    },
+    {
+     "file": "cousine/Cousine-BoldItalic.woff2",
+     "style": "italic",
+     "weight": "700",
+     "bytes": 43360,
+     "sha256": "0b300aaa4d5a7f1fa32250563cf4edada5b9e4707238266d9275b33233cfcd84"
+    }
+   ]
+  },
+  {
+   "id": "gelasio",
+   "family": "Gelasio",
+   "license": "OFL-1.1",
+   "licenseFile": "gelasio/LICENSE.txt",
+   "version": "1.008",
+   "kind": "serif",
+   "group": "serif",
+   "role": "substitute",
+   "standsInFor": [
+    "georgia"
+   ],
+   "stack": "'Gelasio', Georgia, 'Times New Roman', serif",
+   "files": [
+    {
+     "file": "gelasio/Gelasio.woff2",
+     "style": "normal",
+     "weight": "400 700",
+     "bytes": 59620,
+     "sha256": "9f4afd998aca5881724a5ac9aaa6d67591a25ba657ddd65bdac4ffc01c831c49"
+    },
+    {
+     "file": "gelasio/Gelasio-Italic.woff2",
+     "style": "italic",
+     "weight": "400 700",
+     "bytes": 66848,
+     "sha256": "c2885a52bdd52b7c65fbe448472fd0af7571b171166e2d0d00cc08b1fbb1ae35"
+    }
+   ]
+  }
+ ]
+}

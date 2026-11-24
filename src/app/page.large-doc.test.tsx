@@ -348,10 +348,9 @@ describe("large documents", () => {
     await expectRichAvailable();
   });
 
-  it("tiers a converted file by what was converted, not by the file", async () => {
-    // A 600 KB CSV whose markdown table is 1.2 MB: every cell gains its
-    // separators on the way in (src/lib/csv.ts). Main sent the file's size;
-    // the buffer is measured for real.
+  it("tiers a CSV by the file itself: it is shown as a table, never converted", async () => {
+    // 600 KB of CSV used to become a 1.2 MB markdown table on the way in and
+    // open as a large document. It is held as the text it is now.
     const row = Array(100).fill("x").join(",") + "\n";
     const csv = row.repeat(3000);
     const registryTrack = vi.fn(async () => ({ ok: true }));
@@ -366,31 +365,28 @@ describe("large documents", () => {
       registryTrack,
     } as Partial<ElectronAPI>);
     render(<Home />);
-    await waitFor(() => expect(largeStrip()).not.toBeNull());
-    expect(largeStrip()!.textContent).toContain("Large document (1.2 MB)");
+    const grid = await screen.findByRole("grid");
+    expect(grid).toHaveAttribute("aria-colcount", "100");
+    expect(largeStrip()).toBeNull();
     expect(richPane()).toBeNull();
-    await expectSourceOnly();
-    await waitFor(() => expect(sourceEditor()).not.toBeNull());
-    // Never offered to the rich pipeline, so nothing was probed; and main read
-    // a 600 KB file it did not call large, so the registry row is made here.
+    // Never offered to the rich pipeline, so nothing was probed; main read an
+    // ordinary file, so the registry row is made here.
     expect(probe).not.toHaveBeenCalled();
-    expect(registryTrack).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(registryTrack).toHaveBeenCalledTimes(1));
   });
 
-  it("tiers a CSV reloaded from disk by the table it becomes, not by the file", async () => {
+  it("shows a CSV reloaded from disk as the table of what is on disk now", async () => {
     const CSV = { name: "data.csv", path: "/notes/data.csv", content: "a,b\n1,2\n", size: 8, large: false };
     installBridge({ getInitialFile: vi.fn(async () => CSV) } as Partial<ElectronAPI>);
     render(<Home />);
-    await waitFor(() => expect(richPane()).not.toBeNull());
+    expect(await screen.findByRole("grid")).toHaveAttribute("aria-rowcount", "2");
 
-    // 600,000 bytes of CSV; the markdown table it becomes is past the line.
     const grown = Array.from({ length: 3000 }, () => "a".repeat(100).split("").join(",")).join("\n") + "\n";
     emit("onFileChangedOnDisk", { path: CSV.path, content: grown, size: grown.length });
     await userEvent.click(await screen.findByRole("button", { name: /reload/i }));
-    await waitFor(() => expect(largeStrip()).not.toBeNull(), { timeout: 5000 });
-    expect(largeStrip()!.textContent).toContain("Large document (1.2 MB)");
+    await waitFor(() => expect(screen.getByRole("grid")).toHaveAttribute("aria-colcount", "100"), { timeout: 5000 });
+    expect(largeStrip()).toBeNull();
     expect(richPane()).toBeNull();
-    await expectSourceOnly();
   });
 
   it("keeps the offer of a recovered draft the cap refuses", async () => {

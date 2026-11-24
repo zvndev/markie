@@ -14,6 +14,8 @@ import type { Tone } from "../lib/theme-mode";
 import { isMarkieCloud } from "../lib/server-origin";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
+import { CsvTable } from "@/components/csv-table/csv-table";
+import { isCsvName } from "@/lib/csv-table";
 import { DarkmownView } from "../components/darkmown-view";
 import { InboxIcon, PencilIcon } from "../components/icons";
 
@@ -59,12 +61,13 @@ export function IncomingScreen({ api, file, fileKey, tone, backLabel, onBack, on
   }, [api.origin, onOpen]);
 
   const isWd = file.format === "darkmown";
+  const isCsv = file.format === "text" && isCsvName(file.name);
   return (
     <Screen
       title={displayName(file.name)}
       back={{ label: backLabel, onBack }}
       actions={<button type="button" className="m-nav-icon" aria-label="Edit before saving" onClick={onEdit} disabled={saving}><PencilIcon size={22} /></button>}
-      fill={isWd}
+      fill={isWd || isCsv}
       className="m-document m-incoming"
     >
       <div className="m-incoming-card">
@@ -83,7 +86,8 @@ export function IncomingScreen({ api, file, fileKey, tone, backLabel, onBack, on
       </div>
       {error ? <p className="m-inline-error" role="alert">{error}</p> : null}
       {file.format === "markdown" ? <MarkdownView content={file.content} onLink={onLink} /> : null}
-      {file.format === "text" ? <pre className="m-text-doc">{file.content}</pre> : null}
+      {file.format === "text" && !isCsv ? <pre className="m-text-doc">{file.content}</pre> : null}
+      {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={file.content} name={file.name} readOnly compact /></div> : null}
       {isWd ? <DarkmownView docKey={fileKey} source={file.content} tone={tone} /> : null}
     </Screen>
   );

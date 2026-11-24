@@ -48,6 +48,11 @@ describe("csv ↔ markdown table", () => {
     expect(md).toContain("| kirby");
   });
 
+  it("converts a semicolon file by its own delimiter", () => {
+    const md = csvToMarkdownTable("Artikel;Preis\r\nApfel;1,20\r\n");
+    expect(md).toBe("| Artikel | Preis |\n| --- | --- |\n| Apfel | 1,20 |\n");
+  });
+
   it("escapes pipes in cells", () => {
     const md = csvToMarkdownTable("a\nx|y\n");
     expect(md).toContain("x\\|y");

@@ -28,7 +28,8 @@ Object.values(FORMATS).forEach(Object.freeze);
 const EXTENSIONS: Record<string, DocumentFormatKind> = {
   md: "markdown", markdown: "markdown", mdx: "markdown",
   wd: "darkmown",
-  txt: "text", text: "text", log: "text", csv: "csv",
+  // A .tsv is the same table with tabs between its cells (src/lib/csv-table.ts).
+  txt: "text", text: "text", log: "text", csv: "csv", tsv: "csv",
   json: "json", yaml: "yaml", yml: "yaml", xml: "xml",
   docx: "docx", doc: "doc", rtf: "rtf", html: "html", htm: "html", odt: "odt",
 };

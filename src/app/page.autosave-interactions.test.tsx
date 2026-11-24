@@ -1,7 +1,7 @@
 // Autosave shares the open document with a disk watcher, a sync engine and a
 // CSV encoder. Each boundary gets a test, so a refactor cannot cross one in
 // silence. A failure here is a real bug, not a stale expectation.
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { act, useEffect } from "react";
 import type { DocumentShellState } from "@/lib/document-shell";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -74,42 +74,63 @@ describe("autosave truce lines", () => {
     await screen.findByText(/Markdown recovery copy could not be saved/);
     expect(screen.queryByText("Active document renderer")).not.toBeInTheDocument();
   });
-  it("keeps writing the CSV encoding to disk, not the markdown it edits", async () => {
-    const saveFile = okSave(CSV.path);
-    await bootWith(CSV, { saveFile });
-    await screen.findByText("1"); // the table rendered from the CSV
-
+  // A CSV is held as the text it is on disk and edited through its table
+  // (src/components/csv-table); nothing converts it on the way in or out.
+  async function bootCsv(file: typeof OPEN, overrides: Partial<ElectronAPI>) {
+    installBridge({ getInitialFile: vi.fn(async () => file), ...overrides });
+    render(<Home />);
+    return await screen.findByRole("grid");
+  }
+  const editCell = async (grid: HTMLElement, from: string, to: string) => {
+    await act(async () => { fireEvent.mouseDown(within(grid).getByText(from, { selector: "[role=gridcell]" })); });
+    await act(async () => { fireEvent.keyDown(grid, { key: "Enter" }); });
+    const field = screen.getByRole("textbox", { name: "Edit cell" });
     await act(async () => {
-      richEditor().commands.setContent("| a | b |\n| --- | --- |\n| 1 | 3 |");
+      fireEvent.change(field, { target: { value: to } });
+      fireEvent.keyDown(field, { key: "Enter" });
     });
+  };
+
+  it("opens a CSV as a table and autosaves an edited cell as CSV, the rest of the file untouched", async () => {
+    const saveFile = okSave(CSV.path);
+    // A semicolon file from Excel: BOM, CRLF, a quoted cell, no trailing newline.
+    const excel = { ...CSV, content: "\uFEFFa;b\r\n\"x; y\";2\r\n3;4" };
+    const grid = await bootCsv(excel, { saveFile });
+    expect(document.querySelector("[data-markie-rich-pane]")).toBeNull();
+    await editCell(grid, "2", "5");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(6000);
     });
     await waitFor(() => expect(saveFile).toHaveBeenCalled());
-    const written = saveFile.mock.calls[0]![0].content;
-    expect(written).toMatch(/^a,b/); // CSV, not a markdown table
-    expect(written).not.toMatch(/\|/);
+    expect(saveFile.mock.calls[0]![0].content).toBe("\uFEFFa;b\r\n\"x; y\";5\r\n3;4");
   });
 
-  it("says nothing about CSV truncation on an autosave, and everything on a manual one", async () => {
-    // A .csv keeps the first table and drops the rest. Repeating that once a
-    // second while somebody types buries the banner in its own noise.
+  it("saves a CSV on ⌘S as it is, with no warning about dropped content", async () => {
     const saveFile = okSave(CSV.path);
-    await bootWith(CSV, { saveFile });
-    await screen.findByText("1");
-    await act(async () => {
-      richEditor().commands.setContent("Prose above.\n\n| a | b |\n| --- | --- |\n| 1 | 3 |");
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(6000);
-    });
-    await waitFor(() => expect(saveFile).toHaveBeenCalled());
-    expect(screen.queryByText(/Saved as CSV/i)).not.toBeInTheDocument();
-
+    const grid = await bootCsv(CSV, { saveFile });
+    await editCell(grid, "1", "9");
     await act(async () => {
       emit("onMenuSave");
     });
-    expect(await screen.findByText(/Saved as CSV/i)).toBeInTheDocument();
+    await waitFor(() => expect(saveFile).toHaveBeenCalled());
+    expect(saveFile.mock.calls[0]![0].content).toBe("a,b\n9,2\n");
+    expect(screen.queryByText(/Saved as CSV/i)).not.toBeInTheDocument();
+  });
+
+  it("offers Save As both forms of a CSV: the file as it is, and the Markdown table of its rows", async () => {
+    const saveFileAs = vi.fn(async () => ({ success: true, path: "/n/t.md", name: "t.md", wroteCsv: false }));
+    const semicolons = { ...CSV, content: "a;b\r\n1;2\r\n" };
+    await bootCsv(semicolons, { saveFileAs } as Partial<ElectronAPI>);
+    await act(async () => {
+      emit("onMenuSaveAs");
+    });
+    await waitFor(() => expect(saveFileAs).toHaveBeenCalled());
+    expect(saveFileAs).toHaveBeenCalledWith(expect.objectContaining({
+      csvContent: "a;b\r\n1;2\r\n",
+      content: "| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+    }));
+    // Saved as .md, the open document is that Markdown file: no table view of a CSV any more.
+    await waitFor(() => expect(screen.queryByRole("grid")).toBeNull());
   });
 
   it("suspends autosave while a disk change is pending", async () => {

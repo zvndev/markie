@@ -11,6 +11,8 @@ import { displayName } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
+import { CsvTable } from "@/components/csv-table/csv-table";
+import { isCsvName } from "@/lib/csv-table";
 import { DarkmownView } from "../components/darkmown-view";
 import { PencilIcon, PhoneIcon } from "../components/icons";
 
@@ -61,12 +63,14 @@ export function LocalDocScreen({ docKey, name, format, content, note, tone, back
   else if (onSignIn) action = <button type="button" className="m-button m-button-small m-button-secondary" onClick={onSignIn}>Sign in</button>;
 
   const isWd = format === "darkmown";
+  // A CSV or TSV reads as its table, which scrolls itself both ways.
+  const isCsv = format === "text" && isCsvName(name);
   return (
     <Screen
       title={displayName(name)}
       back={back}
       actions={onEdit ? <button type="button" className="m-nav-icon" aria-label="Edit" onClick={onEdit}><PencilIcon size={22} /></button> : null}
-      fill={isWd}
+      fill={isWd || isCsv}
       className="m-document m-incoming m-local-doc"
     >
       <div className="m-incoming-card">
@@ -84,7 +88,8 @@ export function LocalDocScreen({ docKey, name, format, content, note, tone, back
       ) : null}
       {error ? <p className="m-inline-error" role="alert">{error}</p> : null}
       {format === "markdown" ? <MarkdownView content={content} onLink={onLink} /> : null}
-      {format === "text" ? <pre className="m-text-doc">{content}</pre> : null}
+      {format === "text" && !isCsv ? <pre className="m-text-doc">{content}</pre> : null}
+      {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={content} name={name} readOnly compact /></div> : null}
       {isWd ? <DarkmownView docKey={docKey} source={content} tone={tone} /> : null}
     </Screen>
   );

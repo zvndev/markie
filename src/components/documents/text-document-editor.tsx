@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNod
 import type { DocumentCommandTarget } from "@/lib/document-commands";
 import type { Editor } from "@tiptap/react";
 import type { DocumentSession } from "@/lib/document-session";
-import { parseCSV } from "@/lib/csv";
+import { CsvTable, type CsvView } from "@/components/csv-table/csv-table";
 import { DocToolbar } from "@/components/doc-toolbar";
 import { FormattingToolbar } from "@/components/formatting-toolbar";
 import { appearanceVars, clampFontSize, DEFAULT_APPEARANCE, fontStack, type DocAppearance } from "@/lib/doc-appearance";
@@ -41,7 +41,8 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
   const [mode, setMode] = useState<"source" | "rich">("source");
   const [editor, setEditor] = useState<Editor | null>(null);
   const [appearance, setAppearance] = useState<DocAppearance>(() => ({ ...DEFAULT_APPEARANCE, fontFamily: "mono", fontSize: 14, zoom: readDocumentZoom() }));
-  const [showTable, setShowTable] = useState(false);
+  // A CSV opens as its table; the same file as text is one switch away.
+  const [csvView, setCsvView] = useState<CsvView>("table");
   const [findOpen, setFindOpen] = useState(false), [query, setQuery] = useState(""), [replacement, setReplacement] = useState("");
   const findField = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -74,6 +75,13 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
     onSourceEditRequested?.();
     if (!codeSource) { remember(undoHistory.current, session.text); redoHistory.current = []; }
     onChange(text);
+  };
+  // The table hands back the whole file with only the edited cells rewritten,
+  // so it is stored as it is: no line ending is worked out again.
+  const applyTable = (text: string) => {
+    if (readOnly || host.current?.closest("[inert]") || text === session.text) return;
+    remember(undoHistory.current, session.text); redoHistory.current = [];
+    (onRestoreText ?? onChange)(text);
   };
   useEffect(() => writeDocumentZoom(appearance.zoom), [appearance.zoom]);
   const undo = () => {
@@ -111,10 +119,10 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
     undoHistory.current = []; redoHistory.current = [];
     onFlushReady(null); localFlush.current = null; setMode(next);
   };
-  const rows = session.format === "csv" && showTable ? parseCSV(session.text) : null;
+  const csv = session.format === "csv";
   const source = session.text.replace(/\r\n?/g, "\n");
   const matchCount = query ? source.split(query).length - 1 : 0;
-  const openFind = () => { onFindRequested?.(); if (mode === "rich") switchMode("source"); setFindOpen(true); requestAnimationFrame(() => findField.current?.focus()); };
+  const openFind = () => { onFindRequested?.(); if (mode === "rich") switchMode("source"); if (csv) setCsvView("text"); setFindOpen(true); requestAnimationFrame(() => findField.current?.focus()); };
   const findNext = () => {
     const field = readSource();
     if (!field || !query) return;
@@ -147,8 +155,7 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
         if (mode === "rich") editor?.chain().focus().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run();
         else wrap("\n| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n");
       }}>Table</button>
-    </> : <span className="text-[11px] text-muted shrink-0">{session.format === "darkmown" ? "Darkmown · Source" : `${session.format.toUpperCase()} · Literal text`}</span>}
-    {session.format === "csv" ? <button type="button" className={INLINE_CONTROL} aria-pressed={showTable} onClick={() => setShowTable(!showTable)}>Table preview</button> : null}
+    </> : <span className="text-[11px] text-muted shrink-0">{session.format === "darkmown" ? "Darkmown · Source" : csv ? `CSV · ${csvView === "table" ? "Table" : "Text"}` : `${session.format.toUpperCase()} · Literal text`}</span>}
     <button type="button" className={INLINE_CONTROL} aria-expanded={findOpen} onClick={() => findOpen ? setFindOpen(false) : openFind()}>Find</button>
     <span className="docs-text-encoding shrink-0" style={{ marginLeft: 0 }}>{session.textMetadata?.encoding.toUpperCase()}{session.textMetadata?.bom ? " BOM" : ""} · {session.textMetadata?.newline.toUpperCase()}</span>
   </>;
@@ -182,7 +189,6 @@ export function TextDocumentEditor({ session, readOnly, onChange, onRestoreText,
       showStyleControls={markdownSource} showWidthControls={false} startControls={startControls}
     />}
     {findOpen ? <div className="docs-find-tools docs-text-find" role="search" aria-label="Find document text" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setFindOpen(false); if (codeSource) sourceHandle.current?.focus(); else textarea.current?.focus(); } else if (event.key === "Enter") { event.preventDefault(); findNext(); } }}><label>Find in source<input ref={findField} aria-label="Find document text" value={query} placeholder="Case-sensitive text" onChange={(event) => setQuery(event.target.value)} /></label><button type="button" disabled={!matchCount} onClick={findNext}>Find next</button><label>Replace with<input aria-label="Replace document text with" value={replacement} onChange={(event) => setReplacement(event.target.value)} /></label><button type="button" disabled={readOnly || !matchCount} onClick={() => applyText(source.split(query).join(replacement))}>Replace all</button><span role="status">{matchCount} matches</span><button type="button" aria-label="Close find" onClick={() => setFindOpen(false)}>×</button></div> : null}
-    {rows ? <div className="docs-csv-preview" style={{ zoom: appearance.zoom }}><table aria-label="CSV table preview"><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, col) => <td key={col}>{cell}</td>)}</tr>)}</tbody></table></div> : null}
-    {markdown && mode === "rich" ? <Suspense fallback={<p className="docs-loading">Loading rich editor…</p>}><RichView value={session.text} onChange={onChange} readOnly={readOnly} onEditorReady={setEditor} onFlushReady={(flush) => { localFlush.current = flush; onFlushReady(flush); }} /></Suspense> : renderSource ? renderSource(sourceField) : sourceField}
+    {markdown && mode === "rich" ? <Suspense fallback={<p className="docs-loading">Loading rich editor…</p>}><RichView value={session.text} onChange={onChange} readOnly={readOnly} onEditorReady={setEditor} onFlushReady={(flush) => { localFlush.current = flush; onFlushReady(flush); }} /></Suspense> : csv ? <CsvTable key={session.epoch} text={session.text} name={session.name} readOnly={readOnly} onChange={applyTable} view={csvView} onViewChange={setCsvView} zoom={appearance.zoom} renderText={() => sourceField} /> : renderSource ? renderSource(sourceField) : sourceField}
   </div>;
 }

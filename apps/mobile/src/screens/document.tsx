@@ -18,6 +18,8 @@ import { displayName, timeLabel } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
 import { MarkdownView, showThreadMark, type MarkdownComments, type ThreadQuote } from "../components/markdown-view";
+import { CsvTable } from "@/components/csv-table/csv-table";
+import { isCsvName } from "@/lib/csv-table";
 import { ACCESS_LOST_BODY, ACCESS_LOST_TITLE, ReadingCommentsSheet, useThreads, type ReadingDraft } from "../components/comments-sheet";
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, CommentIcon, EyeIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
@@ -242,6 +244,8 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   ) : null;
 
   const isWd = doc?.format === "darkmown";
+  // A CSV or TSV reads as its table, which scrolls itself both ways.
+  const isCsv = doc?.format === "text" && isCsvName(doc.name);
   const themed = useMemo(() => docThemeStyle(pinnedTheme, tone), [pinnedTheme, tone]);
   const loadAsset = useCallback((ref: string) => {
     const source: AssetSource = target.kind === "doc" ? { kind: "doc", id: target.id } : { kind: "public", token: target.token };
@@ -253,8 +257,8 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       title={title}
       back={{ label: backLabel, onBack }}
       actions={actions}
-      onRefresh={doc && !isWd && !lost ? async () => { await Promise.all([load(), takesComments ? refreshThreads() : null]); } : undefined}
-      fill={isWd}
+      onRefresh={doc && !isWd && !isCsv && !lost ? async () => { await Promise.all([load(), takesComments ? refreshThreads() : null]); } : undefined}
+      fill={isWd || isCsv}
       className="m-document"
     >
       {state.status === "loading" ? <DocSkeleton /> : null}
@@ -273,7 +277,8 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           <DocMeta doc={doc} members={members} publicUrl={publicUrl} />
           <OfflineNote api={api} doc={doc} onChanged={() => void load()} onGone={onRecent} onUnauthorized={onUnauthorized} />
           {doc.format === "markdown" ? <div ref={articleHost} className={themed ? `m-doc-themed${themed.colors ? " has-colors" : ""}` : undefined} style={themed ? (themed.vars as CSSProperties) : undefined}><MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
-          {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
+          {doc.format === "text" && !isCsv ? <pre className="m-text-doc">{doc.content}</pre> : null}
+          {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={doc.content} name={doc.name} readOnly compact /></div> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>
       ) : null}

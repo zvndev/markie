@@ -1024,19 +1024,12 @@
   background:var(--background)
 }
 
-.docs-csv-preview {
-  max-height:30%;
-  overflow:auto;
-  padding:16px;
-  border-bottom:1px solid var(--border)
-}
-
-.docs-csv-preview table,.docs-word-table {
+.docs-word-table {
   border-collapse:collapse;
   width:100%
 }
 
-.docs-csv-preview td,.docs-word-table td {
+.docs-word-table td {
   border:1px solid var(--border);
   padding:7px;
   vertical-align:top;

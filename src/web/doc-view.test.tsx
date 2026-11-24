@@ -81,6 +81,32 @@ describe("the read view", () => {
     expect(document.querySelector("[data-web-sign-in-to-edit]")).toBeNull();
   });
 
+  it("draws a member's CSV as a read-only table", async () => {
+    loadDoc.mockResolvedValue({ ...doc("viewer"), name: "Sales.csv", kind: "text", text: "region;total\r\nNord;1,5\r\nSüd;2,25\r\n" });
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    const grid = await screen.findByRole("grid");
+    expect(grid.getAttribute("aria-readonly")).toBe("true");
+    expect(Array.from(grid.querySelectorAll("[role=columnheader]")).map((h) => h.textContent)).toEqual(["region", "total"]);
+    expect(Array.from(grid.querySelectorAll("[role=gridcell]")).map((c) => c.textContent)).toEqual(["Nord", "1,5", "Süd", "2,25"]);
+    fireEvent.doubleClick(screen.getByText("Nord"));
+    expect(screen.queryByRole("textbox", { name: "Edit cell" })).toBeNull();
+    // The file itself is one switch away, and Export still offers it.
+    fireEvent.click(screen.getByRole("button", { name: "Text" }));
+    expect(document.querySelector(".csv-table-text")?.textContent).toContain("Nord;1,5");
+    expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();
+  });
+
+  it("draws a public link's CSV as a table, though the server files it under markdown", async () => {
+    document.head.innerHTML = '<meta name="markie-doc-name" content="prices.csv"><meta name="markie-doc-format" content="markdown">';
+    const fetcher = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async (url) =>
+      url.endsWith("/raw") ? new Response("item,price\nTea,3.50\n", { status: 200 }) : new Response("{}", { status: 404 }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<DocView route={{ kind: "public", token: TOKEN }} apiOrigin={API} user={null} onEdit={() => {}} />);
+    const grid = await screen.findByRole("grid");
+    expect(Array.from(grid.querySelectorAll("[role=gridcell]")).map((c) => c.textContent)).toEqual(["Tea", "3.50"]);
+    expect(document.querySelector("[data-web-view-csv]")).toBeTruthy();
+  });
+
   it("shows a public link to a Live Doc as gone, without reading anything", async () => {
     document.head.innerHTML = '<meta name="markie-doc-name" content="Team.wd"><meta name="markie-doc-format" content="darkmown">';
     const fetcher = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => new Response("# source", { status: 200 }));

@@ -215,3 +215,8 @@
   html.markie-printing .markie-print-layer table { border-collapse: collapse; }
   html.markie-printing .markie-print-layer th, html.markie-printing .markie-print-layer td { border: 1px solid #d4d4d8; padding: 4px 8px; }
 }
+
+/* A CSV or TSV: the table takes the page under the bar (csv-table.css maps the palette). */
+.markie-view-csv { display: flex; flex: 1; min-height: 0; width: 100%; max-width: 1240px; margin: 0 auto; padding: 18px 20px 22px; box-sizing: border-box; }
+.markie-view-csv .csv-table { border: 1px solid var(--view-line); border-radius: 12px; overflow: hidden; box-shadow: var(--view-shadow); }
+@media (max-width: 640px) { .markie-view-csv { padding: 0; } .markie-view-csv .csv-table { border: 0; border-radius: 0; box-shadow: none; } }

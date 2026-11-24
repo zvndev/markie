@@ -17,6 +17,7 @@ describe("document format classification", () => {
     ["/drafts/letter.text", "text", "text", "text"],
     ["service.log", "text", "text", "text"],
     ["report.csv", "csv", "text", "text"],
+    ["report.tsv", "csv", "text", "text"],
     ["copy.json", "json", "text", "text"],
     ["copy.yaml", "yaml", "text", "text"],
     ["copy.YML", "yaml", "text", "text"],

@@ -1,5 +1,8 @@
-// RFC 4180-style CSV codec plus CSV ↔ GFM table conversion.
-// CSV files stay true CSV on disk; Markie renders them as tables.
+// RFC 4180-style CSV codec plus CSV ↔ GFM table conversion, for the two
+// crossings between the formats: a Markdown document saved as .csv, and a CSV
+// saved as Markdown. An open CSV is never converted: it is shown by the table
+// in src/components/csv-table, over the lossless model in ./csv-table.
+import { decodeField, parseCsvDocument } from "./csv-table";
 
 export function parseCSV(text: string): string[][] {
   const rows: string[][] = [];
@@ -84,7 +87,10 @@ function markdownToCell(cell: string): string {
 }
 
 export function csvToMarkdownTable(csv: string): string {
-  const rows = parseCSV(csv).filter((r) => !(r.length === 1 && r[0] === ""));
+  // The file's own delimiter (comma, semicolon, tab), not always a comma.
+  const rows = parseCsvDocument(csv).rows
+    .map((row) => row.map(decodeField))
+    .filter((r) => !(r.length === 1 && r[0] === ""));
   if (rows.length === 0) return "";
   const colCount = Math.max(...rows.map((r) => r.length));
   const norm = (r: string[]) => {

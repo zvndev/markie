@@ -1,6 +1,6 @@
 [package]
 name = "markie-update"
-description = "Markie Nightly's updater: the private rs-nightly feed, download, verification and the atomic swap. No UI."
+description = "Markie's updater on the Mac super-nightly channel: the feed, download, verification and the atomic swap. No UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

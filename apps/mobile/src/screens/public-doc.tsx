@@ -14,6 +14,8 @@ import { displayName } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
+import { CsvTable } from "@/components/csv-table/csv-table";
+import { isCsvName } from "@/lib/csv-table";
 import { DarkmownView } from "../components/darkmown-view";
 import { AlertIcon, ShareIcon } from "../components/icons";
 import { ExportSheet } from "../components/share-sheet";
@@ -77,6 +79,8 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
 
   const doc = state.status === "ready" ? state.doc : null;
   const isWd = doc?.format === "darkmown";
+  // A CSV or TSV reads as its table, which scrolls itself both ways.
+  const isCsv = doc?.format === "text" && isCsvName(doc.name);
   const error = state.status === "error" ? publicLinkErrorCopy(state.error) : null;
 
   return (
@@ -90,8 +94,8 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
               <ShareIcon size={23} />
             </button>
           ) : null}
-          onRefresh={doc && !isWd ? load : undefined}
-          fill={isWd}
+          onRefresh={doc && !isWd && !isCsv ? load : undefined}
+          fill={isWd || isCsv}
           className="m-document"
         >
           {state.status === "loading" ? (
@@ -123,7 +127,8 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
                 </div>
               </div>
               {doc.format === "markdown" ? <MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /> : null}
-              {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
+              {doc.format === "text" && !isCsv ? <pre className="m-text-doc">{doc.content}</pre> : null}
+              {isCsv ? <div className="m-csv-doc" data-csv-doc><CsvTable text={doc.content} name={doc.name} readOnly compact /></div> : null}
               {doc.format === "darkmown" ? <DarkmownView docKey={`s:${target.token}`} source={doc.content} tone={tone} /> : null}
             </>
           ) : null}

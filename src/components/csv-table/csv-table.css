@@ -1,0 +1,423 @@
+/* The CSV table (csv-table.tsx). Built from the app's own tokens, so it follows
+   every theme, light and dark; the hosted read view maps its own palette in
+   at the bottom. */
+.csv-table {
+  --csv-bg: var(--background);
+  --csv-fg: var(--foreground);
+  --csv-muted: var(--muted);
+  --csv-line: color-mix(in srgb, var(--border) 78%, transparent);
+  --csv-head: color-mix(in srgb, var(--surface) 92%, var(--foreground) 3%);
+  --csv-bar: var(--surface);
+  --csv-accent: var(--blue);
+  --csv-stripe: color-mix(in srgb, var(--foreground) 2.6%, var(--csv-bg));
+  --csv-hover: color-mix(in srgb, var(--foreground) 5%, var(--csv-bg));
+  --csv-select: color-mix(in srgb, var(--csv-accent) 15%, var(--csv-bg));
+  --csv-row: 30px;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--csv-bg);
+  color: var(--csv-fg);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* ---- toolbar */
+.csv-table-bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--csv-line);
+  background: var(--csv-bar);
+  font-size: 12px;
+}
+
+.csv-table-switch {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--csv-fg) 8%, var(--csv-bar));
+}
+
+.csv-table-switch button {
+  min-height: 24px;
+  padding: 0 11px;
+  border-radius: 6px;
+  color: var(--csv-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.csv-table-switch button:hover { color: var(--csv-fg); }
+
+.csv-table-switch button[aria-pressed="true"] {
+  background: var(--csv-bg);
+  color: var(--csv-fg);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 16%, transparent), 0 0 0 1px var(--csv-line);
+}
+
+.csv-table-filter {
+  display: inline-flex;
+  flex: 0 1 220px;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--csv-line);
+  border-radius: 7px;
+  background: var(--csv-bg);
+  color: var(--csv-muted);
+}
+
+.csv-table-filter:focus-within {
+  border-color: color-mix(in srgb, var(--csv-accent) 70%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--csv-accent) 22%, transparent);
+}
+
+.csv-table-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--csv-fg);
+  font: inherit;
+}
+
+.csv-table-filter input::placeholder { color: var(--csv-muted); }
+
+.csv-table-check {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--csv-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.csv-table-check input { accent-color: var(--csv-accent); }
+
+.csv-table-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+}
+
+.csv-table-actions button {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--csv-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.csv-table-actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--csv-fg) 8%, transparent);
+  color: var(--csv-fg);
+}
+
+.csv-table-actions button:disabled { opacity: 0.4; }
+
+.csv-table-bar button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--csv-accent) 70%, transparent);
+  outline-offset: 1px;
+}
+
+.csv-table-summary {
+  margin-left: auto;
+  color: var(--csv-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- grid */
+.csv-table-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+  font-size: 13px;
+  line-height: 1;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.csv-table-head,
+.csv-table-row {
+  display: grid;
+  grid-template-columns: var(--csv-cols);
+  min-width: 100%;
+}
+
+.csv-table-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: calc(var(--csv-row) + 1px);
+  border-bottom: 1px solid var(--csv-line);
+  background: var(--csv-head);
+}
+
+.csv-table-body { position: relative; min-width: 100%; }
+
+.csv-table-row {
+  position: absolute;
+  left: 0;
+  height: var(--csv-row);
+  background: var(--csv-bg);
+}
+
+.csv-table-row.is-odd { background: var(--csv-stripe); }
+.csv-table-row.is-editing { z-index: 2; }
+
+.csv-table-corner,
+.csv-table-num {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1px solid var(--csv-line);
+  background: var(--csv-head);
+}
+
+.csv-table-corner { z-index: 2; }
+
+.csv-table-num {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 8px 0 4px;
+  color: var(--csv-muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  user-select: none;
+}
+
+.csv-table-num.is-selected {
+  background: color-mix(in srgb, var(--csv-accent) 18%, var(--csv-head));
+  color: var(--csv-fg);
+}
+
+.csv-table-th {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  border-right: 1px solid var(--csv-line);
+  font-weight: 600;
+}
+
+.csv-table-sort {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.csv-table-sort:hover { background: color-mix(in srgb, var(--csv-fg) 6%, transparent); }
+.csv-table-th.is-number .csv-table-sort { flex-direction: row-reverse; text-align: right; }
+
+.csv-table-th-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.csv-table-sort-mark {
+  flex: none;
+  color: var(--csv-accent);
+  font-size: 0.62em;
+}
+
+.csv-table-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 1;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.csv-table-resize:hover,
+.csv-table-resize:active {
+  background: linear-gradient(90deg, transparent 3px, var(--csv-accent) 3px, var(--csv-accent) 5px, transparent 5px);
+}
+
+.csv-table-cell {
+  position: relative;
+  min-width: 0;
+  padding: 0 10px;
+  overflow: hidden;
+  border-right: 1px solid var(--csv-line);
+  border-bottom: 1px solid var(--csv-line);
+  line-height: calc(var(--csv-row) - 1px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: cell;
+  user-select: none;
+}
+
+.csv-table-cell.is-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.csv-table-row:hover .csv-table-cell:not(.is-selected) { background: var(--csv-hover); }
+.csv-table-cell.is-selected { background: var(--csv-select); }
+
+.csv-table-cell.is-cursor,
+.csv-table-th.is-cursor {
+  outline: 2px solid var(--csv-accent);
+  outline-offset: -2px;
+}
+
+.csv-table-th.is-selected { background: color-mix(in srgb, var(--csv-accent) 18%, var(--csv-head)); }
+.csv-table-cell.is-editing,
+.csv-table-th.is-editing { overflow: visible; z-index: 2; }
+
+.csv-table-editor {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  z-index: 4;
+  box-sizing: border-box;
+  width: calc(100% + 2px);
+  min-width: 120px;
+  min-height: calc(var(--csv-row) + 1px);
+  padding: calc((var(--csv-row) - 1.25em) / 2) 9px;
+  border: 2px solid var(--csv-accent);
+  border-radius: 2px;
+  outline: 0;
+  resize: none;
+  background: var(--csv-bg);
+  color: var(--csv-fg);
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 22%, transparent);
+  font: inherit;
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: left;
+  white-space: pre;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.csv-table-empty {
+  position: sticky;
+  left: 0;
+  margin: 0;
+  padding: 28px 16px;
+  color: var(--csv-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---- status line */
+.csv-table-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  padding: 0 12px;
+  border-top: 1px solid var(--csv-line);
+  background: var(--csv-bar);
+  color: var(--csv-muted);
+  font-size: 12px;
+}
+
+.csv-table-ref {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--csv-fg) 8%, transparent);
+  color: var(--csv-fg);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.csv-table-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--csv-fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.csv-table-hint { color: var(--csv-muted); }
+.csv-table-detail { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ---- the raw file */
+.csv-table-text-host {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.csv-table-text-host > * { flex: 1; min-height: 0; }
+
+.csv-table-text {
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  outline: 0;
+  color: var(--csv-fg);
+  font: 13px/1.6 var(--font-geist-mono), ui-monospace, monospace;
+  tab-size: 8;
+  white-space: pre;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ---- phone */
+.csv-table--compact { --csv-row: 38px; }
+.csv-table--compact .csv-table-bar { padding: 8px 12px; font-size: 13px; }
+.csv-table--compact .csv-table-switch button { min-height: 30px; padding: 0 14px; font-size: 13px; }
+.csv-table--compact .csv-table-filter { flex: 1 1 120px; height: 34px; }
+.csv-table--compact .csv-table-filter input { font-size: 16px; }
+.csv-table--compact .csv-table-summary { font-size: 12px; }
+.csv-table--compact .csv-table-status { min-height: 36px; font-size: 13px; }
+.csv-table--compact .csv-table-row:hover .csv-table-cell:not(.is-selected) { background: transparent; }
+.csv-table--compact .csv-table-resize { display: none; }
+
+/* ---- the hosted read view has its own palette (src/web/doc-view.css) */
+.markie-view .csv-table {
+  --csv-bg: var(--view-surface-strong);
+  --csv-fg: var(--view-text);
+  --csv-muted: var(--view-muted);
+  --csv-line: var(--view-line);
+  --csv-head: color-mix(in srgb, var(--view-bg) 70%, var(--view-surface-strong));
+  --csv-bar: color-mix(in srgb, var(--view-bg) 55%, var(--view-surface-strong));
+  --csv-accent: #2f6fde;
+}
+
+:root[data-theme-tone="dark"] .markie-view .csv-table { --csv-accent: #7aa7ff; }
+
+@media print {
+  .csv-table-bar, .csv-table-status { display: none; }
+  .csv-table-scroll { overflow: visible; }
+}

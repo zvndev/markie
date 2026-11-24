@@ -1486,6 +1486,20 @@ textarea:not(.m-editor-text):focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* A CSV or TSV: the shared table (src/components/csv-table) fills what is
+   left of the screen and scrolls itself, across and down. */
+.m-csv-doc {
+  display: flex;
+  flex: 1;
+  min-height: 240px;
+  margin-top: 6px;
+  padding-bottom: var(--sab);
+  border-top: 1px solid var(--m-separator);
+}
+
+.m-csv-doc .csv-table { --csv-accent: var(--status-blue); }
+.m-csv-doc .csv-table-value { -webkit-touch-callout: default; }
+
 /* A theme the owner pinned to the document (lib/doc-theme.ts). Its type
    always applies. Its colours come only when they are the phone's own tone,
    and then the article paints its own page under them. */

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { desktopAuthApp, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
+import { desktopAuthApp, desktopAuthAppName, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 
 const NONCE = "0123456789abcdef0123456789abcdef";
 
@@ -68,6 +68,27 @@ test("desktopAuthApp names Markie RS only when asked, and Markie otherwise", () 
   for (const other of [null, undefined, "", "markie", "MARKIE-RS", "markie-rs ", "javascript", "https", "markie-rs://x"]) {
     assert.equal(desktopAuthApp(other), "markie", `should fall back for ${String(other)}`);
   }
+});
+
+test("desktopAuthApp names Markie Nightly only for its exact name", () => {
+  assert.equal(desktopAuthApp("markie-nightly"), "markie-nightly");
+  for (const other of ["MARKIE-NIGHTLY", "markie-nightly ", " markie-nightly", "markie-nightly://x", "markie_nightly", "nightly", "markie-nightly\n", "markie-super-nightly"]) {
+    assert.equal(desktopAuthApp(other), "markie", `should fall back for ${JSON.stringify(other)}`);
+  }
+  assert.equal(desktopAuthAppName("markie"), "Markie");
+  assert.equal(desktopAuthAppName("markie-rs"), "Markie RS");
+  assert.equal(desktopAuthAppName("markie-nightly"), "Markie Nightly");
+});
+
+test("desktopAuthDeepLink sends Markie Nightly its own scheme, never Markie's or Markie RS's", () => {
+  assert.equal(
+    desktopAuthDeepLink("abc", NONCE, "https://docs.example.com", "markie-nightly"),
+    `markie-nightly://auth?token=abc&state=${NONCE}&iss=https%3A%2F%2Fdocs.example.com`,
+  );
+  const u = new URL(desktopAuthDeepLink("a b&c", NONCE, null, "markie-nightly"));
+  assert.equal(u.protocol, "markie-nightly:");
+  assert.equal(u.host, "auth");
+  assert.equal(u.searchParams.get("token"), "a b&c");
 });
 
 test("desktopAuthDeepLink sends Markie RS its own scheme and leaves Markie's unchanged", () => {

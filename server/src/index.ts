@@ -26,7 +26,7 @@ import { docsHostConfig, redirectToDocsHost } from "./docs-host.ts";
 import { BRAND_HEAD, brandAssets, brandLogoSvg } from "./brand.ts";
 import { attachCollab, closeAllRooms, terminateAllRooms } from "./collab.ts";
 import { collabTickets } from "./collab-tickets.ts";
-import { desktopAuthApp, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
+import { desktopAuthApp, desktopAuthAppName, desktopAuthDeepLink, desktopAuthIssuer, desktopAuthState } from "./desktop-auth.ts";
 import { createMobileAuth, isMobileAuthPage } from "./mobile-auth.ts";
 import { withoutAppleUserEmail } from "./apple-sign-in.ts";
 import { applicationOrigins } from "./application-origins.ts";
@@ -379,7 +379,8 @@ async function startDesktopSignIn(c: Context, provider: "google" | "apple"): Pro
   const label = provider === "apple" ? "Apple" : "Google";
   try {
     const state = desktopAuthState(c.req.query("state"));
-    // Markie RS asks for its own markie-rs:// hand-back; see desktop-auth.ts.
+    // Markie RS and Markie Nightly each ask for their own hand-back scheme;
+    // see desktop-auth.ts.
     const desktopApp = desktopAuthApp(c.req.query("app"));
     const query = [
       ...(state ? [`state=${encodeURIComponent(state)}`] : []),
@@ -478,7 +479,7 @@ ${link ? `<script>setTimeout(function(){location.href=${JSON.stringify(link)}},4
   const desktopApp = desktopAuthApp(c.req.query("app"));
   return page(
     "You're signed in",
-    desktopApp === "markie-rs" ? "Returning you to Markie RS…" : "Returning you to Markie…",
+    `Returning you to ${desktopAuthAppName(desktopApp)}…`,
     desktopAuthDeepLink(token, state, AUTH_ISSUER, desktopApp)
   );
 });

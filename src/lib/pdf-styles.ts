@@ -402,11 +402,18 @@ function neutralizeBodyBreakouts(html: string): string {
   return html.replace(/<(\/?)(style|script)\b/gi, "&lt;$1$2");
 }
 
+//
+// `fontCss` is the stylesheet src/lib/fonts/export-fonts.ts makes: the bundled
+// fonts the document uses, inside the file, and the rules that apply them. It
+// comes after the theme's own rules so it wins, and it is CSS Markie wrote
+// from registry ids, never a document's text.
 export async function buildPDFHTML(
   markdownHTML: string,
-  theme: PDFTheme
+  theme: PDFTheme,
+  fontCss = ""
 ): Promise<string> {
-  return pdfDocument(await getPDFStyles(theme), markdownHTML);
+  const fonts = fontCss ? `\n<style>${fontCss.replace(/<\/(style)/gi, "<\\/$1")}</style>` : "";
+  return pdfDocument(`${await getPDFStyles(theme)}${fonts}`, markdownHTML);
 }
 
 // The KaTeX-less variant. Same document, same guards.

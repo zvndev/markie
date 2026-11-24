@@ -1,0 +1,33 @@
+{
+  "repo": "https://github.com/google/fonts",
+  "commit": "06bfe0d62a98375cb09c942fa18e68bd32cff057",
+  "families": [
+    { "id": "inter", "family": "Inter", "dir": "ofl/inter", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Inter[opsz,wght].ttf", "normal"], ["Inter-Italic[opsz,wght].ttf", "italic"]] },
+    { "id": "source-sans", "family": "Source Sans 3", "dir": "ofl/sourcesans3", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["SourceSans3[wght].ttf", "normal"], ["SourceSans3-Italic[wght].ttf", "italic"]] },
+    { "id": "plex-sans", "family": "IBM Plex Sans", "dir": "ofl/ibmplexsans", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["IBMPlexSans[wdth,wght].ttf", "normal"], ["IBMPlexSans-Italic[wdth,wght].ttf", "italic"]] },
+    { "id": "atkinson", "family": "Atkinson Hyperlegible Next", "dir": "ofl/atkinsonhyperlegiblenext", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["AtkinsonHyperlegibleNext[wght].ttf", "normal"], ["AtkinsonHyperlegibleNext-Italic[wght].ttf", "italic"]] },
+    { "id": "lexend", "family": "Lexend", "dir": "ofl/lexend", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Lexend[wght].ttf", "normal"]] },
+    { "id": "nunito", "family": "Nunito", "dir": "ofl/nunito", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Nunito[wght].ttf", "normal"], ["Nunito-Italic[wght].ttf", "italic"]] },
+    { "id": "quicksand", "family": "Quicksand", "dir": "ofl/quicksand", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Quicksand[wght].ttf", "normal"]] },
+    { "id": "source-serif", "family": "Source Serif 4", "dir": "ofl/sourceserif4", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["SourceSerif4[opsz,wght].ttf", "normal"], ["SourceSerif4-Italic[opsz,wght].ttf", "italic"]] },
+    { "id": "literata", "family": "Literata", "dir": "ofl/literata", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Literata[opsz,wght].ttf", "normal"], ["Literata-Italic[opsz,wght].ttf", "italic"]] },
+    { "id": "lora", "family": "Lora", "dir": "ofl/lora", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Lora[wght].ttf", "normal"], ["Lora-Italic[wght].ttf", "italic"]] },
+    { "id": "eb-garamond", "family": "EB Garamond", "dir": "ofl/ebgaramond", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["EBGaramond[wght].ttf", "normal"], ["EBGaramond-Italic[wght].ttf", "italic"]] },
+    { "id": "roboto-slab", "family": "Roboto Slab", "dir": "apache/robotoslab", "license": "Apache-2.0", "licenseFile": "LICENSE.txt", "files": [["RobotoSlab[wght].ttf", "normal"]] },
+    { "id": "jetbrains-mono", "family": "JetBrains Mono", "dir": "ofl/jetbrainsmono", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["JetBrainsMono[wght].ttf", "normal"], ["JetBrainsMono-Italic[wght].ttf", "italic"]] },
+    { "id": "fira-code", "family": "Fira Code", "dir": "ofl/firacode", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["FiraCode[wght].ttf", "normal"]] },
+    { "id": "source-code", "family": "Source Code Pro", "dir": "ofl/sourcecodepro", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["SourceCodePro[wght].ttf", "normal"], ["SourceCodePro-Italic[wght].ttf", "italic"]] },
+    { "id": "atkinson-mono", "family": "Atkinson Hyperlegible Mono", "dir": "ofl/atkinsonhyperlegiblemono", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["AtkinsonHyperlegibleMono[wght].ttf", "normal"], ["AtkinsonHyperlegibleMono-Italic[wght].ttf", "italic"]] },
+    { "id": "fraunces", "family": "Fraunces", "dir": "ofl/fraunces", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Fraunces[SOFT,WONK,opsz,wght].ttf", "normal"], ["Fraunces-Italic[SOFT,WONK,opsz,wght].ttf", "italic"]] },
+    { "id": "playfair", "family": "Playfair Display", "dir": "ofl/playfairdisplay", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["PlayfairDisplay[wght].ttf", "normal"], ["PlayfairDisplay-Italic[wght].ttf", "italic"]] },
+    { "id": "space-grotesk", "family": "Space Grotesk", "dir": "ofl/spacegrotesk", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["SpaceGrotesk[wght].ttf", "normal"]] },
+    { "id": "caveat", "family": "Caveat", "dir": "ofl/caveat", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Caveat[wght].ttf", "normal"]] },
+
+    { "id": "carlito", "family": "Carlito", "dir": "ofl/carlito", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Carlito-Regular.ttf", "normal", "400"], ["Carlito-Italic.ttf", "italic", "400"], ["Carlito-Bold.ttf", "normal", "700"], ["Carlito-BoldItalic.ttf", "italic", "700"]] },
+    { "id": "caladea", "family": "Caladea", "dir": "ofl/caladea", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Caladea-Regular.ttf", "normal", "400"], ["Caladea-Italic.ttf", "italic", "400"], ["Caladea-Bold.ttf", "normal", "700"], ["Caladea-BoldItalic.ttf", "italic", "700"]] },
+    { "id": "arimo", "family": "Arimo", "dir": "ofl/arimo", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Arimo[wght].ttf", "normal"], ["Arimo-Italic[wght].ttf", "italic"]] },
+    { "id": "tinos", "family": "Tinos", "dir": "ofl/tinos", "license": "OFL-1.1", "licenseFile": "OFL.txt", "licenseUrl": "https://raw.githubusercontent.com/googlefonts/tinos/3b4482a99b80ea5fc75f187b1be3120a3f5905b3/OFL.txt", "files": [["Tinos-Regular.ttf", "normal", "400"], ["Tinos-Italic.ttf", "italic", "400"], ["Tinos-Bold.ttf", "normal", "700"], ["Tinos-BoldItalic.ttf", "italic", "700"]] },
+    { "id": "cousine", "family": "Cousine", "dir": "ofl/cousine", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Cousine-Regular.ttf", "normal", "400"], ["Cousine-Italic.ttf", "italic", "400"], ["Cousine-Bold.ttf", "normal", "700"], ["Cousine-BoldItalic.ttf", "italic", "700"]] },
+    { "id": "gelasio", "family": "Gelasio", "dir": "ofl/gelasio", "license": "OFL-1.1", "licenseFile": "OFL.txt", "files": [["Gelasio[wght].ttf", "normal"], ["Gelasio-Italic[wght].ttf", "italic"]] }
+  ]
+}

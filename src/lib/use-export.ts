@@ -9,9 +9,17 @@
 // changed the buffer.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
+import { exportFontCss } from "@/lib/fonts/export-fonts";
 import { getColorMode, resolveColorMode } from "@/lib/color-mode";
 import { getSafeAPI } from "@/lib/electron";
 import { convertForExport, exportFileName, exportFormat, type ExportFormatId } from "@/lib/export-formats";
+
+// The document as an export page, set in the fonts the screen shows. A font
+// that cannot be read is left out and the text falls back; it never stops the
+// export.
+async function exportPage(rendered: string, theme: PDFTheme): Promise<string> {
+  return buildPDFHTML(rendered, theme, await exportFontCss(rendered).catch(() => ""));
+}
 
 // One wording for "an export is already running", wherever the second one is
 // refused: the renderer's own guard and the main process's say the same thing.
@@ -89,7 +97,7 @@ export function useDocumentExport(inputs: ExportInputs) {
       if (api) {
         await guarded("Couldn't export this document as a PDF.", async () =>
           api.exportPDF({
-            html: await buildPDFHTML(await previewHTML(md), theme),
+            html: await exportPage(await previewHTML(md), theme),
             theme,
             docPath: docPath(),
           })
@@ -97,7 +105,7 @@ export function useDocumentExport(inputs: ExportInputs) {
         return;
       }
       // Web fallback: open in a new window and print.
-      const fullHTML = await buildPDFHTML(await previewHTML(md), theme);
+      const fullHTML = await exportPage(await previewHTML(md), theme);
       const printWindow = window.open("", "_blank");
       if (!printWindow) return;
       printWindow.document.write(fullHTML);
@@ -115,7 +123,7 @@ export function useDocumentExport(inputs: ExportInputs) {
     await guarded("Couldn't export this document as HTML.", async () =>
       api.exportHTML({
         defaultName: `${base}.html`,
-        html: await buildPDFHTML(await previewHTML(currentMarkdown()), "light"),
+        html: await exportPage(await previewHTML(currentMarkdown()), "light"),
         docPath: docPath(),
       })
     );
@@ -136,7 +144,7 @@ export function useDocumentExport(inputs: ExportInputs) {
     const theme: PDFTheme = resolveColorMode(getColorMode());
     await guarded("Couldn't print this document.", async () =>
       api.exportPDF({
-        html: await buildPDFHTML(await previewHTML(currentMarkdown()), theme),
+        html: await exportPage(await previewHTML(currentMarkdown()), theme),
         theme,
         docPath: docPath(),
         mode: "print",

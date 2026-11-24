@@ -8,6 +8,31 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Twenty fonts come with Markie.** Settings, Appearance now offers Inter,
+  Atkinson Hyperlegible, Literata, Fraunces, JetBrains Mono and fifteen more,
+  each shown in its own face. A document set in one looks the same on another
+  computer, on a shared link and on the phone. They are all open-licensed.
+- **A font for code.** Choose the monospace font code blocks use, beside the
+  body and heading fonts.
+- **Use a font from your computer.** Settings can list the fonts installed on
+  your computer. One of those shows only there: a shared link or another
+  person sees a similar font that comes with Markie.
+- **Word files keep their look when a font is missing.** A document set in
+  Calibri, Cambria, Arial, Times New Roman, Courier New or Georgia opens in a
+  font with the same letter widths when yours is not installed, so lines and
+  pages break where they did. Saving keeps the font name the file had.
+- **Fonts inside a Word file are shown.** When a Word file carries its own
+  fonts, Markie shows its text in them, and keeps them when you save.
+
+### Changed
+
+- **PDF and HTML exports use your fonts.** An export is set in the body,
+  heading and code fonts you chose, and carries the fonts it needs inside it.
+- The font menu in Word, RTF and OpenDocument files lists the document's own
+  fonts first, then the fonts that come with Markie, then the ones installed.
+
 ## [0.9.7] - 2026-11-20
 
 ### Added

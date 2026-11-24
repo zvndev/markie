@@ -9,6 +9,8 @@
 // refusing underline and text colour. The first two are a way of looking at the
 // document; the last two would be edits to it.
 
+import { LIBRARY_FAMILIES, TYPEFACE_GROUP_LABELS } from "./fonts/registry";
+
 export interface DocAppearance {
   fontFamily: string;
   fontSize: number; // px, the document body
@@ -28,7 +30,10 @@ export type DocWidth = "default" | "900" | "1040" | "1200" | "full";
 // id but now means "the style template's body font" (which, for the Markie
 // template, is the system face it always was). Picking the system face on
 // purpose, under a serif template, is "sans".
-export const DOC_FONTS: Array<{ id: string; label: string; stack: string }> = [
+//
+// After those come the fonts Markie bundles (src/lib/fonts/registry.ts), under
+// their group headings. Their ids are the registry's.
+export const DOC_FONTS: Array<{ id: string; label: string; stack: string; group?: string }> = [
   { id: "system", label: "Theme font", stack: "var(--theme-font-family, var(--font-geist-sans))" },
   { id: "sans", label: "System", stack: "var(--font-geist-sans)" },
   { id: "charter", label: "Charter", stack: "Charter, Georgia, 'Times New Roman', serif" },
@@ -36,6 +41,7 @@ export const DOC_FONTS: Array<{ id: string; label: string; stack: string }> = [
   { id: "iowan", label: "Iowan", stack: "'Iowan Old Style', Palatino, Georgia, serif" },
   { id: "helvetica", label: "Helvetica", stack: "'Helvetica Neue', Helvetica, Arial, sans-serif" },
   { id: "mono", label: "Monospace", stack: "var(--font-geist-mono)" },
+  ...LIBRARY_FAMILIES.map((family) => ({ id: family.id, label: family.family, stack: family.stack, group: TYPEFACE_GROUP_LABELS[family.group] })),
 ];
 
 export const DEFAULT_APPEARANCE: DocAppearance = {

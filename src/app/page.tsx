@@ -756,6 +756,13 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
   useEffect(() => {
     if (!booted) return;
     const timer = setTimeout(() => {
+      // A document that has just been loaded settles tierRef at once, but
+      // this timer is only re-armed when React renders it. Coming due in
+      // between, it would measure the last document against the new one's
+      // tier and put a large document's Source-only state over an ordinary
+      // one, with the mode it displaced already given back and gone. The
+      // text is stale; the timer armed by the coming render has the real one.
+      if (latestContent() !== content) return;
       const chars = content.length;
       const tier = tierRef.current;
       const settledByLength =
@@ -769,7 +776,7 @@ export default function Home({ documentsEnabled = false }: { documentsEnabled?: 
       if (tierForSize(bytes) !== tierRef.current) enterTier(content, filePath, bytes);
     }, EDIT_TIER_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [content, filePath, booted, enterTier]);
+  }, [content, filePath, booted, enterTier, latestContent]);
 
   // The clean case: nothing local is at risk, so this finishes in one click.
   const handlePullUpdate = useCallback(async () => {

@@ -60,6 +60,15 @@ async function unlock() {
   await screen.findByRole("button", { name: "New private note" });
 }
 
+// "Encrypted saved copy" shows the moment the bytes are stored, while the save
+// is still running: the item list has not been read back yet and every control
+// in the panel is still disabled. A test that goes on to use the list or a
+// button waits for the save to finish, or its click lands on nothing.
+async function saved() {
+  await screen.findByText("Encrypted saved copy");
+  await waitFor(() => expect(screen.getByRole("button", { name: "New private note" })).toBeEnabled());
+}
+
 describe("usable isolated encrypted vault panel", () => {
   it("creates, edits, durably saves, locks, reopens and searches without plaintext storage", async () => {
     const storage = new TestStorage();
@@ -530,7 +539,7 @@ describe("Touch ID unlock", () => {
     fireEvent.click(screen.getByRole("button", { name: "New private note" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: "Touch ID body" } });
     fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
-    await screen.findByText("Encrypted saved copy");
+    await saved();
     await turnOnTouchId();
     expect(storage.value?.deviceSlot).toBeTypeOf("string");
     expect(touch.keychain.size).toBe(1);
@@ -599,7 +608,7 @@ describe("Touch ID per item", () => {
     fireEvent.click(screen.getByRole("button", { name: "New private note" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: body } });
     fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
-    await screen.findByText("Encrypted saved copy");
+    await saved();
   }
 
   async function saveEnv(text: string) {
@@ -607,7 +616,7 @@ describe("Touch ID per item", () => {
     fireEvent.click(screen.getByRole("button", { name: "Raw" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Environment file text" }), { target: { value: text } });
     fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
-    await screen.findByText("Encrypted saved copy");
+    await saved();
   }
 
   it("asks Touch ID, naming the item, before a note opens; cancelling keeps it closed", async () => {
@@ -740,7 +749,9 @@ describe("Touch ID per item", () => {
 describe("vault backup and restore", () => {
   async function backupBytes(storage: TestStorage) {
     if (!screen.queryByRole("region", { name: "Vault settings" })) fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Back up vault…" }));
+    const backUp = await screen.findByRole("button", { name: "Back up vault…" });
+    await waitFor(() => expect(backUp).toBeEnabled());
+    fireEvent.click(backUp);
     await waitFor(() => expect(picker.download).toHaveBeenCalled());
     const saved = picker.download.mock.calls[0][0] as { name: string; bytes: Uint8Array };
     expect(saved.name).toBe("Markie Vault.markievault");
@@ -756,7 +767,7 @@ describe("vault backup and restore", () => {
     fireEvent.click(screen.getByRole("button", { name: "New private note" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: "Backed up body" } });
     fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
-    await screen.findByText("Encrypted saved copy");
+    await saved();
     await turnOnTouchId();
     const bytes = await backupBytes(storage);
     expect(new TextDecoder().decode(bytes)).not.toContain("device-slot");
@@ -795,7 +806,7 @@ describe("vault backup and restore", () => {
     fireEvent.click(screen.getByRole("button", { name: "New private note" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Private text" }), { target: { value: "Backed up body" } });
     fireEvent.click(screen.getByRole("button", { name: "Save encrypted changes" }));
-    await screen.findByText("Encrypted saved copy");
+    await saved();
     const bytes = await backupBytes(source);
     first.unmount();
 

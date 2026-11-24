@@ -1,4 +1,4 @@
-//! `cargo run --release -p markie-export --example export_pdf -- <in.md> <out.pdf> [light|dark] [--typst out.typ]`
+//! `cargo run --release -p markie-export --example export_pdf -- <in.md> <out.pdf> [light|dark] [--typst out.typ] [--style <preset id>]`
 //! Exports one document the way Export PDF does, for side-by-side checks.
 //! With a `.typ` input it compiles that Typst source instead (for tuning).
 use markie_export::pdf::{PdfOptions, compile, typst_source};
@@ -15,7 +15,16 @@ fn main() {
         let out = std::process::Command::new("curl").args(["-sfL", "--max-time", "8", url]).output().ok()?;
         out.status.success().then_some(out.stdout)
     };
-    let opts = PdfOptions { theme, doc_dir: dir.as_deref(), fetch: Some(&fetch), ..Default::default() };
+    // `--style technical`: the preset, in the faces it brings.
+    let look = match args.iter().position(|a| a == "--style").and_then(|i| args.get(i + 1)) {
+        Some(id) => {
+            let style = markie_core::markdown_style::MarkdownStyle::preset(id);
+            let faces = markie_core::markdown_style::font_tokens(&style);
+            markie_export::ExportLook { style: Some(style), body_font: faces.body_font.unwrap_or_default(), heading_font: faces.heading_font.unwrap_or_default(), code_font: faces.code_font.unwrap_or_default() }
+        }
+        None => Default::default(),
+    };
+    let opts = PdfOptions { theme, doc_dir: dir.as_deref(), fetch: Some(&fetch), look, ..Default::default() };
     let (source, files) = if input.extension().is_some_and(|e| e == "typ") {
         let md = std::fs::read_to_string(input.with_extension("md")).unwrap_or_default();
         let (_, files) = typst_source(&md, &opts).unwrap_or_default();

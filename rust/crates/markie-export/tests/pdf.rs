@@ -199,6 +199,19 @@ fn every_markdown_style_exports_to_pdf() {
     assert!(classic.contains("first-line-indent") && classic.contains("align(center, mk-heading(") && classic.contains("\u{2022}\u{2003}\u{2022}"));
     let editorial = source("editorial");
     assert!(editorial.contains("rect(width:") && editorial.contains("mk-quote-plain(none, true, true,") && editorial.contains("mk-shape(\"square\", fill: c-link)") && editorial.contains("upper("));
+    // The options the first pass left out: list spacing, table density, inline code, tasks, pictures.
+    let extra = "- [x] done\n- [ ] open\n\n`code`\n\n- a\n\n| A |\n| --- |\n| 1 |\n\n![p](data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIvPg==)\n*A caption.*\n";
+    let with = |id: &str| {
+        let opts = PdfOptions { look: ExportLook { style: Some(MarkdownStyle::preset(id)), ..Default::default() }, ..Default::default() };
+        assert!(export_pdf(extra, &opts).unwrap().starts_with(b"%PDF-"), "{id}");
+        markie_export::pdf::typst_source(extra, &opts).unwrap().0
+    };
+    let (m, c, e, k) = (with("minimal"), with("compact"), with("editorial"), with("classic"));
+    assert!(m.contains("mk-box(true, kind: \"minimal\")") && m.contains("show regex") && m.contains("kind: \"plain\""), "tasks and inline code");
+    assert!(c.contains("set text(fill: c-marker)") && c.contains("kind: \"flat\"") && c.contains("radius: 3.000pt"), "dimmed tasks, flat code, 4px corners");
+    assert!(c.contains(&format!("grid(columns: ({},", "14.700pt")), "a 1.4em list indent");
+    assert!(e.contains("align(center, box(clip: true, radius: 1.500pt") && e.contains("style: \"italic\""), "a centred picture and its caption");
+    assert!(k.contains("kind: \"bordered\"") && k.contains("align(center, text(size:"), "bordered code and a centred caption");
     let minimal = source("minimal");
     assert!(minimal.contains("mk-mark(\"\u{2013}\")") && minimal.contains("mk-mark") && minimal.contains("frame: \"bar\"") && minimal.contains("dotted: true"));
 }

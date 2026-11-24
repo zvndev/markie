@@ -12,7 +12,9 @@ import { RichView } from "@/components/rich-view";
 import { installBundledFonts } from "@/lib/fonts/bundled-fonts";
 import { startCodeFont } from "@/lib/fonts/code-font";
 import { renderMarkdownHTML } from "@/lib/markdown-html";
-import { chooseMarkdownStyle } from "@/lib/markdown-style";
+import { chooseMarkdownStyle, paintedMarkdownStyle } from "@/lib/markdown-style";
+import { exportFontCss } from "@/lib/fonts/export-fonts";
+import { buildPDFHTML } from "@/lib/pdf-styles";
 import { sanitizeMarkdownStyleStore } from "@/lib/markdown-style-schema";
 import { commitMarkdownStyleStore, loadMarkdownStyleStore } from "@/lib/markdown-style-store";
 
@@ -58,15 +60,34 @@ function Doc() {
   );
 }
 
-if (scene === "doc" || scene === "style-settings") {
+if (scene === "doc" || scene === "style-settings" || scene === "export") {
   installBundledFonts();
   startCodeFont();
   const styles = typeof args.style === "string" ? chooseMarkdownStyle(loadMarkdownStyleStore(), args.style) : sanitizeMarkdownStyleStore(args.style);
   if (styles) commitMarkdownStyleStore(styles);
 }
 
+// The export page as the app makes it (src/lib/use-export.ts): the document's
+// HTML with the style's rules and the bundled faces it uses inside the file.
+// The page is replaced by it, so `pdf` in a job prints what Export PDF prints.
+function Export() {
+  useEffect(() => {
+    void (async () => {
+      const md = await fetch(`/@fs${args.file}`).then((r) => r.text());
+      const html = renderMarkdownHTML(md);
+      const fontCss = await exportFontCss(html);
+      const page = await buildPDFHTML(html, args.theme === "dark" ? "dark" : "light", { markdownStyle: paintedMarkdownStyle(), fontCss });
+      document.open();
+      document.write(page.replace("</body>", '<script>document.fonts.ready.then(function () { document.body.dataset.sceneExport = "1"; });</script></body>'));
+      document.close();
+    })();
+  }, []);
+  return null;
+}
+
 function Scene() {
   if (scene === "doc") return <Doc />;
+  if (scene === "export") return <Export />;
   if (scene === "share") {
     return <ShareDialog docId={args.doc_id} fileName={args.file_name} body={args.body ?? ""} onClose={() => {}} onChanged={() => {}} />;
   }

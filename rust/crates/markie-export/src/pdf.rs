@@ -391,6 +391,41 @@ struct Ctx<'a, 'b> {
     ol_path: Vec<i64>,
     /// The block before this one, in the same flow, was a paragraph.
     after_p: bool,
+    /// Paragraphs are centred (inside a pull quote).
+    centre: bool,
+}
+
+/// `p > img + em` or `p > img + br + em`, with nothing else in the paragraph.
+fn picture_and_caption(p: &Element) -> Option<(&Element, &Element)> {
+    let mut parts = p.children.iter().filter(|n| match n {
+        Node::Element(e) => e.tag != "br",
+        Node::Text(t) => !t.trim().is_empty(),
+        _ => false,
+    });
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(Node::Element(img)), Some(Node::Element(em)), None) if img.tag == "img" && em.tag == "em" => Some((img, em)),
+        _ => None,
+    }
+}
+
+/// Whether a task item's own box is ticked.
+fn checked_item(li: &Element) -> bool {
+    fn find(nodes: &[Node]) -> Option<bool> {
+        for n in nodes {
+            let Node::Element(e) = n else { continue };
+            if e.tag == "input" {
+                return Some(e.has("checked"));
+            }
+            if matches!(e.tag.as_str(), "ul" | "ol") {
+                continue;
+            }
+            if let Some(found) = find(&e.children) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    find(&li.children).unwrap_or(false)
 }
 
 /// CSS `lower-alpha` and `lower-roman`.
@@ -620,7 +655,14 @@ impl Ctx<'_, '_> {
                 let i = inh.inner(size, true, 0.0);
                 let up = size * MONO_ASC + size * 0.15 + 1.0;
                 let down = size * MONO_DESC + size * 0.15 + 1.0;
-                wrap(format!("mk-code({}, {}, {}, {}, {}, {})", lit(&text), pt(size), pt(i.top), pt(-i.bot), pt(up - i.top), pt(down - i.bot)))
+                // `inlineCodeStyle`: a chip, the fill alone, the hairline alone, or the ink alone.
+                let kind = match self.md.choice("inlineCodeStyle") {
+                    "flat" => ", kind: \"flat\"",
+                    "bordered" => ", kind: \"bordered\"",
+                    "plain" => ", kind: \"plain\"",
+                    _ => "",
+                };
+                wrap(format!("mk-code({}, {}, {}, {}, {}, {}{kind})", lit(&text), pt(size), pt(i.top), pt(-i.bot), pt(up - i.top), pt(down - i.bot)))
             }
             "kbd" | "samp" | "tt" => {
                 // `font-family: monospace` at the inherited size.
@@ -665,7 +707,15 @@ impl Ctx<'_, '_> {
             }
             "input" => {
                 *prev_space = false;
-                (e.get("type") == Some("checkbox")).then(|| format!("mk-box({})", e.has("checked")))
+                (e.get("type") == Some("checkbox")).then(|| {
+                    // `taskStyle`: a rounded box, a circle, or a thin outline with a coloured tick.
+                    let kind = match self.md.choice("taskStyle") {
+                        "round" => ", kind: \"round\"",
+                        "minimal" => ", kind: \"minimal\"",
+                        _ => "",
+                    };
+                    format!("mk-box({}{kind})", e.has("checked"))
+                })
             }
             "video" | "audio" => {
                 *prev_space = false;
@@ -791,7 +841,12 @@ impl Ctx<'_, '_> {
             _ => "width: auto".to_string(),
         };
         let image = format!("image({}, {size})", lit(&path));
-        Some((format!("box(clip: true, radius: 6pt, {image})"), h))
+        // `imageRadius` (8px is the export's own) and `imageFrame: border`.
+        // Typst draws no shadows, so `shadow` adds nothing here.
+        let radius = pt(self.md.number("imageRadius"));
+        let radius = if radius == "6.000pt" { "6pt".to_string() } else { radius };
+        let frame = if self.md.choice("imageFrame") == "border" { ", stroke: 0.75pt + c-border" } else { "" };
+        Some((format!("box(clip: true, radius: {radius}{frame}, {image})"), h))
     }
 
     fn load(&self, src: &str) -> Option<Vec<u8>> {
@@ -902,8 +957,10 @@ impl Ctx<'_, '_> {
                 let (quote, column) = (self.quote, self.column);
                 self.quote = true;
                 self.column -= px(31.0);
+                let centre = self.centre;
+                self.centre = self.md.choice("quoteStyle") == "pull";
                 let inner = self.flow(&e.children, inh);
-                (self.quote, self.column) = (quote, column);
+                (self.quote, self.column, self.centre) = (quote, column, centre);
                 let (top, bottom) = (7.0 + first_mt(&inner), 7.0 + last_mb(&inner));
                 let m = 14.0 * self.gap();
                 // `quoteAccent` and `quoteStyle`, as the stylesheet's rules read.
@@ -1012,13 +1069,31 @@ impl Ctx<'_, '_> {
                     let (image, h) = self.image_sized(only)?;
                     let h = h.map(|h| h / 0.75).unwrap_or(0.0);
                     let above = (h + 28.0).max(inh.top) - h - 14.0;
+                    // `imageAlign: center`.
+                    let image = if self.md.choice("imageAlign") == "center" { format!("align(center, {image})") } else { image };
                     return Some(Blk::new(m, m, format!("{{ {anchor}block(width: 100%, inset: (top: {}, bottom: {}), {image}) }}", pt(above), pt(14.0 + inh.bot))));
                 }
                 "video" | "audio" => return Some(self.replaced(only.tag == "video", m, inh)),
                 _ => {}
             }
         }
-        let al = text_align(e).unwrap_or("left");
+        // `captionStyle`: a picture with emphasised text straight after it,
+        // in the same paragraph, is a picture and its caption (0.86em, muted,
+        // 0.5em closer to the picture, centred or left).
+        let caption_style = self.md.choice("captionStyle").to_string();
+        if caption_style != "inline"
+            && let Some((img, em)) = picture_and_caption(e)
+        {
+            let (image, _) = self.image_sized(img)?;
+            let small = Inh::block(BODY * 0.86, false);
+            let text = self.inline_run(&em.children, small).unwrap_or_else(|| "[]".into());
+            let centre = caption_style == "centered";
+            let image = if centre || self.md.choice("imageAlign") == "center" { format!("align(center, {image})") } else { image };
+            let caption = format!("text(size: {}, fill: c-marker, style: \"italic\", {}, par({text}))", pt(BODY * 0.86), small.args());
+            let caption = if centre { format!("align(center, {caption})") } else { caption };
+            return Some(Blk::new(m.max(14.0), m, format!("{{ block(width: 100%, {image}); v({}); block(width: 100%, {caption}) }}", pt(14.0 - 0.5 * BODY * 0.86))));
+        }
+        let al = text_align(e).unwrap_or(if self.centre { "center" } else { "left" });
         let body = self.inline_run(&e.children, inh)?;
         let body = self.styled(e, body);
         // `text-indent: 1.5em` after another paragraph; `text-align: justify`.
@@ -1177,7 +1252,8 @@ impl Ctx<'_, '_> {
             let anchor = self.anchor(li);
             let task = li.has_class("task-list-item");
             // A task item has no marker and pulls back 1.5em.
-            let indent = if task { 25.2 - 21.0 } else { 25.2 };
+            // `padding-left` (listIndent); a task item pulls back to 0.3em of it.
+            let indent = if task { BODY * 0.3 } else { BODY * self.md.number("listIndent") };
             self.column = column - px(indent);
             place += 1;
             if ordered {
@@ -1188,8 +1264,17 @@ impl Ctx<'_, '_> {
             let body = self.flow(&li.children, inh);
             self.column = column;
             (self.ul_depth, self.ol_path) = (ul_depth, ol_path.clone());
-            let (mt, mb) = (f64::max(3.5, first_mt(&body)), f64::max(3.5, last_mb(&body)));
+            // `li { margin }`: the export's own 0.25em, or the style's listItemGap.
+            let item_gap = if self.md.number("listItemGap") == 0.3 { 3.5 } else { BODY * self.md.number("listItemGap") };
+            let (mt, mb) = (f64::max(item_gap, first_mt(&body)), f64::max(item_gap, last_mb(&body)));
             let body = seq(&body);
+            // `taskDone`: a finished item reads muted, or muted and struck through.
+            let done = task && checked_item(li);
+            let body = match (done, self.md.choice("taskDone")) {
+                (true, "dim") => format!("{{ set text(fill: c-marker); {body} }}"),
+                (true, "strike") => format!("{{ set text(fill: c-marker); show regex(\"[^\\\\s]+\"): strike; {body} }}"),
+                _ => body,
+            };
             let code = if task {
                 format!("pad(left: {}, {body})", pt(indent))
             } else {
@@ -1210,7 +1295,8 @@ impl Ctx<'_, '_> {
             items.push(Blk::new(mt, mb, format!("{{ {anchor}{code} }}")));
             number += 1;
         }
-        Blk::new(f64::max(8.4, first_mt(&items)), f64::max(8.4, last_mb(&items)), seq(&items))
+        let own = 8.4 * self.gap();
+        Blk::new(f64::max(own, first_mt(&items)), f64::max(own, last_mb(&items)), seq(&items))
     }
 
     fn table(&mut self, e: &Element) -> Option<String> {
@@ -1264,20 +1350,28 @@ impl Ctx<'_, '_> {
         // Collapsed borders: each row carries half of the rule above and
         // below it (the header's 2px rule, 1px between body rows), and the
         // table half of its last rule.
+        // `tableDensity`: cell padding (y, x) in em, header then body. The
+        // export's own is 0.55em 0.8em and 0.5em 0.8em.
+        let (hy, hx, by, bx) = match self.md.choice("tableDensity") {
+            "compact" => (0.3, 0.65, 0.28, 0.65),
+            "roomy" => (0.8, 1.2, 0.75, 1.2),
+            _ => (0.55, 0.8, 0.5, 0.8),
+        };
+        let (hs, bs) = (BODY * 0.9 * 0.85, BODY * 0.9);
         let inset = format!(
             "(x, y) => if {has_head} and y == 0 {{ (x: {}, top: {}, bottom: {}) }} else if {has_head} and y == 1 {{ (x: {}, top: {}, bottom: {}) }} else if y == 0 {{ (x: {}, top: {}, bottom: {}) }} else {{ (x: {}, top: {}, bottom: {}) }}",
-            pt(BODY * 0.9 * 0.85 * 0.8),
-            pt(BODY * 0.9 * 0.85 * 0.55),
-            pt(BODY * 0.9 * 0.85 * 0.55 + 1.0),
-            pt(BODY * 0.9 * 0.8),
-            pt(BODY * 0.9 * 0.5 + 1.0),
-            pt(BODY * 0.9 * 0.5 + 0.5),
-            pt(BODY * 0.9 * 0.8),
-            pt(BODY * 0.9 * 0.5),
-            pt(BODY * 0.9 * 0.5 + 0.5),
-            pt(BODY * 0.9 * 0.8),
-            pt(BODY * 0.9 * 0.5 + 0.5),
-            pt(BODY * 0.9 * 0.5 + 0.5),
+            pt(hs * hx),
+            pt(hs * hy),
+            pt(hs * hy + 1.0),
+            pt(bs * bx),
+            pt(bs * by + 1.0),
+            pt(bs * by + 0.5),
+            pt(bs * bx),
+            pt(bs * by),
+            pt(bs * by + 0.5),
+            pt(bs * bx),
+            pt(bs * by + 0.5),
+            pt(bs * by + 0.5),
         );
         // A style's borders, header row and width ride in as named arguments;
         // with none, this is the call the export always made.
@@ -1463,7 +1557,7 @@ fn prelude(p: &Palette, look: &crate::styles::ExportLook) -> String {
 #let mk-under(body, paint: c-link, dotted: false) = underline(stroke: (paint: paint, thickness: 0.75pt, dash: if dotted {{ "dotted" }} else {{ "solid" }}), offset: 2.5pt, body)
 // Inline code: padding 0.15em 0.35em and a 1px border inside the box; the
 // background covers the font's ascent and descent plus the padding.
-#let mk-code(s, size, top, bot, ot, ob) = box(fill: rgb("{code_bg}"), stroke: 0.75pt + rgb("{code_border}"), radius: 3pt, inset: (x: size * 0.35 + 0.75pt), outset: (top: ot, bottom: ob, x: -0.375pt), text(size: size, top-edge: top, bottom-edge: bot, fill: rgb("{code_fg}"), raw(s)))
+#let mk-code(s, size, top, bot, ot, ob, kind: "chip") = box(fill: if kind == "chip" or kind == "flat" {{ rgb("{code_bg}") }} else {{ none }}, stroke: if kind == "chip" or kind == "bordered" {{ 0.75pt + rgb("{code_border}") }} else {{ none }}, radius: 3pt, inset: (x: if kind == "plain" {{ 0pt }} else {{ size * 0.35 + 0.75pt }}), outset: (top: ot, bottom: ob, x: if kind == "chip" or kind == "bordered" {{ -0.375pt }} else {{ 0pt }}), text(size: size, top-edge: top, bottom-edge: bot, fill: if kind == "flat" or kind == "bordered" {{ c-fg }} else {{ rgb("{code_fg}") }}, raw(s)))
 // <pre>: margin 1em 0, padding 1em 1.2em inside a 1px border, 0.85em code.
 // The padding is spacing, not inset, so a block that breaks across pages
 // slices it as CSS does: none at the break. Its lines keep CSS's initial
@@ -1474,7 +1568,7 @@ fn prelude(p: &Palette, look: &crate::styles::ExportLook) -> String {
 #let mk-disc = align(right, "\u{{200b}}" + box(move(dy: -1.56pt, circle(radius: 1.86pt, fill: c-marker, stroke: none))) + h(9.24pt))
 // `::marker` uses tabular digits.
 #let mk-num(s) = align(right, text(fill: c-marker, number-width: "tabular", s) + h(3.04pt))
-#let mk-box(on) = box(baseline: 15%, width: 10.5pt, height: 10.5pt, stroke: 1.5pt + (if on {{ rgb("{box_on}") }} else {{ rgb("{box_border}") }}), radius: 2.25pt, fill: if on {{ rgb("{box_on}") }} else {{ none }}, if on {{ align(center + horizon, text(size: 7.5pt, weight: 700, fill: rgb("{box_tick}"), "✓")) }}) + h(3.75pt)
+#let mk-box(on, kind: "box") = box(baseline: 15%, width: 10.5pt, height: 10.5pt, stroke: (if kind == "minimal" {{ 1.125pt }} else {{ 1.5pt }}) + (if on {{ rgb("{box_on}") }} else if kind == "minimal" {{ c-marker }} else {{ rgb("{box_border}") }}), radius: if kind == "round" {{ 50% }} else {{ 2.25pt }}, fill: if on and kind != "minimal" {{ rgb("{box_on}") }} else {{ none }}, if on {{ align(center + horizon, text(size: 7.5pt, weight: 700, fill: if kind == "minimal" {{ rgb("{box_on}") }} else {{ rgb("{box_tick}") }}, "✓")) }}) + h(3.75pt)
 #let mk-embed(path, url) = link(url, box(clip: true, radius: 6pt, width: calc.min(col, 480pt), height: calc.min(col, 480pt) * 9 / 16, image(path, width: 100%, height: 100%, fit: "cover")))
 #let mk-video() = box(width: 225pt, height: 112.5pt, fill: rgb("#000000"), radius: 0pt)
 #let mk-audio() = box(width: 225pt, height: 40.5pt, fill: rgb("#f1f3f4"), radius: 20pt)
@@ -1540,7 +1634,7 @@ pub fn tree_source(tree: &[Node], opts: &PdfOptions) -> Result<(String, Vec<(Str
     collect_ids(tree, &mut ids);
     let md = opts.look.style.as_ref().map(markie_core::markdown_style::resolve).unwrap_or_default();
     LEADING.with(|l| l.set(md.number("leading")));
-    let mut ctx = Ctx { p, opts, files: vec![("/markie/hljs.tmTheme".into(), theme.into_bytes())], ids, error: None, column: COLUMN, quote: false, md, sections: (0, 0), ul_depth: 0, ol_path: Vec::new(), after_p: false };
+    let mut ctx = Ctx { p, opts, files: vec![("/markie/hljs.tmTheme".into(), theme.into_bytes())], ids, error: None, column: COLUMN, quote: false, md, sections: (0, 0), ul_depth: 0, ol_path: Vec::new(), after_p: false, centre: false };
     let blocks = ctx.flow(tree, Inh::block(BODY, false));
     LEADING.with(|l| l.set(1.0));
     if let Some(e) = ctx.error {

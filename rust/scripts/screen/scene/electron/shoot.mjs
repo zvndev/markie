@@ -8,7 +8,8 @@
 // user}, servers?: [{origin, name, token?, user?}]}, steps?: [...]}]
 // Steps run inside the page, in order: {fill: selector, text}, {press: key},
 // {select: selector, value}, {click: text}, {wait: ms}. A job may also set
-// `viewport` ({width, height}) and `ready` (the selector that says it drew).
+// `viewport` ({width, height}), `ready` (the selector that says it drew) and
+// `pdf: true` (write a PDF of the page to `out`).
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -103,7 +104,10 @@ try {
     // a Markie RS scene, whose window is never the active one.
     await page.mouse.move((job.viewport?.width ?? 1280) - 1, (job.viewport?.height ?? 820) - 1);
     if (job.blur) await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());
-    await page.screenshot({ path: job.out });
+    // `pdf`: print the page the way Export PDF does (A4, the page's own
+    // margins, backgrounds on) instead of taking a screenshot.
+    if (job.pdf) await page.pdf({ path: job.out, format: "A4", printBackground: true, preferCSSPageSize: true });
+    else await page.screenshot({ path: job.out });
     console.log(`wrote ${job.out}`);
     await context.close();
   }

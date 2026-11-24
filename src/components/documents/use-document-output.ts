@@ -3,6 +3,7 @@ import type { DocumentSession } from "@/lib/document-session";
 import { getSafeAPI } from "@/lib/electron";
 import { buildDocxPrintHTML, canPrintDocx } from "@/lib/office/docx-print";
 import { COMMENT_OUTPUT_CONFIRMATION } from "@/lib/document-output-policy";
+import { printFontsFor } from "./word-fonts";
 
 interface DocumentOutputInputs {
   session: DocumentSession | null;
@@ -32,21 +33,31 @@ export function useDocumentOutput(inputs: DocumentOutputInputs) {
     try {
       if (snapshot.office.comments.length && !window.confirm(COMMENT_OUTPUT_CONFIRMATION)) return;
       if (current.current.isBlocked() || !stillCurrent()) return;
-      const html = buildDocxPrintHTML(snapshot.office, snapshot.name);
-      if (current.current.isBlocked() || !stillCurrent()) return;
       const api = getSafeAPI();
+      // In a browser the print window has to open during the click, which is
+      // before the fonts are read.
+      if (!api) {
+        popup = window.open("", "_blank");
+        if (!popup) throw new Error("Allow a print window for Markie, then try again.");
+        ownedPopup.current = popup;
+        popup.opener = null;
+      }
+      // The document's embedded fonts and bundled stand-ins, inside the page.
+      // If they cannot be read the output still goes ahead, in fallback fonts.
+      // A document that needs none skips the wait, so its output starts in
+      // the same turn as the command.
+      const pendingFonts = printFontsFor(snapshot.office);
+      const fonts = pendingFonts ? await pendingFonts.catch(() => undefined) : undefined;
+      if (current.current.isBlocked() || !stillCurrent()) return;
+      const html = buildDocxPrintHTML(snapshot.office, snapshot.name, fonts);
+      if (current.current.isBlocked() || !stillCurrent()) return;
       if (api) {
         const result = await api.exportPDF({ html, ...(command === "document-print" ? { mode: "print" as const } : {}) });
         if (!stillCurrent() || current.current.isBlocked() || result.canceled) return;
         if (!result.success || result.error) throw new Error(result.error || "The document output could not be completed.");
         const unchanged = snapshot.office.format === "docx" ? "The Word file was not changed." : "The source file was not changed.";
         setMessage({ epoch: snapshot.epoch, notice: command === "document-print" ? "Sent the supported document view to the printer." : result.path ? `Exported PDF to ${result.path}. ${unchanged}` : `PDF exported. ${unchanged}` });
-      } else {
-        // Open during the user gesture, before fonts or a print sheet await.
-        popup = window.open("", "_blank");
-        if (!popup) throw new Error("Allow a print window for Markie, then try again.");
-        ownedPopup.current = popup;
-        popup.opener = null;
+      } else if (popup) {
         popup.document.write(html); popup.document.close();
         await Promise.all(Array.from(popup.document.images).map((image) => image.decode()));
         await popup.document.fonts?.ready;

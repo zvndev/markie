@@ -1,3 +1,5 @@
+import { TYPEFACE_LIST } from "./fonts/registry";
+
 export interface ThemeTokens {
   background: string;
   surface: string;
@@ -65,24 +67,11 @@ export interface ThemeTypography {
 
 export const HEADING_SAME_AS_BODY = "body";
 
-// Only faces that ship with macOS or Windows, each with fallbacks that keep the
-// same character on the other platform. Markie bundles no fonts.
-export const TYPEFACES: Array<{ id: string; label: string; stack: string; kind: "sans" | "serif" | "mono" }> = [
-  { id: "system", label: "System", stack: "var(--font-geist-sans)", kind: "sans" },
-  {
-    id: "humanist",
-    label: "Avenir",
-    stack: "'Avenir Next', Avenir, 'Segoe UI Variable Text', 'Segoe UI', 'Helvetica Neue', sans-serif",
-    kind: "sans",
-  },
-  { id: "helvetica", label: "Helvetica", stack: "'Helvetica Neue', Helvetica, Arial, sans-serif", kind: "sans" },
-  { id: "optima", label: "Optima", stack: "Optima, Candara, 'Avenir Next', 'Segoe UI', sans-serif", kind: "sans" },
-  { id: "charter", label: "Charter", stack: "Charter, 'Bitstream Charter', Georgia, 'Times New Roman', serif", kind: "serif" },
-  { id: "iowan", label: "Iowan", stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif", kind: "serif" },
-  { id: "newyork", label: "New York", stack: "ui-serif, 'New York', 'Iowan Old Style', Charter, Georgia, serif", kind: "serif" },
-  { id: "georgia", label: "Georgia", stack: "Georgia, Charter, 'Times New Roman', serif", kind: "serif" },
-  { id: "mono", label: "Monospace", stack: "var(--font-geist-mono)", kind: "mono" },
-];
+// The typefaces come from the font registry (src/lib/fonts/registry.ts), the
+// one source of ids, labels, kinds, stacks and files: the nine system faces
+// first, with the ids and stacks they have always had, then the fonts Markie
+// bundles, then any font on this computer its owner adopted.
+export const TYPEFACES: Array<{ id: string; label: string; stack: string; kind: "sans" | "serif" | "mono" }> = TYPEFACE_LIST;
 
 export function typefaceStack(id: string | undefined): string {
   return (TYPEFACES.find((face) => face.id === id) ?? TYPEFACES[0]).stack;

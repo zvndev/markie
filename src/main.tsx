@@ -8,6 +8,12 @@ import { getElectronAPI } from "./lib/electron";
 import { registerOfflineApp } from "./lib/offline-app";
 import { appRoute } from "./lib/app-route";
 import { PrivateReleaseGate } from "./components/private-release-gate";
+import { installBundledFonts } from "./lib/fonts/bundled-fonts";
+import { startCodeFont } from "./lib/fonts/code-font";
+
+// The fonts Markie ships: declared once, each file read only when used.
+installBundledFonts();
+startCodeFont();
 
 const DocumentWorkbench = lazy(() => import("./components/document-workbench").then((module) => ({ default: module.DocumentWorkbench })));
 const route = appRoute(window.location.search, !!getElectronAPI(), import.meta.env.DEV);

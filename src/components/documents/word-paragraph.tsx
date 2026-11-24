@@ -2,6 +2,8 @@ import { useLayoutEffect, useRef } from "react";
 import type { DocxParagraph, DocxTextEdit } from "@/lib/office/docx";
 import { paragraphInput } from "./word-input";
 import { displayRunColor } from "./word-colors";
+import { officeFontStack } from "@/lib/fonts/registry";
+import type { WordFontStack } from "./word-fonts";
 
 function caretOffset(root: HTMLElement): number | null {
   const selection = window.getSelection();
@@ -64,10 +66,12 @@ interface WordParagraphProps {
   reconcileToken?: number;
   /** Live page background; authored run colors adapt to it on screen only. */
   pageBackground?: string | null;
+  /** How a font name is painted: the document's embedded copy, the installed font, then a bundled stand-in. */
+  fontStack?: WordFontStack;
   onRemovePageBreaks: (ids: string[]) => void;
   onRejectStructure: (message: string) => void;
 }
-export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, onRuns, onSplit, onPasteParagraphs, onSelection, trackText = false, reconcileToken = 0, pageBackground = null, onRemovePageBreaks, onRejectStructure }: WordParagraphProps) {
+export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, onRuns, onSplit, onPasteParagraphs, onSelection, trackText = false, reconcileToken = 0, pageBackground = null, fontStack = officeFontStack, onRemovePageBreaks, onRejectStructure }: WordParagraphProps) {
   const root = useRef<HTMLDivElement>(null);
   const pendingCaret = useRef<number | null>(null);
   const composing = useRef(false);
@@ -125,7 +129,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
         fontWeight: style.bold ? "700" : "400", fontStyle: style.italic ? "italic" : "normal",
         textDecoration: style.underline === "none" ? "none" : style.underline || run.hyperlinkId ? "underline" : "none",
         color: runColor(run, pageBackground),
-        fontFamily: style.fontFamily ?? "", fontSize: style.fontSizePoints ? `${style.fontSizePoints}pt` : "",
+        fontFamily: fontStack(style.fontFamily), fontSize: style.fontSizePoints ? `${style.fontSizePoints}pt` : "",
       });
       span.dataset.expectedStyle = span.getAttribute("style") ?? "";
       return span;
@@ -140,7 +144,7 @@ export function WordParagraph({ paragraph, index, readOnly, selected, onSelect, 
       }
     }
     else if (offset !== null) placeCaret(node, offset);
-  }, [paragraph, trackText, reconcileToken, readOnly, pageBackground]);
+  }, [paragraph, trackText, reconcileToken, readOnly, pageBackground, fontStack]);
   const emit = () => {
     const node = root.current!;
     const reject = (message: string) => {

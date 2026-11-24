@@ -16,6 +16,7 @@ import type { AppCommand } from "@/lib/commands";
 import documentMenuCommands from "../../../electron/document-menu-commands.json";
 import { WordParagraph } from "./word-paragraph";
 import { useWordPageBackground } from "./word-colors";
+import { documentFontNames, useInstalledFonts, useWordFonts, wordFontChoices } from "./word-fonts";
 import { WordToolsDialog, type WordTool } from "./word-toolbar";
 import { WordImage } from "./word-images";
 import type { WordTextMatch } from "./word-find";
@@ -24,7 +25,6 @@ import "./document-workspace.css";
 interface WordDocumentEditorProps<T extends RichDocument> { document: T; readOnly?: boolean; /** A read view (the web's /d/ page): no formatting toolbar, since nothing in it can be used. */ reading?: boolean; isReadOnly?: () => boolean; onChange: (document: T) => void; onCommandsReady?: (target: DocumentCommandTarget | null) => void; onHistory?: () => void }
 const WORD_ACTIONS: readonly FormattingAction[] = ["undo", "redo", "bold", "italic", "underline", "link", "image", "bullet", "ordered", "align-left", "align-center", "align-right", "clear"];
 const LAYOUT_BUTTON = "h-7 min-w-7 px-1.5 rounded flex items-center justify-center shrink-0 transition-colors text-muted hover:text-foreground hover:bg-accent/40 aria-pressed:bg-accent aria-pressed:text-foreground disabled:opacity-35 disabled:hover:bg-transparent";
-const WORD_FONTS = ["Arial", "Calibri", "Georgia", "Times New Roman", "Helvetica"];
 const WORD_STYLES = [{ id: "", label: "Default paragraph" }, { id: "Normal", label: "Normal" }, { id: "Heading1", label: "Heading 1" }, { id: "Heading2", label: "Heading 2" }, { id: "Heading3", label: "Heading 3" }];
 function commonValue<T>(values: readonly T[]): T | "mixed" | undefined {
   return values.length && values.some((value) => value !== values[0]) ? "mixed" : values[0];
@@ -48,6 +48,8 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
   const [selectionRevision, setSelectionRevision] = useState(0);
   const [selectionSupported, setSelectionSupported] = useState(true);
   const pageBackground = useWordPageBackground();
+  const fontStack = useWordFonts(document);
+  const installedFonts = useInstalledFonts();
   type Snapshot = { document: T; selection: RichTextRange | null };
   const undoHistory = useRef<Snapshot[]>([]), redoHistory = useRef<Snapshot[]>([]);
   const logicalSelection = useRef<RichTextRange | null>(null), pendingSelection = useRef<RichTextRange | null>(null);
@@ -373,7 +375,7 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     if (!paragraph) return null;
     const images = document.images.filter((image) => image.paragraphId === id);
     const shown = originalView && paragraph.originalRuns ? { ...paragraph, text: paragraph.originalText ?? paragraph.text, runs: paragraph.originalRuns } : paragraph;
-    const field = <WordParagraph key={id} paragraph={shown} index={document.paragraphs.indexOf(paragraph)} selected={selected === id} readOnly={blocked || originalView || !!tool || paletteOpen || (!tracking && paragraph.revisionIds.length > 0)} trackText={tracking} reconcileToken={reconcileToken} pageBackground={pageBackground}
+    const field = <WordParagraph key={id} paragraph={shown} index={document.paragraphs.indexOf(paragraph)} selected={selected === id} readOnly={blocked || originalView || !!tool || paletteOpen || (!tracking && paragraph.revisionIds.length > 0)} trackText={tracking} reconcileToken={reconcileToken} pageBackground={pageBackground} fontStack={fontStack}
       onSelect={(paragraphId, selectedRun) => { if (paragraphId !== selected) { textSelection.current = null; setSelectionSupported(true); } setSelected(paragraphId); setRunId(selectedRun); }}
       onReplace={(paragraphId, text) => apply([tracking ? { type: "track-paragraph-text", paragraphId, text, author: reviewAuthor.trim() } : { type: "replace-paragraph", paragraphId, text }])}
       onRuns={(edits) => {
@@ -436,7 +438,8 @@ export function WordDocumentEditor<T extends RichDocument>({ document, readOnly 
     fontFamily: commonValue(effectiveStyles.map((style) => style.fontFamily)), fontSizePoints: commonValue(effectiveStyles.map((style) => style.fontSizePoints)),
     color: commonValue(effectiveStyles.map((style) => style.color?.toLowerCase())),
   };
-  const fonts = useMemo(() => [...new Set([...WORD_FONTS, ...document.paragraphs.flatMap((item) => item.runs.map((item) => (item.resolvedStyle ?? item.style).fontFamily).filter((font): font is string => !!font))])].map((font) => ({ id: font, label: font })), [document.paragraphs]);
+  // The document's own fonts, then the bundled ones, then the installed ones. The id is the real name, which is what a save writes.
+  const fonts = useMemo(() => wordFontChoices(documentFontNames(document), installedFonts), [document, installedFonts]);
   const styleId = paragraph?.styleId;
   const styles = useMemo(() => [...new Map([...WORD_STYLES, ...document.styles.map((style) => ({ id: style.id, label: style.name || style.id })), ...(styleId ? [{ id: styleId, label: document.styles.find((style) => style.id === styleId)?.name || styleId }] : [])].map((style) => [style.id, style])).values()], [document.styles, styleId]);
   const editable = !blocked && !originalView, editableSelection = editable && selectionSupported && !!selectedRuns.length && selectedRuns.every((item) => item.canEdit);

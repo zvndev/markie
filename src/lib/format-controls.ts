@@ -16,7 +16,8 @@ export interface FormattingToolbarProps {
   currentStyle: string;
   styles?: readonly { id: string; label: string }[];
   currentFont: string;
-  fonts?: readonly { id: string; label: string }[];
+  /** A `group` gathers choices under a heading; ungrouped choices come first. A `stack` shows the choice in its own face where the menu can. */
+  fonts?: readonly { id: string; label: string; group?: string; stack?: string }[];
   selecting: boolean;
   currentSize: number | null;
   fontPlaceholder?: string;

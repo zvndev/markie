@@ -206,6 +206,23 @@ export async function loadDocLinks(id: string, fetcher: Fetch = fetch): Promise<
   }
 }
 
+/**
+ * The look its owner pinned to a text document (server/src/themes.ts GET
+ * /docs/:id/theme), as the server stored it, or null when there is none or
+ * the server could not say. It is another account's data: view-theme.ts
+ * decides what of it is used.
+ */
+export async function loadDocTheme(id: string, fetcher: Fetch = fetch): Promise<unknown> {
+  if (!DOC_ID.test(id)) return null;
+  try {
+    const { status, data } = await request(`/api/docs/${encodeURIComponent(id)}/theme`, {}, fetcher);
+    if (status !== 200 || !data || typeof data !== "object") return null;
+    return (data as { tokens?: unknown }).tokens ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** How many of a document's references the share dialog asks about. */
 export const MAX_ASSET_CHECKS = 50;
 

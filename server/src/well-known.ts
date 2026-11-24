@@ -8,6 +8,7 @@
 // redirects /auth and /account pages, so these are served on every name the
 // server answers to.
 import { Hono } from "hono";
+import { OFFICIAL_HOSTS } from "./official.ts";
 
 export const MOBILE_APP_ID = "com.zvn.markie.mobile";
 export const APPLE_TEAM_ID = "3VU8SG5TD9";
@@ -23,7 +24,8 @@ export const MOBILE_RETURN_PATH = "/auth/mobile-return";
 
 /**
  * The origin the sign-in page's "Return to Markie" button points at, or null
- * when this server has no host the app claims. Only Markie Cloud has one.
+ * when this server has no host the app claims. Only Markie Cloud has one, and
+ * only when it is running at one of its own addresses.
  * It is never the host the sign-in page itself is on: iOS keeps a link to
  * the page's own host in the browser, and hands the app only a link to
  * another one.
@@ -31,6 +33,11 @@ export const MOBILE_RETURN_PATH = "/auth/mobile-return";
 export function verifiedReturnOrigin(d: { official: boolean; origin: string; docsOrigin: string | null }): string | null {
   if (!d.official) return null;
   const own = new URL(d.origin).host;
+  // MARKIE_OFFICIAL unset reads as official (deployment.ts), so a local or
+  // self-hosted server that forgot MARKIE_OFFICIAL=0 lands here too. It is
+  // not at one of Markie Cloud's addresses, and must not send its sign-ins
+  // back through Markie Cloud's site.
+  if (!OFFICIAL_HOSTS.has(own)) return null;
   const hosts: readonly string[] = MOBILE_LINK_HOSTS;
   const candidates = [...(d.docsOrigin ? [new URL(d.docsOrigin).host] : []), ...hosts];
   const host = candidates.find((candidate) => hosts.includes(candidate) && candidate !== own);

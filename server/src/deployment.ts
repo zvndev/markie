@@ -12,7 +12,7 @@
 // a warning at boot, never the weaker one.
 import { readFileSync } from "node:fs";
 import { downloadManifest, markieSiteUrl } from "./downloads.ts";
-import { CLOUD_API_ORIGIN, CLOUD_API_LEGACY_ORIGINS, CLOUD_API_ORIGINS, cloudApiAliases, officialFlag } from "./official.ts";
+import { CLOUD_API_ORIGIN, CLOUD_API_LEGACY_ORIGINS, CLOUD_API_ORIGINS, OFFICIAL_HOSTS, cloudApiAliases, officialFlag } from "./official.ts";
 
 export { CLOUD_API_ORIGIN, CLOUD_API_LEGACY_ORIGINS, CLOUD_API_ORIGINS, officialFlag };
 
@@ -45,14 +45,6 @@ export interface Deployment {
 type Env = Record<string, string | undefined>;
 
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, "");
-
-// Hosts the official deployment is reached on. Only used to decide whether an
-// unset MARKIE_OFFICIAL deserves a warning; it never turns a server official.
-const OFFICIAL_HOSTS = new Set([
-  ...CLOUD_API_ORIGINS.map((origin) => new URL(origin).host),
-  "markiedocs.com",
-  "www.markiedocs.com",
-]);
 
 export function resolveDeployment(env: Env = process.env, warn: (message: string) => void = console.warn): Deployment {
   const official = officialFlag(env);

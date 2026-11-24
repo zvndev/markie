@@ -4,7 +4,7 @@ Sections 10, 11, 12, 14, 21 and 30 of [PARITY.md](PARITY.md), checked against Ma
 
 ## Score
 
-**Parity: 95.0%** (73 PASS + 3 IMPROVEMENT ÷ 80 rows counted; 83 rows, 1 EXCLUDED, 2 EXCLUDED-NIGHTLY), rescored on 2026-11-23: 30.1, 14.1.1, its group 14.1 and 21.1.4 passed the background comparison (`SCREEN.md`). The same day (branch `t3/markie-rs-home-pages`) 14.1.2, 14.1.3 and 30.1 became IMPROVEMENT: the Cloud page has its own calmer layout. The total does not move. Local comments (12.2, 12.2.1) ship only in super-nightly Electron builds.
+**Parity: 94.0%** (75 PASS + 3 IMPROVEMENT ÷ 83 rows counted, after the three Markdown style rows of 2026-11-24 at the end of this file). Before them: **95.0%** (73 PASS + 3 IMPROVEMENT ÷ 80 rows counted; 83 rows, 1 EXCLUDED, 2 EXCLUDED-NIGHTLY), rescored on 2026-11-23: 30.1, 14.1.1, its group 14.1 and 21.1.4 passed the background comparison (`SCREEN.md`). The same day (branch `t3/markie-rs-home-pages`) 14.1.2, 14.1.3 and 30.1 became IMPROVEMENT: the Cloud page has its own calmer layout. The total does not move. Local comments (12.2, 12.2.1) ship only in super-nightly Electron builds.
 
 | Status | Rows |
 |---|---|
@@ -225,3 +225,16 @@ The smaller differences pass 2 noted, each fixed and captured:
 
 Safety note: one stray click opened a shared document in Electron, which saves those into the real `~/Downloads` whatever HOME says. The file (`From Bob.md`, 29 bytes, the scratch server's test text) was removed at once, and again when Electron's sync wrote it back; Electron's record of it was then removed with Remove from Library. Nothing else in Kirby's folders was touched.
 
+## Markdown styles, 2026-11-24
+
+Electron PR #150, ported on branch `t3/markie-rs-styles-fonts` ([STYLES-FONTS.md](STYLES-FONTS.md)). Three rows. The score is now **78 of 83 = 94.0 %**.
+
+| Item | Row | Status | Evidence |
+|---|---|---|---|
+| The account's styles sync through the theme store, in Electron's JSON shape | 30.L1 | PASS | `theme::tests::a_store_from_electron_keeps_its_styles_and_local_fonts`; the store is sent by the existing `PUT /api/me/themes` path |
+| Share › Appearance › "Readers see my look": pin, unpin, Update when drifted, the failure line | 30.L2 | NEEDS-CAPTURE | `pinned_look::tests` (the body sent, the state read, the lines); `share.rs` `share_set_look` |
+| A reader gets the owner's style and faces with the pinned theme | 30.L3 | PASS | `pinned_look::tests`, `doc_theme::tests` |
+
+30.L2 was not drawn against a server. The scene servers run this branch's own `server/`, which predates `docs.enforced_style`. Capture steps: start the scene servers from the Electron checkout's `server/`, run the `share` scene as the owner, and shoot `ShareDialog` beside it.
+
+A pinned look now shows in either mode, as Electron's does. Before, Markie RS painted it only in the mode its background belonged to.

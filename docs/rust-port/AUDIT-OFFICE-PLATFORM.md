@@ -1,6 +1,6 @@
 # Markie RS Office and platform parity audit
 
-macOS score: **94.92% (52 PASS + 4 IMPROVEMENT ÷ 59 eligible)**, rescored on 2026-11-22 after Kirby excluded the crash report format rows (27.427, 27.431). 105 rows: 52 PASS, 4 IMPROVEMENT (vault, 2026-11-23), 0 FAIL,
+macOS score: **95.08% (54 PASS + 4 IMPROVEMENT ÷ 61 eligible)** after the two font rows of 2026-11-24 (end of this file). Before them: **94.92% (52 PASS + 4 IMPROVEMENT ÷ 59 eligible)**, rescored on 2026-11-22 after Kirby excluded the crash report format rows (27.427, 27.431). 105 rows: 52 PASS, 4 IMPROVEMENT (vault, 2026-11-23), 0 FAIL,
 41 EXCLUDED, 5 EXCLUDED-PLATFORM, 0 NEEDS-CAPTURE, and 3 NEEDS-KIRBY (Touch ID, checked by Kirby in person).
 All 93 inventory bullets are represented. Both exclusion classes stay out of the denominator.
 
@@ -300,3 +300,12 @@ was not clicked because the desktop clipboard is shared.
 
 The final Rust run, `cargo test --workspace`, passed **990 tests**, with 0
 failures and 2 ignored. The ignored Keychain tests were not run.
+
+## Fonts in Office documents, 2026-11-24
+
+Electron PR #151, ported on branch `t3/markie-rs-styles-fonts` ([STYLES-FONTS.md](STYLES-FONTS.md)). Two rows, both PASS. The macOS score is now **58 of 61 = 95.1 %**.
+
+| ID | Inventory item | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 17.F1 | Office stand-ins (Carlito, Caladea, Arimo, Tinos, Cousine, Gelasio) used only when the real font is missing; the name in the file never changes | PASS | Core `fonts::tests::office_fonts_take_the_stand_in_only_when_the_real_one_is_missing` (stacks held to Electron's); Word `view.rs` | |
+| 17.F2 | A Word file's embedded fonts (`.odttf`) are shown and kept on save | PASS | Office `docx::fonts::tests`, `tests/docx_fonts.rs` (parts identical after an edit and a save); App `office.rs` `load_embedded_fonts` | Loaded under the font's own family name for the life of the app, where Electron uses a private alias for the page. |

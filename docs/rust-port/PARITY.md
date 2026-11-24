@@ -439,6 +439,8 @@ Some user data lives inside Chromium's own storage, not in plain files:
   - Style templates (Markie, Paper, Nord, Solarized, Ink, Rosé, Forest, Studio), each with a light and dark variant.
   - Light, dark or system colour mode.
   - Custom presets: colour tokens plus typography (typeface, size, content width).
+  - Markdown styles (added 2026-11-23, zvndev/markie#150): six presets (Spacious, Compact, Classic, Technical, Editorial, Minimal), saved styles of one's own, a style editor with a live sample, and "Readers see my look" in Share. See `STYLES-FONTS.md`.
+  - Font library (added 2026-11-23, zvndev/markie#151): 26 bundled families, a code font, fonts installed on this computer, Office stand-ins and fonts embedded in Word files.
   - Themes follow the account across devices. An owner can pin a theme to a shared document.
 - **Files:** `src/components/settings.tsx` (890); `src/lib/theme.ts` (827), `color-mode.ts`, `theme-sync.ts`, `katex-css.generated.ts`, `src/app/globals.css`.
 - **Compatibility:**

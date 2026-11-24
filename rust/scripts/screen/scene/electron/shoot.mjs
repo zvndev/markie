@@ -7,7 +7,8 @@
 // jobs.json: [{scene, theme, out, args, session?: {primary?: {origin, token,
 // user}, servers?: [{origin, name, token?, user?}]}, steps?: [...]}]
 // Steps run inside the page, in order: {fill: selector, text}, {press: key},
-// {select: selector, value}, {click: text}, {wait: ms}.
+// {select: selector, value}, {click: text}, {wait: ms}. A job may also set
+// `viewport` ({width, height}) and `ready` (the selector that says it drew).
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -37,7 +38,7 @@ const browser = await chromium.launch({ headless: true, executablePath: headless
 try {
   for (const job of jobs) {
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 820 },
+      viewport: job.viewport ?? { width: 1280, height: 820 },
       deviceScaleFactor: 2,
       colorScheme: job.theme === "dark" ? "dark" : "light",
     });
@@ -95,10 +96,12 @@ try {
       if (step.wait) await page.waitForTimeout(step.wait);
     }
     await page.waitForLoadState("networkidle");
+    // Bundled faces load when text is first set in them.
+    await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(job.settle ?? 800);
     // No caret blink or hover in the shot. `blur` drops focus too, to match
     // a Markie RS scene, whose window is never the active one.
-    await page.mouse.move(1279, 819);
+    await page.mouse.move((job.viewport?.width ?? 1280) - 1, (job.viewport?.height ?? 820) - 1);
     if (job.blur) await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());
     await page.screenshot({ path: job.out });
     console.log(`wrote ${job.out}`);

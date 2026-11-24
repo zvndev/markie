@@ -21,6 +21,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/markie-rs "$APP/Contents/MacOS/markie-rs"
 cp -R ../mcp "$APP/Contents/Resources/mcp"
 cp crates/markie-agent/mcp/markie-rs-mcp.mjs "$APP/Contents/Resources/markie-rs-mcp.mjs"
+# The bundled fonts are inside the binary; each family's own license text
+# ships beside it, readable without running the app.
+mkdir -p "$APP/Contents/Resources/font-licenses"
+for dir in ../src/assets/fonts/*/; do
+  cp "$dir/LICENSE.txt" "$APP/Contents/Resources/font-licenses/$(basename "$dir").txt"
+done
 ICON_SRC="../build/icons/512x512.png"
 if [[ -f "$ICON_SRC" ]]; then
   ICONSET="$(mktemp -d)/markie-rs.iconset"

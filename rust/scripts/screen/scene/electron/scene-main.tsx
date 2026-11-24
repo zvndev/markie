@@ -8,6 +8,13 @@ import { applyColorMode } from "@/lib/color-mode";
 import { ShareDialog } from "@/components/share-dialog";
 import { DocumentCloudDialog } from "@/components/document-cloud-dialog";
 import { Settings } from "@/components/settings";
+import { RichView } from "@/components/rich-view";
+import { installBundledFonts } from "@/lib/fonts/bundled-fonts";
+import { startCodeFont } from "@/lib/fonts/code-font";
+import { renderMarkdownHTML } from "@/lib/markdown-html";
+import { chooseMarkdownStyle } from "@/lib/markdown-style";
+import { sanitizeMarkdownStyleStore } from "@/lib/markdown-style-schema";
+import { commitMarkdownStyleStore, loadMarkdownStyleStore } from "@/lib/markdown-style-store";
 
 const params = new URLSearchParams(location.search);
 const scene = params.get("scene") ?? "";
@@ -23,7 +30,43 @@ function OfficeCloud() {
   return <DocumentCloudDialog file={{ name: args.file.split("/").pop(), bytes }} onClose={() => {}} />;
 }
 
+// A document in a Markdown style: `file` (a Markdown file), `style` (a preset
+// id, or a whole style store) and `surface`: "rich" is the editing view
+// (TipTap, what Markie RS's View draws), "read" the rendered page a shared
+// link shows. The style and fonts are set up the way the app's boot does.
+function Doc() {
+  const [md, setMd] = useState<string | null>(null);
+  useEffect(() => {
+    fetch(`/@fs${args.file}`).then((r) => r.text()).then(setMd);
+  }, []);
+  if (md === null) return null;
+  if (args.surface === "read") {
+    return (
+      <div className="markie-document-scroll" data-scene-doc>
+        <article
+          className="markdown-body markie-document-canvas mx-auto"
+          style={{ width: "min(100%, var(--doc-width, 768px))", fontSize: "var(--doc-font-size, 16px)", fontFamily: "var(--doc-font-family, inherit)" }}
+          dangerouslySetInnerHTML={{ __html: renderMarkdownHTML(md) }}
+        />
+      </div>
+    );
+  }
+  return (
+    <div style={{ height: "100%" }} data-scene-doc>
+      <RichView value={md} onChange={() => {}} />
+    </div>
+  );
+}
+
+if (scene === "doc" || scene === "style-settings") {
+  installBundledFonts();
+  startCodeFont();
+  const styles = typeof args.style === "string" ? chooseMarkdownStyle(loadMarkdownStyleStore(), args.style) : sanitizeMarkdownStyleStore(args.style);
+  if (styles) commitMarkdownStyleStore(styles);
+}
+
 function Scene() {
+  if (scene === "doc") return <Doc />;
   if (scene === "share") {
     return <ShareDialog docId={args.doc_id} fileName={args.file_name} body={args.body ?? ""} onClose={() => {}} onChanged={() => {}} />;
   }

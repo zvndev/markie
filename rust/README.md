@@ -5,6 +5,7 @@ The native Rust build of desktop Markie. A side project on branch `rust/markie-r
 - Research and the answer to "can Rust do everything": `docs/rust-port/RESEARCH.md`
 - Phases, finish lines and estimates: `docs/rust-port/PLAN.md`
 - What desktop Markie does today, feature by feature: `docs/rust-port/PARITY.md`
+- Markdown styles and the font library, and how their data is regenerated from Electron: `docs/rust-port/STYLES-FONTS.md`
 
 ## Layout
 

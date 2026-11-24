@@ -6,7 +6,7 @@ Sections: PARITY.md 15, 16, 18, 19 and 23.
 
 ## Score
 
-Parity score: **53 / 53 = 100%**. That is PASS over all 67 rows less the 14 excluded ones (13 nightly, 1 Windows). No row needed plain EXCLUDED: nothing in these sections is the updater, the terminal, the Recovered list, sign-in moving, file-type claims or the private-release gate.
+Parity score: **54 / 55 = 98.2%** after the two export rows of 2026-11-24 (end of this file). Before them: **53 / 53 = 100%**. That is PASS over all 67 rows less the 14 excluded ones (13 nightly, 1 Windows). No row needed plain EXCLUDED: nothing in these sections is the updater, the terminal, the Recovered list, sign-in moving, file-type claims or the private-release gate.
 
 | Status | Rows |
 |---|---|
@@ -216,3 +216,13 @@ Branch `t3/markie-rs-shell-fixes`, Electron 0.9.7 against the release bundle at 
 
 Score: 52 of 53 PASS. 18.13 moves to PASS. With V2 recaptured here, V3 and V4 checked in pass 2 and V5 in pass 1, no visual check is outstanding.
 
+## Markdown styles and fonts in exports, 2026-11-24
+
+Electron PRs #150 and #151, ported on branch `t3/markie-rs-styles-fonts` ([STYLES-FONTS.md](STYLES-FONTS.md)). Two rows. The score is now **54 of 55 = 98.2 %**.
+
+| Row | Item | Status | Evidence |
+|---|---|---|---|
+| 23.S1 | Export HTML is drawn in the style on screen and carries the bundled fonts it uses | PASS | `styles::tests`: the style block is `markdownStyleCss` (held to Electron's output in `markdown_style::tests`) with Electron's `STYLE_VARS`; the font sheet has the same rules and the woff2 files as data URLs. Spacious adds nothing: the page is the same bytes |
+| 23.S2 | Export PDF and print are drawn in the style and its fonts | FAIL | `tests/pdf.rs` `every_markdown_style_exports_to_pdf`: five presets, both themes, each in its own faces; Spacious writes the same Typst source as before |
+
+23.S2 is open for two reasons. The PDF does not yet apply inline code style, task style, picture options, table density, list indent or the space between list items. And no style PDF was compared with Electron's, as row 23.1 was.

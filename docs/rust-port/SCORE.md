@@ -1,17 +1,19 @@
 # Markie RS parity score
 
-The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move).
+The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move), then on 2026-11-24 branch `t3/markie-rs-styles-fonts` (Electron's Markdown styles and font library: 16 new rows, 11 of them met).
 
 ## Overall
 
 | Audit | Counted | Meets parity | Score |
 |---|---|---|---|
-| [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 53 | 53 | 100% |
-| [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 80 | 76 | 95.0% |
+| [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 55 | 54 | 98.2% |
+| [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 83 | 78 | 94.0% |
 | [Editors, autosave, history](AUDIT-EDITORS.md) | 53 | 48 | 90.6% |
-| [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 91 | 91 | 100% |
-| [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 59 | 56 | 94.9% |
-| **Total** | **336** | **324** | **96.4%** |
+| [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 100 | 97 | 97.0% |
+| [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 61 | 58 | 95.1% |
+| **Total** | **352** | **335** | **95.2%** |
+
+The total was 324 of 336 (96.4%) before Electron shipped Markdown styles and the font library. Those added 16 rows; 11 are met and 5 are open, so the share fell while the count met rose.
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -26,6 +28,7 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
   - Browse as a page: "Documents on this Mac" with a folder tree, the chosen folder's contents, a breadcrumb, counts, the last check, and matches shown with their folder (library 3.1). Numbers are unchanged: the row was PASS;
   - Recent as a page: recent documents as cards that show the start of each one, grouped by day, with Starred, grid or list and "Missing on disk"; a launch with no file opens on it (library 1.2). Numbers are unchanged: the row was PASS;
   - the Cloud page's layout: one header, one toolbar row, share requests as a one-line strip that opens, and documents and snapshots as cards (cloud 14.1.2, 14.1.3, 30.1). Numbers are unchanged: these rows were PASS;
+  - a style's picture placement and captions drawn in View, where Electron's editing view ignores them (library 28.S3);
   - the vault's calmer layout, Touch ID first unlock, icon row actions and copy countdown (office 22.374, 22.375, 22.376, 22.378). Numbers are unchanged: these rows were PASS.
 - **Excluded:** the database layout (library 2.2, 2.3, 2.8) and the crash report file format (office 27.427, 27.431).
 - **Nightly-only features are out of the stable score** (EXCLUDED-NIGHTLY), as each audit already applied. Local comments (cloud 12.2, 12.2.1) were rescored on that rule.
@@ -34,7 +37,7 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
 
 Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 
-## What is still open (12 rows)
+## What is still open (17 rows)
 
 | Rows | What closes them |
 |---|---|
@@ -43,5 +46,8 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Editors 8.6 and group 8.0 | One real trackpad pinch by Kirby |
 | Editors 7.9 | The 50 MB timing, run with the speed comparison on a quiet Mac |
 | Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
+| Library 28.S4, 28.S5, 28.F2 | Set the Markdown style section, the style editor and the open font menus beside Electron's (scene `style-settings`; steps in the audit) |
+| Cloud 30.L2 | Draw "Readers see my look" against a server that has `docs.enforced_style` |
+| Export 23.S2 | Finish the style in the PDF (inline code, tasks, pictures, table density, list spacing) and compare a style PDF with Electron's |
 
-If every row above closes except the last two, the score is 334 of 336, which is 99.4%.
+If every row above closes except editors 7.4 and 7.0, the score is 350 of 352, which is 99.4%.

@@ -41,6 +41,7 @@ SCENE_SERVER=http://localhost:18991 rust/scripts/screen/scene.sh <scene> <out.pn
 | Scene | Args | State |
 |---|---|---|
 | `doc` | none | The file passed on the command line |
+| `style-settings` | optional `editor: true`, `group` (an element id such as `tables`), `edit` (choices to change first, `{"tableStyle": "zebra"}`), `face` (`body`, `heading`, `code`, `style-body`) | Settings › Appearance with the Markdown style section; the style editor, one of its elements and a font menu, opened the way their buttons open them |
 | `share` | `token`, `doc_id`, `file_name`, optional `pending` (addresses), `query`, `role: "editor"`, `menu` | Share dialog for a cloud document, loaded |
 | `office-cloud` | `token`, optional `upload: true` | The open office file's cloud dialog, before or after Create a cloud copy |
 | `servers` | `token`, `second_origin`, `email`, `password`, optional `stop` (`confirm`, `added`, `form`) | Settings › Advanced with the second server added and signed in |
@@ -50,6 +51,8 @@ SCENE_SERVER=http://localhost:18991 rust/scripts/screen/scene.sh <scene> <out.pn
 | `launch` | as `recent` | What a launch with no file shows after the first one: the Recent page over the empty page. With no `recents`, the empty state |
 | `library` | `recents` | The Library panel's Recent list beside the file passed on the command line |
 | `cloud` | optional `token` (signed out without it), `recents`, `sync` (local files to turn sync on for), `snapshots` (office files to upload once), `min_docs`, `min_requests`, `second_origin` with `email` and `password` (adds and signs in to a second server first); then `requests_open: true`, `view: "list"`, `sources` (`only-me`, `by-me`, `with-me`), `menu`: `area`, `type`, `sort`, `row` | The Cloud page: signed out, empty, or signed in with documents, share requests and snapshots, once every thumbnail is in |
+
+Every scene also takes `style` (a Markdown style preset id, or a whole style store as JSON), `template` (a colour template id) and `code_font`. `MARKIE_RS_SCENE_SIZE=1280x1000` sets the window size; macOS keeps a window no taller than the screen. The Markdown style gallery (`scene/style-gallery.py`, [STYLES-FONTS.md](STYLES-FONTS.md)) draws the Lighthouse sample in four parts for that reason.
 
 #### Browse scenes
 

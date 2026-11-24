@@ -4,7 +4,7 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 91 of 91 = 100 % (89 PASS and 2 IMPROVEMENT).** Row 3.1 became an IMPROVEMENT on 2026-11-23 (branch `t3/markie-rs-browse-ux`): Browse is a page, not Electron's narrow panel. Row 1.2 became one the same day (branch `t3/markie-rs-home-pages`): Recent is a page of document cards, and a launch with no file opens on it. Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
+**Parity: 97 of 100 = 97.0 % (94 PASS and 3 IMPROVEMENT; 3 NEEDS-CAPTURE), after the nine Markdown style and font rows of 2026-11-24 (end of this file). Before them: 91 of 91.** Row 3.1 became an IMPROVEMENT on 2026-11-23 (branch `t3/markie-rs-browse-ux`): Browse is a page, not Electron's narrow panel. Row 1.2 became one the same day (branch `t3/markie-rs-home-pages`): Recent is a page of document cards, and a launch with no file opens on it. Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
 
 | Count | Rows |
 |---|---|
@@ -230,3 +230,21 @@ Each one is light and dark at 1280 x 820, the same fixture in both apps, per SCR
 - `cargo test --workspace` after merging e8e8e07: 1073 passed, 0 failed, 2 ignored.
 - `node --import ./rust/scripts/ts-run/register.mjs rust/scripts/parity/library-settings-parity.mjs`: regenerates the fixture from Electron's code.
 - `local-parity.mjs` on `.autoloop/runs/library-settings/home`: all match. Five search queries were checked for order, name hits and excerpts, plus the Projects tree and the ignored count.
+
+## Markdown styles and fonts, 2026-11-24
+
+Electron PRs #150 and #151, ported on branch `t3/markie-rs-styles-fonts` ([STYLES-FONTS.md](STYLES-FONTS.md)). Nine rows. Six meet parity; three need a capture. The section score is now **97 of 100 = 97.0 %**.
+
+| ID | Item | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 28.S1 | Six presets with Electron's choices, numbers and type pairings; stored styles cleaned and resolved the same way | PASS | `markdown_style::tests` against `markdown-style-golden.json` (made by Electron's own functions) | The lists are generated from Electron's modules. |
+| 28.S2 | Every style option drawn in View: headings, paragraphs, lists, tasks, tables, quotes, code, dividers, links | PASS | `.autoloop/runs/styles-fonts/GALLERY.md`: six presets, light and dark, beside Electron's editing view; `md::tests` | Line pitch runs about 1 % taller in lists. |
+| 28.S3 | Picture placement, frame, corner radius and captions | IMPROVEMENT | Gallery, Editorial and Classic | Electron's editing view ignores placement and captions; its read view draws them. Markie RS draws them in View. |
+| 28.S4 | Settings › Markdown style: cards drawn by the renderer, In use, Delete, Rename, Duplicate, Customize | NEEDS-CAPTURE | `style_ui.rs`; scene `style-settings` (`ui/rs-settings-light.png`) | Drawn and read against the source. Not yet set beside Electron's section. |
+| 28.S5 | Style editor: start from, thirteen elements, reset an element, save as, save to, discard, live sample | NEEDS-CAPTURE | `style_ui.rs`; scene `style-settings` with `editor: true` (`ui/rs-editor-dark.png`); store transitions held to Electron's by `the_store_transitions_are_electrons` | As 28.S4. Clicks and the sliders need a screen session. |
+| 28.S6 | Spacious is unchanged | PASS | Six frames before and after, light and dark: 0 differing pixels (`spacious/`) | Baseline binary built from a55cbae. |
+| 28.F1 | Font library: the same 26 families, ids and files, licenses shipped | PASS | `fonts::tests` (SHA-256 of all 54 files), `native::tests` (all 54 register) | Licenses are in the binary and in the bundle's `Resources/font-licenses`. |
+| 28.F2 | Body, heading and code menus with every face under its group, drawn in itself; fonts on this computer; the bundled list | NEEDS-CAPTURE | `style_ui::tests`; `fonts::tests` for the `local:` ids | The open menus were not captured. |
+| 28.F4 | Fonts layered template, then style, then the person's own | PASS | `theme::tests::fonts_are_layered_template_then_style_then_the_persons_own` | |
+
+Capture steps: `scene.sh style-settings <out> light '{"style":"technical"}' <file>`, then the same with `"editor":true,"group":"tables"` and with `"face":"body"`; mount `MarkdownStyleSection` in `scene-main.tsx` for the Electron side.

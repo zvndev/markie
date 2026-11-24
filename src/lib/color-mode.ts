@@ -23,6 +23,7 @@ import {
   type ThemeStore,
   type ThemeTone,
 } from "./theme";
+import { activeMarkdownStyle, applyMarkdownStyle, markdownStyleStoreOf } from "./markdown-style";
 
 export type ColorMode = "system" | "light" | "dark";
 export const COLOR_MODE_CHANGED_EVENT = "markie:color-mode-changed";
@@ -64,6 +65,9 @@ export function commitThemeStore(store: ThemeStore, tone: ThemeTone = resolveCol
   const next: ThemeStore = { ...store, activeId: preset.id };
   saveThemeStore(next);
   applyTheme(findTheme(next, preset.id).tokens);
+  // The Markdown style rides in the same store and is painted with it, so
+  // boot, a mode change and Settings all draw the style the store names.
+  applyMarkdownStyle(activeMarkdownStyle(markdownStyleStoreOf(next)));
   return next;
 }
 

@@ -265,6 +265,8 @@ function fakeApi(seat: Seat) {
     shares: vi.fn(async () => seat.members ?? [{ userId: "u2", email: "carol@example.com", name: "Carol", role: "viewer", pending: false }]),
     publicLink: vi.fn(async () => null),
     docTheme: vi.fn(async () => null),
+    docLook: vi.fn(async () => null),
+    publicLook: vi.fn(async () => null),
     asset: vi.fn(async () => null),
     threads: vi.fn(async () => state.threads),
     createThread: vi.fn(async (_id: string, anchor: unknown, body: string) => {

@@ -1,0 +1,47 @@
+// A pinned look is another account's data: what of it a reader's client uses.
+// @vitest-environment node
+import { describe, expect, it } from "vitest";
+import { pinnedLookFrom, plainColor, safePinnedTokens } from "./pinned-look";
+
+const TOKENS = { background: "#101010", surface: "#181818", surface2: "#202020", foreground: "#fafafa", muted: "#a1a1aa", border: "#333", accent: "#444", link: "#60a5fa" };
+
+describe("plainColor", () => {
+  it("accepts hex and colour functions over plain numbers", () => {
+    for (const color of ["#fff", "#ffffff", "#ffffff80", "rgb(1, 2, 3)", "rgba(1,2,3,.5)", "hsl(210 40% 50%)", "oklch(0.7 0.1 250)"]) expect(plainColor(color)).toBe(color);
+  });
+
+  it("refuses anything that could load, reference or run something", () => {
+    for (const value of ["url(https://evil.test/x)", "var(--x)", "red; background: url(x)", "linear-gradient(red, blue)", "expression(alert(1))", "#fff}body{display:none", "", " ", "x".repeat(100), 7, null, undefined, {}]) {
+      expect(plainColor(value)).toBeNull();
+    }
+  });
+});
+
+describe("safePinnedTokens", () => {
+  it("passes plain tokens through and drops what it does not know", () => {
+    expect(safePinnedTokens({ ...TOKENS, docRule: "#222", bodyFont: "charter", fontSize: 17, onload: "alert(1)", statusGreen: "url(x)" })).toEqual({ ...TOKENS, docRule: "#222", bodyFont: "charter", fontSize: 17 });
+  });
+
+  it("answers null when a required colour is missing or not a colour", () => {
+    expect(safePinnedTokens({ ...TOKENS, background: "url(https://evil.test/x)" })).toBeNull();
+    const missing: Record<string, string> = { ...TOKENS };
+    delete missing.link;
+    expect(safePinnedTokens(missing)).toBeNull();
+    for (const raw of [null, "x", 3, [TOKENS]]) expect(safePinnedTokens(raw)).toBeNull();
+  });
+});
+
+describe("pinnedLookFrom", () => {
+  it("is null when nothing is pinned", () => {
+    for (const data of [null, undefined, "x", {}, { tokens: null, style: { base: "compact" } }, { tokens: "x" }]) expect(pinnedLookFrom(data)).toBeNull();
+  });
+
+  it("reads a pin made before styles existed as tokens with no style", () => {
+    expect(pinnedLookFrom({ tokens: TOKENS })).toEqual({ tokens: TOKENS, style: null });
+  });
+
+  it("cleans the style, and keeps it when the colours cannot be used", () => {
+    expect(pinnedLookFrom({ tokens: TOKENS, style: { base: "classic", choices: { tableStyle: "grid", linkStyle: "x" }, future: true } })).toEqual({ tokens: TOKENS, style: { base: "classic", choices: { tableStyle: "grid" } } });
+    expect(pinnedLookFrom({ tokens: { background: "var(--x)" }, style: { base: "classic" } })).toEqual({ tokens: null, style: { base: "classic" } });
+  });
+});

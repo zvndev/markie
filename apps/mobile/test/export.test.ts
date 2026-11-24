@@ -192,6 +192,16 @@ describe("the HTML an export writes", () => {
     expect(html).toContain("body { background: #09090b; color: #fafafa; }");
   });
 
+  it("draws a pinned Markdown style in the exported page, and only for Markdown", async () => {
+    const plain = await buildExportHtml(markdown("# Title"), "light");
+    expect(await buildExportHtml({ ...markdown("# Title"), markdownStyle: { base: "spacious" } }, "light")).toBe(plain);
+    const styled = await buildExportHtml({ ...markdown("# Title"), markdownStyle: { base: "technical", choices: { linkStyle: "} body { display: none }" } } }, "light");
+    expect(styled).toContain(".markdown-body thead th, .markdown-body tbody th, .markdown-body tbody td { border: 1px solid var(--doc-rule); }");
+    expect(styled).not.toContain("display: none }");
+    const text = await buildExportHtml({ name: "notes.txt", body: { kind: "text", text: "plain" }, markdownStyle: { base: "technical" } }, "light");
+    expect(text).not.toContain("Markdown style");
+  });
+
   it("paints the paper the stylesheets paint, so the native printer fills the same colour", () => {
     expect(getPDFStylesSync("light")).toContain(`body { background: #fff;`);
     expect(PAGE_BACKGROUND.markdown.light).toBe("#ffffff");

@@ -9,6 +9,7 @@
 // changed the buffer.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildPDFHTML, type PDFTheme } from "@/lib/pdf-styles";
+import { paintedMarkdownStyle } from "@/lib/markdown-style";
 import { getColorMode, resolveColorMode } from "@/lib/color-mode";
 import { getSafeAPI } from "@/lib/electron";
 import { convertForExport, exportFileName, exportFormat, type ExportFormatId } from "@/lib/export-formats";
@@ -89,7 +90,7 @@ export function useDocumentExport(inputs: ExportInputs) {
       if (api) {
         await guarded("Couldn't export this document as a PDF.", async () =>
           api.exportPDF({
-            html: await buildPDFHTML(await previewHTML(md), theme),
+            html: await buildPDFHTML(await previewHTML(md), theme, { markdownStyle: paintedMarkdownStyle() }),
             theme,
             docPath: docPath(),
           })
@@ -97,7 +98,7 @@ export function useDocumentExport(inputs: ExportInputs) {
         return;
       }
       // Web fallback: open in a new window and print.
-      const fullHTML = await buildPDFHTML(await previewHTML(md), theme);
+      const fullHTML = await buildPDFHTML(await previewHTML(md), theme, { markdownStyle: paintedMarkdownStyle() });
       const printWindow = window.open("", "_blank");
       if (!printWindow) return;
       printWindow.document.write(fullHTML);
@@ -115,7 +116,7 @@ export function useDocumentExport(inputs: ExportInputs) {
     await guarded("Couldn't export this document as HTML.", async () =>
       api.exportHTML({
         defaultName: `${base}.html`,
-        html: await buildPDFHTML(await previewHTML(currentMarkdown()), "light"),
+        html: await buildPDFHTML(await previewHTML(currentMarkdown()), "light", { markdownStyle: paintedMarkdownStyle() }),
         docPath: docPath(),
       })
     );
@@ -136,7 +137,7 @@ export function useDocumentExport(inputs: ExportInputs) {
     const theme: PDFTheme = resolveColorMode(getColorMode());
     await guarded("Couldn't print this document.", async () =>
       api.exportPDF({
-        html: await buildPDFHTML(await previewHTML(currentMarkdown()), theme),
+        html: await buildPDFHTML(await previewHTML(currentMarkdown()), theme, { markdownStyle: paintedMarkdownStyle() }),
         theme,
         docPath: docPath(),
         mode: "print",

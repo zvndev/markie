@@ -26,7 +26,7 @@ import { docExportSource } from "../lib/export";
 import { COMMENTS_OFFLINE_NOTE, OfflineNote, useOffline } from "../components/offline-note";
 import { docsPeople, docsPublicLink } from "../lib/share-people";
 import { LIVE_MAX_CHARS, liveKind } from "../lib/live";
-import { docThemeStyle } from "../lib/doc-theme";
+import { docStyleCss, docThemeStyle } from "../lib/doc-theme";
 import type { ShareMember } from "../lib/api";
 
 interface DocumentProps {
@@ -67,6 +67,8 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   const run = useRef(0);
   // The theme its owner pinned to it, raw from the server (lib/doc-theme.ts decides what is used).
   const [pinnedTheme, setPinnedTheme] = useState<unknown>(null);
+  // The Markdown style pinned beside it, raw too.
+  const [pinnedStyle, setPinnedStyle] = useState<unknown>(null);
   // This account was on the document and no longer is: found out by a comment the server refused.
   const [lost, setLost] = useState(false);
   const docKey = target.kind === "doc" ? `d:${target.id}` : `s:${target.token}`;
@@ -85,8 +87,9 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
       // Members read a Markdown document the way its owner styled it. The
       // owner keeps their own look, as on the desktop. Never an error: a
       // server with no such route, or no network, leaves the phone's own theme.
-      if (target.kind === "doc" && doc.role !== "owner" && doc.format === "markdown") void api.docTheme(target.id).then((tokens) => { if (current === run.current) setPinnedTheme(tokens); }, () => undefined);
-      else setPinnedTheme(null);
+      const pinned = doc.format !== "markdown" ? null : target.kind === "doc" ? (doc.role !== "owner" ? api.docLook(target.id) : null) : api.publicLook(target.token);
+      if (pinned) void pinned.then((look) => { if (current === run.current) { setPinnedTheme(look?.tokens ?? null); setPinnedStyle(look?.style ?? null); } }, () => undefined);
+      else { setPinnedTheme(null); setPinnedStyle(null); }
       if (target.kind === "doc" && doc.role === "owner") void api.publicLink(target.id).then((url) => { if (current === run.current) setPublicUrl(url); }, () => undefined);
     } catch (error) {
       if (current !== run.current) return;
@@ -243,6 +246,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
 
   const isWd = doc?.format === "darkmown";
   const themed = useMemo(() => docThemeStyle(pinnedTheme, tone), [pinnedTheme, tone]);
+  const styleCss = useMemo(() => (themed ? docStyleCss(pinnedStyle) : ""), [themed, pinnedStyle]);
   const loadAsset = useCallback((ref: string) => {
     const source: AssetSource = target.kind === "doc" ? { kind: "doc", id: target.id } : { kind: "public", token: target.token };
     return api.asset(source, ref).catch(() => null);
@@ -272,7 +276,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
         <>
           <DocMeta doc={doc} members={members} publicUrl={publicUrl} />
           <OfflineNote api={api} doc={doc} onChanged={() => void load()} onGone={onRecent} onUnauthorized={onUnauthorized} />
-          {doc.format === "markdown" ? <div ref={articleHost} className={themed ? `m-doc-themed${themed.colors ? " has-colors" : ""}` : undefined} style={themed ? (themed.vars as CSSProperties) : undefined}><MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
+          {doc.format === "markdown" ? <div ref={articleHost} className={themed ? `m-doc-themed${themed.colors ? " has-colors" : ""}` : undefined} style={themed ? (themed.vars as CSSProperties) : undefined}>{styleCss ? <style data-doc-style="">{styleCss}</style> : null}<MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} comments={markdownComments} /></div> : null}
           {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
           {doc.format === "darkmown" ? <DarkmownView docKey={docKey} source={doc.content} tone={tone} /> : null}
         </>
@@ -320,7 +324,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           owner={owner ? null : sharedBy}
           me={me}
           link={doc.privateLink}
-          exportSource={docExportSource(doc, loadAsset)}
+          exportSource={docExportSource(doc, loadAsset, themed ? pinnedStyle : null)}
           onClose={() => setSharing(false)}
           onUnauthorized={onUnauthorized}
           onChanged={() => {
@@ -329,7 +333,7 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
           }}
         />
       ) : null}
-      {sharing && doc && target.kind !== "doc" ? <ExportSheet title={doc.name} link={doc.privateLink} source={docExportSource(doc, loadAsset)} onClose={() => setSharing(false)} /> : null}
+      {sharing && doc && target.kind !== "doc" ? <ExportSheet title={doc.name} link={doc.privateLink} source={docExportSource(doc, loadAsset, themed ? pinnedStyle : null)} onClose={() => setSharing(false)} /> : null}
     </Screen>
   );
 }

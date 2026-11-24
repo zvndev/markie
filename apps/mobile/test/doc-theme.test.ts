@@ -3,7 +3,7 @@
 // only in the phone's own tone, and nothing that is not a plain colour.
 import { describe, expect, it } from "vitest";
 import { MARKIE_DARK, MARKIE_LIGHT } from "@/lib/theme";
-import { docThemeStyle, plainColor } from "../src/lib/doc-theme";
+import { DOC_STYLE_SCOPE, docStyleCss, docThemeStyle, plainColor } from "../src/lib/doc-theme";
 import { createApiClient } from "../src/lib/api";
 import type { HttpRequest, HttpResponse } from "../src/lib/http";
 
@@ -84,5 +84,71 @@ describe("reading the pinned theme from the server", () => {
     expect(await client(() => ({ status: 500, headers: {}, text: "" })).api.docTheme("doc-1")).toBeNull();
     expect(await client(() => { throw new Error("offline"); }).api.docTheme("doc-1")).toBeNull();
     expect(await client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: "dark" }) })).api.docTheme("doc-1")).toBeNull();
+  });
+});
+
+describe("a pinned Markdown style on the reading screen", () => {
+  it("writes nothing for no style, for Spacious, or for something that is not a style", () => {
+    for (const none of [null, undefined, "compact", 4, [], {}, { base: "spacious" }, { base: "from-the-future" }]) expect(docStyleCss(none)).toBe("");
+  });
+
+  it("writes the style's rules for the themed article only", () => {
+    const css = docStyleCss({ base: "technical" });
+    expect(css).toContain(`${DOC_STYLE_SCOPE} thead th`);
+    for (const line of css.split("\n")) expect(line.startsWith(DOC_STYLE_SCOPE)).toBe(true);
+  });
+
+  it("draws only listed choices and numbers in range, whatever the server sent", () => {
+    const attack = "} body { display: none } .x { background: url(https://evil.example/x)";
+    const css = docStyleCss({
+      base: "compact",
+      choices: { tableStyle: "zebra", linkStyle: attack, bulletStyle: attack, futureChoice: "futureOption" },
+      numbers: { imageRadius: 1e9, blockGap: attack, leading: Number.NaN },
+      css: attack,
+    });
+    expect(css).toContain("tr:nth-child(even)");
+    expect(css).toContain("border-radius: 24px");
+    expect(css).not.toContain("evil");
+    expect(css).not.toContain("display: none");
+    expect(css).not.toContain("NaN");
+  });
+});
+
+describe("reading the pinned look from the server", () => {
+  const client = (answer: (request: HttpRequest) => HttpResponse | Promise<HttpResponse>) => {
+    const seen: HttpRequest[] = [];
+    const api = createApiClient({ origin: "https://api.markiedocs.com", getToken: () => "t".repeat(32), transport: async (request) => { seen.push(request); return answer(request); } });
+    return { api, seen };
+  };
+  const TOKEN = "b".repeat(64);
+
+  it("reads a member's look with the session, tokens and style together", async () => {
+    const { api, seen } = client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: { background: "#fff" }, style: { base: "classic" } }) }));
+    expect(await api.docLook("doc-1")).toEqual({ tokens: { background: "#fff" }, style: { base: "classic" } });
+    expect(seen[0].url).toBe("https://api.markiedocs.com/api/docs/doc-1/theme");
+    expect(seen[0].headers?.authorization).toMatch(/^Bearer /);
+  });
+
+  it("reads a server that predates styles as a look with no style", async () => {
+    const { api } = client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: { background: "#fff" } }) }));
+    expect(await api.docLook("doc-1")).toEqual({ tokens: { background: "#fff" }, style: null });
+  });
+
+  it("reads a public link's look with the link alone, never the session", async () => {
+    const { api, seen } = client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: { background: "#fff" }, style: { base: "minimal" } }) }));
+    expect(await api.publicLook(TOKEN)).toEqual({ tokens: { background: "#fff" }, style: { base: "minimal" } });
+    expect(seen[0].url).toBe(`https://api.markiedocs.com/s/${TOKEN}/theme`);
+    expect(seen[0].headers?.authorization).toBeUndefined();
+  });
+
+  it("answers null, never an error, for nothing pinned, an older server, a refusal or no network", async () => {
+    for (const read of [(api: ReturnType<typeof client>["api"]) => api.docLook("doc-1"), (api: ReturnType<typeof client>["api"]) => api.publicLook(TOKEN)]) {
+      expect(await read(client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: null, style: null }) })).api)).toBeNull();
+      expect(await read(client(() => ({ status: 404, headers: {}, text: "Not Found" })).api)).toBeNull();
+      expect(await read(client(() => ({ status: 403, headers: {}, text: "{}" })).api)).toBeNull();
+      expect(await read(client(() => ({ status: 200, headers: {}, text: "# not json" })).api)).toBeNull();
+      expect(await read(client(() => { throw new Error("offline"); }).api)).toBeNull();
+    }
+    expect(await client(() => ({ status: 200, headers: {}, text: "{}" })).api.publicLook("short")).toBeNull();
   });
 });

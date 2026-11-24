@@ -78,34 +78,39 @@
    themselves, and the lightbox lives outside the article. */
 .markie-view-main > [data-web-view-content] { contain: paint; }
 
-/* The document, as the hosted page draws it. */
-.markie-view .markdown-body { color: var(--view-text); }
-.markie-view .markdown-body :where(h1, h2, h3) { line-height: 1.25; margin-top: 1.6em; margin-bottom: 0.6em; font-weight: 700; }
-.markie-view .markdown-body h1 { font-size: 1.9em; }
-.markie-view .markdown-body h2 { font-size: 1.45em; }
-.markie-view .markdown-body h3 { font-size: 1.2em; }
-.markie-view .markdown-body :where(h1, h2, h3, h4, h5, h6) { border: 0; padding-bottom: 0; color: var(--view-text); }
-.markie-view .markdown-body > :first-child { margin-top: 0; }
-.markie-view .markdown-body p, .markie-view .markdown-body ul, .markie-view .markdown-body ol { margin: 0 0 1em; }
-.markie-view .markdown-body ul { list-style: disc; padding-left: 1.6em; }
-.markie-view .markdown-body ol { list-style: decimal; padding-left: 1.6em; }
-.markie-view .markdown-body li > ul, .markie-view .markdown-body li > ol { margin-bottom: 0; }
-.markie-view .markdown-body pre { background: var(--view-code); padding: 14px 16px; border-radius: 8px; overflow-x: auto;
+/* The document, as the hosted page draws it. A document whose owner pinned
+   their look (pinned-look.ts) is drawn as the desktop draws it instead: by
+   globals.css, in the owner's colours and Markdown style, so these rules step
+   aside for it. The test is inside :where(), which weighs nothing: every
+   rule keeps the exact specificity it had, so nothing else on the page (the
+   plain-text view below, say) wins or loses against it differently. */
+.markie-view:where(:not([data-pinned-look])) .markdown-body { color: var(--view-text); }
+.markie-view:where(:not([data-pinned-look])) .markdown-body :where(h1, h2, h3) { line-height: 1.25; margin-top: 1.6em; margin-bottom: 0.6em; font-weight: 700; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body h1 { font-size: 1.9em; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body h2 { font-size: 1.45em; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body h3 { font-size: 1.2em; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body :where(h1, h2, h3, h4, h5, h6) { border: 0; padding-bottom: 0; color: var(--view-text); }
+.markie-view:where(:not([data-pinned-look])) .markdown-body > :first-child { margin-top: 0; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body p, .markie-view:where(:not([data-pinned-look])) .markdown-body ul, .markie-view:where(:not([data-pinned-look])) .markdown-body ol { margin: 0 0 1em; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body ul { list-style: disc; padding-left: 1.6em; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body ol { list-style: decimal; padding-left: 1.6em; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body li > ul, .markie-view:where(:not([data-pinned-look])) .markdown-body li > ol { margin-bottom: 0; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body pre { background: var(--view-code); padding: 14px 16px; border-radius: 8px; overflow-x: auto;
   border: 1px solid var(--view-line); margin: 0 0 1em; }
-.markie-view .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.markie-view .markdown-body :not(pre) > code { background: var(--view-code); padding: 1px 5px; border-radius: 5px; font-size: 0.9em; }
-.markie-view .markdown-body pre code.hljs { background: transparent; padding: 0; }
-.markie-view .markdown-body a { color: var(--view-accent); text-decoration: underline; text-decoration-color: var(--view-red);
+.markie-view:where(:not([data-pinned-look])) .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body :not(pre) > code { background: var(--view-code); padding: 1px 5px; border-radius: 5px; font-size: 0.9em; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body pre code.hljs { background: transparent; padding: 0; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body a { color: var(--view-accent); text-decoration: underline; text-decoration-color: var(--view-red);
   text-decoration-thickness: 2px; text-underline-offset: 3px; }
 /* A link to a page this reader can't open (view-content.ts withDocLinks). */
 .markie-view .markdown-body a.doc-link-muted { color: var(--view-muted); text-decoration-style: dotted;
   text-decoration-color: var(--view-muted); text-decoration-thickness: 1px; cursor: not-allowed; }
-.markie-view .markdown-body blockquote { border-left: 3px solid var(--view-line); margin: 1em 0; padding: 2px 16px; color: var(--view-muted); background: none; }
-.markie-view .markdown-body table { border-collapse: collapse; margin: 0 0 1em; display: block; overflow-x: auto; }
-.markie-view .markdown-body th, .markie-view .markdown-body td { border: 1px solid var(--view-line); padding: 6px 12px; }
-.markie-view .markdown-body th { background: var(--view-code); }
-.markie-view .markdown-body hr { border: 0; border-top: 1px solid var(--view-line); margin: 1.6em 0; }
-.markie-view .markdown-body img { max-width: 100%; height: auto; border-radius: 8px; display: inline-block; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body blockquote { border-left: 3px solid var(--view-line); margin: 1em 0; padding: 2px 16px; color: var(--view-muted); background: none; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body table { border-collapse: collapse; margin: 0 0 1em; display: block; overflow-x: auto; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body th, .markie-view:where(:not([data-pinned-look])) .markdown-body td { border: 1px solid var(--view-line); padding: 6px 12px; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body th { background: var(--view-code); }
+.markie-view:where(:not([data-pinned-look])) .markdown-body hr { border: 0; border-top: 1px solid var(--view-line); margin: 1.6em 0; }
+.markie-view:where(:not([data-pinned-look])) .markdown-body img { max-width: 100%; height: auto; border-radius: 8px; display: inline-block; }
 .markie-view .markdown-body img[data-markie-zoomable] { cursor: zoom-in; }
 .markie-view .markdown-body .katex-display { overflow-x: auto; overflow-y: hidden; }
 .markie-view .markdown-body input[type="checkbox"] { margin-right: 6px; }
@@ -214,4 +219,31 @@
   html.markie-printing .markie-print-layer img { max-width: 100%; }
   html.markie-printing .markie-print-layer table { border-collapse: collapse; }
   html.markie-printing .markie-print-layer th, html.markie-printing .markie-print-layer td { border: 1px solid #d4d4d8; padding: 4px 8px; }
+}
+
+/* A pinned look. The owner's theme is painted on the page (applyTheme), and
+   the bar and the paper take their colours from it, so the whole view is one
+   look and not a document in a frame of another. */
+.markie-view[data-pinned-look] {
+  --view-logo: var(--foreground);
+  --view-bg: var(--background);
+  --view-surface: color-mix(in srgb, var(--background) 86%, transparent);
+  --view-surface-strong: var(--surface);
+  --view-text: var(--foreground);
+  --view-muted: var(--muted);
+  --view-line: var(--border);
+  --view-accent: var(--foreground);
+  --view-accent-text: var(--background);
+  --view-code: var(--surface);
+}
+.markie-view[data-pinned-look] .markie-view-main { max-width: calc(var(--doc-width, 768px) + 48px); }
+.markie-view[data-pinned-look] .markdown-body { font-size: var(--doc-font-size, 16px); }
+.markie-view[data-pinned-look] .markdown-body > :first-child { margin-top: 0; }
+@media print {
+  .markie-view[data-pinned-look] { --foreground: #1a1a2e; --muted: #52525b; --surface: #f4f4f5; --doc-rule: #d4d4d8; --border: #d4d4d8; --blue: #1d4ed8; --background: #fff; --accent: #e4e4e7; }
+}
+/* The print layer of a document with a pinned style: the style's rules read
+   the theme's variables, and paper is light whatever the screen shows. */
+@media print {
+  html.markie-printing .markie-print-layer[data-print-style] { --foreground: #1a1a2e; --muted: #52525b; --surface: #f4f4f5; --doc-rule: #d4d4d8; --border: #d4d4d8; --blue: #1d4ed8; --background: #fff; --accent: #e4e4e7; }
 }

@@ -2,7 +2,7 @@
 // session, so nothing here can ask the server for anything a browser
 // couldn't. Editing, comments and sharing with people need an account, so
 // none of them is offered: the way to them is "Sign in".
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { DocumentFormatMark } from "@/components/document-format-mark";
 import type { ApiClient } from "../lib/api";
 import { classifyDocumentLink, type LinkTarget, type PinnedPublicTarget } from "../lib/deep-links";
@@ -12,6 +12,7 @@ import { docExportSource } from "../lib/export";
 import { publicLinkErrorCopy } from "../lib/public-link";
 import { displayName } from "../lib/recent";
 import type { Tone } from "../lib/theme-mode";
+import { docStyleCss, docThemeStyle } from "../lib/doc-theme";
 import { Screen } from "../components/screen";
 import { MarkdownView } from "../components/markdown-view";
 import { DarkmownView } from "../components/darkmown-view";
@@ -38,12 +39,17 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
   const [notice, setNotice] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const run = useRef(0);
+  // The look the owner pinned to the document, raw from the server (lib/doc-theme.ts decides what is used).
+  const [pinned, setPinned] = useState<{ tokens: unknown; style: unknown } | null>(null);
 
   const load = useCallback(async () => {
     const current = ++run.current;
     try {
       const doc = await api.publicDoc(target.token);
       if (current === run.current) setState({ status: "ready", doc });
+      // Decoration: any failure leaves the phone's own look.
+      if (doc.format === "markdown") void api.publicLook(target.token).then((look) => { if (current === run.current) setPinned(look); }, () => undefined);
+      else setPinned(null);
     } catch (error) {
       if (current === run.current) setState({ status: "error", error });
     }
@@ -77,6 +83,8 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
 
   const doc = state.status === "ready" ? state.doc : null;
   const isWd = doc?.format === "darkmown";
+  const themed = useMemo(() => docThemeStyle(pinned?.tokens, tone), [pinned, tone]);
+  const styleCss = useMemo(() => (themed ? docStyleCss(pinned?.style) : ""), [themed, pinned]);
   const error = state.status === "error" ? publicLinkErrorCopy(state.error) : null;
 
   return (
@@ -122,14 +130,14 @@ export function PublicDocScreen({ api, target, tone, onSignIn, onOpen }: PublicD
                   </span>
                 </div>
               </div>
-              {doc.format === "markdown" ? <MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /> : null}
+              {doc.format === "markdown" ? <div className={themed ? `m-doc-themed${themed.colors ? " has-colors" : ""}` : undefined} style={themed ? (themed.vars as CSSProperties) : undefined}>{styleCss ? <style data-doc-style="">{styleCss}</style> : null}<MarkdownView content={doc.content} onLink={onLink} loadAsset={loadAsset} /></div> : null}
               {doc.format === "text" ? <pre className="m-text-doc">{doc.content}</pre> : null}
               {doc.format === "darkmown" ? <DarkmownView docKey={`s:${target.token}`} source={doc.content} tone={tone} /> : null}
             </>
           ) : null}
           {notice ? <div className="m-toast" role="status">{notice}</div> : null}
           {/* The link, and what this reader can already read as a file. Nothing here needs an account. */}
-          {sharing && doc ? <ExportSheet title={doc.name} link={doc.privateLink} source={docExportSource(doc, loadAsset)} onClose={() => setSharing(false)} /> : null}
+          {sharing && doc ? <ExportSheet title={doc.name} link={doc.privateLink} source={docExportSource(doc, loadAsset, themed ? pinned?.style : null)} onClose={() => setSharing(false)} /> : null}
         </Screen>
       </div>
       {doc ? (

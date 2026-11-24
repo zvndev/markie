@@ -8,6 +8,22 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Markdown styles.** Settings, Appearance now has a Markdown style beside
+  the colour templates: how headings, lists, tables, quotes, code, dividers,
+  pictures and links are drawn. Spacious is the look Markie has always had,
+  and Compact, Classic, Technical, Editorial and Minimal are new. A style
+  works with any template, light or dark.
+- **Build your own style.** Customize opens an editor with a live preview of
+  a sample document. Change one element at a time (table borders, list
+  markers, numbering, heading rules, spacing and more), then save it under a
+  name. Saved styles follow your account to your other computers.
+- **Readers see my look.** In Share, the owner of a document can pin their
+  theme and Markdown style to it. Everyone it is shared with, and anyone
+  with its public link, then reads it that way on the web, the desktop and
+  the phone. HTML and PDF exports are drawn in the style too.
+
 ## [0.9.7] - 2026-11-20
 
 ### Added

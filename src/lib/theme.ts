@@ -1,3 +1,5 @@
+import { sanitizeMarkdownStyleStore, type MarkdownStyleStore } from "./markdown-style-schema";
+
 export interface ThemeTokens {
   background: string;
   surface: string;
@@ -549,6 +551,12 @@ export interface ThemeStore {
   // Typography tweaks layered over the template, in both tones. They belong to
   // the template they were made on and are dropped when another is chosen.
   typography?: Partial<ThemeTypography>;
+  // How Markdown is drawn (markdown-style.ts): the saved style profiles and
+  // the one in use. Apart from templates on purpose, so any style works with
+  // any colours, and it survives a change of template. Always written by a
+  // build that knows it; the server keeps the stored one when a build that
+  // predates it saves a store without the field.
+  markdownStyle?: MarkdownStyleStore;
 }
 
 function getStorage(): Storage | null {
@@ -594,7 +602,18 @@ export function normalizeThemeStore(raw: ThemeStore): ThemeStore {
   } else {
     delete store.typography;
   }
+  // Cleaned on every read: it may have been written by another device, or by hand.
+  const markdownStyle = sanitizeMarkdownStyleStore(raw.markdownStyle);
+  if (markdownStyle) store.markdownStyle = markdownStyle;
+  else delete store.markdownStyle;
   return store;
+}
+
+// A change of template or preset rebuilds the store from its parts, and the
+// Markdown style is not one of the template's: it carries over.
+function keepMarkdownStyle(from: ThemeStore, to: ThemeStore): ThemeStore {
+  if (from.markdownStyle) to.markdownStyle = from.markdownStyle;
+  return to;
 }
 
 export function loadThemeStore(): ThemeStore {
@@ -651,12 +670,12 @@ export function presetForTone(store: ThemeStore, tone: ThemeTone): ThemePreset {
 
 export function chooseTemplate(store: ThemeStore, templateId: string, tone: ThemeTone): ThemeStore {
   const template = findTemplate(templateId) ?? MARKIE_TEMPLATE;
-  return {
+  return keepMarkdownStyle(store, {
     activeId: templateVariant(template, tone).id,
     custom: store.custom,
     templateId: template.id,
     overrides: {},
-  };
+  });
 }
 
 export function chooseCustomPreset(store: ThemeStore, presetId: string): ThemeStore {
@@ -672,7 +691,7 @@ export function chooseCustomPreset(store: ThemeStore, presetId: string): ThemeSt
     overrides: { ...(sameTemplate ? clean.overrides : {}), [presetTone(preset)]: preset.id },
   };
   if (sameTemplate && clean.typography) next.typography = clean.typography;
-  return next;
+  return keepMarkdownStyle(store, next);
 }
 
 export function resetToTemplate(store: ThemeStore, tone: ThemeTone): ThemeStore {

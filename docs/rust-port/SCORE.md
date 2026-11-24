@@ -8,12 +8,12 @@ The overall score across the five audits, and the rules behind it. Updated 2026-
 |---|---|---|---|
 | [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 55 | 55 | 100% |
 | [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 83 | 79 | 95.2% |
-| [Editors, autosave, history](AUDIT-EDITORS.md) | 62 | 56 | 90.3% |
+| [Editors, autosave, history](AUDIT-EDITORS.md) | 70 | 64 | 91.4% |
 | [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 100 | 97 | 97.0% |
 | [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 61 | 58 | 95.1% |
-| **Total** | **361** | **345** | **95.6%** |
+| **Total** | **369** | **353** | **95.7%** |
 
-The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 13 are met.
+The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 13 are met. The eight CSV sheet rows (editors 7b, Electron PR #154) then made it 353 of 369; all eight are met.
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -49,4 +49,4 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Library 28.S4, 28.S5, 28.F2 | A scheduled screen session of about 15 minutes: the Markdown style section, the style editor and the font menus with a real pointer, beside Electron's. The checks are written in each audit row |
 | Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
 
-If every row above closes except the last two, the score is 359 of 361, which is 99.4%.
+If every row above closes except the last two, the score is 367 of 369, which is 99.5%.

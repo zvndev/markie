@@ -6,12 +6,12 @@ Written 2026-11-24, after Kirby set the platform map. Estimates are agent time, 
 
 | Platform | App | State today |
 |---|---|---|
-| Mac | Markie RS, the Rust app | 95.6% parity. Becoming the Mac super-nightly now |
+| Mac | Markie RS, the Rust app | 95.7% parity. Becoming the Mac super-nightly now |
 | Windows | Electron Markie | Shipping. Signed with Azure Trusted Signing, NSIS installer, its own feed |
 | Linux | Electron Markie | Shipping (AppImage and .deb). Not in Kirby's note; assumed to stay on Electron |
 | Web | The hosted app at markiedocs.com | Shipping |
-| iPhone and iPad | Markie Docs (Capacitor) | 0.4.0 built, waits on store steps. iPad runs the phone layout stretched |
-| Android phones and tablets | Markie Docs (Capacitor) | 0.4.0 bundle built. Nothing on Play yet. Tablets get the phone layout |
+| iPhone and iPad | Markie Docs (Capacitor) | 0.4.0 code done. No signed build yet; waits on store steps. iPad runs the phone layout stretched |
+| Android phones and tablets | Markie Docs (Capacitor) | 0.4.0 code done. No signed bundle yet, nothing on Play. Tablets get the phone layout |
 
 ## 1. Mac: Rust takes over
 

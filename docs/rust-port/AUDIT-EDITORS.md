@@ -4,19 +4,19 @@ Date: 2026-11-22. Branch: `t3/markie-rs-editor-parity-1`, from `rust/markie-rs` 
 
 ## Score
 
-**Parity: 56 of 62 scored rows (90.3%): 55 PASS and 1 IMPROVEMENT.** Rescored on 2026-11-22 with Kirby's rulings: 8.13 is an IMPROVEMENT, so its group 8.11 passes. On 2026-11-24 section 7a added nine rows for the CSV table (Electron PR #149): eight PASS and one NEEDS-CAPTURE.
+**Parity: 64 of 70 scored rows (91.4%): 63 PASS and 1 IMPROVEMENT.** Rescored on 2026-11-22 with Kirby's rulings: 8.13 is an IMPROVEMENT, so its group 8.11 passes. On 2026-11-24 section 7a added nine rows for the CSV table (Electron PR #149): eight PASS and one NEEDS-CAPTURE. Later that day section 7b added eight PASS rows for the CSV sheet look (Electron PR #154), counted once #154 merged.
 
 | Status | Rows |
 |---|---|
-| PASS | 55 |
+| PASS | 63 |
 | IMPROVEMENT | 1 (8.13: no TipTap rewrites of untouched text) |
 | FAIL | 2 (7.4, kept at 36 languages by Kirby's choice, and its group 7.0) |
 | NEEDS-CAPTURE | 4 (7.9, the 50 MB timing; 7.18, the CSV table with a real pointer and beside Electron's frame; 8.6, a real trackpad pinch; their group 8.0) |
 | EXCLUDED | 0 |
 | EXCLUDED-PLATFORM | 0 |
-| Total | 62 |
+| Total | 70 |
 
-Score = (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED) = 56 ÷ 62. IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron (Kirby, 2026-11-22); it counts as meeting parity. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
+Score = (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED) = 64 ÷ 70. IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron (Kirby, 2026-11-22); it counts as meeting parity. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
 
 The screen was locked for the whole run (`IOConsoleLocked = Yes`). No captures were taken and no app was launched. Visual and live-gesture rows are NEEDS-CAPTURE, with their steps below.
 
@@ -97,7 +97,7 @@ Added 2026-11-24 on branch `t3/markie-rs-csv-table`. Reference: Electron `main` 
 
 ## Section 7b: The CSV sheet look (Electron PR #154)
 
-Added 2026-11-24 on branch `t3/markie-rs-csv-sheet`. Reference: Electron branch `t3/csv-spreadsheet-styling` at a65082d7 (PR #154, open when this was written), the same three files as section 7a. Kirby asked for a CSV to "look like a spreadsheet when you start it, with opinionated styling". These rows are not in the score above: the main thread adds them when PR #154 merges. Checked in the background only, as section 7a was: Rust tests, `csv` scenes, and scene reports. Evidence is in the Electron worktree's `.autoloop/runs/csv-sheet/` (`before-rust-*.png`, `after-rust-*.png`, beside Electron's own `after-desktop-*.png`).
+Added 2026-11-24 on branch `t3/markie-rs-csv-sheet`. Reference: Electron branch `t3/csv-spreadsheet-styling` at a65082d7 (PR #154, open when this was written), the same three files as section 7a. Kirby asked for a CSV to "look like a spreadsheet when you start it, with opinionated styling". These rows are in the score above: PR #154 merged on 2026-11-24. Checked in the background only, as section 7a was: Rust tests, `csv` scenes, and scene reports. Evidence is in the Electron worktree's `.autoloop/runs/csv-sheet/` (`before-rust-*.png`, `after-rust-*.png`, beside Electron's own `after-desktop-*.png`).
 
 | # | Bullet | Status | Evidence (Electron / Markie RS) | Notes |
 |---|---|---|---|---|

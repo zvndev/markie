@@ -106,6 +106,8 @@ private final class PaperRenderer: UIPrintPageRenderer {
 private final class PdfJob: NSObject, WKNavigationDelegate {
     /// CSS pixels per PDF point: 96 px to the inch against 72 pt.
     private static let pixelsPerPoint: CGFloat = 96.0 / 72.0
+    /// How much wider than the sheet WebKit lays a page out before shrinking it to fit (see render()).
+    private static let webKitPrintLayoutFactor: CGFloat = 1.25
     /// The whole job, and the wait for fonts and pictures inside it.
     private static let timeout: TimeInterval = 30
     private static let readyTimeout: TimeInterval = 8
@@ -204,7 +206,17 @@ private final class PdfJob: NSObject, WKNavigationDelegate {
 
     private func render() {
         guard let view = webView, completion != nil else { return }
-        let renderer = PaperRenderer(paper: paper, printable: printable)
+        // WebKit never prints a page at the width it is given. It lays the
+        // page out 1.25 times wider and shrinks the result to fit (WebCore's
+        // printingMinimumShrinkFactor), so on A4 every piece of text came out
+        // a fifth smaller than the desktop prints it: 8.4 pt body for
+        // 10.5 pt, measured on a simulator. So the renderer is handed a
+        // column that is smaller by that factor, with no margins of its own.
+        // WebKit then lays out at exactly the column's real width in CSS
+        // pixels, and each page is drawn scaled back up, at the margins' offset.
+        let shrink = 1 / PdfJob.webKitPrintLayoutFactor
+        let column = CGRect(x: 0, y: 0, width: printable.width * shrink, height: printable.height * shrink)
+        let renderer = PaperRenderer(paper: column, printable: column)
         renderer.addPrintFormatter(view.viewPrintFormatter(), startingAtPageAt: 0)
 
         let bounds = CGRect(origin: .zero, size: page)
@@ -221,7 +233,10 @@ private final class PdfJob: NSObject, WKNavigationDelegate {
             // The renderer works in CSS pixels; the page is in points.
             context.saveGState()
             context.scaleBy(x: 1 / PdfJob.pixelsPerPoint, y: 1 / PdfJob.pixelsPerPoint)
-            renderer.drawPage(at: index, in: paper)
+            context.translateBy(x: printable.minX, y: printable.minY)
+            context.scaleBy(x: PdfJob.webKitPrintLayoutFactor, y: PdfJob.webKitPrintLayoutFactor)
+            context.clip(to: column)
+            renderer.drawPage(at: index, in: column)
             context.restoreGState()
         }
         UIGraphicsEndPDFContext()

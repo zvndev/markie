@@ -8,8 +8,14 @@ appId: com.zvn.markie.mobile
     index: 1
 - inputText: "kirby@example.com"
 - tapOn: "Sign in to Markie"
-- tapOn: "Advanced.*"
+# Advanced stays open once another server was chosen, and a second tap would close it.
+- runFlow:
+    when:
+      notVisible: "https?://.*"
+    commands:
+      - tapOn: "Advanced.*"
 - tapOn: "https?://.*"
+- eraseText: 60
 - inputText: "http://10.0.2.2:8790"
 - tapOn: "Send code"
 - extendedWaitUntil:

@@ -893,6 +893,13 @@ textarea:not(.m-editor-text):focus-visible {
   line-height: 1.4;
 }
 
+/* Under a group's footer note (the share sheet's Export group) the error
+   keeps the note's indent and its own line, instead of riding up over it. */
+.m-group-footer + .m-form-error,
+.m-group + .m-form-error {
+  margin: 6px 16px 0;
+}
+
 .m-form-info {
   margin: -4px 0 0;
   color: var(--status-green);

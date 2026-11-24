@@ -322,10 +322,16 @@ describe("the page the printer is given", () => {
     for (const platform of ["ios", "android"] as const) {
       const job = printJobFor(source, "<html></html>", "light", platform);
       expect(job.page).toEqual({ width: layout.widthPoints, height: layout.heightPoints });
-      expect(job.margins).toEqual({ top: layout.marginTopPoints, right: layout.marginRightPoints, bottom: layout.marginBottomPoints, left: layout.marginLeftPoints });
       expect(job.background).toBe("#ffffff");
       expect(job.html).toBe("<html></html>");
     }
+    // WebKit ignores `@page` margins, so on iOS they are the job's.
+    expect(printJobFor(source, "<html></html>", "light", "ios").margins).toEqual({ top: layout.marginTopPoints, right: layout.marginRightPoints, bottom: layout.marginBottomPoints, left: layout.marginLeftPoints });
+    // Chromium honours the page's own `@page` margins. Asking the print job
+    // for them as well made it never finish on Android (found on a device).
+    expect(printJobFor(source, "<html></html>", "light", "android").margins).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+    const { buildDocxPrintHTML } = await import("@/lib/office/docx-print");
+    expect(buildDocxPrintHTML(source.body.document, "Letter")).toContain(`margin:${layout.marginTopPoints}pt ${layout.marginRightPoints}pt ${layout.marginBottomPoints}pt ${layout.marginLeftPoints}pt`);
   });
 });
 

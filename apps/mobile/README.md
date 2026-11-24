@@ -53,7 +53,8 @@ Where, and what protects it:
 What wipes it:
 
 - Signing out: documents, pictures, the list and unsent edits all go, before the server is told and
-  whether or not there is a network. If an edit has not been sent, Settings says so first and the
+  whether or not there is a network. The database itself is deleted, not only emptied: an emptied
+  SQLite file still holds the old pages, and its text could be read out of the app's container. If an edit has not been sent, Settings says so first and the
   button reads "Sign out and delete".
 - A different account signing in, on the same server or another.
 - A launch that finds no session, which covers a reinstall on iOS (the container is deleted with the
@@ -134,7 +135,8 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./android/gradlew -p android assembleDebu
 ```sh
 npm test                    # vitest: API client, deep-link router, token storage, recent list, writing, incoming files, export, mock server, CSP, push,
                             # the phone's store: the wipe, the cap, the edit queue, the conflict choices,
-                            # and local files with the native plugin faked (test/local-files.test.ts)
+                            # local files with the native plugin faked (test/local-files.test.ts),
+                            # the system text size, a pinned theme, and what a link does to the stack
 npm run typecheck
 ```
 
@@ -234,37 +236,6 @@ Two things would close it, and neither is built:
 Until one of them exists, the defence is the person's own: the page is the provider's, in their
 browser, and it names the account that signed in.
 
-In the desktop browser (`npm run dev` only), `http://localhost:5174/?link=<url>` stands in for a tapped link.
-A document the user cannot read shows the server's message and a way back to Recent.
-An https link on a Markie host that the app cannot route (a raw download) opens in the default browser.
-Any other URL another app sends is ignored.
-
-## Signing in
-
-The sign-in screen offers an emailed code, the account's password ("Use a password instead"), and
-Google and Apple where the chosen server offers them. No account is created with a password on the
-phone: a new address signs in with a code.
-
-Google and Apple (`src/lib/provider-sign-in.ts`, `server/src/mobile-auth.ts`):
-
-- The app asks the server what it supports (`GET /api/server-info`). It shows Google or Apple only
-  when the answer has `signIn.mobile: true` and names that provider. A server that does not answer,
-  or one from before the hand-off, gets neither. This holds for a self-hosted server under Advanced.
-- On iOS, Google shows only where Apple shows too, with Apple first (App Store guideline 4.8).
-- The provider's screen opens in the phone's browser, never in a web view inside the app.
-- The app makes a random secret and keeps it in the Keychain or Keystore. The browser is sent to
-  `/auth/mobile-start` with the secret's SHA-256 and a random state.
-- After the provider, the server's page shows who signed in and a "Return to Markie" button. Its
-  link is `markie-mobile://auth?code=...&state=...&iss=...`. The code lasts two minutes and works
-  once. The link never carries a session token.
-- The app accepts the link only when the state is its own and `iss` is the server it started on.
-  It then posts the code and the secret to `/auth/mobile-exchange` on that server and gets the
-  session back over HTTPS. Any other link is ignored, and a sign-in under way is left alone.
-
-A link that leaks, or that another app receives, is a code with no secret. It opens nothing, and
-trying it spends it. The result goes through the same `signedIn` path as every other sign-in, so the
-offline store's rules for a changed account hold.
-
 In the desktop browser (`npm run dev` only), a `markie-dev-link` window event carrying the link
 stands in for the tap, without the reload that would lose the secret.
 
@@ -306,7 +277,9 @@ The phone edits with the desktop's own editors, reached through the `@` alias li
   - never over a stored copy with front matter or raw HTML, which a live rich room can't keep
   - never over a version written from outside the room, which shows as a conflict instead
 
-  A session whose pass never comes drops to editing alone. Source is read-only while live, exactly as on
+  A viewer follows the same room from the reading screen ("Follow live", where an editor has the
+  pencil): others' changes arrive as they type, and the line under the title says they can read and
+  comment. A session whose pass never comes drops to editing alone. Source is read-only while live, exactly as on
   the desktop. When the server closes the room because the person's access was removed (close code
   4403), the editor says access changed and goes read-only. It does not say "offline".
 - Comments work on the reading screen of any Markdown document that is shared, with no live room
@@ -439,7 +412,9 @@ it can be saved to Files, AirDropped or mailed. A signed-out reader of a public 
   `android/app/src/main/java/com/zvn/markie/mobile/MarkiePdfPlugin.java` (a `WebView` that is never
   attached, `createPrintDocumentAdapter`; `android/print/MarkiePdfWriter.java` exists only because the
   adapter's callbacks can be made only from that package). Android prints the desktop's page as it is.
-  iOS keeps the same inset as real margins and paints the paper itself (`printJobFor`).
+  iOS keeps the same inset as real margins and paints the paper itself (`printJobFor`). WebKit lays a
+  printed page out 1.25 times wider than its sheet and shrinks it, so the plugin hands it a smaller
+  sheet and draws each page scaled back up: body text measures 10.5 pt, as on the desktop.
 - Files are written to `shared/` in the app's cache, the one folder the Android FileProvider may hand
   out, and never backed up. A file is removed when the share sheet is done with it (on Android, five
   minutes after a successful share, since the chosen app may still be reading it), and the whole folder
@@ -454,6 +429,24 @@ it can be saved to Files, AirDropped or mailed. A signed-out reader of a public 
   with the session token, kept in the phone's store with its document (never in an HTTP cache), and
   shown as a `blob:` URL. A public share's pictures come from
   the share's own asset route. Video and audio beside the document are not fetched on a phone.
+
+## Text size and a document's own theme
+
+- The app follows the system text size: Dynamic Type on iOS, font scale on Android
+  (`src/lib/text-size.ts`). Documents, the editors and comments follow it all the way, up to twice
+  the default. The app's own labels follow it up to 1.15 times, so bars and rows of buttons keep
+  their shape on a 360-point screen. The setting is read at launch and whenever the app comes back
+  to the front.
+  - iOS reads the size WebKit gives `font: -apple-system-body`.
+  - Android reads the activity's font scale through the app's own `MarkieTextSize` plugin
+    (`TextSizePlugin.java`), which also holds the web view's own text zoom to the same 1.15, or
+    everything would be scaled twice.
+- A theme the owner pinned to a shared document (`GET /api/docs/:id/theme`) is read for members, as
+  on the desktop (`src/lib/doc-theme.ts`). Its type always applies: faces, line height, paragraph
+  spacing and relative size. Its colours apply only when they are the phone's own tone, so a dark
+  theme is never painted into a light app. Every colour must be a plain colour; anything else drops
+  the colours and keeps the document. A server without the route, a refusal or no network all mean
+  no theme, with no message.
 
 ## Push notifications
 

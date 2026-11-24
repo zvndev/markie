@@ -15,7 +15,7 @@ Written 2026-11-24, after Kirby set the platform map. Estimates are agent time, 
 
 ## 1. Mac: Rust takes over
 
-In progress now.
+In progress now. `0.10.0-super-nightly.1` is built, signed, notarized and verified, and not published yet: the first publish waits for Kirby to be at his Mac. The runbook is [NIGHTLY.md](NIGHTLY.md).
 
 1. **Rust becomes the super-nightly.** Kirby's Electron super-nightly updates itself into the Rust app through its normal updater. On first launch the Rust app imports settings, styles, library, sign-in and vault from a read-only copy of Electron's profile. Windows and Linux feeds are untouched.
 2. **Dogfood.** Kirby uses it daily for a week. Close the last parity rows: Touch ID, one real Google or Apple sign-in, a pinch, and two short screen sessions.

@@ -13,11 +13,11 @@ This covers PARITY.md risk 2. If it is wrong, people lose vault contents or sign
 | Touch ID and Keychain for the device slot | Done behind traits. The Keychain half was run once against a test service. A real Touch ID sheet is untested. |
 | Secret clipboard with auto-clear | Done, with the macOS pasteboard. |
 | Reading Chromium localStorage and IndexedDB | Done, from a copy. Reads a real Electron 42 profile and Kirby's real profile copy. |
-| Wiring into Markie RS first run | Not started. See "What remains". |
+| Wiring into Markie RS first run | Done since: the nightly's first-run import, `markie-app/src/electron_import.rs`. See [NIGHTLY.md](NIGHTLY.md). |
 
 ## What is read
 
-The migration copies two stores out of the Electron userData folder (`~/Library/Application Support/Markie`) into a scratch folder. That plain file read is the only access to the live profile. Every decoder runs on the copy and refuses a path inside the live profile.
+The migration copies two stores out of the Electron userData folder (`~/Library/Application Support/Markie`; the nightly reads `Markie Super-nightly`) into a scratch folder. That plain file read is the only access to the live profile. Every decoder runs on the copy and refuses a path inside the live profile.
 
 | Source | Records produced |
 |---|---|
@@ -108,17 +108,18 @@ The Electron device secret is encrypted under the "Markie Safe Storage" Keychain
 
 Recommendation: import the vault without its device slot, using `StoredVault::without_device_slot`. The first unlock takes the passphrase. Then Markie RS offers to turn Touch ID on again, which writes a fresh slot. The passphrase stays the master key throughout.
 
-## What remains
+## Since then
 
-| Work | Notes |
+The first-run import in the nightly build now does this work ([NIGHTLY.md](NIGHTLY.md), "First-run import"). The calls this section once left open were made:
+
+| Question | What was built |
 |---|---|
-| First-run import in the app | Ask the user to quit Electron Markie. `copy_profile` reports when `SingletonLock` is present. Then copy, read, show what will come over by count, and import. |
-| Sessions | Write each `ServerSession` through `markie-cloud`'s `set_token` and `confirm` into the Keychain store. **Decision for Kirby:** copying tokens means both apps share one server session, so signing out in one signs out both. The alternative is asking people to sign in again. |
-| Theme and settings | Map `markie.themes.v1` and the `markie.*` keys onto Markie RS settings as each setting is ported. The raw values are already in `MarkieSettings::other`. |
-| Library records | Markie RS has no IndexedDB library. Land them as files, for example in a "Recovered" folder, or in the registry. Needs a product call. |
-| Vault | Commit the snapshot into `FileVaultStorage` in the Markie RS data folder, without the device slot. |
-| Export step in the last Electron build | Not needed if the reader holds. Keep it as a fallback: a menu item that writes the vault backup file and a JSON of settings. The backup format is already readable by Rust. |
-| Regenerate the fixture | Rerun `fixtures/generate/make-fixture.sh` with the last Electron build before cutover, then run the tests. |
+| Sessions | Copied into the nightly's Keychain service. Both apps share one server session, so signing out in one signs out both |
+| Library records | Land as files in the nightly's data folder, under `Imported Documents` |
+| Vault | Imported without its device slot. The first unlock takes the passphrase, then Touch ID can be turned on again |
+| Theme and settings | The keys the app uses are mapped, listed in NIGHTLY.md |
+
+Still worth doing before the public Mac cutover: regenerate the fixture with the last Electron build (`fixtures/generate/make-fixture.sh`) and run the tests again.
 
 ## Risks
 
@@ -127,21 +128,6 @@ Recommendation: import the vault without its device slot, using `StoredVault::wi
 3. **Keychain prompts on ad-hoc builds.** Each rebuild of an ad-hoc signed app has a new signature, so macOS may ask again for its own Keychain items. This goes away with a Developer ID signature.
 4. **A real Touch ID sheet** has not been shown. The objc2 call compiles and follows Apple's API, but needs one manual check on Kirby's Mac.
 5. **Shared sessions** if tokens are copied. See the decision above.
-
-## Estimate
-
-Agentic wall-clock time, with agents in parallel:
-
-| Step | Time | Serial limit |
-|---|---|---|
-| First-run import screen and wiring | 1 to 1.5 days | The app shell, one screen at a time |
-| Session import into the Keychain store | Half a day | Kirby's call on shared sessions |
-| Library landing | Half a day | A product call on where records go |
-| Touch ID and Keychain check on Kirby's Mac | 1 hour | Kirby's fingerprint and a signed build |
-| Fixture regenerated with the last Electron | 1 hour | The last Electron release |
-| Optional Electron export step | Half a day, plus a release | The Electron release gate |
-
-Without the optional export step: about 2 to 3 days.
 
 ## How to run it
 

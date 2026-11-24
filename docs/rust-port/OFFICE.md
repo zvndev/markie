@@ -72,6 +72,8 @@ The other 16 unported cases are mostly ones Rust types cannot express: lone UTF-
 
 ## What remains
 
+As of 2026-11-21. For what is open now, see [AUDIT-OFFICE-PLATFORM.md](AUDIT-OFFICE-PLATFORM.md) and [SCORE.md](SCORE.md).
+
 - **The print projection.** `docx-print.ts` builds Chromium print HTML. Phase 5 prints and exports PDF through Typst, so the gate (`canPrintDocx`) should move to that pipeline rather than ship as HTML. Its 26 test cases are not ported yet.
 - **The document workspace layer.** Sessions, the local library and recovery, which the two skipped rich-document cases exercise.
 - **CJK code pages, if wanted.** Only if Kirby accepts a decoding dependency or wants the WHATWG indexes generated into the crate (several MB).
@@ -152,21 +154,6 @@ Run against copies in a scratch folder with `MARKIE_RS_DATA_DIR` set. No origina
 - **Find and replace is not ported.** Electron's Word find tool is a stub too.
 - **The margin and wide pages scroll sideways** when the window is narrow. The Library panel takes 300 px.
 - **Paper follows the theme, as in Electron** (Kirby's decision). White paper is under View > Word Layout > Light Paper.
-
-### Estimate for the gaps
-
-Agentic wall-clock time:
-
-| Work | Estimate | Serial limit |
-|---|---|---|
-| Split long paragraphs and tables across pages | 1 to 1.5 days | One layout pass design, shared with print in phase 5 |
-| Per-run font sizes | 1 day | Needs a line layout that mixes sizes; GPUI's `StyledText` cannot |
-| Justified text | Half a day | Same custom line painter |
-| Office autosave, drafts and history | 1 day | Uses the workspace layer above |
-| Find and replace in Word documents | Half a day | None |
-| Live IME and picture dialog checks | 1 hour | Kirby enables an input method, or approves a test-only input source |
-
-With the print gate, the workspace layer and the Word corpus check above, that leaves phase 4 at about 4 to 6 days of wall-clock time, run in parallel with phase 2b.
 
 ## How to run it
 

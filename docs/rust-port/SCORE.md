@@ -42,7 +42,7 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Rows | What closes them |
 |---|---|
 | Office 22.377, 22.386a, 22.387a | Kirby checks Touch ID in person |
-| Cloud 21.1.1, 21.3.1 and labels 21.1, 21.3 | One real Google or Apple sign-in into Markie RS. Server `markie-api` 8ed421211f04 is deployed. |
+| Cloud 21.1.1, 21.3.1 and labels 21.1, 21.3 | One real Google or Apple sign-in into Markie RS. The server side is deployed: `markie-api` since 8ed421211f04, and at f6bba2b7d689 on 2026-11-24. |
 | Editors 8.6 and group 8.0 | One real trackpad pinch by Kirby |
 | Editors 7.9 | The 50 MB timing, run with the speed comparison on a quiet Mac |
 | Editors 7.18 | A scheduled screen session of about 15 minutes: the CSV table with a real pointer, keyboard and clipboard, and one frame beside Electron's |

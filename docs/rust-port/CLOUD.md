@@ -6,7 +6,7 @@ The crate talks to Markie Cloud and self-hosted servers through the same API as 
 
 ## Sign in to Markie Cloud in Markie RS
 
-Markie RS keeps its own session. It never reads, copies or changes the Electron app's sign-in.
+Each build keeps its own session, under a Keychain service named for its profile: "Markie RS" for the dev build, "Markie Nightly" for the nightly. The dev build never reads, copies or changes the Electron app's sign-in. The nightly copies it once, in the first-run import ([NIGHTLY.md](NIGHTLY.md)). The rest of this section describes the dev build.
 
 | Piece | Where | Matches Electron |
 |---|---|---|
@@ -21,13 +21,14 @@ Markie RS keeps its own session. It never reads, copies or changes the Electron 
 
 `AccountSection` is its own entity, so Settings can host it in its Account tab instead of opening the sheet.
 
-### Google and Apple wait for the server deploy
+### Google and Apple
 
-Markie Cloud answers `app=markie-rs` with a `markie-rs://` link only after zvndev/markie#136 is deployed. It is merged, not deployed. Until then production answers `markie://`, which the Electron app owns, so:
+zvndev/markie#136, which answers `app=markie-rs` with a `markie-rs://` link, is deployed. Markie Cloud's markie-api has run it since 8ed421211f04 and was deployed again at f6bba2b7d689 on 2026-11-24.
 
-- Markie RS refuses every `markie://` link and never registers that scheme.
-- Google and Apple are off by default. The sheet shows them greyed with one line: "Google and Apple sign-in in Markie RS wait for a Markie Cloud update. Use an email code for now." Under it, "Server updated? Turn them on" saves the setting `cloud_browser_sign_in = on`.
-- No public route shows the change without signing in, so `crates/markie-cloud/scripts/probe-hand-back.sh` reads the deployed commit from `/health` and checks it for the change in git. On 2026-11-22 it said "not yet" (commit `bccfb617b3d6`).
+- The dev build hands back on `markie-rs://`. Google and Apple stay off until "Server updated? Turn them on" saves the setting `cloud_browser_sign_in = on`.
+- The nightly build carries Markie's own `markie://` scheme, which Markie Cloud has always answered, so Google and Apple are on from the start (`BROWSER_SIGN_IN_DEFAULT` in `workspace/account.rs`).
+- A real Google or Apple sign-in into Markie RS has not been done yet. It is the open cloud row in [SCORE.md](SCORE.md).
+- `crates/markie-cloud/scripts/probe-hand-back.sh` reads the deployed commit from `/health` and checks it for the change in git.
 
 ### Kirby's steps: email
 
@@ -39,7 +40,7 @@ Markie Cloud answers `app=markie-rs` with a `markie-rs://` link only after zvnde
 
 Signed in, the sheet shows your name and email, the rail shows your initials with a green dot, and Cloud shows "Connected" with your documents. Click one to read it. Quit and reopen: you stay signed in.
 
-### Kirby's steps: Google and Apple, after the deploy
+### Kirby's steps: Google and Apple in the dev build
 
 1. Run `git fetch origin && rust/crates/markie-cloud/scripts/probe-hand-back.sh` from the main worktree. Go on when it prints "live".
 2. Keep your Markie RS open. Quit any Markie RS an agent is running, so macOS hands the link to yours.
@@ -135,32 +136,9 @@ It passed three runs in a row. Each run checks these steps:
 - Keychain entries are under the service name the app passes in, for example "Markie RS". The Rust build never reads the Electron app's sign-in.
 - The session stored per origin is the token plus the confirmed account, in one Keychain entry.
 
-## What remains for Phase 3
+## Since then
 
-| Work | Notes |
-|---|---|
-| Google and Apple live | `markie-rs://` is built and tested locally. Turn it on after the PR #136 deploy (steps above). |
-| UI wiring | Done: sign-in sheet, account, Cloud list and read-only open. Left: Settings > Servers, share dialog, people requests, comments panel, presence avatars, view-only banner. |
-| Registry integration | Done in CLOUD-SYNC.md: sync records in the registry, push after save, background checks, conflict strip, cloud documents land in `~/Documents/Markie RS/Cloud`. |
-| Assets and links | Port `asset-sync.js`, `asset-cache.js` and `link-sync.js` on top of the `docs` calls. |
-| Room supervisor | Reconnect with backoff and refresh the ticket in place every 2 minutes, using the rules in `collab/ticket.rs`. |
-| Rich rooms | XmlFragment rooms and comment anchors (Y.RelativePosition). Waits on the Phase 2a spike. |
-| Real sign-in tests | Kirby's email sign-in on production, then Google and Apple after the deploy. The Keychain round trip passed with a marked test item. |
-| Token migration | Moving existing tokens out of Chromium localStorage belongs to Phase 6. |
-
-## Estimate
-
-Agentic wall-clock time, with agents in parallel:
-
-| Phase | Time | Serial limit |
-|---|---|---|
-| Deep link decision and its server change | Half a day after Kirby decides | Kirby's call, then a Markie Cloud deploy he approves |
-| Registry integration, assets and links, room supervisor | 2 to 3 days | Runs in parallel with UI wiring |
-| UI wiring | 3 to 4 days | GPUI screens share one app shell, so they merge one at a time |
-| Real-account checks | Half a day | Kirby's Google, Apple and Keychain prompts |
-| Rich rooms and anchors | Part of Phase 2b | The rich editor spike outcome |
-
-Phase 3 without rich rooms: about 4 to 6 days.
+The Phase 3 list and estimate that stood here are retired: the work they sized is built. Sync is in [CLOUD-SYNC.md](CLOUD-SYNC.md), the wiring in [INTEGRATION-CLOUD.md](INTEGRATION-CLOUD.md), rooms and comments in [COLLAB.md](COLLAB.md), and token migration in the nightly's first-run import ([NIGHTLY.md](NIGHTLY.md)). For what is open now, see [AUDIT-CLOUD.md](AUDIT-CLOUD.md) and [SCORE.md](SCORE.md).
 
 ## How to run it
 

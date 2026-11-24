@@ -57,7 +57,7 @@ export function exportFontRules(choice: ExportFontChoice): string {
     rules.push(`.markdown-body :is(h1,h2,h3,h4,h5,h6){font-family:${standalone(typefaceStack(choice.headingFont))}}`);
   }
   const code = codeFontStack(choice.codeFont);
-  if (code) rules.push(`.markdown-body :is(code,pre,kbd,samp),.markdown-body pre code{font-family:${standalone(code)}}`);
+  if (code) rules.push(`.markdown-body :is(code,pre,kbd,samp),.markdown-body pre code{font-family:${standalone(code)};font-variant-ligatures:none}`);
   return rules.join("\n");
 }
 

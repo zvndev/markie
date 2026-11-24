@@ -37,6 +37,8 @@ describe("bundled fonts in a build", () => {
     expect(css.match(/@font-face/g)).toHaveLength(BUNDLED_FAMILIES.reduce((sum, family) => sum + family.files.length, 0));
     expect(css).toContain("font-family:'Atkinson Hyperlegible Next'");
     expect(css).not.toMatch(/https?:\/\//);
+    // Code keeps the characters that were typed: no != drawn as one sign.
+    expect(css).toMatch(/\[data-doc-code-font\][^}]*font-variant-ligatures:none/);
   });
 
   it("writes a family's files into a stylesheet for an export", async () => {

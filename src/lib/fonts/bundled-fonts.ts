@@ -30,8 +30,10 @@ const STYLE_ID = "markie-bundled-fonts";
 // Document code is set in the theme's code font only while one is chosen
 // (code-font.ts sets the attribute), so the stylesheet's own rule, and how
 // everything looked before, stays in charge otherwise.
+// Ligatures off: JetBrains Mono and Fira Code would otherwise draw != as a
+// single not-equal sign, and code should show the characters that were typed.
 const CODE_RULE =
-  ":root[data-doc-code-font] .markdown-body :is(code, pre, kbd, samp){font-family:var(--doc-code-family),ui-monospace,monospace}";
+  ":root[data-doc-code-font] .markdown-body :is(code, pre, kbd, samp){font-family:var(--doc-code-family),ui-monospace,monospace;font-variant-ligatures:none}";
 
 /** Declares every bundled face on the page. Safe to call more than once. */
 export function installBundledFonts(target: Document | undefined = typeof document === "undefined" ? undefined : document): void {

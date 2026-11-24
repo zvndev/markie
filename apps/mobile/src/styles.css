@@ -1487,6 +1487,11 @@ textarea:not(.m-editor-text):focus-visible {
 }
 
 .m-doc-themed.has-colors {
+  /* A short document still fills the screen below its header, so the page
+     never ends in a band of the app's own colour. */
+  min-height: calc(100dvh - var(--m-nav-height) - var(--sat) - 76px);
+  margin-bottom: calc(-24px - var(--sab));
+  padding-bottom: var(--sab);
   background: var(--background);
   color: var(--foreground);
 }
@@ -1999,6 +2004,14 @@ textarea:not(.m-editor-text):focus-visible {
   overflow-x: auto;
 }
 
+/* Access was removed mid-session. The line under the title already says so
+   (ACCESS_CHANGED_NOTE). The desktop editors float their own notice for the
+   same thing, which on a phone sat on top of the title and said it twice. */
+.m-rich-host.is-revoked > div > [role="status"],
+.m-text-live.is-revoked [role="status"].markie-banner {
+  display: none;
+}
+
 .m-text-live .cm-editor {
   height: 100%;
   font-size: calc(15px * var(--m-text-scale, 1));
@@ -2492,10 +2505,11 @@ textarea:not(.m-editor-text):focus-visible {
   gap: 10px;
 }
 
+/* The same indent as every other group heading in the sheet (Export, People
+   with access), so the labels line up down the left edge. */
 .m-share-invite .m-group-heading,
 .m-share-public .m-group-heading {
   margin-bottom: 0;
-  padding: 0 4px;
 }
 
 .m-share-invite-row {
@@ -3063,9 +3077,10 @@ textarea:not(.m-editor-text):focus-visible {
   font-size: 13.5px;
 }
 
+/* Centred under the form, like "Use a password instead" above it. */
 .m-signin-local {
-  align-self: center;
-  margin-top: 6px;
+  display: block;
+  margin: 6px auto 0;
 }
 
 .m-chooser-open-second {

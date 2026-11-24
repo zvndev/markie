@@ -583,7 +583,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
         {session.mode === "checking" || (richShown && !picturesReady) ? (
           <div className="m-editor-wait" role="status"><span className="m-spinner" aria-hidden="true" />Opening…</div>
         ) : richShown ? (
-          <div className="m-rich-host" ref={richHost} onClickCapture={swallowLinkTaps} onTouchStart={() => { touchedRich.current = true; }}>
+          <div className={`m-rich-host${revoked ? " is-revoked" : ""}`} ref={richHost} onClickCapture={swallowLinkTaps} onTouchStart={() => { touchedRich.current = true; }}>
             <RichView
               key={collab ? `live:${collab.docId}` : "solo"}
               value={value}
@@ -602,7 +602,7 @@ export function EditorScreen({ api, draft, me, onCancel, onSaved, onUnauthorized
             />
           </div>
         ) : liveText ? (
-          <div className="m-text-live">
+          <div className={`m-text-live${revoked ? " is-revoked" : ""}`}>
             <TextCollabEditor
               key={`live-text:${collab.docId}`}
               value={value}

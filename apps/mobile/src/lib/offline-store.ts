@@ -478,6 +478,7 @@ export function memoryBackend(): OfflineBackend & { size(): number } {
 
 export const OFFLINE_DB_NAME = "markie-offline-v1";
 const OPEN_TIMEOUT_MS = 5_000;
+const DELETE_TIMEOUT_MS = 4_000;
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -548,18 +549,35 @@ export function indexedDbBackend(factory: IDBFactory = indexedDB, name = OFFLINE
       await finished;
     },
     async clear() {
+      // Two steps, and either one alone is a wipe as far as the app can tell.
+      // Emptying the stores is immediate. But the web view's database is a
+      // file (SQLite on iOS), and emptying it leaves the old pages and its
+      // write-ahead log on disk: after a sign-out the documents' text could
+      // still be read out of the app's container. Deleting the database
+      // removes the files themselves. It is made again on the next write.
+      let emptied = false;
       try {
         const db = await database();
         const tx = db.transaction([...STORES], "readwrite");
         const finished = done(tx);
         for (const store of STORES) tx.objectStore(store).clear();
         await finished;
+        emptied = true;
       } catch {
-        // A database that can't be emptied is deleted whole.
+        // A database that can't be emptied is still deleted whole below.
+      }
+      try {
         const db = await opening?.catch(() => null);
         db?.close();
         opening = null;
-        await request(factory.deleteDatabase(name));
+        // Never hold up a sign-out: a delete that is blocked finishes on its
+        // own once the last connection closes.
+        await Promise.race([
+          request(factory.deleteDatabase(name)),
+          new Promise<void>((_, reject) => setTimeout(() => reject(new Error("The phone's storage didn't answer.")), DELETE_TIMEOUT_MS)),
+        ]);
+      } catch (error) {
+        if (!emptied) throw error;
       }
     },
   };

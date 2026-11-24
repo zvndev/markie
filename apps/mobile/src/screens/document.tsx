@@ -20,7 +20,7 @@ import { Screen } from "../components/screen";
 import { MarkdownView, showThreadMark, type MarkdownComments, type ThreadQuote } from "../components/markdown-view";
 import { ACCESS_LOST_BODY, ACCESS_LOST_TITLE, ReadingCommentsSheet, useThreads, type ReadingDraft } from "../components/comments-sheet";
 import { DarkmownView } from "../components/darkmown-view";
-import { AlertIcon, CommentIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
+import { AlertIcon, CommentIcon, EyeIcon, LockIcon, PeopleIcon, PencilIcon, ShareIcon, SparkleIcon, UserPlusIcon } from "../components/icons";
 import { ExportSheet, ShareSheet } from "../components/share-sheet";
 import { docExportSource } from "../lib/export";
 import { COMMENTS_OFFLINE_NOTE, OfflineNote, useOffline } from "../components/offline-note";
@@ -42,7 +42,7 @@ interface DocumentProps {
   /** Back to the list, past any documents in between. */
   onRecent: () => void;
   onOpen: (target: LinkTarget) => void;
-  /** Opens the editor on the version shown. */
+  /** Opens the editor on the version shown. For a viewer it is the live document, read-only. */
   onEdit: (doc: CloudDoc) => void;
   /** Who is signed in, for the share sheet. */
   me: { email: string; name: string };
@@ -206,11 +206,21 @@ export function DocumentScreen({ api, target, initialName, sharedBy = null, back
   // still reads from the store; the sheet says comments need a connection,
   // and nothing is offered that could only fail.
   const offlineNow = useOffline(api)?.offline ?? false;
+  // A viewer can't edit, but can watch the people who can: the same live
+  // document, read-only, where their changes arrive as they type. It sits
+  // where the pencil would be. (The Comments button used to be the only way
+  // in; comments moved to this screen and the way in went with them.)
+  const canFollowLive = !!doc && target.kind === "doc" && doc.role === "viewer" && doc.version !== null && !doc.publicToken
+    && liveKind(doc.name, doc.format) !== null && doc.content.length <= LIVE_MAX_CHARS;
   const actions = doc && !lost ? (
     <>
       {canEditDoc(doc) ? (
         <button type="button" className="m-nav-icon" aria-label="Edit" onClick={() => onEdit(doc)}>
           <PencilIcon size={22} />
+        </button>
+      ) : canFollowLive && !offlineNow ? (
+        <button type="button" className="m-nav-icon" aria-label="Follow live" onClick={() => onEdit(doc)}>
+          <EyeIcon size={23} />
         </button>
       ) : null}
       {commentable && !lost ? (

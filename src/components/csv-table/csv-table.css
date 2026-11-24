@@ -517,7 +517,6 @@ textarea.csv-table-value:focus { box-shadow: inset 0 0 0 2px var(--csv-accent); 
   top: 0;
   left: 0;
   z-index: 4;
-  width: calc(100% + 1px);
   min-width: 120px;
   min-height: var(--csv-row);
   padding: calc((var(--csv-row) - 1.25em - 4px) / 2) 6px;

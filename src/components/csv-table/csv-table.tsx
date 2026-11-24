@@ -873,6 +873,8 @@ function CellEditor({ value, selectAll, onValue, onDone }: { value: string; sele
       className="csv-table-editor"
       aria-label="Edit cell"
       rows={Math.min(8, value.split("\n").length)}
+      // As in a spreadsheet, the editor grows over the cells to its right as the text does.
+      style={{ width: `max(calc(100% + 1px), ${Math.min(90, value.split("\n").reduce((longest, line) => Math.max(longest, line.length), 0) + 3)}ch)` }}
       value={value}
       spellCheck={false}
       onChange={(event) => onValue(event.target.value)}

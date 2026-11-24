@@ -279,6 +279,29 @@ mod tests {
         s.untouched();
     }
 
+    /// The updater's own checks, on a real release ZIP, before it is published:
+    /// what an installed nightly will do with this exact file, short of the swap.
+    ///
+    ///   MARKIE_NIGHTLY_ZIP=<path to Markie-Nightly-X.Y.Z-rs-nightly.N-arm64.zip> \
+    ///     cargo test -p markie-update the_updater_accepts_the_release_zip -- --ignored
+    #[test]
+    #[ignore = "needs MARKIE_NIGHTLY_ZIP: a signed, notarized release ZIP"]
+    fn the_updater_accepts_the_release_zip() {
+        let zip = PathBuf::from(std::env::var_os("MARKIE_NIGHTLY_ZIP").expect("set MARKIE_NIGHTLY_ZIP to the release ZIP"));
+        let name = zip.file_name().and_then(|n| n.to_str()).expect("a file name");
+        let version = name
+            .strip_prefix("Markie-Nightly-")
+            .and_then(|n| n.strip_suffix("-arm64.zip"))
+            .and_then(NightlyVersion::parse)
+            .expect("the ZIP must be named Markie-Nightly-<version>-arm64.zip");
+        assert_eq!(crate::feed::artifact_name(&version), name);
+        let contents = archive::inspect(&mut std::fs::File::open(&zip).unwrap()).expect("the ZIP's table of contents");
+        let dir = tempfile::tempdir().unwrap();
+        let app = bundle::unpack(&bundle::SystemTools, &zip, &dir.path().join("unpacked")).expect("unpacking");
+        bundle::verify(&bundle::SystemTools, &app, &Expect::nightly(&version)).expect("an installed nightly would refuse this ZIP");
+        eprintln!("accepted {name}: {} entries, {} bytes unpacked", contents.entries, contents.expanded_bytes);
+    }
+
     #[test]
     fn the_pause_marker_is_inside_the_work_folder() {
         assert_eq!(paused_marker(Path::new("/data/updates")), Path::new("/data/updates/paused"));

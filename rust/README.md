@@ -6,6 +6,7 @@ The native Rust build of desktop Markie. A side project on branch `rust/markie-r
 - Phases, finish lines and estimates: `docs/rust-port/PLAN.md`
 - What desktop Markie does today, feature by feature: `docs/rust-port/PARITY.md`
 - Markdown styles and the font library, and how their data is regenerated from Electron: `docs/rust-port/STYLES-FONTS.md`
+- Markie Nightly, the private self-updating build of this app: `docs/rust-port/NIGHTLY.md`
 
 ## Layout
 
@@ -14,6 +15,8 @@ The native Rust build of desktop Markie. A side project on branch `rust/markie-r
 | `crates/markie-core` | No UI. Formats and lossless text decoding, the device index, search, atomic save, outline, stats, the registry. |
 | `crates/markie-app` | The GPUI window: Library, document pane, status bar, menus and shortcuts. |
 | `scripts/bundle-mac.sh` | Builds `target/release/Markie RS.app` for local testing. |
+| `crates/markie-update` | Markie Nightly's updater: feed, download, verification, atomic swap. No UI. |
+| `scripts/nightly-release.sh`, `scripts/nightly-publish.mjs` | Build, sign, notarize, zip and publish the private Markie Nightly build. Runbook: `docs/rust-port/NIGHTLY.md`. |
 | `rust-toolchain.toml` | Pins Rust 1.99 for this folder only. GPUI Kit needs it. |
 
 ## Commands

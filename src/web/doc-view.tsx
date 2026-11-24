@@ -13,7 +13,7 @@
 // that is not signed in sees the sign-in, never the document.
 import "./doc-view.css";
 import "@/components/documents/document-workspace.css";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { getAuthToken } from "@/lib/auth-client";
 import { compileDarkmownPreview } from "@/lib/darkmown/preview";
 import { darkmownFrameSandbox, projectDarkmownTheme } from "@/lib/darkmown/frame";
@@ -25,7 +25,8 @@ import { ImageLightbox } from "@/components/image-lightbox";
 import { HtmlSectionRail } from "@/components/section-rail";
 import { HideBarButton, ShowBarButton } from "./bar-controls";
 import { useBarVisibility } from "./bar-visibility";
-import { loadDocLinks, SessionEndedError, type EditorKind } from "./cloud";
+import { loadDocLinks, loadDocTheme, SessionEndedError, type EditorKind } from "./cloud";
+import { pinnedTypeVars } from "./view-theme";
 import { viewSignInHref, type ViewRoute } from "./routes";
 import type { WebSessionUser } from "./session";
 import { memberAssetUrl, parseViewLinks, publicAssetUrl, viewHtml, type AssetUrl, type ViewLinks } from "./view-content";
@@ -43,6 +44,8 @@ export interface ViewDoc {
   /** The id the editor opens, when this account may edit. */
   editId: string | null;
   assetUrl: AssetUrl | null;
+  /** The type of the look its owner pinned, as custom properties (view-theme.ts). */
+  type?: Record<string, string> | null;
   /** Where its links to other documents lead for this reader; null mutes them all. */
   links: ViewLinks | null;
 }
@@ -70,6 +73,7 @@ async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | 
   try {
     // Asked alongside the document rather than after it; it never throws.
     const links = loadDocLinks(id);
+    const theme = loadDocTheme(id);
     const doc = await loadDoc(id);
     if (!doc) return { state: "no-access" };
     // A Word, RTF or ODT file Markie keeps read-only to protect what it can't
@@ -85,6 +89,7 @@ async function loadMember(id: string, apiOrigin: string, user: WebSessionUser | 
         // and links to other documents (server/src/doc-links.ts).
         assetUrl: doc.store === "docs" ? memberAssetUrl(apiOrigin, id) : null,
         links: doc.store === "docs" && doc.kind === "markdown" ? await links : null,
+        type: doc.store === "docs" && doc.kind === "markdown" ? pinnedTypeVars(await theme) : null,
       },
     };
   } catch (error) {
@@ -281,11 +286,11 @@ function ViewBody({ view, html, signIn, user, apiOrigin, route, onRetry }: {
   if (doc.kind === "unsupported" || html === null) {
     return <main className="markie-view-notice"><h1>{doc.name}</h1><p>Markie can&apos;t show this kind of file in the browser. Export it to download the original.</p></main>;
   }
-  return <ReadingColumn html={html} />;
+  return <ReadingColumn html={html} type={doc.type ?? null} />;
 }
 
 /** The rendered document, with the section rail beside it and pictures that enlarge. */
-function ReadingColumn({ html }: { html: string }) {
+function ReadingColumn({ html, type }: { html: string; type: Record<string, string> | null }) {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [article, setArticle] = useState<HTMLElement | null>(null);
 
@@ -332,7 +337,7 @@ function ReadingColumn({ html }: { html: string }) {
     <HtmlSectionRail root={article} scroller={scroller} content={html} />
     <div ref={setScroller} className="markie-view-scroll" data-web-view-scroll>
       <main className="markie-view-main">
-        <article ref={setArticle} className="markdown-body" data-web-view-content dangerouslySetInnerHTML={{ __html: html }} />
+        <article ref={setArticle} className="markdown-body" data-web-view-content style={type ? (type as CSSProperties) : undefined} dangerouslySetInnerHTML={{ __html: html }} />
       </main>
     </div>
     <ImageLightbox container={scroller} openOn="click" />

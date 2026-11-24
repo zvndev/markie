@@ -86,3 +86,26 @@ describe("reading the pinned theme from the server", () => {
     expect(await client(() => ({ status: 200, headers: {}, text: JSON.stringify({ tokens: "dark" }) })).api.docTheme("doc-1")).toBeNull();
   });
 });
+
+// The phone bundles the same font files as the desktop (src/assets/fonts,
+// declared by installBundledFonts in main.tsx), so a pinned look set in one
+// paints in it here too.
+describe("a pinned look set in a bundled or a local font", () => {
+  it("paints a bundled face by its registry id", () => {
+    const style = docThemeStyle({ bodyFont: "atkinson", headingFont: "fraunces" }, "light");
+    expect(style?.vars["--doc-font-family"]).toMatch(/^'Atkinson Hyperlegible Next', system-ui/);
+    expect(style?.vars["--doc-heading-family"]).toMatch(/^'Fraunces', Georgia/);
+  });
+
+  it("shows the bundled fallback for a font only the owner's computer has", () => {
+    const style = docThemeStyle({ bodyFont: "local:source-serif:Hoefler Text" }, "light");
+    expect(style?.vars["--doc-font-family"]).toMatch(/^'Hoefler Text', 'Source Serif 4', Georgia/);
+  });
+
+  it("ignores a font id that is not one", () => {
+    for (const bodyFont of ["local:inter:x'; } body { display:none", "local:nope:Futura", "'; background: url(//evil.example)"]) {
+      const style = docThemeStyle({ bodyFont }, "light");
+      expect(style?.vars["--doc-font-family"] ?? "").not.toMatch(/evil|display|nope/);
+    }
+  });
+});

@@ -191,3 +191,26 @@ test("Google sign-in for the web app returns to the app page on this server's ow
   assert.equal(res.status, 302);
   assert.equal(res.headers.get("location"), "/auth/web-signin");
 });
+
+// The bundled fonts (src/assets/fonts) are built into /app/assets with the
+// rest of the web app, so a hosted page set in one loads it from this server
+// and from nowhere else.
+test("a bundled font is served from this origin as woff2, cached for a year", async () => {
+  const dir = build();
+  const font = Buffer.concat([Buffer.from("wOF2"), Buffer.alloc(64, 7)]);
+  writeFileSync(join(dir, "assets", "Inter-Italic-Bq3x_9aZ.woff2"), font);
+  const app = server(dir);
+  const res = await app.request("/app/assets/Inter-Italic-Bq3x_9aZ.woff2");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "font/woff2");
+  assert.equal(res.headers.get("cache-control"), "public, max-age=31536000, immutable");
+  assert.deepEqual(Buffer.from(await res.arrayBuffer()), font);
+  assert.equal((await app.request("/app/assets/Inter-Italic-missing.woff2")).status, 404);
+});
+
+test("the page policy loads fonts from this origin and inline data only, never a third party", async () => {
+  const shell = await server(build()).request("/app/d/doc-1");
+  const fontSrc = (shell.headers.get("content-security-policy") ?? "").split("; ").find((directive) => directive.startsWith("font-src "));
+  assert.equal(fontSrc, "font-src 'self' data:");
+  assert.equal(webAppCsp([], API).split("; ").find((directive) => directive.startsWith("font-src ")), "font-src 'self' data:");
+});

@@ -14,6 +14,7 @@
 //
 // The result is a set of CSS variables for the element around the article,
 // so nothing outside the document changes.
+import { adoptLocalTypefacesIn } from "@/lib/fonts/registry";
 import { DEFAULT_TYPOGRAPHY, editorThemeForTokens, typographyVars, typographyOf, type ThemeTokens } from "@/lib/theme";
 import type { Tone } from "./theme-mode";
 
@@ -56,6 +57,9 @@ export function docThemeStyle(tokens: unknown, tone: Tone): DocThemeStyle | null
   const vars: Record<string, string> = {};
 
   // Type. typographyOf keeps faces to the desktop's own list and numbers in range.
+  // A font from the owner's computer arrives as a local id; here it paints as
+  // the bundled face that id names.
+  adoptLocalTypefacesIn(raw);
   const type = typographyVars(raw);
   if (type["--doc-font-family"]) vars["--doc-font-family"] = type["--doc-font-family"];
   if (type["--doc-heading-family"]) vars["--doc-heading-family"] = type["--doc-heading-family"];

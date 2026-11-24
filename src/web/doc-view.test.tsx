@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const loadDoc = vi.fn();
 vi.mock("./web-document", () => ({ loadDoc: (id: string) => loadDoc(id) }));
 const loadDocLinks = vi.fn();
-vi.mock("./cloud", async (original) => ({ ...(await original<typeof import("./cloud")>()), loadDocLinks: (id: string) => loadDocLinks(id) }));
+const loadDocTheme = vi.fn();
+vi.mock("./cloud", async (original) => ({ ...(await original<typeof import("./cloud")>()), loadDocLinks: (id: string) => loadDocLinks(id), loadDocTheme: (id: string) => loadDocTheme(id) }));
 
 const { DocView } = await import("./doc-view");
 
@@ -25,6 +26,8 @@ beforeEach(() => {
   loadDoc.mockReset();
   loadDocLinks.mockReset();
   loadDocLinks.mockResolvedValue(new Map());
+  loadDocTheme.mockReset();
+  loadDocTheme.mockResolvedValue(null);
   document.head.innerHTML = "";
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -146,6 +149,36 @@ describe("the read view", () => {
     expect(img.tabIndex).toBe(0);
     fireEvent.keyDown(img, { key: "Enter" });
     await waitFor(() => expect(document.querySelector("[data-markie-lightbox-image]")).toBeTruthy());
+  });
+
+  it("sets a document in the fonts of the look its owner pinned, bundled faces included", async () => {
+    loadDoc.mockResolvedValue(doc("viewer"));
+    loadDocTheme.mockResolvedValue({ background: "#fff", bodyFont: "atkinson", headingFont: "fraunces", lineHeight: 1.9, paragraphGap: 1.1, fontSize: 99 });
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByText("Ship it.");
+    expect(loadDocTheme).toHaveBeenCalledWith("doc-1");
+    const article = document.querySelector<HTMLElement>("[data-web-view-content]")!;
+    expect(article.style.getPropertyValue("--doc-font-family")).toMatch(/^'Atkinson Hyperlegible Next', system-ui/);
+    expect(article.style.getPropertyValue("--doc-heading-family")).toMatch(/^'Fraunces', Georgia/);
+    expect(article.style.getPropertyValue("--doc-line-height")).toBe("1.9");
+    expect(article.style.getPropertyValue("--doc-paragraph-gap")).toBe("1.1em");
+    // Type only: the page keeps its own colours, size and width.
+    expect(article.getAttribute("style")).not.toMatch(/background|--doc-font-size|--doc-width/);
+  });
+
+  it("paints nothing from a pinned look whose font is not a font id, and nothing when there is none", async () => {
+    loadDoc.mockResolvedValue(doc("viewer"));
+    loadDocTheme.mockResolvedValue({ bodyFont: "x'; } body { display: none", headingFont: "local:nope:Futura", lineHeight: "url(//evil.example)" });
+    const first = render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByText("Ship it.");
+    const style = document.querySelector<HTMLElement>("[data-web-view-content]")!.getAttribute("style") ?? "";
+    expect(style).not.toMatch(/evil|display|nope|Futura/);
+    expect(document.querySelector<HTMLElement>("[data-web-view-content]")!.style.getPropertyValue("--doc-font-family")).toBe("var(--font-geist-sans)");
+    first.unmount();
+    loadDocTheme.mockResolvedValue(null);
+    render(<DocView route={{ kind: "member", id: "doc-1" }} apiOrigin={API} user={USER} onEdit={() => {}} />);
+    await screen.findByText("Ship it.");
+    expect(document.querySelector<HTMLElement>("[data-web-view-content]")!.getAttribute("style")).toBeNull();
   });
 
   it("sends a member's link to another page to that page's read view, not the Library", async () => {

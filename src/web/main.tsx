@@ -9,11 +9,16 @@
 import { createRoot } from "react-dom/client";
 import "@/app/globals.css";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { installBundledFonts } from "@/lib/fonts/bundled-fonts";
+import { startCodeFont } from "@/lib/fonts/code-font";
 import { applyColorMode, getColorMode, watchSystemColorMode } from "@/lib/color-mode";
 import { parseViewRoute, parseWebRoute, signInHref } from "./routes";
 import { apiOriginFrom, bootWebSession, clearSignInMark, collabBaseFrom, markSignInSent, signInWouldBounce } from "./session";
 import { WebRoot } from "./web-root";
 
+// The fonts Markie ships, served from this origin's own /app/assets.
+installBundledFonts();
+startCodeFont();
 applyColorMode(getColorMode());
 watchSystemColorMode();
 

@@ -44,6 +44,13 @@ pub enum VaultError {
     Device(DeviceFailure),
     #[error("This is not a Markie vault backup.")]
     Backup,
+    /// A backup whose format version is newer than this build reads.
+    #[error("This vault backup was made by a newer version of Markie.")]
+    BackupTooNew,
+    /// A restore would bring private files in, but this Mac's private files
+    /// open with another passphrase and are locked. Nothing was changed.
+    #[error("This Mac's private files open with a different passphrase.")]
+    PrivateFilesLocked,
     /// A failed save keeps its encrypted draft in memory under this ID.
     #[error("The encrypted document could not be committed.")]
     Save { document_id: String, failure: Box<VaultError> },

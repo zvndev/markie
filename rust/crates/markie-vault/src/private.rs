@@ -34,6 +34,10 @@ pub const PRIVATE_DIR: &str = "private-files";
 /// One private file's largest size. The whole file is held in memory to encrypt it.
 pub const PRIVATE_FILE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 16 * 1024;
+/// The largest `<id>.mkpf` a file within the limit can produce.
+pub(crate) const MAX_STORED_BYTES: usize = PRIVATE_FILE_BYTES + 2 * MAX_METADATA_BYTES + 64;
+/// `key.json` is a few hundred bytes; anything far larger is not one.
+pub(crate) const MAX_SLOT_BYTES: usize = 4096;
 const KEY_FILE: &str = "key.json";
 const EXTENSION: &str = "mkpf";
 const MAGIC: &[u8] = b"MARKIE-PRIVATE-FILE 1\n";
@@ -116,6 +120,32 @@ fn derive(passphrase: &str, salt: &[u8], iterations: u32) -> Result<Zeroizing<[u
     Ok(key)
 }
 
+/// Opens a `key.json` slot with the passphrase. A wrong one is `AuthenticationFailed`.
+pub(crate) fn open_slot(text: &[u8], passphrase: &str) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+    let corrupt = || VaultError::from(StorageErrorCode::Corrupt);
+    if text.len() > MAX_SLOT_BYTES {
+        return Err(corrupt());
+    }
+    let slot: Value = serde_json::from_slice(text).map_err(|_| corrupt())?;
+    if slot.get("version").and_then(Value::as_u64) != Some(1) || slot.get("kdf").and_then(Value::as_str) != Some("PBKDF2-HMAC-SHA256") {
+        return Err(corrupt());
+    }
+    let iterations = slot.get("iterations").and_then(Value::as_u64).ok_or_else(corrupt)?;
+    if !(u64::from(MIN_ITERATIONS)..=u64::from(limits::MAXIMUM_KDF_ITERATIONS)).contains(&iterations) {
+        return Err(corrupt());
+    }
+    let iterations = iterations as u32;
+    let field = |k: &str| slot.get(k).and_then(Value::as_str).ok_or_else(corrupt);
+    let salt_text = field("salt")?;
+    let salt = decode_base64_checked(salt_text, 16, 16)?;
+    let iv = decode_base64_checked(field("iv")?, 12, 12)?;
+    let ciphertext = decode_base64_checked(field("ciphertext")?, 48, 48)?;
+    let wrapper = derive(passphrase, &salt, iterations)?;
+    let raw = gcm_decrypt(&wrapper, &iv, &slot_aad(salt_text, iterations), &ciphertext)?;
+    let key: [u8; 32] = raw.as_slice().try_into().map_err(|_| corrupt())?;
+    Ok(Zeroizing::new(key))
+}
+
 fn slot_aad(salt: &str, iterations: u32) -> Vec<u8> {
     format!("{SLOT_CONTEXT}:{salt}:{iterations}").into_bytes()
 }
@@ -133,7 +163,7 @@ fn storage_failed<E>(_: E) -> VaultError {
 }
 
 /// Writes `bytes` to `path` through a 0600 temporary file, synced, then renamed.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
     let dir = path.parent().ok_or(VaultError::from(StorageErrorCode::Unavailable))?;
     let temp = dir.join(format!(".{}.tmp", new_id()?));
     let mut options = std::fs::OpenOptions::new();
@@ -186,11 +216,16 @@ impl PrivateStore {
         self.dir.join(KEY_FILE).is_file()
     }
 
-    fn path_for(&self, id: &str) -> PathBuf {
+    /// A store on `dir` holding `key` in memory. For opening a backup's files.
+    pub(crate) fn with_key(dir: impl Into<PathBuf>, key: Zeroizing<[u8; 32]>) -> Self {
+        Self { dir: dir.into(), key: Some(key), iterations: limits::KDF_ITERATIONS }
+    }
+
+    pub(crate) fn path_for(&self, id: &str) -> PathBuf {
         self.dir.join(format!("{id}.{EXTENSION}"))
     }
 
-    fn ensure_dir(&self) -> Result<(), VaultError> {
+    pub(crate) fn ensure_dir(&self) -> Result<(), VaultError> {
         std::fs::create_dir_all(&self.dir).map_err(storage_failed)?;
         #[cfg(unix)]
         {
@@ -205,7 +240,7 @@ impl PrivateStore {
         self.ids().len()
     }
 
-    fn ids(&self) -> Vec<String> {
+    pub(crate) fn ids(&self) -> Vec<String> {
         let Ok(read) = std::fs::read_dir(&self.dir) else { return Vec::new() };
         let mut ids: Vec<String> = read
             .flatten()
@@ -219,7 +254,7 @@ impl PrivateStore {
         ids
     }
 
-    fn key(&self) -> Result<&[u8; 32], VaultError> {
+    pub(crate) fn key(&self) -> Result<&[u8; 32], VaultError> {
         self.key.as_deref().ok_or(VaultError::from(VaultErrorCode::Locked))
     }
 
@@ -230,26 +265,14 @@ impl PrivateStore {
     }
 
     fn create_key(&mut self, passphrase: &str) -> Result<(), VaultError> {
-        let salt = random::<16>()?;
-        let wrapper = derive(passphrase, &salt, self.iterations)?;
         let key = Zeroizing::new(random::<32>()?);
-        let iv = random::<12>()?;
-        let salt_text = encode_base64(&salt);
-        let ciphertext = gcm_encrypt(&wrapper, &iv, &slot_aad(&salt_text, self.iterations), key.as_ref())?;
-        let slot = json!({
-            "version": 1,
-            "kdf": "PBKDF2-HMAC-SHA256",
-            "iterations": self.iterations,
-            "salt": salt_text,
-            "iv": encode_base64(&iv),
-            "ciphertext": encode_base64(&ciphertext),
-        });
+        let slot = self.wrap_slot(&key, passphrase)?;
         self.ensure_dir()?;
         let path = self.dir.join(KEY_FILE);
         if path.exists() {
             return Err(StorageErrorCode::Conflict.into());
         }
-        write_atomic(&path, slot.to_string().as_bytes())?;
+        write_atomic(&path, &slot)?;
         self.key = Some(key);
         // Read it back: a key that does not reopen must never protect a file.
         let mut check = PrivateStore::new(&self.dir);
@@ -262,27 +285,60 @@ impl PrivateStore {
     }
 
     pub fn unlock(&mut self, passphrase: &str) -> Result<(), VaultError> {
-        let text = std::fs::read(self.dir.join(KEY_FILE)).map_err(|_| VaultError::from(StorageErrorCode::Unavailable))?;
-        let corrupt = || VaultError::from(StorageErrorCode::Corrupt);
-        let slot: Value = serde_json::from_slice(&text).map_err(|_| corrupt())?;
-        if slot.get("version").and_then(Value::as_u64) != Some(1) || slot.get("kdf").and_then(Value::as_str) != Some("PBKDF2-HMAC-SHA256") {
-            return Err(corrupt());
-        }
-        let iterations = slot.get("iterations").and_then(Value::as_u64).ok_or_else(corrupt)?;
-        if !(u64::from(MIN_ITERATIONS)..=u64::from(limits::MAXIMUM_KDF_ITERATIONS)).contains(&iterations) {
-            return Err(corrupt());
-        }
-        let iterations = iterations as u32;
-        let field = |k: &str| slot.get(k).and_then(Value::as_str).ok_or_else(corrupt);
-        let salt_text = field("salt")?;
-        let salt = decode_base64_checked(salt_text, 16, 16)?;
-        let iv = decode_base64_checked(field("iv")?, 12, 12)?;
-        let ciphertext = decode_base64_checked(field("ciphertext")?, 48, 48)?;
-        let wrapper = derive(passphrase, &salt, iterations)?;
-        let raw = gcm_decrypt(&wrapper, &iv, &slot_aad(salt_text, iterations), &ciphertext)?;
-        let key: [u8; 32] = raw.as_slice().try_into().map_err(|_| corrupt())?;
-        self.key = Some(Zeroizing::new(key));
+        let text = self.slot_bytes()?;
+        self.key = Some(open_slot(&text, passphrase)?);
         Ok(())
+    }
+
+    /// `key.json` as stored: the key wrapped under the passphrase, never the key.
+    pub(crate) fn slot_bytes(&self) -> Result<Vec<u8>, VaultError> {
+        let path = self.dir.join(KEY_FILE);
+        match std::fs::metadata(&path) {
+            Ok(m) if m.len() as usize <= MAX_SLOT_BYTES => {}
+            Ok(_) => return Err(StorageErrorCode::Corrupt.into()),
+            Err(_) => return Err(StorageErrorCode::Unavailable.into()),
+        }
+        std::fs::read(path).map_err(|_| VaultError::from(StorageErrorCode::Unavailable))
+    }
+
+    /// Replaces `key.json`. `None` removes it. For a restore and its rollback.
+    pub(crate) fn put_slot_bytes(&self, bytes: Option<&[u8]>) -> Result<(), VaultError> {
+        let path = self.dir.join(KEY_FILE);
+        match bytes {
+            Some(bytes) => {
+                self.ensure_dir()?;
+                write_atomic(&path, bytes)
+            }
+            None => match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(storage_failed(e)),
+            },
+        }
+    }
+
+    /// A fresh `key.json` that wraps `key` under `passphrase`, with a new salt.
+    pub(crate) fn wrap_slot(&self, key: &[u8; 32], passphrase: &str) -> Result<Vec<u8>, VaultError> {
+        let salt = random::<16>()?;
+        let wrapper = derive(passphrase, &salt, self.iterations)?;
+        let iv = random::<12>()?;
+        let salt_text = encode_base64(&salt);
+        let ciphertext = gcm_encrypt(&wrapper, &iv, &slot_aad(&salt_text, self.iterations), key)?;
+        Ok(json!({
+            "version": 1,
+            "kdf": "PBKDF2-HMAC-SHA256",
+            "iterations": self.iterations,
+            "salt": salt_text,
+            "iv": encode_base64(&iv),
+            "ciphertext": encode_base64(&ciphertext),
+        })
+        .to_string()
+        .into_bytes())
+    }
+
+    /// Takes `key` as this store's open key.
+    pub(crate) fn adopt_key(&mut self, key: Zeroizing<[u8; 32]>) {
+        self.key = Some(key);
     }
 
     fn seal(&self, id: &str, bytes: &[u8], metadata: &PrivateMetadata) -> Result<Vec<u8>, VaultError> {
@@ -354,7 +410,7 @@ impl PrivateStore {
         Ok((content_key, metadata, header, body_at))
     }
 
-    fn open(&self, id: &str, stored: &[u8]) -> Result<PrivateDocument, VaultError> {
+    pub(crate) fn open(&self, id: &str, stored: &[u8]) -> Result<PrivateDocument, VaultError> {
         let (content_key, metadata, header, body_at) = self.open_header(id, stored)?;
         let invalid = || VaultError::from(VaultErrorCode::InvalidEnvelope);
         let meta_iv = header.get("metaIv").and_then(Value::as_str).ok_or_else(invalid)?;
@@ -364,13 +420,13 @@ impl PrivateStore {
         Ok(PrivateDocument { metadata, bytes })
     }
 
-    fn read_stored(&self, id: &str) -> Result<Vec<u8>, VaultError> {
+    pub(crate) fn read_stored(&self, id: &str) -> Result<Vec<u8>, VaultError> {
         if !valid_private_id(id) {
             return Err(StorageErrorCode::Conflict.into());
         }
         let path = self.path_for(id);
         let size = std::fs::metadata(&path).map_err(|_| VaultError::from(StorageErrorCode::Conflict))?.len();
-        if size as usize > PRIVATE_FILE_BYTES + 2 * MAX_METADATA_BYTES + 64 {
+        if size as usize > MAX_STORED_BYTES {
             return Err(VaultErrorCode::LimitExceeded.into());
         }
         std::fs::read(&path).map_err(storage_failed)
@@ -380,7 +436,7 @@ impl PrivateStore {
     /// decrypted and compared with `bytes` byte for byte. Any difference
     /// removes what was written, so a caller never deletes an original on
     /// the strength of a bad copy.
-    fn write_verified(&self, id: &str, bytes: &[u8], metadata: &PrivateMetadata, fresh: bool) -> Result<(), VaultError> {
+    pub(crate) fn write_verified(&self, id: &str, bytes: &[u8], metadata: &PrivateMetadata, fresh: bool) -> Result<(), VaultError> {
         let sealed = self.seal(id, bytes, metadata)?;
         self.ensure_dir()?;
         let path = self.path_for(id);

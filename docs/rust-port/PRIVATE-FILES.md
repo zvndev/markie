@@ -19,6 +19,49 @@ Private files are not `vault.json` records. They live in `private-files/` in Mar
 - Files and the folder are created 0600 and 0700. Every write goes to a temporary file, is synced and renamed.
 - The limit is 256 MiB per file, because a file is encrypted in memory. The vault's own 8 MiB and 128-record limits do not apply.
 
+## Backups
+
+Settings → Backup writes `Markie Vault.markievault`. Since 2026-11-25 it carries the private files too, so a backup restored on a new Mac brings them back.
+
+### Format
+
+With no private files the backup is version 1: one JSON file, byte for byte what Electron writes and reads. With private files it is version 2 (`markie_vault::backup`), streamed to disk:
+
+1. `MARKIE-VAULT-BACKUP 2` and a newline.
+2. A one-line JSON manifest: `kind`, `version`, the size and SHA-256 of the vault part, `privateKey`, and for each private file only its random ID, size and SHA-256.
+3. The vault part: the version 1 backup, unchanged.
+4. Each private file's `.mkpf` bytes as stored, in the manifest's order.
+5. The SHA-256 of every byte before it, 32 raw bytes.
+
+- `privateKey` is `key.json` as stored: the private-files key wrapped under the passphrase. The key itself is never written.
+- File names, media types, folders and contents stay inside the `.mkpf` ciphertext. The test `private_files_round_trip_and_the_backup_holds_no_plaintext_or_names` scans the backup's bytes for every made-up content marker, name and folder.
+- The backup is written to a 0600 temporary file beside the destination and read back in full: length, every digest and the vault part. Only then is it renamed into place, so a failed backup never replaces an older one.
+- There is no total size cap. The vault part keeps its old limit, each private file keeps its 256 MiB limit, and a backup holds at most 65,536 private files. Copying streams in 1 MiB chunks.
+- The backup copies ciphertext only, so it works while private files are locked, as after a Touch ID unlock.
+
+### Restore
+
+Choosing a file reads it once to check its version, length and digests. A truncated, extended or altered file is refused before the passphrase is asked for. A version newer than 2 gets its own message: update Markie first.
+
+After the passphrase, nothing is written until all of this holds: the passphrase opens the vault and the backup's private-files key, every vault record authenticates, and every private file decrypts under the backup's key. Each private file is read again from the backup when it is written, and its digest checked again.
+
+Private files are merged, never overwritten:
+
+- A file whose ID is not here comes back with its name, format and original folder.
+- A file already here with the same ID and the same content is left alone. So is one an earlier restore already kept a copy of.
+- A file whose ID is here but whose content differs is kept beside it, under a new ID.
+
+The merged store ends up under one key, which the restored vault's passphrase opens:
+
+- With no private files here, the backup's `key.json` is used.
+- With private files here that the same passphrase opens, they keep their key, and the backup's files are re-encrypted under it.
+- With private files here that are open under an earlier passphrase, their key is wrapped again under the restored passphrase.
+- With private files here that are locked under another passphrase, the restore is refused and nothing changes. The user opens them first.
+
+If anything fails, the files the restore added are removed and `key.json` is put back. The notice says how many private files came back, how many were already here, and how many were kept as a second copy.
+
+A version 1 backup restores exactly as before. It leaves private files alone.
+
 ## Make Private, step by step
 
 1. Refuse a symbolic link, a file with a second hard link, a folder, or a file over the limit. Nothing changes.
@@ -44,6 +87,7 @@ The bar: someone who has the Mac's disk and the macOS login password, but not th
 
 ### Not protected
 
+- **Older backups.** A backup made while a file was private still holds it, encrypted under the passphrase, after Make Not Private or a deletion.
 - **Copies made before Make Private:** Time Machine snapshots, iCloud Drive, Dropbox or other sync, email attachments, other apps' caches, and macOS's own QuickLook and Spotlight data from before. A cloud sync of the folder may keep a version history too.
 - **The old blocks on disk.** APFS writes copy-on-write and SSDs remap blocks, so the overwrite in step 5 may not reach the bytes the file used to occupy. FileVault is what protects those blocks; it should be on.
 - **A Markie Cloud copy.** It stays on the server, and people it is shared with keep access.

@@ -46,6 +46,11 @@ opt-level = 2
 # No debug info for dependencies (GPUI and the rest): we never step into them.
 debug = false
 
+# The vault's AES-GCM and SHA-256 are generic, so they compile inside
+# markie-vault; unoptimized they run a 256 MiB private file at a few MB/s.
+[profile.dev.package.markie-vault]
+opt-level = 2
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

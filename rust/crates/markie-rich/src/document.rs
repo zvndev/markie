@@ -71,6 +71,69 @@ impl Block {
     }
 }
 
+/// Something a live rich room cannot hold, so the room is never written
+/// over the file it came from (live-room-carry.ts).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomRefusal {
+    /// The 1-based line in the whole text, front matter included.
+    pub line: usize,
+    pub what: RefusalKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalKind {
+    Html,
+    HtmlComment,
+    Footnote,
+    LinkDefinition,
+    PictureInHeading,
+    PictureInTable,
+    Other,
+}
+
+impl RefusalKind {
+    /// What it is, as the live note names it ("line 40 has a footnote").
+    pub fn noun(self) -> &'static str {
+        match self {
+            RefusalKind::Html => "raw HTML",
+            RefusalKind::HtmlComment => "an HTML comment",
+            RefusalKind::Footnote => "a footnote",
+            RefusalKind::LinkDefinition => "a link definition",
+            RefusalKind::PictureInHeading => "a picture in a heading",
+            RefusalKind::PictureInTable => "a picture in a table",
+            RefusalKind::Other => "markdown",
+        }
+    }
+}
+
+/// Every place in `md` a live rich room cannot hold, in file order. Empty
+/// means a room seeded from `md` writes it back byte for byte.
+pub fn room_refusals(md: &str) -> Vec<RoomRefusal> {
+    let fm = front_matter_len(md);
+    let body = &md[fm..];
+    let (doc, located) = Document::parse_body_located(body);
+    let line_at = |offset: usize| md[..(fm + offset).min(md.len())].matches('\n').count() + 1;
+    let mut out = Vec::new();
+    let mut pos = doc.leading.len();
+    for (b, at) in doc.blocks.iter().zip(located) {
+        let start = pos;
+        pos += b.source.len() + b.trailing.len();
+        let BlockContent::Opaque(why) = b.content else { continue };
+        let at = at.unwrap_or(start);
+        let what = match why {
+            Opaque::Html if body[at..].trim_start().starts_with("<!--") => RefusalKind::HtmlComment,
+            Opaque::Html => RefusalKind::Html,
+            Opaque::FootnoteDefinition => RefusalKind::Footnote,
+            Opaque::Definition => RefusalKind::LinkDefinition,
+            Opaque::PictureInHeading => RefusalKind::PictureInHeading,
+            Opaque::PictureInTable => RefusalKind::PictureInTable,
+            Opaque::Unsupported => RefusalKind::Other,
+        };
+        out.push(RoomRefusal { line: line_at(at), what });
+    }
+    out
+}
+
 /// `^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)`, as front-matter.ts.
 pub fn front_matter_len(md: &str) -> usize {
     let open = if md.starts_with("---\n") {
@@ -115,6 +178,13 @@ impl Document {
 
     /// Parse text that has no front matter (an editor block, a room body).
     pub fn parse_body(body: &str) -> Document {
+        Self::parse_body_located(body).0
+    }
+
+    /// As `parse_body`, with, per block, the byte offset in `body` of what
+    /// made it opaque (None for an editable block).
+    fn parse_body_located(body: &str) -> (Document, Vec<Option<usize>>) {
+        let mut located: Vec<Option<usize>> = Vec::new();
         let front_matter = String::new();
         // Display math is a block rule in Markie's markdown-it (rich-math.ts)
         // and only an inline one in pulldown, so its blocks are found first
@@ -209,16 +279,19 @@ impl Document {
             doc.push_gap(&body[cursor..start]);
             let text = body[start..bytes.end.max(start)].trim_end_matches([' ', '\t', '\r', '\n']);
             let end = start + text.len();
-            let content = if evs.start == usize::MAX {
+            let (content, at) = if evs.start == usize::MAX {
                 let source = math.iter().find(|(r, _)| r.start == bytes.start).unwrap().1.clone();
-                BlockContent::Nodes(vec![Node::MathBlock { source }])
+                (BlockContent::Nodes(vec![Node::MathBlock { source }]), None)
             } else {
-                match parse::convert_block_events(body, &events[evs], &spans) {
-                    Parsed::Nodes(n) => BlockContent::Nodes(n),
-                    Parsed::Opaque(o) => BlockContent::Opaque(o),
+                match parse::convert_block_events_located(body, &events[evs], &spans) {
+                    (Parsed::Nodes(n), _) => (BlockContent::Nodes(n), None),
+                    (Parsed::Opaque(o), at) => (BlockContent::Opaque(o), Some(at.unwrap_or(start))),
                 }
             };
+            // A gap before this block may have added definition blocks.
+            located.resize(doc.blocks.len(), None);
             doc.push_block(text.to_string(), content);
+            located.push(at);
             cursor = end;
         }
         doc.push_gap(&body[cursor..]);
@@ -227,7 +300,8 @@ impl Document {
         }
         doc.end_origin = doc.blocks.len().checked_sub(1);
         doc.ending = doc.blocks.last().map(|b| b.trailing.clone()).unwrap_or_default();
-        doc
+        located.resize(doc.blocks.len(), None);
+        (doc, located)
     }
 
     fn push_block(&mut self, source: String, content: BlockContent) {

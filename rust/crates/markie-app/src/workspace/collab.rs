@@ -99,9 +99,9 @@ struct Live {
     stage: Stage,
     readonly: bool,
     revoked: bool,
-    /// The room can write the file back exactly (no raw HTML, comments,
-    /// footnotes or other held-aside blocks).
-    carries: bool,
+    /// What in the file the room cannot hold, in file order. Empty: the
+    /// room writes the file back exactly, so the file follows the room.
+    holds: Vec<markie_rich::document::RoomRefusal>,
     front_matter: bool,
     /// Peers' cursor JSON as last seen, and when it last moved.
     cursors: HashMap<u64, (Value, Value, Instant)>,
@@ -451,14 +451,14 @@ impl Workspace {
             // The desktop never writes the stored copy (live-snapshot.ts).
             SessionOptions { user: PeerUser { name: display.clone(), color: color_for_name(&display).into() }, readonly, offer_snapshot_writer: false },
         );
-        let (room, carries, front_matter) = if rich {
+        let (room, holds, front_matter) = if rich {
             let r = self.rich.read(cx);
-            let carries = !r.editor.doc.blocks.iter().any(|b| b.is_opaque());
+            let holds = markie_rich::document::room_refusals(&r.markdown());
             let fm = !r.editor.doc.front_matter.is_empty();
-            (Room::Rich(RichBinding::new(doc.clone())), carries, fm)
+            (Room::Rich(RichBinding::new(doc.clone())), holds, fm)
         } else {
             let text = doc.get_or_insert_text(TEXT_COLLAB_KEY);
-            (Room::Text(TextBinding::new(&doc, text)), true, false)
+            (Room::Text(TextBinding::new(&doc, text)), Vec::new(), false)
         };
         let mut changes = session.subscribe();
         let pump = cx.spawn(async move |this, cx| {
@@ -478,7 +478,7 @@ impl Workspace {
             stage: Stage::Syncing,
             readonly,
             revoked: false,
-            carries,
+            holds,
             front_matter,
             cursors: HashMap::new(),
             last_sel: (u64::MAX, u64::MAX),
@@ -879,7 +879,17 @@ impl Workspace {
     /// While live, the file is written from the room only when the room can
     /// carry it exactly (live-room-carry.ts).
     pub(super) fn live_holds_file(&self) -> bool {
-        self.collab.live.as_ref().is_some_and(|l| l.stage == Stage::Ready && !l.carries)
+        self.collab.live.as_ref().is_some_and(|l| l.stage == Stage::Ready && !l.holds.is_empty())
+    }
+
+    /// The line that says why the file is left alone, while it is.
+    fn live_file_note(&self) -> Option<String> {
+        if !self.live_holds_file() {
+            return None;
+        }
+        let holds = &self.collab.live.as_ref()?.holds;
+        let first = holds.first()?;
+        Some(view::live_file_note(first.line, first.what.noun(), holds.len()))
     }
 
     /// The rich room's binding and editor, for the comment layer.
@@ -980,10 +990,10 @@ impl Workspace {
     pub(super) fn render_live_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = themes::palette(cx);
         let role_view = self.collab.role.and_then(|r| share_banner_for(r, self.collab.shared_by.as_deref()));
-        let file_note = self.live_holds_file() && self.mode == Mode::View;
+        let file_note = self.live_file_note().filter(|_| self.mode == Mode::View);
         let source_note = self.collab.live.as_ref().is_some_and(|l| matches!(l.room, Room::Rich(_))) && self.mode == Mode::Source;
         let note = self.collab.note;
-        if role_view.is_none() && note.is_none() && !file_note && !source_note {
+        if role_view.is_none() && note.is_none() && file_note.is_none() && !source_note {
             return None;
         }
         let bar = || div().flex_none().w_full().bg(p.surface).border_b_1().border_color(p.border).px(px(12.)).py(px(6.));
@@ -1022,9 +1032,38 @@ impl Workspace {
                 ),
             );
         }
-        for line in [note, file_note.then_some(view::LIVE_FILE_REFUSAL_NOTE), source_note.then_some(view::LIVE_SOURCE_LINE)].into_iter().flatten() {
+        for line in [note, source_note.then_some(view::LIVE_SOURCE_LINE)].into_iter().flatten() {
             let red = line == view::ACCESS_REVOKED_LINE;
             col = col.child(bar().py(px(4.)).text_size(px(11.)).text_color(if red { p.red } else { p.muted }).child(line));
+        }
+        // One line, with the one thing worth doing about it: the live text,
+        // everyone's edits included, saved as a file of its own.
+        if let Some(line) = file_note {
+            col = col.child(
+                bar().py(px(4.)).child(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(div().min_w_0().truncate().text_size(px(11.)).line_height(px(16.5)).text_color(p.muted).child(line))
+                        .child(
+                            no_drag(div().id("live-save-copy"))
+                                .ml_auto()
+                                .flex_none()
+                                .rounded(px(4.))
+                                .border_1()
+                                .border_color(p.border)
+                                .px(px(8.))
+                                .py(px(1.))
+                                .text_size(px(11.))
+                                .line_height(px(16.5))
+                                .text_color(p.muted)
+                                .hover(|s| s.text_color(p.foreground))
+                                .cursor_pointer()
+                                .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(view::LIVE_SAVE_COPY_TIP).build(window, cx))
+                                .child("Save a copy")
+                                .on_click(cx.listener(|this, _, window, cx| this.save_a_copy(window, cx))),
+                        ),
+                ),
+            );
         }
         Some(col.into_any_element())
     }

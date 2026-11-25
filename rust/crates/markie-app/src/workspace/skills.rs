@@ -2,7 +2,7 @@
 //! device index. Rows come from `markie_agent::skills::from_index`, which ports
 //! the view's grouping; this file is its look and its actions.
 //!
-//! The rows differ from Electron's by design (audit row 16.8): a name and a
+//! The rows differ from Electron's by design (audit row 16.1): a name and a
 //! description each get two lines before an ellipsis, and the row's actions
 //! (Show in Finder, the star, Remove) sit in a small toolbar that appears on
 //! hover and on the keyboard cursor, and in the row's menu (right-click, the

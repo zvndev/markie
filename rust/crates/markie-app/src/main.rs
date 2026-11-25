@@ -72,6 +72,12 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-2", SourceMode, None),
         KeyBinding::new("cmd-3", SplitMode, None),
         KeyBinding::new("cmd-/", ShowShortcuts, None),
+        // Back and Forward, as Safari and Finder. GPUI Kit's code editor
+        // binds the same keys to indent and outdent in its own context,
+        // which is deeper, so in Source they still indent (Electron's
+        // CodeMirror does the same).
+        KeyBinding::new("cmd-[", NavigateBack, None),
+        KeyBinding::new("cmd-]", NavigateForward, None),
     ]
 }
 
@@ -100,6 +106,43 @@ mod key_tests {
     fn cmd_shift_f_searches_all_documents_inside_the_source_editor() {
         let found = bound("cmd-shift-f");
         assert!(found.iter().any(|(a, ctx)| a.ends_with("FocusSearch") && ctx.as_deref() == Some("Input")), "{found:?}");
+    }
+
+    /// What a keystroke runs with focus inside `stack` (outermost first),
+    /// GPUI Kit's own editor bindings first, as `gpui_kit::init` binds them
+    /// before ours.
+    fn runs(keys: &'static str, stack: &[&str]) -> Option<String> {
+        use gpui_kit::component::input as kit;
+        use gpui_kit::{KeyBinding, KeyContext, Keymap};
+        let mut all = vec![
+            KeyBinding::new("cmd-[", kit::Outdent, Some("Input")),
+            KeyBinding::new("cmd-]", kit::Indent, Some("Input")),
+        ];
+        all.extend(super::key_bindings());
+        all.extend(super::menus::key_bindings());
+        // As `main` binds them: Source's own keys after the app's.
+        all.extend(super::workspace::source::key_bindings());
+        let keymap = Keymap::new(all);
+        let contexts: Vec<KeyContext> = stack.iter().map(|c| KeyContext::parse(c).unwrap()).collect();
+        let (found, _) = keymap.bindings_for_input(&[Keystroke::parse(keys).unwrap()], &contexts);
+        found.first().map(|b| b.action().name().rsplit("::").next().unwrap_or_default().to_string())
+    }
+
+    #[test]
+    fn cmd_brackets_go_back_and_forward_but_indent_in_source_text() {
+        // The document in View, a page, the History page: Back and Forward.
+        for stack in [&["Workspace"][..], &["Workspace", "RichEditor"], &["Workspace", "HistoryPage"]] {
+            assert_eq!(runs("cmd-[", stack).as_deref(), Some("NavigateBack"), "{stack:?}");
+            assert_eq!(runs("cmd-]", stack).as_deref(), Some("NavigateForward"), "{stack:?}");
+        }
+        // Source text: indent and outdent, as Electron's CodeMirror.
+        let source = ["Workspace", "Input mode=editor"];
+        assert_eq!(runs("cmd-[", &source).as_deref(), Some("Outdent"));
+        assert_eq!(runs("cmd-]", &source).as_deref(), Some("Indent"));
+        // A one-line field (search, rename) goes Back, as Safari's fields do.
+        assert_eq!(runs("cmd-[", &["Workspace", "Input"]).as_deref(), Some("NavigateBack"));
+        // ⌥⌘[ and ⌥⌘] stay the page width.
+        assert_eq!(runs("cmd-alt-[", &["Workspace"]).as_deref(), Some("PageNarrower"));
     }
 
     #[test]

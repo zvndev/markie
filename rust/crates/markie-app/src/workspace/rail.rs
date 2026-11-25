@@ -255,6 +255,8 @@ impl Workspace {
     /// A rail click (`selectLeftView` in left-rail.ts): the current panel
     /// again closes it; the pencil twice returns to the last panel.
     pub(super) fn select_view(&mut self, clicked: LeftView, cx: &mut Context<Self>) {
+        // A page may replace the document: the document keeps its scroll for Back.
+        self.nav_capture(cx);
         let s = &mut self.shell;
         if clicked == LeftView::Edit {
             if s.view == LeftView::Edit {

@@ -94,6 +94,9 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         cmd("Copy File Path", "File", None, "link location terminal clipboard", action(CopyPath)),
         cmd("Copy Document Contents", "File", None, "clipboard markdown text", Rc::new(|ws, _, cx| ws.copy_all(cx))),
         cmd("Format Tables", "Format", Some("⌥⌘T"), "align prettify pipes", action(super::source::FormatTables)),
+        // Markie RS's Back and Forward between places (nav.rs), as the Go menu.
+        cmd("Back", "Go", Some("⌘["), "previous last document page history navigate return", action(NavigateBack)),
+        cmd("Forward", "Go", Some("⌘]"), "next document page history navigate", action(NavigateForward)),
     ]);
     for t in crate::themes::templates() {
         let id = t.id.clone();

@@ -64,5 +64,8 @@ actions!(
         DarkmownSourceView,
         DarkmownPreviewView,
         DarkmownSplitView,
+        // Back and Forward between places (workspace/nav.rs).
+        NavigateBack,
+        NavigateForward,
     ]
 );

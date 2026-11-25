@@ -54,6 +54,7 @@ mod history_page;
 mod library_rows;
 mod library_area;
 mod live_docs;
+mod nav;
 mod import_copy;
 mod cloud;
 mod cloud_drive;
@@ -213,6 +214,10 @@ pub struct Workspace {
     viewing_version: Option<(String, String)>,
     /// The History page (`history_page.rs`), when it is up.
     history_page: Option<history_page::HistoryPage>,
+    /// Back and Forward between places (`nav.rs`), and a place's mode and
+    /// scroll waiting to be put back.
+    nav: nav::NavHistory,
+    pending_view: Option<nav::PendingView>,
     /// Document zoom (1.0 = 100%) and reading column width, shared by every
     /// document like the Electron app's `markie.documents.zoom.v1`.
     zoom: f32,
@@ -236,6 +241,8 @@ pub struct Workspace {
     _doc_theme: Option<Task<()>>,
     /// The (document, dirty) the menu bar was last built for.
     menu_key: Option<(PathBuf, bool)>,
+    /// Whether Go › Back and Forward were enabled when it was built.
+    menu_nav: (bool, bool),
     /// When the device index last began a walk.
     last_scan_at: Option<std::time::Instant>,
     /// Scene mode: the Cloud scene's snapshot uploads have finished.
@@ -399,6 +406,8 @@ impl Workspace {
             versions: Vec::new(),
             viewing_version: None,
             history_page: None,
+            nav: Default::default(),
+            pending_view: None,
             pending_editor_text: None,
             collab: collab::Collab::default(),
             cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
@@ -409,6 +418,7 @@ impl Workspace {
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
             menu_key: None,
+            menu_nav: (false, false),
             own_theme: None,
             _doc_theme: None,
             last_scan_at: None,
@@ -736,6 +746,8 @@ impl Workspace {
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         crate::perf::open_started();
+        // The place being left keeps its mode and scroll for Back.
+        self.nav_capture(cx);
         self.invalidate_import();
         if self.intercept_import(path, window, cx) {
             return;
@@ -1778,6 +1790,7 @@ impl Render for Workspace {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         self.ensure_browse_rows();
+        self.nav_sync(window, cx);
         self.sync_home_pages(window, cx);
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
@@ -1846,6 +1859,16 @@ impl Render for Workspace {
             .map(|d| Self::source_actions(d, cx))
             .map(|d| Self::edit_menu_actions(d, cx))
             .on_action(cx.listener(Self::on_open))
+            .on_action(cx.listener(Self::on_navigate_back))
+            .on_action(cx.listener(Self::on_navigate_forward))
+            // A mouse's back and forward buttons (and the swipes some mice
+            // and a three-finger trackpad swipe send as them).
+            .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                if let MouseButton::Navigate(direction) = ev.button {
+                    this.navigate(direction == NavigationDirection::Back, window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))
             .on_action(cx.listener(|this, _: &NewMarkdownDocument, window, cx| this.create_document("md", window, cx)))

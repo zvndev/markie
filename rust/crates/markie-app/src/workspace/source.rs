@@ -108,7 +108,25 @@ pub fn edit_menu() -> Menu {
     }
 }
 
+/// Source text only: GPUI Kit's code editor (`Input mode=editor`), not the
+/// one-line fields that share its `Input` context.
+pub const SOURCE: &str = "Input && mode == editor";
+
+/// Keys that belong to Source text. Bound after the app-wide keys, so at the
+/// same depth these win inside Source (GPUI ranks a binding with no context
+/// as deep as the focus, and the newest binding first).
+pub fn key_bindings() -> Vec<KeyBinding> {
+    use gpui_kit::component::input as kit;
+    let src = Some(SOURCE);
+    vec![
+        // CodeMirror's ⌘[ and ⌘]: outdent and indent, not Back and Forward.
+        KeyBinding::new("cmd-[", kit::Outdent, src),
+        KeyBinding::new("cmd-]", kit::Indent, src),
+    ]
+}
+
 pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys(key_bindings());
     cx.bind_keys([KeyBinding::new("cmd-alt-t", FormatTables, None), KeyBinding::new("cmd-alt-f", FindReplace, None)]);
     // The Edit menu's shortcuts, as Electron's menu shows them. The editors'
     // own bindings sit deeper in the key context, so they still take the

@@ -77,6 +77,7 @@ impl Workspace {
     }
 
     fn open_untitled_with_baseline(&mut self, name: String, text: String, clean: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.nav_capture(cx);
         self.invalidate_import();
         self.settle(window, cx);
         self.leave_page_for_document();
@@ -210,6 +211,8 @@ impl Workspace {
                     // entry is spent too.
                     if untitled {
                         let _ = this.drafts.discard(&Drafts::key_for(None));
+                        // Back returns to the file it became, not an empty buffer.
+                        this.nav_saved_untitled(&target);
                     }
                     // The open document is the new file now: nothing left to
                     // settle on the old one.

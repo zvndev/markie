@@ -325,6 +325,10 @@ impl Workspace {
             //  highlight?, named?, menu?}: the History page for the file passed
             //  on the command line, see `scene_history`.
             "history" => self.scene_history(args, step, window, cx),
+            // {open: [paths], back?: n, page?: "recent"}: places visited in
+            // order after the file on the command line, then Back n times;
+            // see `scene_nav`.
+            "nav" => self.scene_nav(args, step, window, cx),
             other => {
                 eprintln!("markie-rs scene: unknown scene {other}");
                 true

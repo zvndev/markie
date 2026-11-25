@@ -31,10 +31,12 @@ impl Workspace {
     /// The menu bar follows the open document (`refreshRevertMenuItem`).
     pub(super) fn refresh_menus(&mut self, cx: &mut Context<Self>) {
         let key = self.doc.as_ref().map(|d| (d.path.clone(), self.dirty));
-        if self.menu_key == key {
+        let (back, forward) = (self.can_navigate(true), self.can_navigate(false));
+        if self.menu_key == key && self.menu_nav == (back, forward) {
             return;
         }
         self.menu_key = key;
+        self.menu_nav = (back, forward);
         let has_history = match &self.doc {
             Some(doc) if doc.untitled => false,
             Some(doc) if matches!(doc.kind, DocKind::Office(_)) => !self.office_versions(&doc.path).is_empty(),
@@ -43,6 +45,6 @@ impl Workspace {
         };
         let nightly = super::comments::nightly(self.registry.as_deref());
         let word = matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_)));
-        crate::menus::install(crate::menus::MenuState { has_history, nightly, word, ..Default::default() }, cx);
+        crate::menus::install(crate::menus::MenuState { has_history, nightly, word, back, forward, ..Default::default() }, cx);
     }
 }

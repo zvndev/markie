@@ -588,6 +588,16 @@ impl RichView {
         self.focus.focus(window, cx);
     }
 
+    /// How far down the page is scrolled, in px (Back puts it back).
+    pub fn scroll_y(&self) -> f32 {
+        -f32::from(self.scroll.offset().y)
+    }
+
+    pub fn set_scroll_y(&mut self, y: f32, cx: &mut Context<Self>) {
+        self.scroll.set_offset(point(px(0.), px(-y.max(0.))));
+        cx.notify();
+    }
+
     pub fn set_appearance(&mut self, zoom: f32, page_width: f32, cx: &mut Context<Self>) {
         self.zoom = zoom;
         self.page_width = page_width;

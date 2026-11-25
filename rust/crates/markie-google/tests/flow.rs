@@ -294,3 +294,38 @@ fn the_fake_only_ever_hears_drive_file() {
     assert!(matches!(api.document("../../etc"), Err(GoogleError::NoAccess(_))));
     assert_eq!(DOC_MIME, "application/vnd.google-apps.document");
 }
+
+/// The Projects hook (`google_import_becomes_projects_folder`): imported Docs
+/// land in one "Google Docs" folder, made once; a re-import adds only what is
+/// new; a Doc the person moved stays where they put it.
+#[test]
+fn imported_docs_become_one_google_docs_projects_folder() {
+    use markie_core::bring_docs::bring_folder;
+    use markie_core::projects::folders;
+    let w = World::new();
+    w.google.add_doc("docP1", "Plan", 1, doc("Plan"));
+    w.google.add_doc("docP2", "Budget", 1, doc("Budget"));
+    let picked = w.pick(&["docP1", "docP2"]).unwrap();
+    let report = w.import(&picked.file_ids);
+    let paths: Vec<_> = report.imported.iter().map(|i| i.path.clone()).collect();
+    assert_eq!(bring_folder(&w.db, &w.folder(), "Google Docs", &paths).unwrap(), 2);
+    let tree = folders::tree(&w.db).unwrap();
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Google Docs");
+    assert_eq!(tree[0].files.len(), 2);
+
+    // The person moves Plan to a folder of their own; then imports again,
+    // with one new Doc.
+    let mine = folders::create_folder(&w.db, None, "Planning").unwrap();
+    let plan = w.folder().join("Plan.md");
+    folders::place_files(&w.db, &[plan.to_string_lossy().into_owned()], &mine, None).unwrap();
+    w.google.add_doc("docP3", "Notes", 1, doc("Notes"));
+    let picked = w.pick(&["docP1", "docP2", "docP3"]).unwrap();
+    let again = w.import(&picked.file_ids);
+    let paths: Vec<_> = again.imported.iter().map(|i| i.path.clone()).collect();
+    assert_eq!(bring_folder(&w.db, &w.folder(), "Google Docs", &paths).unwrap(), 1, "only the new Doc");
+    let tree = folders::tree(&w.db).unwrap();
+    let names: Vec<_> = tree.iter().map(|n| (n.name.as_str(), n.files.len())).collect();
+    assert_eq!(names, [("Google Docs", 2), ("Planning", 1)], "no second Google Docs folder, and Plan stayed put");
+    assert_eq!(folders::folder_of(&w.db, &plan.to_string_lossy()).unwrap(), Some(mine));
+}

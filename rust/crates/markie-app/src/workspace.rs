@@ -33,6 +33,7 @@ mod account_slot;
 mod agents;
 mod agents_setting;
 mod appearance;
+mod bring_docs;
 mod style_ui;
 mod chrome;
 mod csv_doc;

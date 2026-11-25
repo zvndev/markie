@@ -53,6 +53,8 @@ pub(super) enum Overlay {
     DeleteFolder { id: String, name: String, impact: markie_core::projects::folders::DeleteImpact },
     /// Move to…: a folder for the items, from Projects or Recents.
     MoveToFolder { items: Vec<markie_core::projects::folders::Item>, focused: usize },
+    /// "Bring your documents" (`bring_docs.rs`).
+    BringDocs(Box<super::bring_docs::BringState>),
 }
 
 impl Overlay {
@@ -163,6 +165,7 @@ impl Workspace {
             Overlay::StopSync { .. } => (self.render_stop_sync(&t, cx), false, true),
             Overlay::DeleteFolder { .. } => (self.render_delete_folder(&t, cx), false, true),
             Overlay::MoveToFolder { .. } => (self.render_move_to(&t, cx), false, true),
+            Overlay::BringDocs(_) => (self.render_bring_docs(&t, window, cx), false, false),
         };
         Some(
             div()
@@ -187,7 +190,8 @@ impl Workspace {
                         // confirm has no click-outside, and the conflict
                         // dialog ignores it while a choice runs.
                         match &this.dialogs.open {
-                            Overlay::StopSync { .. } => {}
+                            // Onboarding: a stray click must not lose the list.
+                            Overlay::StopSync { .. } | Overlay::BringDocs(_) => {}
                             Overlay::CloudConflict(c) if c.busy => {}
                             _ => this.close_dialog(window, cx),
                         }
@@ -207,7 +211,8 @@ impl Workspace {
         let plain = !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt;
         if key.key == "escape" && plain {
             // conflict-dialog.tsx ignores Escape while a choice is running.
-            if !matches!(&self.dialogs.open, Overlay::CloudConflict(c) if c.busy) {
+            // Nor while "Bring your documents" is placing files.
+            if !matches!(&self.dialogs.open, Overlay::CloudConflict(c) if c.busy) && !matches!(&self.dialogs.open, Overlay::BringDocs(s) if s.running.is_some()) {
                 self.close_dialog(window, cx);
             }
             return true;

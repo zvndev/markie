@@ -10,6 +10,13 @@ pub(super) fn should_show_welcome(opened_file: bool, seen: bool) -> bool {
     !opened_file && !seen
 }
 
+/// "Bring your documents" (`bring_docs.rs`) follows the welcome on a new
+/// install, once. An install that has seen the welcome never gets it on its
+/// own: only from Settings › Files and the empty Projects and Recent pages.
+pub(super) fn should_offer_bring_docs(welcome_now: bool, offered_before: bool) -> bool {
+    welcome_now && !offered_before
+}
+
 /// Electron's text byte for byte (welcome.rs, fixtures/welcome.md).
 pub(super) const WELCOME_DOC: &str = super::welcome::WELCOME_DOC;
 
@@ -31,5 +38,12 @@ mod tests {
         }
         let reopened = Registry::open(&path).unwrap();
         assert!(!should_show_welcome(false, reopened.setting(SEEN_KEY).unwrap().is_some()));
+    }
+
+    #[test]
+    fn bring_your_documents_comes_once_after_a_new_installs_welcome() {
+        assert!(should_offer_bring_docs(true, false), "a new install: after the welcome");
+        assert!(!should_offer_bring_docs(true, true), "once");
+        assert!(!should_offer_bring_docs(false, false), "an existing install that has seen the welcome never gets it on its own");
     }
 }

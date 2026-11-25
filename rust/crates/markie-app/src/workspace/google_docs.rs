@@ -274,11 +274,15 @@ impl Workspace {
         self.google(cx).records = records;
     }
 
-    /// PROJECTS HOOK: an import folder becomes a Projects folder here. Today
-    /// it is registered as a Library root (the caller does that); when the
-    /// Projects-as-folders work lands, add the folder to Projects in this one
-    /// function and nowhere else.
-    fn google_import_becomes_projects_folder(&mut self, _folder: &Path, _cx: &mut Context<Self>) {}
+    /// PROJECTS HOOK: the import folder (a Library root, which the caller
+    /// registers) becomes one "Google Docs" Projects folder, made once, the
+    /// way "Bring your documents" makes one (`markie_core::bring_docs`). A
+    /// Doc already in a folder, because an earlier import placed it or the
+    /// person moved it, stays where it is. One ⌘Z in Projects undoes it.
+    fn google_import_becomes_projects_folder(&mut self, folder: &Path, files: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = folder.to_path_buf();
+        self.organize("Import from Google Docs", window, cx, move |db| markie_core::bring_docs::bring_folder(db, &folder, "Google Docs", &files));
+    }
 
     pub(super) fn on_import_google(&mut self, _: &ImportFromGoogleDocs, window: &mut Window, cx: &mut Context<Self>) {
         if !available() {
@@ -435,7 +439,8 @@ impl Workspace {
                     }
                 }
                 if !report.imported.is_empty() {
-                    self.google_import_becomes_projects_folder(&folder, cx);
+                    let files = report.imported.iter().map(|i| i.path.clone()).collect();
+                    self.google_import_becomes_projects_folder(&folder, files, window, cx);
                     self.rescan(cx);
                 }
                 let warn = !report.folders_without_access.is_empty() || !report.errors.is_empty();

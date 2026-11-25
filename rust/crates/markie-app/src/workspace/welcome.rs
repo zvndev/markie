@@ -52,6 +52,8 @@ impl Workspace {
             if let Some(reg) = &self.registry {
                 let _ = reg.set_setting(SEEN_KEY, &markie_core::clock::iso(markie_core::clock::now_ms()));
             }
+            // A new install: "Bring your documents" over the welcome, once.
+            self.bring_docs_at_first_run(window, cx);
         } else {
             // Every later launch with no file lands on the Recent page, over
             // the empty page: pick a document up, or start a new one.

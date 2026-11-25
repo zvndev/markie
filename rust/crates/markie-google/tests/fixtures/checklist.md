@@ -1,0 +1,3 @@
+- [x] Buy stamps
+- [ ] Post the **letter**
+    - [ ] Find envelope

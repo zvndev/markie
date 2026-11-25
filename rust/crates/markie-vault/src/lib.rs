@@ -11,6 +11,7 @@ pub mod dotenv;
 pub mod envelope;
 pub mod error;
 pub mod passphrase;
+pub mod private;
 pub mod repository;
 pub mod storage;
 pub mod vault;

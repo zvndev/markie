@@ -1886,16 +1886,21 @@ fn align_or(a: &Option<String>, fallback: Align) -> Align {
 /// `mark`, `u` and TipTap's `textStyle` in `.markdown-body`).
 fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
     let mut s = base.clone();
+    // `.markdown-body strong { color: var(--foreground) }`: bold text takes
+    // the page's ink even where its block is muted (a quote, a finished task).
     if m.bold {
         s.font.weight = FontWeight(650.);
+        s.color = look.fg;
     }
     if m.italic {
         s.font.style = FontStyle::Italic;
     }
     s.underline = m.underline;
     // TipTap writes `<s>`, which keeps the text's own ink; globals.css mutes
-    // only `del`, which the rich editor never writes.
-    s.strike = m.strike;
+    // only `del`, which the rich editor never writes. A finished task's
+    // line-through (`taskDone: strike`) runs through every run in it, as
+    // CSS text-decoration does.
+    s.strike = base.strike || m.strike;
     if let Some(t) = &m.text_style {
         if let Some(c) = t.color.as_deref().and_then(media::css_color) {
             s.color = c;
@@ -1907,6 +1912,7 @@ fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
             s.size = px(z * look.zoom);
         }
     }
+    let ink = s.color;
     if let Some(link) = &m.link {
         // `a[data-doc-link="none"]`: muted, for a document not shared with
         // this reader.
@@ -1919,7 +1925,7 @@ fn style_for(m: &Marks, base: &SegStyle, look: &Look) -> SegStyle {
                 "underline" => s.under = Some((look.link.opacity(0.55), false)),
                 "dotted" => s.under = Some((look.link, true)),
                 "ink" => {
-                    s.color = base.color;
+                    s.color = ink;
                     s.under = Some((look.link, false));
                 }
                 _ => {}
@@ -1986,7 +1992,77 @@ fn cell_text(nodes: &[Node]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::disc_marker;
+    use super::{Look, disc_marker, style_for};
+    use gpui_kit::{Hsla, font, rgb};
+    use markie_core::markdown_style::{MarkdownStyle, resolve};
+    use markie_rich::model::{Link, LinkStyle, Marks};
+
+    fn look(style: &str) -> Look {
+        let c = |v: u32| -> Hsla { rgb(v).into() };
+        Look {
+            size: 16.,
+            zoom: 1.,
+            line_height: 1.6,
+            gap: 1.,
+            fg: c(0xeeeeee),
+            muted: c(0x888888),
+            link: c(0x3b82f6),
+            accent: c(0x444444),
+            surface: c(0x111111),
+            surface2: c(0x161616),
+            background: c(0x0a0a0a),
+            border: c(0x222222),
+            rule: c(0x333333),
+            code_fg: c(0xeab308),
+            selection: c(0x264f78),
+            caret: c(0xffffff),
+            find: c(0x665500),
+            find_current: c(0xaa8800),
+            font: font("Helvetica"),
+            heading_family: None,
+            mono: "Menlo".into(),
+            code_features: None,
+            md: resolve(&MarkdownStyle::preset(style)),
+            hovered_link: None,
+            snap: None,
+            focused: false,
+            scale: 2.,
+            unshared_links: Default::default(),
+        }
+    }
+
+    #[test]
+    fn bold_takes_the_ink_inside_a_muted_block() {
+        // `.markdown-body strong { color: var(--foreground) }` wins over a
+        // quote's or a finished task's muted colour.
+        let l = look("compact");
+        let mut muted = l.base(16.);
+        muted.color = l.muted;
+        let bold = Marks { bold: true, ..Default::default() };
+        assert_eq!(style_for(&bold, &muted, &l).color, l.fg);
+        assert_eq!(style_for(&Marks::default(), &muted, &l).color, l.muted);
+        let link = Link { href: "https://e.com".into(), title: None, style: LinkStyle::Inline };
+        let bold_link = Marks { bold: true, link: Some(link), ..Default::default() };
+        assert_eq!(style_for(&bold_link, &muted, &l).color, l.link, "a link keeps its own colour");
+    }
+
+    #[test]
+    fn a_finished_tasks_line_through_runs_through_marked_text() {
+        // Minimal's `taskDone: strike` sets the item's base; bold, italic and
+        // links inside it are struck too, as CSS text-decoration is.
+        let l = look("minimal");
+        let mut done = l.base(16.);
+        done.strike = true;
+        for m in [
+            Marks { bold: true, ..Default::default() },
+            Marks { italic: true, ..Default::default() },
+            Marks { code: true, ..Default::default() },
+            Marks::default(),
+        ] {
+            assert!(style_for(&m, &done, &l).strike, "{m:?}");
+        }
+        assert!(!style_for(&Marks { bold: true, ..Default::default() }, &l.base(16.), &l).strike);
+    }
 
     #[test]
     fn the_disc_is_chromiums_symbol_marker() {

@@ -5,11 +5,13 @@
 
 ## Stack (fixed)
 - Language/runtime: TypeScript and JavaScript on Node.js 22+.
-- Framework(s): Electron 41, Vite 8 renderer build, React 19, Tailwind 4, CodeMirror 6, TipTap /
+- Framework(s): Electron 42, Vite 8 renderer build, React 19, Tailwind 4, CodeMirror 6, TipTap /
   ProseMirror, Yjs, Hono, better-auth, better-sqlite3. The phone app in `apps/mobile` is Capacitor 8
   and reuses the desktop renderer modules.
 - Datastore: local SQLite registry in Electron; server SQLite with Litestream/B2 backups.
-- Deploy target: Electron desktop builds for Apple Silicon macOS, Intel macOS, Windows, and Linux;
+- Deploy target: Electron desktop builds for Windows and Linux, and for macOS until the Mac
+  cutover; Markie RS, the Rust app on the `rust/markie-rs` branch, for macOS (Apple Silicon). Markie
+  RS ships to the Mac super-nightly now and replaces Electron on the Mac at the cutover Kirby calls;
   the Markie Docs phone app for iOS and Android; the optional Markie Cloud API at
   `api.markiedocs.com`, which runs on ZVN's own boxes and deploys from `ZVN-DEV/zvn-infra` with
   Kamal. Never deploy Markie Cloud to Railway or Fly.

@@ -32,6 +32,7 @@ use markie_vault::{DeviceFailure, FileVaultStorage, StorageErrorCode, VaultEntry
 use super::Workspace;
 
 pub(super) mod ui;
+pub(crate) mod private_files;
 use ui::{CopyFeedback, Escape, EscapeState, Shortcut, escape_target, shows_search};
 
 pub const IDLE_LOCK: Duration = Duration::from_secs(5 * 60);

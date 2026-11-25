@@ -117,9 +117,12 @@ mod key_tests {
         let mut all = vec![
             KeyBinding::new("cmd-[", kit::Outdent, Some("Input")),
             KeyBinding::new("cmd-]", kit::Indent, Some("Input")),
+            KeyBinding::new("shift-alt-up", gpui_kit::base::input::AddCursorAbove, Some("Input")),
+            KeyBinding::new("cmd-alt-up", gpui_kit::base::input::AddCursorAbove, Some("Input")),
         ];
         all.extend(super::key_bindings());
         all.extend(super::menus::key_bindings());
+        all.push(KeyBinding::new("cmd-shift-l", markie_editor::AlignLeft, Some("RichEditor")));
         // As `main` binds them: Source's own keys after the app's.
         all.extend(super::workspace::source::key_bindings());
         let keymap = Keymap::new(all);
@@ -143,6 +146,33 @@ mod key_tests {
         assert_eq!(runs("cmd-[", &["Workspace", "Input"]).as_deref(), Some("NavigateBack"));
         // ⌥⌘[ and ⌥⌘] stay the page width.
         assert_eq!(runs("cmd-alt-[", &["Workspace"]).as_deref(), Some("PageNarrower"));
+    }
+
+    #[test]
+    fn source_keys_win_in_source_text_and_nowhere_else() {
+        let source = ["Workspace", "Input mode=editor"];
+        // ⇧⌘L: every match in Source, Align Left in View, the theme elsewhere.
+        assert_eq!(runs("cmd-shift-l", &source).as_deref(), Some("SelectAllOccurrences"));
+        assert_eq!(runs("cmd-shift-l", &["Workspace", "RichEditor"]).as_deref(), Some("AlignLeft"));
+        assert_eq!(runs("cmd-shift-l", &["Workspace"]).as_deref(), Some("ToggleTheme"));
+        assert_eq!(runs("cmd-shift-l", &["Workspace", "Input"]).as_deref(), Some("ToggleTheme"), "a one-line field");
+        // ⇧⌥↑ copies the line, as CodeMirror; ⌘⌥↑ still adds a cursor.
+        assert_eq!(runs("shift-alt-up", &source).as_deref(), Some("CopyLineUp"));
+        assert_eq!(runs("cmd-alt-up", &source).as_deref(), Some("AddCursorAbove"));
+        for (keys, action) in [
+            ("alt-up", "MoveLineUp"),
+            ("alt-down", "MoveLineDown"),
+            ("shift-alt-down", "CopyLineDown"),
+            ("cmd-shift-k", "DeleteLine"),
+            ("cmd-d", "SelectNextOccurrence"),
+            ("cmd-alt-g", "GoToLine"),
+            ("cmd-enter", "InsertBlankLine"),
+            ("cmd-g", "FindNextMatch"),
+        ] {
+            assert_eq!(runs(keys, &source).as_deref(), Some(action), "{keys}");
+        }
+        // ⇧⌘D stays Duplicate everywhere.
+        assert_eq!(runs("cmd-shift-d", &source).as_deref(), Some("DuplicateDocument"));
     }
 
     #[test]

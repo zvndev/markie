@@ -87,6 +87,7 @@ mod skills;
 pub mod source;
 pub use csv_table::bind_keys as bind_csv_keys;
 mod source_column;
+mod source_keys;
 pub(crate) mod vault;
 #[cfg(feature = "scene")]
 pub(crate) mod scene;
@@ -218,6 +219,8 @@ pub struct Workspace {
     /// scroll waiting to be put back.
     nav: nav::NavHistory,
     pending_view: Option<nav::PendingView>,
+    /// Source's CodeMirror keys: Go to Line's field and ⌘D's run.
+    source_keys: source_keys::SourceKeys,
     /// Document zoom (1.0 = 100%) and reading column width, shared by every
     /// document like the Electron app's `markie.documents.zoom.v1`.
     zoom: f32,
@@ -408,6 +411,7 @@ impl Workspace {
             history_page: None,
             nav: Default::default(),
             pending_view: None,
+            source_keys: Default::default(),
             pending_editor_text: None,
             collab: collab::Collab::default(),
             cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
@@ -1857,6 +1861,7 @@ impl Render for Workspace {
                 .size_0()
             })
             .map(|d| Self::source_actions(d, cx))
+            .map(|d| Self::source_key_actions(d, cx))
             .map(|d| Self::edit_menu_actions(d, cx))
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_navigate_back))

@@ -329,6 +329,9 @@ impl Workspace {
             // order after the file on the command line, then Back n times;
             // see `scene_nav`.
             "nav" => self.scene_nav(args, step, window, cx),
+            // {ops: [...]}: Source mode on the file passed on the command
+            // line, the CodeMirror keys run in order; see `scene_source`.
+            "source" => self.scene_source(args, step, window, cx),
             other => {
                 eprintln!("markie-rs scene: unknown scene {other}");
                 true

@@ -123,6 +123,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-[", kit::Outdent, src),
         KeyBinding::new("cmd-]", kit::Indent, src),
     ]
+    .into_iter()
+    .chain(super::source_keys::key_bindings())
+    .collect()
 }
 
 pub fn bind_keys(cx: &mut App) {
@@ -151,7 +154,11 @@ impl Workspace {
         div()
             .size_full()
             .min_h_0()
-            .child(editor)
+            .flex()
+            .flex_col()
+            // Go to Line (⌥⌘G), above the text like GPUI Kit's find bar.
+            .children(self.render_goto_line(cx))
+            .child(div().flex_1().min_h_0().child(editor))
             .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, window, cx| this.source_mouse_down(ev, window, cx)))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| this.source_mouse_move(ev, window, cx)))
             .capture_any_mouse_up(cx.listener(|this, ev: &MouseUpEvent, _, cx| {

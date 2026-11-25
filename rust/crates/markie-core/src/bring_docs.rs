@@ -468,6 +468,7 @@ const CHUNK: usize = 400;
 
 impl Importer {
     pub fn new(db: &Connection, roots: Vec<(PathBuf, PlanNode)>) -> Result<Self> {
+        folders::ensure_tables(db)?;
         let mut ops = VecDeque::new();
         let mut slots = 0usize;
         let mut total = 0usize;
@@ -556,6 +557,15 @@ impl Importer {
         self.folders.push(id.clone());
         Ok(id)
     }
+}
+
+/// One folder's documents into its Projects folder, in one go: for an
+/// import that already knows its files, such as Google Docs. Returns how
+/// many were placed. Safe to call after every import of the same folder.
+pub fn bring_folder(db: &Connection, root: &Path, name: &str, files: &[PathBuf]) -> Result<usize> {
+    let mut job = Importer::new(db, vec![(root.to_path_buf(), plan(root, name, files))])?;
+    job.run(db)?;
+    Ok(job.added)
 }
 
 fn child_named(db: &Connection, parent: &str, name: &str) -> Result<Option<String>> {

@@ -338,6 +338,7 @@ impl Workspace {
                         })))
                     } else {
                         row.child(ui::button("recent-empty-open", "Open file", None, Tone::Secondary, false, &p).on_click(|_, window, cx| window.dispatch_action(Box::new(Open), cx)))
+                            .child(ui::button("recent-empty-bring", "Bring in your documents\u{2026}", None, Tone::Secondary, false, &p).on_click(cx.listener(|this, _, window, cx| this.open_bring_docs(false, window, cx))))
                     }
                 }))
                 .into_any_element()

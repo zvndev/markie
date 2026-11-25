@@ -359,6 +359,8 @@ impl Workspace {
             "vault" => self.scene_vault(args, step, window, cx),
             // {state?, filter?, type?, open?: [..], ...}: Browse, see `scene_browse`.
             "browse" => self.scene_browse(args, step, window, cx),
+            // {state, roots?, tap?}: "Bring your documents", see `scene_bring`.
+            "bring" => self.scene_bring(args, step, window, cx),
             // {folders, recents?, select?, drop?, menu?, confirm?, moveto?,
             //  rename?, auto?, filter?}: the Projects tab, see `scene_projects`.
             "projects" => {

@@ -32,6 +32,7 @@ pub(crate) mod account;
 mod account_slot;
 mod agents;
 mod appearance;
+mod bring_docs;
 mod style_ui;
 mod chrome;
 mod csv_doc;

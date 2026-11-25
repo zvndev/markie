@@ -819,8 +819,8 @@ impl Workspace {
             .when(!disabled, |el| el.on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx))))
     }
 
-    /// The Library panel on its Projects tab, for scenes.
-    #[cfg(feature = "scene")]
+    /// The Library panel on its Projects tab: for scenes, and after
+    /// "Bring your documents" made its folders.
     pub(super) fn show_projects_tab(&mut self, cx: &mut Context<Self>) {
         if !(self.shell.panel_open && self.shell.view == LeftView::Library) {
             self.select_view(LeftView::Library, cx);

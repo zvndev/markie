@@ -239,6 +239,16 @@ impl Workspace {
                     .child("New Folder")
                     .on_click(cx.listener(|this, _, window, cx| this.new_folder(None, window, cx))),
             )
+            .child(
+                div()
+                    .id("projects-empty-bring")
+                    .text_size(px(11.5))
+                    .text_color(p.blue)
+                    .cursor_pointer()
+                    .hover(|s| s.underline())
+                    .child("Bring in your documents\u{2026}")
+                    .on_click(cx.listener(|this, _, window, cx| this.open_bring_docs(false, window, cx))),
+            )
             .into_any_element()
     }
 

@@ -15,6 +15,7 @@ members = [
   "crates/markie-export",
   "crates/markie-web",
   "crates/markie-update",
+  "crates/markie-google",
 ]
 
 [workspace.package]

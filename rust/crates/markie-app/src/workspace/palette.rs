@@ -155,6 +155,9 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         // build keeps Electron's own wording and brings nothing.
         cmd(if markie_core::paths::NIGHTLY { "Import from Markie" } else { "Import Recents and Stars from Markie" }, "File", None, "electron migrate settings vault", action(ImportFromMarkie)),
         cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
+    ]);
+    list.extend(super::google_docs::palette_commands());
+    list.extend([
         cmd(&format!("About {}", markie_core::paths::APP_NAME), "Help", None, "version", action(ShowAbout)),
     ]);
     // The filter at the end of Electron's memo.

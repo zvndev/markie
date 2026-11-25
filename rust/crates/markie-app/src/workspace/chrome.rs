@@ -589,9 +589,18 @@ impl Workspace {
                 .child(text)
         };
 
+        // Make Private… is offered for a file on this Mac (vault/private_ui.rs).
+        let local_file = self.file_path().is_some_and(|p| p.is_file());
         let mut panel = menu_panel(&p).py(px(6.)).min_w(px(188.)).child(
             item("ex-copy", "markie/save-copy.svg", "Save a Copy…", has_doc)
                 .when(has_doc, |el| el.on_click(cx.listener(|this, _, window, cx| this.save_a_copy(window, cx)))),
+        ).child(
+            item("ex-private", "markie/lock.svg", "Make Private…", local_file).when(local_file, |el| {
+                el.on_click(cx.listener(|this, _, window, cx| {
+                    this.close_menu(cx);
+                    window.dispatch_action(Box::new(crate::actions::MakePrivate), cx);
+                }))
+            }),
         );
         // toolbar.tsx offers the document PDF only while `document-export-pdf`
         // is enabled, which is `canPrintDocx` for a Word, RTF or ODT document.

@@ -484,6 +484,12 @@ impl PreviewCache {
         self.map.insert(want.key, (want.stamp, preview.map(Arc::new)));
     }
 
+    /// Forget one document's preview: it became private.
+    pub fn forget(&mut self, key: &str) {
+        self.map.remove(key);
+        self.pending.remove(key);
+    }
+
     /// Some previews are still being built.
     pub fn busy(&self) -> bool {
         !self.pending.is_empty()

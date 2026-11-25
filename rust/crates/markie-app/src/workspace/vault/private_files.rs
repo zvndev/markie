@@ -1,4 +1,5 @@
-//! Make Private, Make Not Private and Export for private files, without UI.
+//! Make Private and Make Not Private for private files, without UI. Export
+//! is the vault page's own `export_decrypted`, from the opened copy.
 //!
 //! Make Private reads a local file, stores it in the private store
 //! (`markie_vault::private`), proves the encrypted copy decrypts back to the
@@ -192,12 +193,6 @@ pub fn make_not_private(store: &PrivateStore, id: &str, dir: Option<&Path>) -> R
     Ok(target)
 }
 
-/// Export: a decrypted copy in `dir`. The private copy stays.
-pub fn export_copy(store: &PrivateStore, id: &str, dir: &Path) -> Result<PathBuf, String> {
-    let doc = store.read(id).map_err(|e| super::failure_copy(&e).to_string())?;
-    write_copy(dir, &doc.metadata.name, &doc.bytes).map_err(|e| format!("Markie could not write the copy: {e}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,12 +289,12 @@ mod tests {
         assert_eq!(std::fs::read(&back).unwrap(), bytes);
         assert_eq!(std::fs::read(&doc).unwrap(), b"newer file");
         assert_eq!(store.count(), 0);
-        // Export keeps the private copy.
+        // A restore to a folder the user picked, which does not exist yet.
         let id = make_private(&store, &back, 2).unwrap();
-        let elsewhere = root.path().join("exported");
-        let copy = export_copy(&store, &id, &elsewhere).unwrap();
+        let elsewhere = root.path().join("picked");
+        let copy = make_not_private(&store, &id, Some(&elsewhere)).unwrap();
+        assert_eq!(copy, elsewhere.join("memo 2.txt"));
         assert_eq!(std::fs::read(copy).unwrap(), bytes);
-        assert_eq!(store.count(), 1);
     }
 
     #[test]

@@ -272,8 +272,14 @@ impl Workspace {
                                 ProjectRow::File { path, name, dir } => {
                                     let active = current.as_ref() == Some(&path);
                                     let open_path = path.clone();
+                                    let menu_path = path.clone();
                                     v_flex()
                                         .id(SharedString::from(format!("pfile-{}", path.display())))
+                                        // The same row menu as Recents and Browse (Make Private…, Delete…).
+                                        .on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                                            this.shell.row_menu = None;
+                                            this.open_row_menu(menu_path.clone(), ev.position, cx);
+                                        }))
                                         .mx(px(4.))
                                         .pl(px(22.))
                                         .pr(px(8.))

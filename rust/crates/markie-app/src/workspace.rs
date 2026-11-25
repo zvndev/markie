@@ -238,6 +238,8 @@ pub struct Workspace {
     cloud_panel: Entity<account::CloudPanel>,
     /// The vault page (workspace/vault.rs), made the first time the Vault view opens.
     vault: Option<Entity<vault::VaultPage>>,
+    /// The vault page's events (Make Private's clean-up).
+    vault_events: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
     /// The person's own theme store, kept aside while an owner's pinned
     /// theme paints a shared document (doc_theme.rs).
@@ -420,6 +422,7 @@ impl Workspace {
             page_width: 768.0,
             source_column: Default::default(),
             vault: None,
+            vault_events: None,
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
             menu_key: None,
@@ -1902,6 +1905,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_duplicate))
             .on_action(cx.listener(Self::on_trash))
+            .on_action(cx.listener(Self::on_make_private))
             .on_action(cx.listener(Self::on_reveal))
             .on_action(cx.listener(Self::on_copy_path))
             .on_action(cx.listener(Self::on_open_account))

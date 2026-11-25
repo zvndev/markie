@@ -165,11 +165,11 @@ fn entry_icon(name: &str) -> IconName {
 // ── States ──
 
 impl VaultPage {
-    fn palette(cx: &App) -> Palette {
+    pub(super) fn palette(cx: &App) -> Palette {
         crate::themes::palette(cx)
     }
 
-    fn error_banner(&self, p: &Palette) -> Option<Div> {
+    pub(super) fn error_banner(&self, p: &Palette) -> Option<Div> {
         self.error.as_ref().map(|e| banner(Kind::Error, e.clone(), p))
     }
 
@@ -218,7 +218,9 @@ impl VaultPage {
         if self.shielded {
             return self.locked_frame(body.child(hint("Saving your last edits and locking…", &p)), &p);
         }
-        if !self.notice.is_empty() {
+        if let Some(b) = self.render_request_banner(&p) {
+            body = body.child(b);
+        } else if !self.notice.is_empty() {
             body = body.child(banner(Kind::Info, self.notice.clone(), &p));
         }
         if restoring_first {
@@ -416,6 +418,9 @@ impl VaultPage {
             }
             nav = nav.child(group);
         }
+        if let Some(private) = self.render_private_section(cx) {
+            nav = nav.child(private);
+        }
         let new_row = h_flex()
             .gap(px(6.))
             .child(button("vault-new-env", "Keys", Some(IconName::Plus), Tone::Secondary, busy, &p).flex_1().px(px(6.)).when(!busy, |b| {
@@ -451,7 +456,7 @@ impl VaultPage {
     pub(super) fn render_empty(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = Self::palette(cx);
         let busy = self.busy;
-        if !self.entries.is_empty() {
+        if !self.entries.is_empty() || self.private_count > 0 {
             return v_flex()
                 .items_center()
                 .gap(px(6.))
@@ -900,7 +905,8 @@ impl VaultPage {
                 .child(div().text_size(px(13.)).line_height(px(19.)).text_color(p.muted).child("Markie cannot preview this kind of file. Export a copy to open it in another app. The copy keeps the original bytes."))
                 .into_any_element()
         };
-        v_flex().w_full().max_w(px(920.)).gap(px(16.)).child(head).child(body).into_any_element()
+        let private_bar = self.render_private_bar(cx);
+        v_flex().w_full().max_w(px(920.)).gap(px(16.)).child(head).children(private_bar).child(body).into_any_element()
     }
 
     /// The passphrase check that stands in when Touch ID cannot be used.
@@ -997,7 +1003,10 @@ impl VaultPage {
         if !unlocked {
             return page.child(self.render_locked(cx)).into_any_element();
         }
-        let content = if self.settings_open {
+        let request = self.render_request(cx);
+        let content = if let Some(sheet) = request {
+            sheet
+        } else if self.settings_open {
             self.render_settings(cx)
         } else if self.opened.is_some() {
             self.render_opened(window, cx)
@@ -1013,7 +1022,7 @@ impl VaultPage {
             top = top.child(gate);
             any = true;
         }
-        if !self.settings_open {
+        if !self.settings_open && self.request.is_none() {
             if let Some(e) = self.error_banner(&p) {
                 top = top.child(e);
                 any = true;

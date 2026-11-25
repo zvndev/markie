@@ -117,6 +117,8 @@ pub(super) enum RowAction {
     Delete,
     /// The file is gone: "Remove from Library".
     Forget,
+    /// Move it into the vault, encrypted (vault/private_ui.rs).
+    MakePrivate,
 }
 
 pub(super) struct Entry {
@@ -205,8 +207,11 @@ pub(super) fn row_entries_shared(status: SyncStatus, shared: bool, signed_in: bo
         first.separated = true;
     }
     entries.extend(sync);
+    if exists && !links.cloud_only {
+        entries.push(Entry { action: RowAction::MakePrivate, label: "Make Private…", icon: ICON_LOCK, tone: Tone::Default, separated: true });
+    }
     entries.push(if exists {
-        Entry { action: RowAction::Delete, label: "Delete file…", icon: ICON_TRASH, tone: Tone::Danger, separated: true }
+        Entry { action: RowAction::Delete, label: "Delete file…", icon: ICON_TRASH, tone: Tone::Danger, separated: false }
     } else {
         Entry { action: RowAction::Forget, label: "Remove from Library", icon: ICON_REMOVE, tone: Tone::Default, separated: true }
     });
@@ -249,6 +254,7 @@ const ICON_DOWNLOAD: &str = r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 
 const ICON_REVIEW: &str = r#"<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4M12 16.8v.2"/>"#;
 const ICON_CLOUD_OFF: &str = r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>"#;
 const ICON_REMOVE: &str = r#"<circle cx="12" cy="12" r="8"/><path d="M8.5 12h7"/>"#;
+pub(super) const ICON_LOCK: &str = r#"<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>"#;
 pub(super) const ICON_TRASH: &str = r#"<path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6 7l1 12.5h10L18 7"/><path d="M10 11v5M14 11v5"/>"#;
 
 impl Workspace {
@@ -359,6 +365,7 @@ impl Workspace {
                 window.push_notification("Path copied. Paste it anywhere.", cx);
             }
             RowAction::Delete => self.show_dialog(Overlay::Trash { path }, window, cx),
+            RowAction::MakePrivate => self.make_private_path(path, window, cx),
             RowAction::Forget => {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 match self.registry.as_ref().map(|r| r.forget(&path)) {
@@ -539,7 +546,7 @@ mod tests {
         // Copy link shows for any row with a cloud copy, signed in or not.
         assert_eq!(
             got(SyncStatus::Synced, false, links(true, false)),
-            [(RowAction::CopyLink, "Copy link"), (RowAction::CopyPath, "Copy path"), (RowAction::Delete, "Delete file…")]
+            [(RowAction::CopyLink, "Copy link"), (RowAction::CopyPath, "Copy path"), (RowAction::MakePrivate, "Make Private…"), (RowAction::Delete, "Delete file…")]
         );
         // A cloud Live Doc: the two addresses after Copy link, before Copy path.
         let live = got(SyncStatus::Synced, true, links(true, true));
@@ -569,23 +576,23 @@ mod tests {
 
     #[test]
     fn signed_out_rows_copy_and_delete_only() {
-        assert_eq!(actions(SyncStatus::Synced, false, true), [RowAction::CopyPath, RowAction::Delete]);
+        assert_eq!(actions(SyncStatus::Synced, false, true), [RowAction::CopyPath, RowAction::MakePrivate, RowAction::Delete]);
     }
 
     #[test]
     fn each_state_offers_electrons_sync_action() {
-        assert_eq!(actions(SyncStatus::LocalOnly, true, true), [RowAction::CopyPath, RowAction::SyncOn, RowAction::Delete]);
-        assert_eq!(actions(SyncStatus::LocalOnly, true, false), [RowAction::CopyPath, RowAction::Delete]);
+        assert_eq!(actions(SyncStatus::LocalOnly, true, true), [RowAction::CopyPath, RowAction::SyncOn, RowAction::MakePrivate, RowAction::Delete]);
+        assert_eq!(actions(SyncStatus::LocalOnly, true, false), [RowAction::CopyPath, RowAction::MakePrivate, RowAction::Delete]);
         assert_eq!(
             actions(SyncStatus::Synced, true, true),
-            [RowAction::CopyPath, RowAction::ManageSharing, RowAction::SyncOff, RowAction::Delete]
+            [RowAction::CopyPath, RowAction::ManageSharing, RowAction::SyncOff, RowAction::MakePrivate, RowAction::Delete]
         );
         assert_eq!(actions(SyncStatus::Unpushed, true, true)[1], RowAction::RetryBackup);
         assert_eq!(actions(SyncStatus::Behind, true, true)[1], RowAction::Pull);
         assert_eq!(actions(SyncStatus::Conflict, true, true)[1], RowAction::Review);
         // A synced copy shared with you: no Manage sharing, but Stop syncing
         // stays (`item.state === "synced" && item.path`).
-        assert_eq!(actions(SyncStatus::Shared, true, true), [RowAction::CopyPath, RowAction::SyncOff, RowAction::Delete]);
+        assert_eq!(actions(SyncStatus::Shared, true, true), [RowAction::CopyPath, RowAction::SyncOff, RowAction::MakePrivate, RowAction::Delete]);
     }
 
     #[test]
@@ -594,7 +601,10 @@ mod tests {
         assert!(!e[0].separated);
         assert!(e[1].separated);
         assert!(!e[2].separated);
-        assert!(e.last().unwrap().separated);
+        // Make Private… and Delete file… close the menu as one group.
+        assert_eq!(e[e.len() - 2].action, RowAction::MakePrivate);
+        assert!(e[e.len() - 2].separated);
+        assert!(!e.last().unwrap().separated);
     }
 
     #[test]

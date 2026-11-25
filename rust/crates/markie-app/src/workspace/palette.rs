@@ -146,6 +146,7 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         cmd("Rename…", "File", None, "name file", action(RenameDocument)),
         cmd("Move to…", "File", None, "folder relocate", action(MoveDocument)),
         cmd("Move to Trash", "File", None, "delete remove", action(TrashDocument)),
+        cmd("Make Private…", "File", None, "vault encrypt secure lock hide password", action(MakePrivate)),
         cmd("Star or Unstar", "File", None, "favorite pin", action(ToggleStar)),
         cmd("Outline", "View", Some("⌥⌘O"), "sections headings rail toc", action(ToggleOutline)),
         cmd("Add Folder to Library…", "File", Some("⇧⌘O"), "workspace root", action(OpenFolder)),

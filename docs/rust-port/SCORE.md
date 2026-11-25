@@ -1,6 +1,6 @@
 # Markie RS parity score
 
-The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-csv-table` (editors 7.10 to 7.18 added for the CSV table of Electron PR #149: eight PASS, one NEEDS-CAPTURE), then on 2026-11-24 branch `t3/markie-rs-styles-fonts` (Electron's Markdown styles and font library, PRs #150 and #151: 16 new rows across four audits), then branch `t3/markie-rs-live-notice` (cloud 11.2 is now an IMPROVEMENT; the totals do not move).
+The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-csv-table` (editors 7.10 to 7.18 added for the CSV table of Electron PR #149: eight PASS, one NEEDS-CAPTURE), then on 2026-11-24 branch `t3/markie-rs-styles-fonts` (Electron's Markdown styles and font library, PRs #150 and #151: 16 new rows across four audits), then branch `t3/markie-rs-live-notice` (cloud 11.2 is now an IMPROVEMENT; the totals do not move), then on 2026-11-25 branch `t3/markie-rs-nav-history` (Back and Forward, library 29.12, IMPROVEMENT; the full-page History, editors 13.2, 13.8 and 13.9, IMPROVEMENT; Source's CodeMirror keys, editors 7.19 to 7.27, nine PASS: 12 new rows, all met).
 
 ## Overall
 
@@ -8,12 +8,12 @@ The overall score across the five audits, and the rules behind it. Updated 2026-
 |---|---|---|---|
 | [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 55 | 55 | 100% |
 | [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 83 | 79 | 95.2% |
-| [Editors, autosave, history](AUDIT-EDITORS.md) | 70 | 64 | 91.4% |
-| [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 100 | 97 | 97.0% |
+| [Editors, autosave, history](AUDIT-EDITORS.md) | 81 | 75 | 92.6% |
+| [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 101 | 98 | 97.0% |
 | [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 61 | 58 | 95.1% |
-| **Total** | **369** | **353** | **95.7%** |
+| **Total** | **381** | **365** | **95.8%** |
 
-The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 13 are met. The eight CSV sheet rows (editors 7b, Electron PR #154) then made it 353 of 369; all eight are met.
+The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 13 are met. The eight CSV sheet rows (editors 7b, Electron PR #154) then made it 353 of 369; all eight are met. Back and Forward, the History page and Source's keys (2026-11-25) added 12 rows, all met: 365 of 381.
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -30,7 +30,9 @@ Target set by Kirby on 2026-11-22: 98.5% or better.
   - the Cloud page's layout: one header, one toolbar row, share requests as a one-line strip that opens, and documents and snapshots as cards (cloud 14.1.2, 14.1.3, 30.1). Numbers are unchanged: these rows were PASS;
   - a style's picture placement and captions drawn in View, where Electron's editing view ignores them (library 28.S3);
   - the live note names this file's reason by line ("Line 40 has a footnote, which live editing can't keep.") in one line with Save a copy, where Electron lists every possible cause whether the file has it or not (cloud 11.2). Numbers are unchanged: the row was PASS;
-  - the vault's calmer layout, Touch ID first unlock, icon row actions and copy countdown (office 22.374, 22.375, 22.376, 22.378). Numbers are unchanged: these rows were PASS.
+  - the vault's calmer layout, Touch ID first unlock, icon row actions and copy countdown (office 22.374, 22.375, 22.376, 22.378). Numbers are unchanged: these rows were PASS;
+  - Back and Forward between documents and pages: title-bar arrows, ⌘[ ⌘], a Go menu, the mouse's side buttons (library 29.12). Electron has none;
+  - History as Electron's super-nightly full page, in place of the stable popup whose click toggled a diff under the pointer (editors 13.2), with rows that select on the press (13.8) and Older and Newer arrows (13.9). Word, RTF and ODT keep the recovery dialog.
 - **Excluded:** the database layout (library 2.2, 2.3, 2.8) and the crash report file format (office 27.427, 27.431).
 - **Nightly-only features are out of the stable score** (EXCLUDED-NIGHTLY), as each audit already applied. Local comments (cloud 12.2, 12.2.1) were rescored on that rule.
 - **No web views** in Markie RS: printing and export stay on the native engine.
@@ -50,4 +52,4 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Library 28.S4, 28.S5, 28.F2 | A scheduled screen session of about 15 minutes: the Markdown style section, the style editor and the font menus with a real pointer, beside Electron's. The checks are written in each audit row |
 | Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
 
-If every row above closes except the last two, the score is 367 of 369, which is 99.5%.
+If every row above closes except the last two, the score is 379 of 381, which is 99.5%.

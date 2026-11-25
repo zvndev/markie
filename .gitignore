@@ -88,3 +88,9 @@ deploy/markie-backup-key.txt
 
 # Markie RS (native Rust build): cargo output
 rust/target/
+# Extra build folders agents create (target-base, target-math, ...): never commit build output.
+rust/target-*/
+
+# Python caches from the bench and scene scripts
+__pycache__/
+*.pyc

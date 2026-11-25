@@ -42,6 +42,10 @@ pub enum Opaque {
     FootnoteDefinition,
     /// Link reference definitions and anything else the parser consumes.
     Definition,
+    /// A picture inside a heading: the room's picture is a block of its own.
+    PictureInHeading,
+    /// A picture inside a table cell, for the same reason.
+    PictureInTable,
     Unsupported,
 }
 
@@ -60,11 +64,17 @@ pub fn parse_nodes(md: &str) -> Vec<Node> {
 /// `math` holds the inline math spans of the whole text (see
 /// `inline_math_spans`), which were masked out before pulldown saw it.
 pub fn convert_block_events(src: &str, events: &[Ev], math: &[Range<usize>]) -> Parsed {
-    let mut c = Conv { src, ev: events, i: 0, opaque: None, math, math_emitted: vec![false; math.len()] };
+    convert_block_events_located(src, events, math).0
+}
+
+/// As `convert_block_events`, with the byte offset in `src` of what made
+/// the block opaque (the start of the event that failed).
+pub fn convert_block_events_located(src: &str, events: &[Ev], math: &[Range<usize>]) -> (Parsed, Option<usize>) {
+    let mut c = Conv { src, ev: events, i: 0, opaque: None, opaque_at: None, math, math_emitted: vec![false; math.len()] };
     let nodes = c.blocks(None);
     match c.opaque {
-        Some(o) => Parsed::Opaque(o),
-        None => Parsed::Nodes(nodes),
+        Some(o) => (Parsed::Opaque(o), c.opaque_at),
+        None => (Parsed::Nodes(nodes), None),
     }
 }
 
@@ -73,6 +83,7 @@ struct Conv<'s, 'e> {
     ev: &'e [Ev<'s>],
     i: usize,
     opaque: Option<Opaque>,
+    opaque_at: Option<usize>,
     math: &'e [Range<usize>],
     math_emitted: Vec<bool>,
 }
@@ -93,9 +104,17 @@ impl<'s, 'e> Conv<'s, 'e> {
         self.ev.get(self.i)
     }
 
+    /// Opaque because of the event about to be read.
     fn fail(&mut self, why: Opaque) {
+        let at = self.ev.get(self.i).map(|(_, r)| r.start);
+        self.fail_at(why, at);
+    }
+
+    /// Opaque because of what starts at byte `at`.
+    fn fail_at(&mut self, why: Opaque, at: Option<usize>) {
         if self.opaque.is_none() {
             self.opaque = Some(why);
+            self.opaque_at = at;
         }
     }
 
@@ -117,10 +136,11 @@ impl<'s, 'e> Conv<'s, 'e> {
                 }
                 Event::Start(Tag::Heading { level, .. }) => {
                     let level = *level as u8;
+                    let at = range.start;
                     self.i += 1;
                     let pieces = self.inlines(TagEnd::Heading((level as usize).try_into().unwrap()));
                     if pieces.iter().any(|p| matches!(p, Piece::Image(_))) {
-                        self.fail(Opaque::Unsupported);
+                        self.fail_at(Opaque::PictureInHeading, Some(at));
                     }
                     let content = finish_inlines(pieces);
                     out.push(Node::heading(level, content));
@@ -193,6 +213,14 @@ impl<'s, 'e> Conv<'s, 'e> {
                 Event::Start(Tag::FootnoteDefinition(_)) => {
                     self.fail(Opaque::FootnoteDefinition);
                     self.skip_container();
+                }
+                // A tight list item that opens with emphasis, a link or a
+                // picture (`- **Lead.** text`): inline content like any other.
+                Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. } | Tag::Image { .. }) => {
+                    let pieces = self.loose_inlines();
+                    if !pieces.is_empty() {
+                        out.extend(paragraph_nodes(pieces, ""));
+                    }
                 }
                 Event::Start(_) => {
                     self.fail(Opaque::Unsupported);
@@ -302,7 +330,7 @@ impl<'s, 'e> Conv<'s, 'e> {
         let mut rows: Vec<Vec<Cell>> = Vec::new();
         let mut header = false;
         let mut row: Vec<Cell> = Vec::new();
-        while let Some((ev, _)) = self.peek() {
+        while let Some((ev, range)) = self.peek() {
             self.i += 1;
             match ev {
                 Event::Start(Tag::TableHead) => {
@@ -317,9 +345,10 @@ impl<'s, 'e> Conv<'s, 'e> {
                 Event::End(TagEnd::TableRow) => rows.push(std::mem::take(&mut row)),
                 Event::Start(Tag::TableCell) => {
                     let col = row.len();
+                    let at = range.start;
                     let pieces = self.inlines(TagEnd::TableCell);
                     if pieces.iter().any(|p| matches!(p, Piece::Image(_))) {
-                        self.fail(Opaque::Unsupported);
+                        self.fail_at(Opaque::PictureInTable, Some(at));
                     }
                     let align = match aligns.get(col) {
                         Some(pulldown_cmark::Alignment::Left) => Some(Align::Left),
@@ -499,7 +528,7 @@ impl<'s, 'e> Conv<'s, 'e> {
                 // so the "\n" after it starts the next paragraph and survives.
             }
             Event::TaskListMarker(_) => {}
-            Event::Start(_) => self.fail(Opaque::Unsupported),
+            Event::Start(_) => self.fail_at(Opaque::Unsupported, Some(range.start)),
             _ => {}
         }
     }

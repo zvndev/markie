@@ -175,6 +175,16 @@ impl Workspace {
         let wants_session = args.get("token").is_some();
         match spec.name.as_str() {
             "doc" => self.doc.is_some(),
+            // The file passed on the command line, live: MARKIE_RS_TEST_SESSION
+            // binds it to a shared document on the scratch server. Ready once
+            // the room is claimed and a few frames have settled the banner.
+            "live" => {
+                if !self.live_active() {
+                    return false;
+                }
+                *step += 1;
+                *step > 6
+            }
             // Settings › Appearance, with the Markdown style section. `editor: true`
             // opens the style editor, `group` one of its elements ("tables"),
             // `edit` changes choices first ({"tableStyle": "zebra"}), and

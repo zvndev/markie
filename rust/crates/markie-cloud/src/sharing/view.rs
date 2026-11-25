@@ -241,8 +241,23 @@ pub fn share_banner_for(state: ShareRoleState, shared_by: Option<&str>) -> Optio
 pub const ACCESS_REVOKED_LINE: &str = "Your access to this document was removed. It's read-only now — copy anything you still need.";
 /// Said when no live session could start (share-banner.tsx).
 pub const LIVE_UNAVAILABLE_LINE: &str = "The live session could not load. You are editing your copy alone.";
-/// Said while a live rich session leaves the file alone (live-room-carry.ts).
-pub const LIVE_FILE_REFUSAL_NOTE: &str = "Live edits stay in the live session. Your file isn't updated from the live session, because it has raw HTML, an HTML comment, a footnote, a picture address or other markdown that live editing can't keep exactly.";
+/// Said while a live rich session leaves the file alone (live-room-carry.ts):
+/// what that means, then the first thing in this file the room cannot
+/// hold, by line. `noun` is "a footnote", "raw HTML" and so on, or
+/// "markdown" when there is no plainer name; `count` is how many there are.
+/// Electron lists every possible cause whether the file has it or not.
+pub fn live_file_note(line: usize, noun: &str, count: usize) -> String {
+    let lead = "Edits here reach the live session, not this file.";
+    let why = match (noun, count) {
+        ("markdown", 0 | 1) => format!("Line {line} has markdown that live editing can't keep."),
+        ("markdown", n) => format!("Line {line} has the first of {n} things live editing can't keep."),
+        (noun, 0 | 1) => format!("Line {line} has {noun}, which live editing can't keep."),
+        (noun, n) => format!("Line {line} has {noun}, the first of {n} things live editing can't keep."),
+    };
+    format!("{lead} {why}")
+}
+/// The tooltip on the live note's Save a copy.
+pub const LIVE_SAVE_COPY_TIP: &str = "Save the live text, with everyone's edits, as a new file";
 /// Shown over Source while a session is live.
 pub const LIVE_SOURCE_LINE: &str = "Live session. Edit in Rich.";
 /// A room this build cannot draw, or a claim the server never answered.
@@ -363,6 +378,31 @@ mod tests {
         taken.insert("ada@x.io".to_string());
         assert!(suggestions(&contacts, "ada", &taken).is_empty());
         assert!(suggestions(&contacts, "", &taken).is_empty());
+    }
+
+    #[test]
+    fn the_live_file_note_names_this_files_reason_and_nothing_else() {
+        assert_eq!(
+            live_file_note(40, "a footnote", 1),
+            "Edits here reach the live session, not this file. Line 40 has a footnote, which live editing can't keep."
+        );
+        assert_eq!(
+            live_file_note(7, "an HTML comment", 3),
+            "Edits here reach the live session, not this file. Line 7 has an HTML comment, the first of 3 things live editing can't keep."
+        );
+        assert_eq!(
+            live_file_note(2, "markdown", 1),
+            "Edits here reach the live session, not this file. Line 2 has markdown that live editing can't keep."
+        );
+        assert_eq!(
+            live_file_note(2, "markdown", 2),
+            "Edits here reach the live session, not this file. Line 2 has the first of 2 things live editing can't keep."
+        );
+        for n in [1, 4] {
+            let note = live_file_note(9, "raw HTML", n);
+            assert!(!note.contains('\u{2014}'), "no em dash: {note}");
+            assert!(!note.contains("footnote") && !note.contains("picture"), "names only this file's reason: {note}");
+        }
     }
 
     #[test]

@@ -51,6 +51,13 @@ case "$VARIANT" in
     ;;
 esac
 
+# Google Docs import (crates/markie-google config.rs) is compiled in only
+# when the Desktop OAuth client is in the environment; without it the
+# feature is hidden. The values are never printed.
+export MARKIE_GOOGLE_DESKTOP_CLIENT_ID="${MARKIE_GOOGLE_DESKTOP_CLIENT_ID:-}"
+export MARKIE_GOOGLE_DESKTOP_CLIENT_SECRET="${MARKIE_GOOGLE_DESKTOP_CLIENT_SECRET:-}"
+if [[ -n "$MARKIE_GOOGLE_DESKTOP_CLIENT_ID" ]]; then echo "Google Docs import: on"; else echo "Google Docs import: off (no MARKIE_GOOGLE_DESKTOP_CLIENT_ID)"; fi
+
 cargo build --release -p markie-app ${FEATURES[@]+"${FEATURES[@]}"}
 
 rm -rf "$APP"

@@ -1,0 +1,149 @@
+{
+ "documentId": "fixture",
+ "title": "Code",
+ "revisionId": "rev-fixture",
+ "tabs": [
+  {
+   "tabProperties": {
+    "tabId": "t.tab1",
+    "title": "Tab 1"
+   },
+   "documentTab": {
+    "body": {
+     "content": [
+      {
+       "sectionBreak": {}
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Run ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "make test",
+           "textStyle": {
+            "weightedFontFamily": {
+             "fontFamily": "Courier New",
+             "weight": 400
+            }
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": " before pushing.\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "fn main() {\n",
+           "textStyle": {
+            "weightedFontFamily": {
+             "fontFamily": "Courier New",
+             "weight": 400
+            }
+           }
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "\n",
+           "textStyle": {
+            "weightedFontFamily": {
+             "fontFamily": "Courier New",
+             "weight": 400
+            }
+           }
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "    println!(\"hi\");\n",
+           "textStyle": {
+            "weightedFontFamily": {
+             "fontFamily": "Courier New",
+             "weight": 400
+            }
+           }
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "}\n",
+           "textStyle": {
+            "weightedFontFamily": {
+             "fontFamily": "Courier New",
+             "weight": 400
+            }
+           }
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Back to prose.\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

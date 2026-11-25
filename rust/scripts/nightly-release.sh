@@ -20,6 +20,8 @@
 #   sign      the "Developer ID Application" certificate in the login Keychain
 #   notarize  APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
 #             (or MARKIE_NOTARY_PROFILE, a `notarytool store-credentials` name)
+#   build     MARKIE_GOOGLE_DESKTOP_CLIENT_ID (and _SECRET, if the client has
+#             one) to include Google Docs import; without them it is hidden
 #
 # --dry-run builds for real, prints the sign and notarize commands instead of
 # running them, and checks everything that needs no credential. Its output
@@ -77,7 +79,10 @@ build() {
     rm -rf "$OUT"
   fi
   mkdir -p "$OUT"
-  MARKIE_VARIANT=nightly MARKIE_NIGHTLY_VERSION="$VERSION" MARKIE_NIGHTLY_COMMIT="$COMMIT" MARKIE_BUNDLE_DIR="$OUT" "$RUST_DIR/scripts/bundle-mac.sh"
+  # MARKIE_GOOGLE_DESKTOP_CLIENT_ID (and _SECRET) turn on Google Docs import
+  # in the build; bundle-mac.sh says whether it is on, never the value.
+  MARKIE_GOOGLE_DESKTOP_CLIENT_ID="${MARKIE_GOOGLE_DESKTOP_CLIENT_ID:-}" MARKIE_GOOGLE_DESKTOP_CLIENT_SECRET="${MARKIE_GOOGLE_DESKTOP_CLIENT_SECRET:-}" \
+    MARKIE_VARIANT=nightly MARKIE_NIGHTLY_VERSION="$VERSION" MARKIE_NIGHTLY_COMMIT="$COMMIT" MARKIE_BUNDLE_DIR="$OUT" "$RUST_DIR/scripts/bundle-mac.sh"
 }
 
 need_app() { [[ -d "$APP" ]] || die "no bundle at $APP; run the build step first"; }

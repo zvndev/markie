@@ -1,0 +1,111 @@
+{
+ "documentId": "fixture",
+ "title": "Checklist",
+ "revisionId": "rev-fixture",
+ "tabs": [
+  {
+   "tabProperties": {
+    "tabId": "t.tab1",
+    "title": "Tab 1"
+   },
+   "documentTab": {
+    "body": {
+     "content": [
+      {
+       "sectionBreak": {}
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Buy stamps\n",
+           "textStyle": {
+            "strikethrough": true
+           }
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.c1",
+         "nestingLevel": 0
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Post the ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "letter",
+           "textStyle": {
+            "bold": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": "\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.c1",
+         "nestingLevel": 0
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Find envelope\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.c1",
+         "nestingLevel": 1
+        }
+       }
+      }
+     ]
+    },
+    "lists": {
+     "kix.c1": {
+      "listProperties": {
+       "nestingLevels": [
+        {
+         "glyphType": "GLYPH_TYPE_UNSPECIFIED",
+         "glyphFormat": "%0"
+        },
+        {
+         "glyphType": "GLYPH_TYPE_UNSPECIFIED",
+         "glyphFormat": "%1"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ ]
+}

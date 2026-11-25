@@ -86,6 +86,8 @@ const ICONS: &[(&str, &str)] = &[
     ("markie/sync-conflict.svg", stroke!("1.8", r#"<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4M12 16.8v.2"/>"#)),
     ("markie/sync-behind.svg", stroke!("1.8", r#"<path d="M7 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.55-1.4A4.25 4.25 0 0 1 17.5 18z"/><path d="M12 10v5M9.8 12.8 12 15l2.2-2.2"/>"#)),
     ("markie/sync-shared.svg", stroke!("1.8", r#"<circle cx="9" cy="9" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="10" r="2.3"/><path d="M16 14.6a4.5 4.5 0 0 1 5 4.4"/>"#)),
+    // A synced Google Doc in Recents (workspace/google_docs.rs): a page with lines.
+    ("markie/google-doc.svg", stroke!("1.8", r#"<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>"#)),
     ("markie/people.svg", stroke!("1.7", r#"<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>"#)),
     ("markie/refresh.svg", stroke!("2", r#"<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/>"#)),
     ("markie/comment.svg", stroke!("2", r#"<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>"#)),

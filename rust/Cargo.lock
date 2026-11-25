@@ -5482,6 +5482,7 @@ dependencies = [
  "markie-core",
  "markie-editor",
  "markie-export",
+ "markie-google",
  "markie-migrate",
  "markie-office",
  "markie-office-view",
@@ -5605,6 +5606,30 @@ dependencies = [
  "unicode-normalization",
  "url",
  "woff2-patched",
+]
+
+[[package]]
+name = "markie-google"
+version = "0.10.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "getrandom 0.3.4",
+ "hex",
+ "keyring",
+ "markie-core",
+ "markie-google",
+ "markie-vault",
+ "pulldown-cmark",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -8035,6 +8060,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

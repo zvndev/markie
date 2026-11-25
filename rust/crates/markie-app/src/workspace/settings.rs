@@ -108,6 +108,7 @@ impl Workspace {
             SettingsSection::Account => self.render_account_section(t, cx),
             SettingsSection::Appearance => self.render_appearance_live(colors_open, t, window, cx),
             SettingsSection::Files => div()
+                .child(self.render_google_docs_setting(t, cx))
                 .child(render_files(t))
                 .child(div().mt(px(20.)).pt(px(16.)).border_t_1().border_color(fade(t.border, 0.6)).child(self.render_auto_organize_setting(t, cx)))
                 .into_any_element(),

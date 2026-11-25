@@ -71,6 +71,7 @@ pub fn build(state: MenuState) -> Vec<Menu> {
         item("History…", ShowHistory).disabled(!state.has_history),
         item("Duplicate (Fork)", DuplicateDocument),
         item(reveal_label(), RevealDocument),
+        item("Make Private…", MakePrivate),
         MenuItem::separator(),
         item("Print…", Print),
         MenuItem::submenu(Menu {
@@ -254,15 +255,16 @@ mod tests {
             labels(&menu(&menus, "File").items),
             [
                 "New File", "Open…", "-", "Library…", "Search All Documents…", "-", "Save", "Save As…", "History…",
-                "Duplicate (Fork)", "Reveal in Finder", "-", "Print…", "Export >", "-", "New Markdown Document",
+                // Make Private… is Markie RS's own (docs/rust-port/PRIVATE-FILES.md).
+                "Duplicate (Fork)", "Reveal in Finder", "Make Private…", "-", "Print…", "Export >", "-", "New Markdown Document",
                 "New Word Document", "New Text Document", "New Darkmown Document", "Document Details…", "-", "Close Window",
             ]
         );
-        let MenuItem::Submenu(export) = &menu(&menus, "File").items[13] else { panic!() };
+        let MenuItem::Submenu(export) = &menu(&menus, "File").items[14] else { panic!() };
         assert_eq!(labels(&export.items), ["PDF (Dark)…", "PDF (Light)…", "HTML…"]);
         let nightly = build(MenuState { has_history: true, nightly: true, ..Default::default() });
         let word = build(MenuState { word: true, ..Default::default() });
-        let MenuItem::Submenu(export) = &menu(&word, "File").items[13] else { panic!() };
+        let MenuItem::Submenu(export) = &menu(&word, "File").items[14] else { panic!() };
         assert_eq!(labels(&export.items), ["PDF (Dark)…", "Export PDF…", "HTML…"]);
         assert!(labels(&menu(&nightly, "File").items).contains(&"Make Interactive".to_string()));
     }

@@ -130,6 +130,28 @@ impl Registry {
         Ok(())
     }
 
+    /// Make Private: every row that names `path`, in every path-keyed table
+    /// (Recents, stars, Projects pins and assignments, metadata, the cloud
+    /// record), and its entry in the Library snapshot. Workspace roots are
+    /// folders and stay. Secure delete zeroes the freed pages, and the WAL is
+    /// checkpointed and truncated, so the old rows do not linger in the file.
+    pub fn purge_path(&self, path: &Path) -> Result<()> {
+        self.db.pragma_update(None, "secure_delete", "ON")?;
+        let tx = self.db.unchecked_transaction()?;
+        for table in self.path_keyed_tables()? {
+            if table != "workspace_roots" {
+                tx.execute(&format!("DELETE FROM \"{table}\" WHERE path = ?1"), params![key(path)])?;
+            }
+        }
+        tx.commit()?;
+        if let Some(mut snapshot) = self.load_snapshot()? {
+            snapshot.files.retain(|f| f.path != path);
+            self.save_snapshot(&snapshot)?;
+        }
+        self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok(())
+    }
+
     pub fn track_opened(&self, path: &Path) -> Result<()> {
         let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         self.db.execute(
@@ -349,6 +371,24 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn purge_path_removes_every_row_but_roots() {
+        let reg = Registry::in_memory().unwrap();
+        let doc = Path::new("/fixture/secret plan.md");
+        reg.track_opened(doc).unwrap();
+        reg.track_opened(Path::new("/fixture/other.md")).unwrap();
+        reg.set_star(doc, "star").unwrap();
+        reg.add_root(Path::new("/fixture")).unwrap();
+        crate::projects::store::pin_set(reg.conn(), &key(doc), "Plans", None).unwrap();
+        reg.set_cloud_record(doc, &serde_json::json!({"cloudDocId": "fixture"})).unwrap();
+        reg.purge_path(doc).unwrap();
+        assert_eq!(reg.recent(10).unwrap().len(), 1);
+        assert!(!reg.is_starred(doc).unwrap());
+        assert!(crate::projects::store::pins_all(reg.conn()).unwrap().is_empty());
+        assert!(reg.cloud_record::<serde_json::Value>(doc).unwrap().is_none());
+        assert_eq!(reg.roots().unwrap(), vec![PathBuf::from("/fixture")]);
+    }
 
     #[test]
     fn recents_roots_stars_settings() {

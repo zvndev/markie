@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::input::{EditorState, InputEvent, InputState};
 use gpui_kit::*;
+use gpui_kit::component::WindowExt as _;
 
 use markie_core::formats::{self, Newline, Representation, TextEncoding};
 use markie_office::model::{Format, TextEdit};
@@ -27,11 +28,14 @@ use markie_vault::device::{Biometric, DeviceKeeper, KeychainSecretStore, PromptD
 use markie_vault::dotenv::{self, DotenvDocument, LineKind};
 use markie_vault::envelope::{VaultDocumentMetadata, limits};
 use markie_vault::passphrase::{suggest_passphrase, SUGGESTED_PASSPHRASE_WORDS};
+use markie_vault::private::{PrivateEntry, PrivateMetadata, PrivateStore};
 use markie_vault::{DeviceFailure, FileVaultStorage, StorageErrorCode, VaultEntry, VaultError, VaultErrorCode, VaultRepository};
 
 use super::Workspace;
 
 pub(super) mod ui;
+pub(crate) mod private_files;
+mod private_ui;
 use ui::{CopyFeedback, Escape, EscapeState, Shortcut, escape_target, shows_search};
 
 pub const IDLE_LOCK: Duration = Duration::from_secs(5 * 60);
@@ -234,6 +238,8 @@ struct SecureDoc {
     bytes: zeroize::Zeroizing<Vec<u8>>,
     dirty: bool,
     body: Body,
+    /// A private file: where it came from. None for an ordinary vault item.
+    private: Option<PrivateMetadata>,
 }
 
 impl SecureDoc {
@@ -248,7 +254,18 @@ impl SecureDoc {
             }
             Representation::Bytes => Body::Opaque,
         };
-        Self { id, original_name: name.clone(), name, media_type, bytes, dirty: recovery, body }
+        Self { id, original_name: name.clone(), name, media_type, bytes, dirty: recovery, body, private: None }
+    }
+
+    fn from_private(id: String, doc: markie_vault::private::PrivateDocument) -> Self {
+        let mut opened = Self::from_read(Some(id), doc.metadata.name.clone(), doc.metadata.media_type.clone(), doc.bytes, false);
+        opened.private = Some(doc.metadata);
+        opened
+    }
+
+    /// The metadata a private file is saved back with: a rename keeps its folder.
+    fn private_metadata(&self, name: &str) -> Option<PrivateMetadata> {
+        self.private.as_ref().map(|m| PrivateMetadata { name: name.to_string(), media_type: self.media_type.clone(), ..m.clone() })
     }
 
     fn is_env(&self) -> bool {
@@ -297,6 +314,7 @@ struct PrivateRun {
 /// What waits for a fresh Touch ID or passphrase check.
 enum Pending {
     Open(VaultEntry),
+    OpenPrivate(PrivateEntry),
     Reveal(Vec<usize>),
     RevealRaw,
     Copy { value: zeroize::Zeroizing<String>, label: String, row: Option<usize> },
@@ -324,8 +342,33 @@ struct EnvView {
     rows: HashMap<usize, EnvRow>,
 }
 
+/// A file waiting to be made private, from the menu or a row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateRequest {
+    pub path: PathBuf,
+    /// The file has a Markie Cloud copy, or is shared: that copy stays.
+    pub cloud: bool,
+}
+
+/// What the page tells the window.
+pub enum VaultEvent {
+    /// The file at this path is private now: drop every copy the window holds.
+    MadePrivate(PathBuf),
+    /// Make Not Private put a file back here.
+    Restored(PathBuf),
+}
+
+impl EventEmitter<VaultEvent> for VaultPage {}
+
 pub struct VaultPage {
     repo: Arc<Mutex<Repo>>,
+    private: Arc<Mutex<PrivateStore>>,
+    private_entries: Vec<PrivateEntry>,
+    /// Private files on disk, known without the key.
+    private_count: usize,
+    private_unlocked: bool,
+    request: Option<PrivateRequest>,
+    private_passphrase: Entity<InputState>,
     keeper: Arc<Keeper>,
     clipboard: SecretClipboard,
     has_vault: Option<bool>,
@@ -386,6 +429,7 @@ impl VaultPage {
         let enroll_passphrase = masked_input(window, cx);
         let restore_passphrase = masked_input(window, cx);
         let gate_passphrase = masked_input(window, cx);
+        let private_passphrase = masked_input(window, cx);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by name"));
         let filename = cx.new(|cx| InputState::new(window, cx));
         let text_editor = cx.new(|cx| EditorState::new(window, cx).language("text").line_number(false).soft_wrap(true));
@@ -423,6 +467,11 @@ impl VaultPage {
                 InputEvent::PressEnter { .. } => this.pending_submit = Some(Submit::Gate),
                 _ => {}
             }),
+            cx.subscribe(&private_passphrase, |this, _, e: &InputEvent, cx| match e {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => this.pending_submit = Some(Submit::Private),
+                _ => {}
+            }),
             cx.subscribe(&query, |_, _, e: &InputEvent, cx| {
                 if matches!(e, InputEvent::Change) {
                     cx.notify();
@@ -455,8 +504,15 @@ impl VaultPage {
             }),
         ];
 
+        let private = Arc::new(Mutex::new(PrivateStore::new(private_files::private_dir())));
         let mut this = Self {
             repo,
+            private,
+            private_entries: Vec::new(),
+            private_count: 0,
+            private_unlocked: false,
+            request: None,
+            private_passphrase,
             keeper,
             clipboard,
             has_vault: None,
@@ -510,6 +566,7 @@ enum Submit {
     Enroll,
     Restore,
     Gate,
+    Private,
 }
 
 /// A clipboard that keeps nothing: for platforms without a concealed writer,
@@ -561,6 +618,7 @@ impl VaultPage {
             self.enroll_passphrase.clone(),
             self.restore_passphrase.clone(),
             self.gate_passphrase.clone(),
+            self.private_passphrase.clone(),
         ] {
             self.clear_input(&input, window, cx);
         }
@@ -575,6 +633,17 @@ impl VaultPage {
         job: impl FnOnce(&mut Repo, &Keeper) -> Result<T, VaultError> + Send + 'static,
         done: impl FnOnce(&mut Self, Result<T, VaultError>, &mut Window, &mut Context<Self>) + 'static,
     ) {
+        self.run_all(window, cx, move |repo, _, keeper| job(repo, keeper), done);
+    }
+
+    /// `run`, with the private store too. Locks are always taken repository first.
+    fn run_all<T: Send + 'static>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        job: impl FnOnce(&mut Repo, &mut PrivateStore, &Keeper) -> Result<T, VaultError> + Send + 'static,
+        done: impl FnOnce(&mut Self, Result<T, VaultError>, &mut Window, &mut Context<Self>) + 'static,
+    ) {
         self.operation += 1;
         let ticket = self.operation;
         self.busy = true;
@@ -582,10 +651,12 @@ impl VaultPage {
         self.notice.clear();
         cx.notify();
         let repo = self.repo.clone();
+        let private = self.private.clone();
         let keeper = self.keeper.clone();
         let work = cx.background_executor().spawn(async move {
             let mut guard = repo.lock().unwrap_or_else(|p| p.into_inner());
-            job(&mut guard, &*keeper)
+            let mut store = private.lock().unwrap_or_else(|p| p.into_inner());
+            job(&mut guard, &mut store, &*keeper)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = work.await;
@@ -642,16 +713,29 @@ impl VaultPage {
         self.operation += 1;
         let ticket = self.operation;
         let mut deferred_lock = false;
+        let private_now = match self.private.try_lock() {
+            Ok(mut store) => {
+                store.lock();
+                true
+            }
+            Err(std::sync::TryLockError::Poisoned(store)) => {
+                store.into_inner().lock();
+                true
+            }
+            Err(std::sync::TryLockError::WouldBlock) => false,
+        };
         match self.repo.try_lock() {
-            Ok(mut repo) => repo.lock(),
-            Err(std::sync::TryLockError::Poisoned(repo)) => repo.into_inner().lock(),
-            Err(std::sync::TryLockError::WouldBlock) => {
+            Ok(mut repo) if private_now => repo.lock(),
+            Err(std::sync::TryLockError::Poisoned(repo)) if private_now => repo.into_inner().lock(),
+            _ => {
                 // A save or biometric operation may still own the repository.
                 // Shield the UI now, even when releasing the key has to wait.
                 deferred_lock = true;
                 let repo = self.repo.clone();
+                let private = self.private.clone();
                 let lock = cx.background_spawn(async move {
                     repo.lock().unwrap_or_else(|p| p.into_inner()).lock();
+                    private.lock().unwrap_or_else(|p| p.into_inner()).lock();
                 });
                 cx.spawn(async move |this, cx| {
                     lock.await;
@@ -676,6 +760,8 @@ impl VaultPage {
         self.private_runs.clear();
         self.env = EnvView::default();
         self.entries.clear();
+        self.private_entries.clear();
+        self.private_unlocked = false;
         self.suggested = None;
         self.enrolling = false;
         self.restore_file = None;
@@ -714,6 +800,7 @@ impl VaultPage {
                 }
                 self.locked = false;
                 self.entries = entries;
+                self.refresh_private();
                 self.suggested = None;
                 self.last_activity = Instant::now();
                 let recovery = self.repo.lock().map(|r| r.has_volatile_recovery()).unwrap_or(false);
@@ -746,14 +833,17 @@ impl VaultPage {
         self.clear_input(&self.passphrase.clone(), window, cx);
         self.clear_input(&self.confirmation.clone(), window, cx);
         let has_vault = self.has_vault == Some(true);
-        self.run(
+        self.run_all(
             window,
             cx,
-            move |repo, _| {
+            move |repo, private, _| {
                 let result = if has_vault { repo.unlock(&secret) } else { repo.create(&secret) };
                 if result.is_err() {
                     // A valid header with a tampered record must not leave unlocked keys behind.
                     repo.lock();
+                } else if private.unlock_or_create(&secret).is_err() {
+                    // Private files made under another passphrase stay locked.
+                    private.lock();
                 }
                 result
             },
@@ -974,6 +1064,14 @@ impl VaultPage {
         .detach();
     }
 
+    /// The private list and count, from the store as it stands.
+    fn refresh_private(&mut self) {
+        let store = self.private.lock().unwrap_or_else(|p| p.into_inner());
+        self.private_count = store.count();
+        self.private_unlocked = store.is_unlocked();
+        self.private_entries = if store.is_unlocked() { store.list().unwrap_or_default() } else { Vec::new() };
+    }
+
     fn refresh_entries(&mut self) {
         if let Ok(list) = self.repo.lock().unwrap_or_else(|p| p.into_inner()).list("") {
             self.entries = list;
@@ -1050,6 +1148,7 @@ impl VaultPage {
         }
         match action {
             Pending::Open(entry) => self.read_entry(entry, window, cx),
+            Pending::OpenPrivate(entry) => self.read_private(entry, window, cx),
             Pending::Reveal(ids) => {
                 self.env.revealed.extend(ids);
                 self.env.revealed_at = Some(Instant::now());
@@ -1299,6 +1398,7 @@ impl VaultPage {
                     bytes: zeroize::Zeroizing::new(Vec::new()),
                     dirty: true,
                     body: Body::Text { text: String::new(), encoding: TextEncoding::Utf8, bom: false, newline: Newline::None },
+                    private: None,
                 };
                 this.show_doc(doc, window, cx);
                 cx.notify();
@@ -1375,6 +1475,9 @@ impl VaultPage {
             Ok(bytes) => bytes,
             Err(e) => { self.error = Some(failure_copy(&e).into()); cx.notify(); return; }
         };
+        if let (Some(id), Some(meta)) = (id.clone(), doc.private_metadata(&doc.name)) {
+            return self.save_private(id, bytes, meta, window, cx);
+        }
         let meta = VaultDocumentMetadata { name: doc.name.clone(), media_type: doc.media_type.clone() };
         self.run(
             window,
@@ -1437,6 +1540,9 @@ impl VaultPage {
     }
 
     fn delete_opened(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.opened.as_ref().is_some_and(|d| d.private.is_some()) {
+            return self.delete_private(window, cx);
+        }
         let Some(id) = self.opened.as_ref().and_then(|d| d.id.clone()) else { return };
         cx.spawn_in(window, async move |this, cx| {
             if !confirm(&this, cx, "Delete this encrypted copy and any unsaved edits? The original imported file is not deleted.").await {
@@ -1503,12 +1609,18 @@ impl VaultPage {
         cx.notify();
         let checkpoint = self.opened.as_ref().filter(|d| d.dirty).map(|d| {
             let name = if valid_filename(&d.original_name, &d.name) { d.name.clone() } else { d.original_name.clone() };
-            (d.id.clone(), d.current_bytes(), VaultDocumentMetadata { name, media_type: d.media_type.clone() })
+            (d.id.clone(), d.current_bytes(), d.private_metadata(&name), VaultDocumentMetadata { name, media_type: d.media_type.clone() })
         });
         let repo = self.repo.clone();
+        let private = self.private.clone();
         let save = cx.background_executor().spawn(async move {
             match checkpoint {
-                Some((id, bytes, meta)) => {
+                // A private file checkpoints into the private store, encrypted.
+                Some((Some(id), bytes, Some(private_meta), _)) => {
+                    let bytes = bytes?;
+                    private.lock().unwrap_or_else(|p| p.into_inner()).replace(&id, &bytes, &private_meta)
+                }
+                Some((id, bytes, _, meta)) => {
                     let bytes = bytes?;
                     repo.lock().unwrap_or_else(|p| p.into_inner()).save(id.as_deref(), &bytes, &meta).map(|_| ())
                 }
@@ -1578,6 +1690,10 @@ impl VaultPage {
                 cx.notify();
                 true
             }
+            Shortcut::Escape if self.request.is_some() && !self.busy && !(unlocked && self.gate.is_some()) => {
+                self.cancel_request(cx);
+                true
+            }
             Shortcut::Escape => {
                 let state = EscapeState {
                     gate: unlocked && self.gate.is_some() && !self.gate_busy,
@@ -1643,6 +1759,7 @@ impl Render for VaultPage {
                 Submit::Enroll => self.enroll_touch_id(window, cx),
                 Submit::Restore => self.restore_backup(window, cx),
                 Submit::Gate => self.submit_gate(window, cx),
+                Submit::Private => self.submit_private_passphrase(window, cx),
             }
         }
         if self.pending_text.take().is_some() && self.opened.as_ref().is_some_and(|d| d.is_env()) && !self.env.raw {
@@ -1676,7 +1793,9 @@ impl Workspace {
     pub(super) fn sync_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.vault_open() {
             if self.vault.is_none() {
-                self.vault = Some(cx.new(|cx| VaultPage::new(window, cx)));
+                let page = cx.new(|cx| VaultPage::new(window, cx));
+                self.vault_events = Some(cx.subscribe_in(&page, window, |this, _, event: &VaultEvent, window, cx| this.on_vault_event(event, window, cx)));
+                self.vault = Some(page);
             }
         } else if let Some(page) = self.vault.clone()
             && !page.read(cx).is_locked()
@@ -1721,6 +1840,67 @@ impl Workspace {
         .detach();
     }
 
+    /// File › Make Private… and the other ways in: the open document, or `path`.
+    pub(super) fn make_private_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if !path.is_file() {
+            window.push_notification("Only a file on this Mac can be made private.", cx);
+            return;
+        }
+        let cloud = self.cloud.bindings.get(&path).is_some_and(|b| b.record.cloud_doc_id.is_some()) || self.cloud.remote(&path).is_some_and(|r| r.shared);
+        // The open document saves first, so the private copy has every edit and
+        // no later autosave can write the file back.
+        if self.file_path().as_deref() == Some(path.as_path()) && self.dirty {
+            self.save(window, cx);
+        }
+        self.open_vault(window, cx);
+        if let Some(page) = self.vault.clone() {
+            page.update(cx, |page, cx| page.request_make_private(PrivateRequest { path, cloud }, window, cx));
+        }
+        cx.notify();
+    }
+
+    pub(super) fn on_make_private(&mut self, _: &crate::actions::MakePrivate, window: &mut Window, cx: &mut Context<Self>) {
+        match self.file_path() {
+            Some(path) => self.make_private_path(path, window, cx),
+            None => window.push_notification("Open a file first, then make it private.", cx),
+        }
+    }
+
+    fn on_vault_event(&mut self, event: &VaultEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            VaultEvent::MadePrivate(path) => self.made_private(path, cx),
+            VaultEvent::Restored(path) => {
+                // A normal file again: it shows in Recents like any opened file.
+                if let Some(registry) = &self.registry {
+                    let _ = registry.track_opened(path);
+                }
+                self.refresh_lists(cx);
+                self.rescan(cx);
+            }
+        }
+    }
+
+    /// The file is private now: every copy this window holds goes, on disk
+    /// (`purge_local_copies`) and in memory (the open document, its preview,
+    /// its cloud binding, a recovered draft).
+    pub(super) fn made_private(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        if self.doc.as_ref().is_some_and(|d| d.path == path) {
+            self.autosave.cancel();
+            self.doc = None;
+            self.dirty = false;
+            self.versions.clear();
+        }
+        self.disk.forget(path);
+        private_files::purge_local_copies(&markie_core::paths::data_dir(), path, self.registry.as_deref());
+        self.shell.previews.forget(&path.to_string_lossy());
+        self.cloud.bindings.remove(path);
+        self.recovered.retain(|d| d.meta.path.as_deref() != Some(&*path.to_string_lossy()));
+        self.shell.row_menu = None;
+        self.refresh_lists(cx);
+        self.rescan(cx);
+        cx.notify();
+    }
+
     pub(super) fn on_toggle_vault(&mut self, _: &ToggleVault, window: &mut Window, cx: &mut Context<Self>) {
         if self.vault_open() { self.close_vault(window, cx) } else { self.open_vault(window, cx) }
     }
@@ -1762,12 +1942,40 @@ impl VaultPage {
         items
     }
 
+    /// Synthetic files for the private-file scenes, in the scratch home's
+    /// Documents/Plans. Made up; never anyone's real file.
+    fn scene_private_files() -> Vec<(&'static str, Vec<u8>)> {
+        let docx = export_rich_document(&markie_office::rich_document::create_rich_document(Format::Docx, "Offer letter for a fixture candidate. Salary: 0000.").unwrap()).unwrap();
+        vec![
+            ("Launch plan.md", b"# Launch plan\n\nA synthetic plan for the scene. Ship the fixture on Day 0.\n\n- Draft the notes\n- Review with the fixture team\n".to_vec()),
+            ("Offer letter.docx", docx),
+            ("Passport scan.pdf", b"%PDF-1.4\n% synthetic fixture, not a real document\n".to_vec()),
+            ("Ideas.txt", b"Fixture ideas only.\n".to_vec()),
+        ]
+    }
+
+    fn scene_plans_dir() -> PathBuf {
+        markie_core::paths::home_dir().join("Documents").join("Plans")
+    }
+
+    /// The file a Make Private scene asks about.
+    fn scene_request(args: &serde_json::Value) -> PrivateRequest {
+        let dir = Self::scene_plans_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Board notes.md");
+        let _ = std::fs::write(&path, b"# Board notes\n\nSynthetic notes for a scene.\n");
+        PrivateRequest { path, cloud: args.get("cloud").and_then(serde_json::Value::as_bool).unwrap_or(false) }
+    }
+
     /// One step of a vault scene. `stage` counts the steps already done.
     /// Args: `state` (see `scene_states`), `touch_id` (bool).
     pub fn scene_step(&mut self, args: &serde_json::Value, stage: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let state = args.get("state").and_then(serde_json::Value::as_str).unwrap_or("locked").to_string();
         let touch = args.get("touch_id").and_then(serde_json::Value::as_bool).unwrap_or(false)
-            || matches!(state.as_str(), "locked-touch" | "settings-touch" | "gate");
+            || matches!(state.as_str(), "locked-touch" | "settings-touch" | "gate" | "private-passphrase" | "private-locked-list");
+        let private_scene = state.starts_with("private-");
+        let with_private_files = matches!(state.as_str(), "private-items" | "private-open" | "private-locked-list" | "private-done");
+        let with_request = matches!(state.as_str(), "private-create" | "private-unlock" | "private-sheet" | "private-passphrase" | "private-done");
         if *stage >= 9 {
             return true;
         }
@@ -1779,9 +1987,9 @@ impl VaultPage {
                 if self.has_vault.is_none() {
                     return false;
                 }
-                let fresh = matches!(state.as_str(), "none" | "create" | "create-error");
+                let fresh = matches!(state.as_str(), "none" | "create" | "create-error" | "private-create");
                 if !fresh {
-                    let empty = state == "empty";
+                    let empty = state == "empty" || (private_scene && !with_private_files && state != "private-done");
                     let mut repo = self.repo.lock().unwrap_or_else(|p| p.into_inner());
                     repo.create(SCENE_PASSPHRASE).expect("scene vault");
                     if !empty {
@@ -1794,6 +2002,18 @@ impl VaultPage {
                     }
                     repo.lock();
                     drop(repo);
+                    if with_private_files {
+                        let mut store = self.private.lock().unwrap_or_else(|p| p.into_inner());
+                        store.unlock_or_create(SCENE_PASSPHRASE).expect("scene private store");
+                        let dir = Self::scene_plans_dir();
+                        std::fs::create_dir_all(&dir).expect("scene plans folder");
+                        for (name, bytes) in Self::scene_private_files() {
+                            let path = dir.join(name);
+                            std::fs::write(&path, bytes).expect("scene private file");
+                            private_files::make_private(&store, &path, 1_764_000_000_000).map_err(|r| r.copy()).expect("scene make private");
+                        }
+                        store.lock();
+                    }
                     self.has_vault = Some(true);
                     self.notice.clear();
                     self.refresh_touch_id(window, cx);
@@ -1808,7 +2028,7 @@ impl VaultPage {
                     this.writing = false;
                 };
                 match state.as_str() {
-                    "none" | "locked" | "locked-touch" => {}
+                    "none" | "locked" | "locked-touch" | "private-create" | "private-unlock" => {}
                     "create" => self.suggest(window, cx),
                     "create-error" => {
                         typed(self, self.passphrase.clone(), "correct horse battery", window, cx);
@@ -1843,7 +2063,22 @@ impl VaultPage {
                         this.read_entry(entry, window, cx);
                     }
                 };
+                if with_request {
+                    self.request_make_private(Self::scene_request(args), window, cx);
+                }
+                if matches!(state.as_str(), "private-passphrase" | "private-locked-list") {
+                    // As after a Touch ID unlock: the vault is open, private files are not.
+                    self.private.lock().unwrap_or_else(|p| p.into_inner()).lock();
+                    self.refresh_private();
+                    self.clear_input(&self.private_passphrase.clone(), window, cx);
+                }
                 match state.as_str() {
+                    "private-done" => self.confirm_make_private(window, cx),
+                    "private-open" => {
+                        if let Some(entry) = self.private_entries.iter().find(|e| e.metadata.name == "Launch plan.md").cloned() {
+                            self.read_private(entry, window, cx);
+                        }
+                    }
                     "note" => open(self, "Server notes.txt", window, cx),
                     "env" | "env-copied" | "env-revealed" | "gate" => open(self, "production.env", window, cx),
                     "file" => open(self, "signed-lease.pdf", window, cx),

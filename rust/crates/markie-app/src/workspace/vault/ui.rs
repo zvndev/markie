@@ -1035,7 +1035,7 @@ impl VaultPage {
                 any = true;
             }
         }
-        if self.offer_touch_id && self.touch_id.available && !self.touch_id.enrolled && !self.settings_open {
+        if self.offer_touch_id && self.touch_id.available && !self.touch_id.enrolled && !self.settings_open && self.request.is_none() {
             let busy = self.busy;
             top = top.child(
                 card(&p)

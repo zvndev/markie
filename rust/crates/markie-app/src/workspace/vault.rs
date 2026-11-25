@@ -1942,12 +1942,40 @@ impl VaultPage {
         items
     }
 
+    /// Synthetic files for the private-file scenes, in the scratch home's
+    /// Documents/Plans. Made up; never anyone's real file.
+    fn scene_private_files() -> Vec<(&'static str, Vec<u8>)> {
+        let docx = export_rich_document(&markie_office::rich_document::create_rich_document(Format::Docx, "Offer letter for a fixture candidate. Salary: 0000.").unwrap()).unwrap();
+        vec![
+            ("Launch plan.md", b"# Launch plan\n\nA synthetic plan for the scene. Ship the fixture on Day 0.\n\n- Draft the notes\n- Review with the fixture team\n".to_vec()),
+            ("Offer letter.docx", docx),
+            ("Passport scan.pdf", b"%PDF-1.4\n% synthetic fixture, not a real document\n".to_vec()),
+            ("Ideas.txt", b"Fixture ideas only.\n".to_vec()),
+        ]
+    }
+
+    fn scene_plans_dir() -> PathBuf {
+        markie_core::paths::home_dir().join("Documents").join("Plans")
+    }
+
+    /// The file a Make Private scene asks about.
+    fn scene_request(args: &serde_json::Value) -> PrivateRequest {
+        let dir = Self::scene_plans_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Board notes.md");
+        let _ = std::fs::write(&path, b"# Board notes\n\nSynthetic notes for a scene.\n");
+        PrivateRequest { path, cloud: args.get("cloud").and_then(serde_json::Value::as_bool).unwrap_or(false) }
+    }
+
     /// One step of a vault scene. `stage` counts the steps already done.
     /// Args: `state` (see `scene_states`), `touch_id` (bool).
     pub fn scene_step(&mut self, args: &serde_json::Value, stage: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let state = args.get("state").and_then(serde_json::Value::as_str).unwrap_or("locked").to_string();
         let touch = args.get("touch_id").and_then(serde_json::Value::as_bool).unwrap_or(false)
-            || matches!(state.as_str(), "locked-touch" | "settings-touch" | "gate");
+            || matches!(state.as_str(), "locked-touch" | "settings-touch" | "gate" | "private-passphrase" | "private-locked-list");
+        let private_scene = state.starts_with("private-");
+        let with_private_files = matches!(state.as_str(), "private-items" | "private-open" | "private-locked-list" | "private-done");
+        let with_request = matches!(state.as_str(), "private-create" | "private-unlock" | "private-sheet" | "private-passphrase" | "private-done");
         if *stage >= 9 {
             return true;
         }
@@ -1959,9 +1987,9 @@ impl VaultPage {
                 if self.has_vault.is_none() {
                     return false;
                 }
-                let fresh = matches!(state.as_str(), "none" | "create" | "create-error");
+                let fresh = matches!(state.as_str(), "none" | "create" | "create-error" | "private-create");
                 if !fresh {
-                    let empty = state == "empty";
+                    let empty = state == "empty" || (private_scene && !with_private_files && state != "private-done");
                     let mut repo = self.repo.lock().unwrap_or_else(|p| p.into_inner());
                     repo.create(SCENE_PASSPHRASE).expect("scene vault");
                     if !empty {
@@ -1974,6 +2002,18 @@ impl VaultPage {
                     }
                     repo.lock();
                     drop(repo);
+                    if with_private_files {
+                        let mut store = self.private.lock().unwrap_or_else(|p| p.into_inner());
+                        store.unlock_or_create(SCENE_PASSPHRASE).expect("scene private store");
+                        let dir = Self::scene_plans_dir();
+                        std::fs::create_dir_all(&dir).expect("scene plans folder");
+                        for (name, bytes) in Self::scene_private_files() {
+                            let path = dir.join(name);
+                            std::fs::write(&path, bytes).expect("scene private file");
+                            private_files::make_private(&store, &path, 1_764_000_000_000).map_err(|r| r.copy()).expect("scene make private");
+                        }
+                        store.lock();
+                    }
                     self.has_vault = Some(true);
                     self.notice.clear();
                     self.refresh_touch_id(window, cx);
@@ -1988,7 +2028,7 @@ impl VaultPage {
                     this.writing = false;
                 };
                 match state.as_str() {
-                    "none" | "locked" | "locked-touch" => {}
+                    "none" | "locked" | "locked-touch" | "private-create" | "private-unlock" => {}
                     "create" => self.suggest(window, cx),
                     "create-error" => {
                         typed(self, self.passphrase.clone(), "correct horse battery", window, cx);
@@ -2023,7 +2063,22 @@ impl VaultPage {
                         this.read_entry(entry, window, cx);
                     }
                 };
+                if with_request {
+                    self.request_make_private(Self::scene_request(args), window, cx);
+                }
+                if matches!(state.as_str(), "private-passphrase" | "private-locked-list") {
+                    // As after a Touch ID unlock: the vault is open, private files are not.
+                    self.private.lock().unwrap_or_else(|p| p.into_inner()).lock();
+                    self.refresh_private();
+                    self.clear_input(&self.private_passphrase.clone(), window, cx);
+                }
                 match state.as_str() {
+                    "private-done" => self.confirm_make_private(window, cx),
+                    "private-open" => {
+                        if let Some(entry) = self.private_entries.iter().find(|e| e.metadata.name == "Launch plan.md").cloned() {
+                            self.read_private(entry, window, cx);
+                        }
+                    }
                     "note" => open(self, "Server notes.txt", window, cx),
                     "env" | "env-copied" | "env-revealed" | "gate" => open(self, "production.env", window, cx),
                     "file" => open(self, "signed-lease.pdf", window, cx),

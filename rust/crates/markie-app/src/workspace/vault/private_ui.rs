@@ -314,16 +314,18 @@ impl VaultPage {
     }
 
     /// The passphrase row that opens private files.
-    fn private_unlock_row(&self, id: &'static str, button_label: &'static str, cx: &mut Context<Self>) -> Div {
+    fn private_unlock_row(&self, id: &'static str, button_label: &'static str, stacked: bool, cx: &mut Context<Self>) -> Div {
         let p = Self::palette(cx);
         let busy = self.busy;
         let empty = self.private_passphrase.read(cx).value().is_empty();
-        h_flex()
-            .gap(px(8.))
-            .child(div().flex_1().min_w(px(200.)).child(field(&self.private_passphrase, busy, &p)))
-            .child(button(id, if busy { "Checking…" } else { button_label }, None, Tone::Primary, busy || empty, &p).h(px(36.)).when(!(busy || empty), |b| {
-                b.on_click(cx.listener(|this, _, window, cx| this.submit_private_passphrase(window, cx)))
-            }))
+        let submit = button(id, if busy { "Checking…" } else { button_label }, None, Tone::Primary, busy || empty, &p).h(px(36.)).when(!(busy || empty), |b| {
+            b.on_click(cx.listener(|this, _, window, cx| this.submit_private_passphrase(window, cx)))
+        });
+        // The sidebar is narrow: the field takes the whole row, the button goes under it.
+        if stacked {
+            return v_flex().gap(px(8.)).child(field(&self.private_passphrase, busy, &p)).child(submit.w_full());
+        }
+        h_flex().gap(px(8.)).child(div().flex_1().min_w(px(200.)).child(field(&self.private_passphrase, busy, &p))).child(submit)
     }
 
     /// The Make Private sheet: what happens, said plainly, then one button.
@@ -338,7 +340,7 @@ impl VaultPage {
                 .gap(px(10.))
                 .items_start()
                 .child(div().mt(px(7.)).size(px(5.)).flex_none().rounded_full().bg(p.muted))
-                .child(div().flex_1().text_size(px(13.5)).line_height(px(20.)).child(text.to_string()))
+                .child(div().flex_1().min_w_0().text_size(px(13.5)).line_height(px(20.)).child(text.to_string()))
         };
         let mut body = v_flex()
             .gap(px(14.))
@@ -364,7 +366,7 @@ impl VaultPage {
                     .p(px(12.))
                     .bg(p.yellow.opacity(0.12))
                     .child(div().mt(px(1.)).text_color(p.yellow).child(Icon::new(IconName::Cloud).small()))
-                    .child(div().flex_1().text_size(px(13.)).line_height(px(19.)).child(CLOUD_FACT)),
+                    .child(div().flex_1().min_w_0().text_size(px(13.)).line_height(px(19.)).child(CLOUD_FACT)),
             );
         }
         body = body.when_some(self.error_banner(&p), |el, b| el.child(b));
@@ -380,11 +382,11 @@ impl VaultPage {
             );
         } else {
             body = body
-                .child(v_flex().gap(px(6.)).child(label("Vault passphrase", &p)).child(self.private_unlock_row("private-unlock", "Continue", cx)))
+                .child(v_flex().gap(px(6.)).child(label("Vault passphrase", &p)).child(self.private_unlock_row("private-unlock", "Continue", false, cx)))
                 .child(hint(TOUCH_ID_NOTE, &p))
                 .child(h_flex().justify_end().child(button("private-cancel", "Cancel", None, Tone::Quiet, busy, &p).when(!busy, |b| b.on_click(cx.listener(|this, _, _, cx| this.cancel_request(cx))))));
         }
-        Some(card(&p).max_w(px(520.)).p(px(24.)).bg(p.background).shadow_sm().child(body).into_any_element())
+        Some(card(&p).w_full().max_w(px(520.)).p(px(24.)).bg(p.background).shadow_sm().child(body).into_any_element())
     }
 
     /// The sidebar's Private files group, or the row that unlocks it.
@@ -420,7 +422,7 @@ impl VaultPage {
                     } else {
                         format!("{count} private files. Enter your passphrase to open them.")
                     }))
-                    .when(self.request.is_none(), |el| el.child(self.private_unlock_row("private-list-unlock", "Open", cx))),
+                    .when(self.request.is_none(), |el| el.child(self.private_unlock_row("private-list-unlock", "Open", true, cx))),
             );
             return Some(group.into_any_element());
         }

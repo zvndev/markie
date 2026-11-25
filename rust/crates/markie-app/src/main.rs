@@ -300,6 +300,7 @@ fn main() {
             bind_keys(cx);
             markie_editor::bind_keys(cx);
             workspace::source::bind_keys(cx);
+            cx.bind_keys(workspace::projects_keys());
             workspace::bind_csv_keys(cx);
             menus::bind_app_actions(cx);
             cx.on_action(|_: &Quit, cx| {

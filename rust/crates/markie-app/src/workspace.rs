@@ -71,6 +71,7 @@ mod overlay;
 mod palette;
 mod panels;
 mod projects;
+mod projects_view;
 mod rail;
 mod recent_page;
 mod rich;
@@ -86,6 +87,7 @@ mod strips;
 mod skills;
 pub mod source;
 pub use csv_table::bind_keys as bind_csv_keys;
+pub use projects_view::key_bindings as projects_keys;
 mod source_column;
 mod source_keys;
 mod source_markdown;
@@ -1789,6 +1791,7 @@ mod rescan_tests {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.projects.tree_focused = self.projects.focus.contains_focused(window, cx);
         crate::perf::frame_start();
         self.refresh_menus(cx);
         if let Some(path) = self.cloud.pending_link.take() {
@@ -1936,6 +1939,8 @@ impl Render for Workspace {
                     cx.stop_propagation();
                 } else if (this.shell.row_menu.is_some() || this.shell.cloud_row_menu.is_some()) && this.row_menu_key(ev.keystroke.key.as_str(), window, cx) {
                     cx.stop_propagation();
+                } else if this.projects.menu.is_some() && this.projects_menu_key(ev.keystroke.key.as_str(), window, cx) {
+                    cx.stop_propagation();
                 }
             }))
             .relative()
@@ -1987,6 +1992,7 @@ impl Render for Workspace {
             .children((self.side == SidePanel::Stats).then(|| self.render_stats(window, cx)))
             .children(self.render_live_preview(cx))
             .children(self.render_row_menu(cx))
+            .children(self.render_projects_menu(cx))
             .children(self.render_search(cx))
             .children(self.render_share(window, cx))
             .children(self.render_office_cloud(window, cx))

@@ -11,6 +11,7 @@ name = "markie-rs"
 path = "src/main.rs"
 
 [dependencies]
+rusqlite.workspace = true
 markie-core.workspace = true
 markie-agent = { path = "../markie-agent" }
 markie-cloud = { path = "../markie-cloud" }
@@ -68,7 +69,6 @@ scene = ["dep:gpui-scene", "dep:gpui-scene-macos"]
 
 [dev-dependencies]
 tempfile.workspace = true
-rusqlite.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

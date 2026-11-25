@@ -133,6 +133,11 @@ pub struct DocCard {
     pub menu_open: bool,
     /// One text button on the card, such as "Remove" or "Manage".
     pub action: Option<SharedString>,
+    /// ⌘-click, ⇧-click and a checkbox on hover select it with others.
+    pub selectable: bool,
+    pub selected: bool,
+    /// What dragging the card carries, onto a folder in Projects.
+    pub drag: Option<super::projects::DragItems>,
 }
 
 impl DocCard {
@@ -150,6 +155,9 @@ impl DocCard {
             has_menu: true,
             menu_open: false,
             action: None,
+            selectable: false,
+            selected: false,
+            drag: None,
         }
     }
 }
@@ -189,11 +197,41 @@ pub struct DocGridState {
     pub scroll: ScrollHandle,
     /// Where the grid was last painted, to scroll the cursor into view.
     painted: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The cards picked with ⌘-click, ⇧-click, ⌘A or their checkboxes.
+    /// Kept when the view switches between grid and list.
+    pub selection: super::projects::Selection<SharedString>,
+    /// Every card in drawn order, as last drawn: ranges and ⌘A use it.
+    order: Rc<std::cell::RefCell<Vec<SharedString>>>,
 }
 
 impl DocGridState {
     pub fn new(view: GridView, cx: &mut App) -> Self {
-        Self { view, focus: cx.focus_handle(), cursor: None, scroll: ScrollHandle::new(), painted: Rc::new(Cell::new(None)) }
+        Self {
+            view,
+            focus: cx.focus_handle(),
+            cursor: None,
+            scroll: ScrollHandle::new(),
+            painted: Rc::new(Cell::new(None)),
+            selection: Default::default(),
+            order: Default::default(),
+        }
+    }
+
+    /// The selected cards that are on show, in drawn order.
+    pub fn selected(&self) -> Vec<SharedString> {
+        self.order.borrow().iter().filter(|id| self.selection.contains(id)).cloned().collect()
+    }
+
+    pub fn select_all(&mut self) {
+        let order = self.order.borrow().clone();
+        self.selection.select_all(&order);
+    }
+
+    /// A ⌘- or ⇧-press on a card, or its checkbox (a ⌘-press).
+    pub fn press(&mut self, id: &SharedString, cmd: bool, shift: bool) {
+        let order = self.order.borrow().clone();
+        self.selection.press(id, cmd, shift, &order);
+        self.cursor = Some(id.clone());
     }
 }
 
@@ -310,7 +348,12 @@ pub fn render<V: 'static>(grid: Grid<V>, state: &DocGridState, window: &Window, 
     let focused = state.focus.is_focused(window);
     let cursor = state.cursor.clone().filter(|_| focused);
     let p = *p;
+    *state.order.borrow_mut() = layout.sections.iter().flatten().cloned().collect();
+    // With anything selected, every card shows its checkbox.
+    let selecting = layout.sections.iter().flatten().any(|id| state.selection.contains(id));
 
+    let selectable: std::collections::HashSet<SharedString> =
+        sections.iter().flat_map(|s| s.cards.iter().filter(|c| c.selectable).map(|c| c.id.clone())).collect();
     let mut body = v_flex().gap(px(SECTION_GAP));
     let headed = sections.iter().any(|s| s.label.is_some() || s.trailing.is_some());
     for section in sections {
@@ -326,11 +369,12 @@ pub fn render<V: 'static>(grid: Grid<V>, state: &DocGridState, window: &Window, 
             .when(section.label.is_some(), |el| el.child(div().text_size(px(11.5)).text_color(p.muted).child(count)))
             .child(div().flex_1())
             .children(section.trailing);
-        let cards = section.cards.into_iter().map(|card| {
+        let cards = section.cards.into_iter().map(|mut card| {
             let at_cursor = cursor.as_ref() == Some(&card.id);
+            card.selected = card.selectable && state.selection.contains(&card.id);
             match view {
-                GridView::Grid => render_card(card, at_cursor, state_of, on_event.clone(), &p, cx),
-                GridView::List => render_row(card, at_cursor, state_of, on_event.clone(), &p, cx),
+                GridView::Grid => render_card(card, at_cursor, selecting, state_of, on_event.clone(), &p, cx),
+                GridView::List => render_row(card, at_cursor, selecting, state_of, on_event.clone(), &p, cx),
             }
         });
         let items = match view {
@@ -342,6 +386,7 @@ pub fn render<V: 'static>(grid: Grid<V>, state: &DocGridState, window: &Window, 
 
     let painted = state.painted.clone();
     let keys = layout.clone();
+    let selectable_ids: Rc<std::collections::HashSet<SharedString>> = Rc::new(selectable);
     let handler = on_event.clone();
     div()
         .id(id)
@@ -358,6 +403,21 @@ pub fn render<V: 'static>(grid: Grid<V>, state: &DocGridState, window: &Window, 
                 return;
             }
             let state = state_of(this);
+            // Escape clears a selection; Space picks the cursor's card.
+            if key == "escape" && !state.selection.items.is_empty() {
+                cx.stop_propagation();
+                state.selection.clear();
+                cx.notify();
+                return;
+            }
+            if key == "space" && selectable_ids.contains(&state.cursor.clone().unwrap_or_default()) {
+                if let Some(id) = state.cursor.clone() {
+                    cx.stop_propagation();
+                    state.press(&id, true, false);
+                    cx.notify();
+                }
+                return;
+            }
             if key == "enter" {
                 if let Some(id) = state.cursor.clone().filter(|id| keys.locate(id).is_some()) {
                     cx.stop_propagation();
@@ -368,6 +428,15 @@ pub fn render<V: 'static>(grid: Grid<V>, state: &DocGridState, window: &Window, 
             let Some(next) = keys.step(state.cursor.as_ref(), key) else { return };
             cx.stop_propagation();
             reveal(state, &keys, &next);
+            // ⇧ with an arrow extends the selection, as in Finder.
+            if mods.shift && selectable_ids.contains(&next) {
+                if state.selection.anchor.is_none()
+                    && let Some(from) = state.cursor.clone()
+                {
+                    state.selection.anchor = Some(from);
+                }
+                state.press(&next, false, true);
+            }
             state.cursor = Some(next);
             cx.notify();
         }))
@@ -481,19 +550,34 @@ fn marks(card_id: &SharedString, marks: &[Mark], p: &Palette) -> Vec<AnyElement>
 }
 
 /// Shared wiring of a card and a row: click opens, right click asks for the
-/// menu, and a click moves the keyboard cursor there.
-fn interactive<V: 'static>(el: Stateful<Div>, card: &DocCard, state_of: fn(&mut V) -> &mut DocGridState, on_event: Handler<V>, cx: &mut Context<V>) -> Stateful<Div> {
+/// menu, and a click moves the keyboard cursor there. On a selectable card a
+/// ⌘- or ⇧-click selects instead of opening, and a plain click clears the
+/// selection. A card with something to carry drags it.
+fn interactive<V: 'static>(el: Stateful<Div>, card: &DocCard, state_of: fn(&mut V) -> &mut DocGridState, on_event: Handler<V>, p: &Palette, cx: &mut Context<V>) -> Stateful<Div> {
     let (open_id, menu_id) = (card.id.clone(), card.id.clone());
-    let (openable, has_menu) = (card.openable, card.has_menu);
+    let (openable, has_menu, selectable) = (card.openable, card.has_menu, card.selectable);
     let menu = on_event.clone();
+    let p = *p;
     el.when(openable, |el| el.cursor_pointer())
         .when(has_menu, |el| {
             el.on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, window, cx| menu(this, &menu_id, CardEvent::Menu(ev.position), window, cx)))
         })
-        .on_click(cx.listener(move |this, _, window, cx| {
+        .when_some(card.drag.clone(), |el, drag| {
+            el.on_drag(drag, move |d: &super::projects::DragItems, _, _, cx| {
+                cx.new(|_| super::projects::DragPreview { label: d.label.clone(), count: d.items.len(), palette: p })
+            })
+        })
+        .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+            let m = ev.modifiers();
             let state = state_of(this);
-            state.cursor = Some(open_id.clone());
             state.focus.focus(window, cx);
+            if selectable && (m.platform || m.shift) {
+                state.press(&open_id, m.platform, m.shift);
+                cx.notify();
+                return;
+            }
+            state.cursor = Some(open_id.clone());
+            state.selection.clear();
             if openable {
                 on_event(this, &open_id, CardEvent::Open, window, cx);
             }
@@ -501,7 +585,39 @@ fn interactive<V: 'static>(el: Stateful<Div>, card: &DocCard, state_of: fn(&mut 
         }))
 }
 
-fn render_card<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) -> &mut DocGridState, on_event: Handler<V>, p: &Palette, cx: &mut Context<V>) -> AnyElement {
+/// The round checkbox a selectable card shows on hover, and always once
+/// anything is selected.
+fn check_box<V: 'static>(card: &DocCard, group: &SharedString, selecting: bool, state_of: fn(&mut V) -> &mut DocGridState, p: &Palette, cx: &mut Context<V>) -> Stateful<Div> {
+    let id = card.id.clone();
+    let on = card.selected;
+    let (blue, border, bg) = (p.blue, mix(p.foreground, p.border, 0.35), if p.dark { p.surface2 } else { hex("#ffffff") });
+    div()
+        .id(SharedString::from(format!("doc-check-{}", card.id)))
+        .size(px(18.))
+        .flex_none()
+        .rounded_full()
+        .border_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .when(on, |el| el.bg(blue).border_color(blue).child(svg().data(CHECK).size(px(11.)).text_color(gpui_kit::white())))
+        .when(!on, |el| el.bg(bg.opacity(0.92)).border_color(border).hover(move |s| s.border_color(blue)))
+        .when(!on && !selecting, |el| el.invisible().group_hover(group.clone(), |s| s.visible()))
+        .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(if on { "Deselect" } else { "Select" }).build(window, cx))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            let state = state_of(this);
+            state.focus.focus(window, cx);
+            state.press(&id, true, false);
+            cx.notify();
+        }))
+}
+
+const CHECK: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>"#;
+
+fn render_card<V: 'static>(card: DocCard, at_cursor: bool, selecting: bool, state_of: fn(&mut V) -> &mut DocGridState, on_event: Handler<V>, p: &Palette, cx: &mut Context<V>) -> AnyElement {
     let p = *p;
     let group = SharedString::from(format!("doc-card-{}", card.id));
     let border = if card.current { mix(p.blue, p.border, 0.6) } else { p.border };
@@ -521,6 +637,7 @@ fn render_card<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) 
         .bg(surface)
         .overflow_hidden()
         .when(card.menu_open, |el| el.border_color(hover_border))
+        .when(card.selected, |el| el.border_color(p.blue).bg(mix(p.blue, surface, 0.1)))
         .when(at_cursor, |el| el.shadow(vec![ring(p.blue.opacity(0.9), 2.)]))
         .when(!at_cursor, |el| el.hover(move |s| s.border_color(hover_border).shadow(vec![lift(&p)])));
     // The card's one button shows with the pointer or the cursor on the card,
@@ -570,15 +687,22 @@ fn render_card<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) 
                 .child(div().flex_1().min_w_0().truncate().text_size(px(11.)).line_height(px(16.)).text_color(if card.missing { p.red } else { p.muted }).child(card.meta.clone()))
                 .children(action),
         );
-    let thumb = div().h(px(THUMB_H)).flex_none().relative().overflow_hidden().bg(tray).child(match &card.thumb {
-        Thumb::Page(preview) => sheet(&p).children(preview.blocks.iter().map(|b| block(b, &p))).into_any_element(),
-        Thumb::Loading => sheet(&p).into_any_element(),
-        Thumb::Tile => tile(card.format, card.missing, &p),
-    });
-    interactive(shell, &card, state_of, on_event, cx).child(thumb).child(foot).into_any_element()
+    let thumb = div()
+        .h(px(THUMB_H))
+        .flex_none()
+        .relative()
+        .overflow_hidden()
+        .bg(if card.selected { mix(p.blue, tray, 0.12) } else { tray })
+        .child(match &card.thumb {
+            Thumb::Page(preview) => sheet(&p).children(preview.blocks.iter().map(|b| block(b, &p))).into_any_element(),
+            Thumb::Loading => sheet(&p).into_any_element(),
+            Thumb::Tile => tile(card.format, card.missing, &p),
+        })
+        .when(card.selectable, |el| el.child(div().absolute().top(px(8.)).left(px(8.)).child(check_box(&card, &group, selecting, state_of, &p, cx))));
+    interactive(shell, &card, state_of, on_event, &p, cx).child(thumb).child(foot).into_any_element()
 }
 
-fn render_row<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) -> &mut DocGridState, on_event: Handler<V>, p: &Palette, cx: &mut Context<V>) -> AnyElement {
+fn render_row<V: 'static>(card: DocCard, at_cursor: bool, selecting: bool, state_of: fn(&mut V) -> &mut DocGridState, on_event: Handler<V>, p: &Palette, cx: &mut Context<V>) -> AnyElement {
     let p = *p;
     let group = SharedString::from(format!("doc-row-{}", card.id));
     let hover = p.fg(0.05);
@@ -593,8 +717,13 @@ fn render_row<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) -
         .rounded(px(7.))
         .when(card.current, |el| el.bg(p.fg(0.06)))
         .when(card.menu_open, |el| el.bg(hover))
-        .when(at_cursor, |el| el.shadow(vec![ring(p.blue.opacity(0.9), 2.)]))
-        .hover(move |s| s.bg(hover))
+        .when(card.selected, |el| el.bg(p.blue.opacity(if p.dark { 0.24 } else { 0.12 })))
+        // A border, not a shadow ring: a shadow shows through a row's
+        // translucent selected fill.
+        .border_2()
+        .border_color(if at_cursor { p.blue.opacity(0.9) } else { transparent_black() })
+        .when(!card.selected, |el| el.hover(move |s| s.bg(hover)))
+        .when(card.selectable, |el| el.child(check_box(&card, &group, selecting, state_of, &p, cx)))
         .child(div().when(card.missing, |el| el.opacity(0.45)).child(format_icon(card.format, 16., &p)))
         .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(card.name.clone()))
         .child(
@@ -612,7 +741,7 @@ fn render_row<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) -
         .child(h_flex().w(px(46.)).flex_none().child(format_badge(card.format, &p)))
         .when(card.has_menu, |el| el.child(more_button(&card.id, &group, card.menu_open, at_cursor, on_event.clone(), &p, cx)))
         .when(!card.has_menu, |el| el.child(div().w(px(22.)).flex_none()));
-    interactive(shell, &card, state_of, on_event, cx).into_any_element()
+    interactive(shell, &card, state_of, on_event, &p, cx).into_any_element()
 }
 
 // ------------------------------------------------------------- thumbnail

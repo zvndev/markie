@@ -682,6 +682,11 @@ impl History {
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
+    /// How many actions can be undone: a caller compares it before and after
+    /// to know whether an action it started was recorded.
+    pub fn depth(&self) -> usize {
+        self.undo.len()
+    }
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }

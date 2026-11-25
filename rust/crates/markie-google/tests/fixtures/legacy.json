@@ -1,0 +1,26 @@
+{
+ "documentId": "fixture",
+ "title": "Legacy",
+ "body": {
+  "content": [
+   {
+    "sectionBreak": {}
+   },
+   {
+    "paragraph": {
+     "elements": [
+      {
+       "textRun": {
+        "content": "Read without tabs.\n",
+        "textStyle": {}
+       }
+      }
+     ],
+     "paragraphStyle": {
+      "namedStyleType": "NORMAL_TEXT"
+     }
+    }
+   }
+  ]
+ }
+}

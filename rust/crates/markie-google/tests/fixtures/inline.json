@@ -1,0 +1,217 @@
+{
+ "documentId": "fixture",
+ "title": "Inline",
+ "revisionId": "rev-fixture",
+ "tabs": [
+  {
+   "tabProperties": {
+    "tabId": "t.tab1",
+    "title": "Tab 1"
+   },
+   "documentTab": {
+    "body": {
+     "content": [
+      {
+       "sectionBreak": {}
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Plain ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "bold",
+           "textStyle": {
+            "bold": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": " and ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "italic",
+           "textStyle": {
+            "italic": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": " and ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "struck",
+           "textStyle": {
+            "strikethrough": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": " and ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "both",
+           "textStyle": {
+            "bold": true,
+            "italic": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": ".\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Read ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "the guide",
+           "textStyle": {
+            "link": {
+             "url": "https://example.com/guide"
+            },
+            "underline": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": " or ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "bold link",
+           "textStyle": {
+            "bold": true,
+            "link": {
+             "url": "https://example.com/a b"
+            }
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": ".\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Jump to ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "a heading",
+           "textStyle": {
+            "link": {
+             "headingId": "h.abc"
+            }
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": ", ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "underlined",
+           "textStyle": {
+            "underline": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": ".\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Trailing space in ",
+           "textStyle": {}
+          }
+         },
+         {
+          "textRun": {
+           "content": "bold ",
+           "textStyle": {
+            "bold": true
+           }
+          }
+         },
+         {
+          "textRun": {
+           "content": "is moved.\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

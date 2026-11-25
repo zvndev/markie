@@ -1,0 +1,174 @@
+{
+ "documentId": "fixture",
+ "title": "Numbered",
+ "revisionId": "rev-fixture",
+ "tabs": [
+  {
+   "tabProperties": {
+    "tabId": "t.tab1",
+    "title": "Tab 1"
+   },
+   "documentTab": {
+    "body": {
+     "content": [
+      {
+       "sectionBreak": {}
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Prepare\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.n1",
+         "nestingLevel": 0
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Gather tools\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.n1",
+         "nestingLevel": 1
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Clear the desk\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.n1",
+         "nestingLevel": 1
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Build\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.n1",
+         "nestingLevel": 0
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Measure twice\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.n1",
+         "nestingLevel": 1
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Note: a bullet inside\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.n1",
+         "nestingLevel": 2
+        }
+       }
+      },
+      {
+       "paragraph": {
+        "elements": [
+         {
+          "textRun": {
+           "content": "Finish\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.n1",
+         "nestingLevel": 0
+        }
+       }
+      }
+     ]
+    },
+    "lists": {
+     "kix.n1": {
+      "listProperties": {
+       "nestingLevels": [
+        {
+         "glyphType": "DECIMAL",
+         "glyphFormat": "%0."
+        },
+        {
+         "glyphType": "ALPHA",
+         "glyphFormat": "%1."
+        },
+        {
+         "glyphSymbol": "■"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ ]
+}

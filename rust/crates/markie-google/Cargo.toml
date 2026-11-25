@@ -1,0 +1,34 @@
+[package]
+name = "markie-google"
+description = "Markie RS Google Docs import: the drive.file grant through Google's desktop Picker, Docs to Markdown, and the sync records two-way sync will build on. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+markie-core.workspace = true
+markie-vault = { path = "../markie-vault" }
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+thiserror = "2"
+url = "2.5"
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+getrandom = "0.3"
+zeroize = "1"
+keyring = "4"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "blocking", "form"] }
+
+[features]
+# The fake Google server (src/fake.rs), for this crate's tests and the app's scenes.
+fake = []
+
+[dev-dependencies]
+tempfile.workspace = true
+pulldown-cmark.workspace = true
+# The fake Google server for the integration tests.
+markie-google = { path = ".", features = ["fake"] }

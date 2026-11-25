@@ -108,7 +108,7 @@ impl Workspace {
         let body = match section {
             SettingsSection::Account => self.render_account_section(t, cx),
             SettingsSection::Appearance => self.render_appearance_live(colors_open, t, window, cx),
-            SettingsSection::Files => render_files(t),
+            SettingsSection::Files => div().child(self.render_google_docs_setting(t, cx)).child(render_files(t)).into_any_element(),
             SettingsSection::Agents => self.render_agents_section(t, cx),
             SettingsSection::Advanced => self.render_advanced(t, window, cx),
         };

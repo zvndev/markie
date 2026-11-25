@@ -263,6 +263,7 @@ impl Workspace {
             .gap(px(10.))
             .child(self.render_wordmark(&p))
             .child(vrule(&p))
+            .child(self.render_nav_buttons(&p, cx))
             .child(
                 h_flex()
                     .min_w_0()

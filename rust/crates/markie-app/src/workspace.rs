@@ -49,9 +49,12 @@ mod file_ops;
 mod first_run;
 mod folder_tree;
 mod history_dialog;
+mod history_model;
+mod history_page;
 mod library_rows;
 mod library_area;
 mod live_docs;
+mod nav;
 mod import_copy;
 mod cloud;
 mod cloud_drive;
@@ -84,6 +87,7 @@ mod skills;
 pub mod source;
 pub use csv_table::bind_keys as bind_csv_keys;
 mod source_column;
+mod source_keys;
 pub(crate) mod vault;
 #[cfg(feature = "scene")]
 pub(crate) mod scene;
@@ -209,6 +213,14 @@ pub struct Workspace {
     side: SidePanel,
     versions: Vec<Version>,
     viewing_version: Option<(String, String)>,
+    /// The History page (`history_page.rs`), when it is up.
+    history_page: Option<history_page::HistoryPage>,
+    /// Back and Forward between places (`nav.rs`), and a place's mode and
+    /// scroll waiting to be put back.
+    nav: nav::NavHistory,
+    pending_view: Option<nav::PendingView>,
+    /// Source's CodeMirror keys: Go to Line's field and ⌘D's run.
+    source_keys: source_keys::SourceKeys,
     /// Document zoom (1.0 = 100%) and reading column width, shared by every
     /// document like the Electron app's `markie.documents.zoom.v1`.
     zoom: f32,
@@ -232,6 +244,8 @@ pub struct Workspace {
     _doc_theme: Option<Task<()>>,
     /// The (document, dirty) the menu bar was last built for.
     menu_key: Option<(PathBuf, bool)>,
+    /// Whether Go › Back and Forward were enabled when it was built.
+    menu_nav: (bool, bool),
     /// When the device index last began a walk.
     last_scan_at: Option<std::time::Instant>,
     /// Scene mode: the Cloud scene's snapshot uploads have finished.
@@ -394,6 +408,10 @@ impl Workspace {
             side: SidePanel::None,
             versions: Vec::new(),
             viewing_version: None,
+            history_page: None,
+            nav: Default::default(),
+            pending_view: None,
+            source_keys: Default::default(),
             pending_editor_text: None,
             collab: collab::Collab::default(),
             cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
@@ -404,6 +422,7 @@ impl Workspace {
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
             menu_key: None,
+            menu_nav: (false, false),
             own_theme: None,
             _doc_theme: None,
             last_scan_at: None,
@@ -731,6 +750,8 @@ impl Workspace {
 
     fn open_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         crate::perf::open_started();
+        // The place being left keeps its mode and scroll for Back.
+        self.nav_capture(cx);
         self.invalidate_import();
         if self.intercept_import(path, window, cx) {
             return;
@@ -1773,6 +1794,7 @@ impl Render for Workspace {
             self.editor.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         self.ensure_browse_rows();
+        self.nav_sync(window, cx);
         self.sync_home_pages(window, cx);
         self.sync_vault(window, cx);
         self.sync_darkmown(window, cx);
@@ -1839,8 +1861,19 @@ impl Render for Workspace {
                 .size_0()
             })
             .map(|d| Self::source_actions(d, cx))
+            .map(|d| Self::source_key_actions(d, cx))
             .map(|d| Self::edit_menu_actions(d, cx))
             .on_action(cx.listener(Self::on_open))
+            .on_action(cx.listener(Self::on_navigate_back))
+            .on_action(cx.listener(Self::on_navigate_forward))
+            // A mouse's back and forward buttons (and the swipes some mice
+            // and a three-finger trackpad swipe send as them).
+            .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                if let MouseButton::Navigate(direction) = ev.button {
+                    this.navigate(direction == NavigationDirection::Back, window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new))
             .on_action(cx.listener(|this, _: &NewMarkdownDocument, window, cx| this.create_document("md", window, cx)))
@@ -1904,42 +1937,48 @@ impl Render for Workspace {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(self.render_title_bar(cx))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(self.render_rail(cx))
-                    .children(self.render_side_panel(cx))
-                    .map(|el| {
-                        if self.workspace_page_open() {
-                            el.child(div().flex_1().min_w_0().h_full().child(self.render_workspace_page(window, cx)))
-                        } else {
-                            el.child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h_full()
-                                    .overflow_hidden()
-                                    .children(banner)
-                                    .children(self.render_untitled_office_offer(cx))
-                                    .children(cloud_banner)
-                                    .children(self.render_live_banner(cx))
-                                    .child(
-                                        div()
-                                            .relative()
-                                            .flex_1()
-                                            .min_h_0()
-                                            .overflow_hidden()
-                                            .child(self.render_document(cx))
-                                            .children(self.render_comments(window, cx)),
-                                    ),
-                            )
-                            .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))
-                        }
-                    }),
-            )
+            .map(|root| {
+                // The History page is a mode of the document that covers the
+                // whole window, its own title bar included, as Electron's.
+                if self.history_page_open() {
+                    return root.child(self.render_history_page(window, cx));
+                }
+                root.child(self.render_title_bar(cx)).child(
+                    h_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .child(self.render_rail(cx))
+                        .children(self.render_side_panel(cx))
+                        .map(|el| {
+                            if self.workspace_page_open() {
+                                el.child(div().flex_1().min_w_0().h_full().child(self.render_workspace_page(window, cx)))
+                            } else {
+                                el.child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h_full()
+                                        .overflow_hidden()
+                                        .children(banner)
+                                        .children(self.render_untitled_office_offer(cx))
+                                        .children(cloud_banner)
+                                        .children(self.render_live_banner(cx))
+                                        .child(
+                                            div()
+                                                .relative()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .overflow_hidden()
+                                                .child(self.render_document(cx))
+                                                .children(self.render_comments(window, cx)),
+                                        ),
+                                )
+                                .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))
+                            }
+                        }),
+                )
+            })
             .children((self.side == SidePanel::Stats).then(|| self.render_stats(window, cx)))
             .children(self.render_live_preview(cx))
             .children(self.render_row_menu(cx))

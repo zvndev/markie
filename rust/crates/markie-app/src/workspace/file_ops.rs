@@ -424,6 +424,7 @@ impl Workspace {
             Ok(()) => {
                 self.file_grants.move_document(old, &new);
                 self.follow_move(old, &new, cx);
+                self.nav_follow(old, &new);
                 self.open_path(&new, window, cx);
                 self.rescan(cx);
             }
@@ -579,6 +580,7 @@ impl Workspace {
                 self.file_grants.move_document(from, to);
                 self.disk.forget(from);
                 self.follow_move(from, to, cx);
+                self.nav_follow(from, to);
                 self.open_path(to, window, cx);
                 self.rescan(cx);
             }

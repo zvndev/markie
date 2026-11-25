@@ -4,19 +4,19 @@ Date: 2026-11-22. Branch: `t3/markie-rs-editor-parity-1`, from `rust/markie-rs` 
 
 ## Score
 
-**Parity: 64 of 70 scored rows (91.4%): 63 PASS and 1 IMPROVEMENT.** Rescored on 2026-11-22 with Kirby's rulings: 8.13 is an IMPROVEMENT, so its group 8.11 passes. On 2026-11-24 section 7a added nine rows for the CSV table (Electron PR #149): eight PASS and one NEEDS-CAPTURE. Later that day section 7b added eight PASS rows for the CSV sheet look (Electron PR #154), counted once #154 merged.
+**Parity: 75 of 81 scored rows (92.6%): 71 PASS and 4 IMPROVEMENT.** Rescored on 2026-11-22 with Kirby's rulings: 8.13 is an IMPROVEMENT, so its group 8.11 passes. On 2026-11-24 section 7a added nine rows for the CSV table (Electron PR #149): eight PASS and one NEEDS-CAPTURE. Later that day section 7b added eight PASS rows for the CSV sheet look (Electron PR #154), counted once #154 merged. On 2026-11-25 (branch `t3/markie-rs-nav-history`) Source gained the CodeMirror keys it lacked (rows 7.19 to 7.27, nine PASS), and History became Electron's full-page view (13.2 is now an IMPROVEMENT; 13.8 and 13.9 are new IMPROVEMENT rows).
 
 | Status | Rows |
 |---|---|
-| PASS | 63 |
-| IMPROVEMENT | 1 (8.13: no TipTap rewrites of untouched text) |
+| PASS | 71 |
+| IMPROVEMENT | 4 (8.13: no TipTap rewrites of untouched text; 13.2, 13.8, 13.9: the full-page History with one-press rows and Older and Newer arrows) |
 | FAIL | 2 (7.4, kept at 36 languages by Kirby's choice, and its group 7.0) |
 | NEEDS-CAPTURE | 4 (7.9, the 50 MB timing; 7.18, the CSV table with a real pointer and beside Electron's frame; 8.6, a real trackpad pinch; their group 8.0) |
 | EXCLUDED | 0 |
 | EXCLUDED-PLATFORM | 0 |
-| Total | 70 |
+| Total | 81 |
 
-Score = (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED) = 64 ÷ 70. IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron (Kirby, 2026-11-22); it counts as meeting parity. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
+Score = (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED) = 75 ÷ 81. IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron (Kirby, 2026-11-22); it counts as meeting parity. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
 
 The screen was locked for the whole run (`IOConsoleLocked = Yes`). No captures were taken and no app was launched. Visual and live-gesture rows are NEEDS-CAPTURE, with their steps below.
 
@@ -78,6 +78,56 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 | 7.7 | CSV shows as a table, converts CSV ↔ GFM | PASS | `csv.ts` / `workspace/csv_doc.rs` `save_as_text`, `markie-core/src/csv.rs`; fixture | Since Electron PR #149 an open CSV is never converted (section 7a). The conversion is left for the two crossings: Markdown saved as `.csv`, and a CSV saved under another name. Fixture entry for a BOM updated to Electron's current output. |
 | 7.8 | Files | PASS | each file has its port: `editor-keymap.ts` (`main.rs` bindings), `source-find.ts` (GPUI Kit search), `source-handle.ts` (`workspace.rs` editor entity), `format-tables.ts`, `csv.ts`, `undo-target.ts` (`edit_menu`), `large-doc.tsx` (`text_view.rs`) | `source-comments.ts` is local comments, section 12's. |
 | 7.9 | Rust port note: performance on a 1 to 100 MB buffer | NEEDS-CAPTURE | GPUI Kit rope editor | Needs a timed live run (steps below). Files at 100 MB are refused by both apps (`MAX_DOC_BYTES`). |
+| 7.19 | ⌥↑ ⌥↓ move the lines (`moveLineUp`, `moveLineDown`) | PASS | `@codemirror/commands` `moveLine` / `workspace/source_keys.rs` `move_lines`; `alt_up_and_down_move_lines_with_the_selection` | Was missing (2026-11-25). Whole lines of a multi-line selection move; a selection ending at a line's start leaves that line, as `selectedLineBlocks`. One undo step: the touched lines are one `replace`. |
+| 7.20 | ⇧⌥↑ ⇧⌥↓ copy the lines (`copyLineUp`, `copyLineDown`) | PASS | `copyLine` / `copy_lines`; `shift_alt_up_and_down_copy_lines`; `source_keys_win_in_source_text_and_nowhere_else` | Was missing: GPUI Kit bound these keys to add a cursor. They copy now; ⌥⌘↑ ⌥⌘↓ still add a cursor, as CodeMirror. |
+| 7.21 | ⇧⌘K deletes the lines (`deleteLine`) | PASS | `deleteLine` / `delete_lines`; `shift_cmd_k_deletes_lines_and_keeps_the_column` | Was missing. The cursor lands a line down at the same column. |
+| 7.22 | ⌘D adds the next match (`selectNextOccurrence`) | PASS | `selectNextOccurrence`, `findNextOccurrence` / `next_occurrence`, `select_next_occurrence`; `cmd_d_takes_the_word_then_each_next_match` | Was missing. With nothing selected it takes the word; from a word, only whole words match; it wraps once and skips what is selected. |
+| 7.23 | ⇧⌘L selects every match (`selectSelectionMatches`) | PASS | `selectSelectionMatches` / `all_occurrences`, `select_all_occurrences`; `shift_cmd_l_selects_every_match`; routing test | Was missing: ⇧⌘L was Toggle Theme everywhere. It is Toggle Theme outside Source text still (and Align Left in View). Markie RS also takes the word at a bare cursor, with whole-word matches, where CodeMirror does nothing. A thousand matches at most, as CodeMirror. |
+| 7.24 | ⌥⌘G goes to a line (`gotoLine`) | PASS | `gotoLine` / `goto_target`, `render_goto_line`; `cmd_alt_g_reads_lines_columns_offsets_and_percent` | Was missing. The field takes `42`, `42:7`, `+3`, `-3` and `50%`, as CodeMirror's. It is a strip above the text styled like GPUI Kit's find bar; Enter goes, Escape closes. |
+| 7.25 | ⌘↵ inserts a blank line below (`insertBlankLine`) | PASS | `newlineAndIndent(true)` / `insert_blank_line`; `cmd_enter_opens_a_line_below_without_splitting` | Was missing: GPUI Kit reads ⌘↵ as submit. The new line keeps the line's indentation; the line is not split. |
+| 7.26 | ⌘[ ⌘] outdent and indent in Source | PASS | `defaultKeymap` `indentLess`, `indentMore` / `source::key_bindings`; `cmd_brackets_go_back_and_forward_but_indent_in_source_text` | Back and Forward took ⌘[ ⌘] app-wide; Source text keeps them, bound to `Input && mode == editor` after the app's keys (GPUI ranks a binding with no context as deep as the focus). |
+| 7.27 | The rest of CodeMirror's basic setup a writer uses | PASS | sweep below; `source_keys::key_bindings`, `every_key_is_bound_in_source_text_only` | Fixed in the sweep: ⌘G ⇧⌘G (Electron's find bar keys, missing in Source), ⌃L, ⇧⌘\, ⌘Home ⌘End with ⇧, and the macOS Emacs keys. The rarely used ones left are listed as NOT BUILT below and not scored. |
+
+All of 7.19 to 7.27 act on the main cursor when there are several: GPUI Kit does not let an app read every cursor. Evidence beyond the unit tests: a `source` scene ran each line command and Undo in the real editor and logged the text (`.autoloop/runs/source-keys/`): each command was one undo step, and Undo restored the text exactly.
+
+### CodeMirror's basic setup against Markie RS Source (2026-11-25)
+
+Electron's Source is `@uiw/react-codemirror` with its full basic setup (`src/components/editor.tsx`). Every key in its keymaps, on macOS, against GPUI Kit 0.10's editor and Markie RS's own bindings. Not scored beyond row 7.27.
+
+| Keys | CodeMirror | Markie RS Source | Status |
+|---|---|---|---|
+| Arrows, ⇧arrows, ⌥←→, ⌘←→, ⌘↑↓, Page Up and Down, Home, End | cursor and selection moves | GPUI Kit | PASS |
+| ⌘Home ⌘End, ⇧⌘Home ⇧⌘End | `cursorDocStart`, `cursorDocEnd` | bound to GPUI Kit's moves | FIXED |
+| ⌃← ⌃→ | `cursorSyntaxLeft`, `cursorSyntaxRight` | none | NOT BUILT (rare: moves by syntax node) |
+| ↵ | `insertNewlineAndIndent` | GPUI Kit keeps the line's indentation | PASS |
+| ⌫ ⌦ ⌥⌫ ⌥⌦ ⌘⌫ ⌘⌦, ⌘A | deletes, select all | GPUI Kit | PASS |
+| ⌥↑ ⌥↓ ⇧⌥↑ ⇧⌥↓ | move and copy lines | rows 7.19, 7.20 | FIXED |
+| ⌥⌘↑ ⌥⌘↓ | `addCursorAbove`, `addCursorBelow` | GPUI Kit | PASS |
+| Esc | `simplifySelection` | GPUI Kit's Escape drops the extra cursors first | PASS |
+| ⌘↵ | `insertBlankLine` | row 7.25 | FIXED |
+| ⌃L | `selectLine` | `line_selection` | FIXED |
+| ⌘I | `selectParentSyntax` | none | NOT BUILT (rare) |
+| ⌘[ ⌘] | `indentLess`, `indentMore` | row 7.26 | PASS |
+| ⌥⌘\ | `indentSelection` | none | NOT BUILT (rare; re-indents by language rules Markdown hardly has) |
+| ⇧⌘K | `deleteLine` | row 7.21 | FIXED |
+| ⇧⌘\ | `cursorMatchingBracket` | `matching_bracket` (bracket before the cursor first, as CodeMirror) | FIXED |
+| ⌘/ | `toggleComment` | the shortcuts sheet, app-owned in both apps (`editor-keymap.ts`) | PASS |
+| ⇧⌥A | `toggleBlockComment` | none | NOT BUILT (rare; wraps in `<!-- -->`) |
+| ⇧⌥M | `toggleTabFocusMode` | none | NOT BUILT (rare; lets Tab leave the editor) |
+| ⌃B ⌃F ⌃P ⌃N ⌃D ⌃H ⌃K ⌃⌥H ⌃V ⌃O ⌃T | `emacsStyleKeymap` | bound to GPUI Kit's moves and deletes; ⌃O `splitLine` and ⌃T `transposeChars` ported | FIXED (⌃A ⌃E were already there) |
+| Tab ⇧Tab | `indentWithTab` | GPUI Kit | PASS |
+| ⌘F | find | GPUI Kit's find bar (app-owned in Electron) | PASS |
+| ⌘G ⇧⌘G | next and previous match (app-owned in Electron) | `FindNextMatch`, `FindPreviousMatch`: the find bar's next match, selected; with no search they open the find bar | FIXED |
+| F3 ⇧F3 | `findNext`, `findPrevious` | none | NOT BUILT (rare on a Mac keyboard) |
+| ⇧⌘L ⌥⌘G ⌘D | search commands | rows 7.23, 7.24, 7.22 | FIXED |
+| ⌘Z ⇧⌘Z | `undo`, `redo` | GPUI Kit | PASS |
+| ⌘U ⇧⌘U | `undoSelection`, `redoSelection` | none | NOT BUILT (rare) |
+| ⌥⌘[ ⌥⌘] | `foldCode`, `unfoldCode` | Narrower and Wider Page, app-wide in both apps; GPUI Kit folds from the gutter | PASS (the app's keys win, as in Electron) |
+| ⌃⌥[ ⌃⌥] | `foldAll`, `unfoldAll` | none; the gutter folds | NOT BUILT (rare) |
+| ⌃Space and the completion keys | `completionKeymap` | none; Markdown's only completion is HTML tag names after `<` | NOT BUILT (rare) |
+| ( [ { ' " | `closeBrackets` and its ⌫ | GPUI Kit's auto-closing pairs (`LanguageConfig::default`, `auto_close.rs`) | PASS, from the source; not checked by hand |
+
+Found outside the six keymaps: `@codemirror/lang-markdown` adds `insertNewlineContinueMarkup` (↵ in a list item starts the next item, ↵ on an empty item ends the list) and `deleteMarkupBackward`. Markie RS Source has neither. A writer meets this often; it is the first thing to build next.
 
 ## Section 7a: The CSV table (Electron PR #149)
 
@@ -162,12 +212,14 @@ Pending Kirby, recorded and unchanged:
 |---|---|---|---|---|
 | 13.0 | What the user can do (group) | PASS | children | |
 | 13.1 | A version is kept before every overwrite | PASS | `history.js` `record` / `history.rs` (`keeps_the_previous_text_with_an_author`, `an_outside_write_is_kept_as_its_own_version`) | Fixed: an outside edit is now recorded as a version when it is seen (`captureExternal`); before, an agent's edit appeared in history only if the user saved over it. An agent write over an unknown file is "unknown", as Electron. |
-| 13.2 | List with author, name, view, restore, diff | PASS | `history-dialog.tsx` / `history_dialog.rs` | The stable 0.9.7 dialog has no naming; naming lives in the nightly view, and `set_name` is ported. Row counts now use the exact `lineDiff`. Fixed: Restore armed an autosave; Electron loads it unsaved and never writes. The diff view is the stated polish from VISUAL-DIALOGS.md. |
+| 13.2 | List with author, name, view, restore, diff | IMPROVEMENT | `history-dialog.tsx`, nightly `version-history-view.tsx` / `history_page.rs`, `history_model.rs` | Since 2026-11-25 File › History… (⌥⌘Y) opens Electron's super-nightly full-page History instead of the stable popup, where a click toggled a diff open and shut under the pointer (Kirby: "history clicking isn't working well"). The selected version fills the document area with its changes against the version before it, as Electron's view compares; the list sits on the right, grouped Today, Yesterday, This week and by month, with runs of autosaves folded. Naming (with `name_current`), "Which versions", ↑ ↓, Copy text, Restore (loaded unsaved, never written) and Back to the document are ported. Word, RTF and ODT keep the popup, as Electron's document shell keeps its own recovery dialog; its rows now select on the press too. Compared off screen with Electron's view, light and dark (`.autoloop/runs/history-page/`): layout, list, folding, selection and highlighting match; the version is drawn in Markie RS's rich view, where Electron uses its HTML reading style, so tables and lists keep the editor's look. |
 | 13.3 | Retention: 24 h, hourly to 7 days, daily to 30, newest 5, 200 per file, 500 MB, named kept | PASS | `planRetention` / `plan_retention`, 60 generated histories identical | Names: control and format characters are now cleared exactly as `[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]` (generated from V8's tables). One quirk left out: V8's lenient `Date.parse` dates some stray non-stamp file names; Markie never writes such names. |
-| 13.4 | Files | PASS | `history.rs`, `history_dialog.rs`, `line_diff.rs` | |
+| 13.4 | Files | PASS | `history.rs` (`head`, `name_current` added), `version_diff.rs` (`version-diff.ts`), `version_list.rs` (`version-history.ts`), `history_page.rs`, `history_model.rs`, `history_dialog.rs`, `line_diff.rs` | |
 | 13.5 | Compatibility (group) | PASS | children | |
 | 13.6 | IPC `history-list`, `history-read`, `history-head`, `history-name`; `menu-history` | PASS | `main.js` / `History::list`, `read`, `set_name`; File menu | `history-head` serves only the nightly view. The File menu item is now "History…", Electron's label. |
 | 13.7 | On disk: `snapshots/<hash8>-<basename>/<stamp>[-N].md`, `meta.json`, `last-write.json` | PASS | `snapshots.js`, `history.js` / `history.rs`, `clock.rs`; stamp and slug fixture | |
+| 13.8 | One press on a row selects it and shows it | IMPROVEMENT | `history_page.rs` `render_history_row` (selects on mouse down), `history_select` | Electron selects on click; Markie RS selects on the press, as a native list does, so nothing can move between press and release. Nothing folds closed under the pointer; the chevron folds a run on its own. |
+| 13.9 | Older and Newer arrows step through versions | IMPROVEMENT | `history_page.rs` `render_history_panel`, `history_model.rs` `step`, `can_step`; `arrows_step_one_row_and_stop_at_the_ends` | Kirby asked to step by click. Two arrows beside "Version history" go one row down (older) or up (newer), the same as ↓ and ↑, and dim at the ends. A folded run compares with the version before the whole run, as Electron's. |
 
 ## Section 24: Link previews
 

@@ -17,6 +17,7 @@ import { exportFontCss } from "@/lib/fonts/export-fonts";
 import { buildPDFHTML } from "@/lib/pdf-styles";
 import { sanitizeMarkdownStyleStore } from "@/lib/markdown-style-schema";
 import { commitMarkdownStyleStore, loadMarkdownStyleStore } from "@/lib/markdown-style-store";
+import { VersionHistoryView } from "@/components/version-history-view";
 
 const params = new URLSearchParams(location.search);
 const scene = params.get("scene") ?? "";
@@ -60,7 +61,7 @@ function Doc() {
   );
 }
 
-if (scene === "doc" || scene === "style-settings" || scene === "export" || (scene === "share" && args.style)) {
+if (scene === "doc" || scene === "history" || scene === "style-settings" || scene === "export" || (scene === "share" && args.style)) {
   installBundledFonts();
   startCodeFont();
   const styles = typeof args.style === "string" ? chooseMarkdownStyle(loadMarkdownStyleStore(), args.style) : sanitizeMarkdownStyleStore(args.style);
@@ -85,7 +86,47 @@ function Export() {
   return null;
 }
 
+// The super-nightly History page over made-up versions: `file` (the current
+// text), `versions` ([{iso, text, author, agent?, name?}], newest first) and
+// the same `expand` (rows of `versions`), `select` (a row of the list, 0 is
+// the current version) and `menu` the Markie RS scene takes. Just enough of
+// preload.js's history calls stands in for the bridge.
+function History() {
+  const [md, setMd] = useState<string | null>(null);
+  const versions = (args.versions ?? []).map((v: { iso: string }) => ({ ...v, stamp: v.iso.replace(/:/g, "-") }));
+  (window as unknown as { electronAPI: unknown }).electronAPI = {
+    platform: "darwin",
+    historyList: async () => versions.map(({ text: _t, ...e }: { text: string }) => ({ bytes: 0, ...e })),
+    historyRead: async ({ stamp }: { stamp: string }) => ({ content: versions.find((v: { stamp: string }) => v.stamp === stamp)?.text ?? null }),
+    historyHead: async () => null,
+    historyName: async () => ({ ok: true }),
+  };
+  useEffect(() => {
+    fetch(`/@fs${args.file}`).then((r) => r.text()).then(setMd);
+  }, []);
+  useEffect(() => {
+    if (md === null) return;
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    void (async () => {
+      await wait(400);
+      for (const i of args.expand ?? []) {
+        document.querySelector<HTMLElement>(`[data-vh-row="${versions[i].stamp}"] .markie-vh-chevron`)?.click();
+        await wait(150);
+      }
+      const rows = () => Array.from(document.querySelectorAll<HTMLElement>("[data-vh-row]"));
+      if (typeof args.select === "number") rows()[args.select]?.click();
+      await wait(150);
+      if (typeof args.menu === "number") rows()[args.menu]?.querySelector<HTMLElement>(".markie-vh-kebab")?.click();
+      await wait(300);
+      document.body.dataset.sceneHistory = "1";
+    })();
+  }, [md]);
+  if (md === null) return null;
+  return <VersionHistoryView filePath={args.file} fileName={args.file.split("/").pop()} currentContent={md} dirty={false} onRestore={() => {}} onClose={() => {}} />;
+}
+
 function Scene() {
+  if (scene === "history") return <History />;
   if (scene === "doc") return <Doc />;
   if (scene === "export") return <Export />;
   if (scene === "share") {

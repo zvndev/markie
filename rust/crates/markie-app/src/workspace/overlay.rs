@@ -129,7 +129,7 @@ impl Workspace {
             search: self.shell.search_open,
             share: self.collab.share.is_some(),
             kit_layer: window.has_active_dialog(cx) || window.has_active_sheet(cx),
-            page_replaced: self.workspace_page_open() || self.viewing_version.is_some(),
+            page_replaced: self.workspace_page_open() || self.viewing_version.is_some() || self.history_page_open(),
         })
     }
 

@@ -53,6 +53,27 @@ The spec was the Electron source: `formatting-toolbar.tsx`, `doc-toolbar.tsx`, `
 
 All eight templates come from `themes/templates.json`, which is generated from `src/lib/theme.ts`. The page reads each template's typography and doc rule from that file, so Paper's Charter and Iowan, Studio's mono headings and 880 px column, and the rest follow without separate code. Light and dark follow the system appearance and the manual toggle, as in Electron.
 
+### History page (2026-11-25)
+
+File › History… (⌥⌘Y) for a text document is Electron's super-nightly `version-history-view.tsx`, compared off screen with it (`.autoloop/runs/history-page/`, both apps' own code, the same made-up versions, 1280 by 820, light and dark):
+
+| Part | Electron nightly | Markie RS |
+|---|---|---|
+| Header | 40 pt, past the traffic lights; Back arrow, the version's heading ("Today, 7:53 AM", bold when named) and the file name in 12 pt muted; Copy text; blue "Restore this version" unless it is the current version | Same |
+| Document | The version full size, its changes against the version before it: words added in green, removed struck in red; a block only one side has in a green or red band with a 3 pt edge | Same marks and bands. The version is drawn by the rich view, so tables and lists look as the editor draws them, where Electron uses its HTML reading style (small-caps table headers, tighter lists) |
+| Panel | 300 pt on the right: "Version history", "Which versions" (All, Named), sections Today, Yesterday, This week, months; runs of autosaves folded under a chevron; author dots; ⋯ menu (Name, Remove name, Restore, Copy text); "Highlight changes" at the foot | Same, plus Older and Newer arrows beside the title |
+| Selection | Blue 16% fill (11% light) with a 70% edge | Same |
+
+A row selects on the press. The arrows and ↑ ↓ step through the rows; the arrows dim at the ends.
+
+### Source: Go to Line (⌥⌘G)
+
+A strip across the top of the Source pane, as GPUI Kit's find bar is drawn there: the popover fill, a bottom hairline, "Go to line" in small muted text and a 220 pt field. Enter goes, Escape closes (`.autoloop/runs/source-keys/rs-source-goto.png`). Electron's is CodeMirror's panel at the bottom of the editor.
+
+### Title bar: Back and Forward
+
+Two chevrons after the wordmark, the title bar's 28 pt icon buttons with their hover; dimmed to 35% with nowhere to go (`.autoloop/runs/nav/bars.png`). Electron has none. The title bar is the shell's (VISUAL-SHELL.md); the row is library audit 29.12.
+
 ## What still differs, and why
 
 | Difference | Why |

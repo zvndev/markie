@@ -356,6 +356,77 @@ impl History {
         Ok((!name.is_empty()).then_some(name))
     }
 
+    /// Who wrote `content` (the text on screen), as far as Markie knows
+    /// (`head` in `history.js`): the last recorded write when it matches,
+    /// "external" when the text is what is on disk but nobody recorded it,
+    /// and None when it cannot say (no record, or unsaved text on screen).
+    pub fn head(&self, file: &Path, content: &str) -> Option<VersionMeta> {
+        let disk = fs::read_to_string(file).ok()?;
+        let last = self.read_last_write(file)?;
+        if last.hash == sha256_hex(content.as_bytes()) {
+            return Some(VersionMeta {
+                author: last.author,
+                iso: last.iso.filter(|i| !i.is_empty()),
+                agent: last.agent.filter(|a| !a.is_empty()),
+                name: None,
+            });
+        }
+        (content == disk).then(|| VersionMeta { author: "external".into(), ..Default::default() })
+    }
+
+    /// Keep what is on disk now as a version, and name it (`nameCurrent`).
+    /// The current text is not a stored version until something replaces
+    /// it, and a name has to hang on something that stays. The newest
+    /// version is named instead when it already holds the same bytes.
+    pub fn name_current(&self, file: &Path, raw: &str) -> Result<Option<String>, &'static str> {
+        if clean_name(raw).is_empty() {
+            return Err("A name is required.");
+        }
+        let disk = fs::read_to_string(file).map_err(|_| "The file is not on disk.")?;
+        let disk_hash = sha256_hex(disk.as_bytes());
+        let stems = self.stems(file);
+        let newest_same = stems
+            .last()
+            .and_then(|s| self.read(file, s))
+            .is_some_and(|text| sha256_hex(text.as_bytes()) == disk_hash);
+        let stamp = if newest_same {
+            stems.last().cloned().unwrap_or_default()
+        } else {
+            let who = match self.read_last_write(file) {
+                Some(last) if last.hash == disk_hash => VersionMeta {
+                    author: if last.author.is_empty() { "unknown".into() } else { last.author },
+                    iso: last.iso.filter(|i| !i.is_empty()).or_else(|| Some(iso((self.now)()))),
+                    agent: last.agent.filter(|a| !a.is_empty()),
+                    name: None,
+                },
+                last => VersionMeta {
+                    author: if last.is_some() { "external".into() } else { "user".into() },
+                    iso: Some(self.written_at(file)),
+                    agent: None,
+                    name: None,
+                },
+            };
+            let dir = self.dir_for(file);
+            fs::create_dir_all(&dir).map_err(|_| "This version could not be kept.")?;
+            let base = stamp((self.now)());
+            let mut stem = base.clone();
+            if dir.join(format!("{stem}.md")).exists() {
+                stem = format!("{base}-2");
+            }
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(format!("{stem}.md")))
+                .and_then(|mut f| std::io::Write::write_all(&mut f, disk.as_bytes()))
+                .map_err(|_| "This version could not be kept.")?;
+            let mut meta = self.read_meta(file);
+            meta.insert(stem.clone(), who);
+            self.write_meta(file, &meta);
+            stem
+        };
+        self.set_name(file, &stamp, raw)
+    }
+
     fn retain(&self, file: &Path) {
         let dir = self.dir_for(file);
         let mut meta = self.read_meta(file);
@@ -455,6 +526,37 @@ mod tests {
         assert_eq!(h.read(&doc, &versions[0].stamp).as_deref(), Some("one"));
         assert_eq!(h.read(&doc, &versions[1].stamp).as_deref(), Some("two"));
         assert_eq!(versions[1].meta.author, "user", "our own save wrote 'two'");
+    }
+
+    #[test]
+    fn head_names_who_wrote_the_text_on_screen() {
+        let (_d, doc, h, _clock) = setup();
+        fs::write(&doc, "one").unwrap();
+        assert_eq!(h.head(&doc, "one"), None, "no write recorded yet");
+        h.capture(&doc, "two", Writer::Agent("claude-code".into())).unwrap();
+        fs::write(&doc, "two").unwrap();
+        let head = h.head(&doc, "two").unwrap();
+        assert_eq!((head.author.as_str(), head.agent.as_deref()), ("agent", Some("claude-code")));
+        fs::write(&doc, "three").unwrap();
+        assert_eq!(h.head(&doc, "three").unwrap().author, "external", "on disk, but nobody recorded it");
+        assert_eq!(h.head(&doc, "unsaved"), None);
+    }
+
+    #[test]
+    fn naming_the_current_version_keeps_it_first() {
+        let (_d, doc, h, clock) = setup();
+        fs::write(&doc, "draft").unwrap();
+        assert_eq!(h.name_current(&doc, "  "), Err("A name is required."));
+        assert_eq!(h.name_current(&doc, "First draft"), Ok(Some("First draft".into())));
+        let versions = h.list(&doc);
+        assert_eq!(versions.len(), 1);
+        assert_eq!(h.read(&doc, &versions[0].stamp).as_deref(), Some("draft"));
+        assert_eq!(versions[0].meta.author, "user");
+        // The same bytes again: the stored copy is renamed, nothing new kept.
+        clock.fetch_add(1000, Ordering::SeqCst);
+        assert_eq!(h.name_current(&doc, "Renamed"), Ok(Some("Renamed".into())));
+        assert_eq!(h.list(&doc).len(), 1);
+        assert_eq!(h.list(&doc)[0].meta.name.as_deref(), Some("Renamed"));
     }
 
     #[test]

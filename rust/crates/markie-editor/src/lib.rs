@@ -345,6 +345,10 @@ pub struct RichView {
     pub remote: Vec<RemoteCursor>,
     /// Commented passages to tint (local comments), with their colour.
     pub comment_marks: Vec<(Pos, Pos, Hsla)>,
+    /// Whole blocks drawn as a band with a coloured left edge: (block, fill,
+    /// edge). The History page marks a block only one version has this way
+    /// (Electron's `.markie-vh-block`).
+    pub block_tints: Vec<(usize, Hsla, Hsla)>,
     /// Undo and redo belong to the live room's shared history.
     pub collab_undo: bool,
     /// The template's typography and doc rule (`style.rs`).
@@ -466,6 +470,7 @@ impl RichView {
             link_previews: true,
             remote: Vec::new(),
             comment_marks: Vec::new(),
+            block_tints: Vec::new(),
             collab_undo: false,
             style: style::DocStyle::default(),
             doc_font: "system",
@@ -586,6 +591,16 @@ impl RichView {
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.focus.focus(window, cx);
+    }
+
+    /// How far down the page is scrolled, in px (Back puts it back).
+    pub fn scroll_y(&self) -> f32 {
+        -f32::from(self.scroll.offset().y)
+    }
+
+    pub fn set_scroll_y(&mut self, y: f32, cx: &mut Context<Self>) {
+        self.scroll.set_offset(point(px(0.), px(-y.max(0.))));
+        cx.notify();
     }
 
     pub fn set_appearance(&mut self, zoom: f32, page_width: f32, cx: &mut Context<Self>) {

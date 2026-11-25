@@ -48,4 +48,6 @@ pub mod save;
 pub mod search;
 pub mod stats;
 pub mod theme;
+pub mod version_diff;
+pub mod version_list;
 pub mod workspace_ops;

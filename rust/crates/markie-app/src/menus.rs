@@ -28,6 +28,9 @@ pub struct MenuState {
     /// This build updates itself (the nightly, installed): the app menu
     /// has Check for Updates…. `install` sets it; callers leave it alone.
     pub updates: bool,
+    /// Go › Back and Go › Forward have somewhere to go.
+    pub back: bool,
+    pub forward: bool,
 }
 
 fn item(label: &str, action: impl Action) -> MenuItem {
@@ -132,6 +135,13 @@ pub fn build(state: MenuState) -> Vec<Menu> {
     // The Word menus sit between Edit and View, as `install` splices them.
     menus.extend(markie_office_view::actions::menus());
     menus.push(Menu { name: "View".into(), items: view, disabled: false });
+    // Finder's and Preview's Go menu: Back and Forward between places, with
+    // ⌘[ and ⌘]. Electron has none; Markie RS adds it (workspace/nav.rs).
+    menus.push(Menu {
+        name: "Go".into(),
+        items: vec![item("Back", NavigateBack).disabled(!state.back), item("Forward", NavigateForward).disabled(!state.forward)],
+        disabled: false,
+    });
     menus.push(Menu {
         name: "Window".into(),
         items: vec![item("Minimize", MinimizeWindow), item("Zoom", ZoomWindow), MenuItem::separator(), item("Bring All to Front", BringAllToFront)],
@@ -232,7 +242,7 @@ mod tests {
     fn menus_come_in_electrons_order() {
         let menus = build(MenuState::default());
         let names: Vec<&str> = menus.iter().map(|m| m.name.as_ref()).collect();
-        assert_eq!(names, ["Markie RS", "File", "Edit", "Format", "Insert", "Layout", "Review", "View", "Window", "Help"]);
+        assert_eq!(names, ["Markie RS", "File", "Edit", "Format", "Insert", "Layout", "Review", "View", "Go", "Window", "Help"]);
     }
 
     #[test]
@@ -266,6 +276,23 @@ mod tests {
         };
         assert_eq!(find(MenuState { has_history: false, ..Default::default() }), Some(true));
         assert_eq!(find(MenuState { has_history: true, ..Default::default() }), Some(false));
+    }
+
+    #[test]
+    fn go_has_back_and_forward_greyed_with_nowhere_to_go() {
+        let state = |menus: &[Menu]| -> Vec<(String, bool)> {
+            menu(menus, "Go")
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    MenuItem::Action { name, disabled, .. } => Some((name.to_string(), *disabled)),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(state(&build(MenuState::default())), [("Back".to_string(), true), ("Forward".to_string(), true)]);
+        assert_eq!(state(&build(MenuState { back: true, ..Default::default() })), [("Back".to_string(), false), ("Forward".to_string(), true)]);
+        assert_eq!(state(&build(MenuState { forward: true, ..Default::default() })), [("Back".to_string(), true), ("Forward".to_string(), false)]);
     }
 
     #[test]
@@ -333,6 +360,8 @@ mod tests {
             ("cmd-q", "Quit"),
             ("cmd-w", "CloseWindow"),
             ("cmd-m", "MinimizeWindow"),
+            ("cmd-[", "NavigateBack"),
+            ("cmd-]", "NavigateForward"),
         ] {
             assert!(has(keys, action), "{keys} should run {action}");
         }

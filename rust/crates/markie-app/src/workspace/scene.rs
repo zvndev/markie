@@ -8,7 +8,7 @@
 //! screen and nothing on Kirby's display moves. Then the app quits.
 //!
 //! - `MARKIE_RS_SCENE`: `doc`, `csv`, `share`, `office-cloud`, `servers`, `vault`, `browse`,
-//!   `recent`, `launch`, `library`, `cloud` or `skills`.
+//!   `recent`, `launch`, `library`, `cloud`, `skills`, `history`, `nav` or `source`.
 //! - `MARKIE_RS_SCENE_ARGS`: a JSON object for the scene (see each one below).
 //! - `MARKIE_RS_SCENE_OUT`: the PNG to write.
 //! - `MARKIE_RS_SCENE_THEME`: `light` (default) or `dark`.
@@ -372,6 +372,17 @@ impl Workspace {
                 }
                 self.scene_skills(args, step, window, cx)
             }
+            // {versions: [{iso, text, author?, agent?, name?}], select?, expand?,
+            //  highlight?, named?, menu?}: the History page for the file passed
+            //  on the command line, see `scene_history`.
+            "history" => self.scene_history(args, step, window, cx),
+            // {open: [paths], back?: n, page?: "recent"}: places visited in
+            // order after the file on the command line, then Back n times;
+            // see `scene_nav`.
+            "nav" => self.scene_nav(args, step, window, cx),
+            // {ops: [...]}: Source mode on the file passed on the command
+            // line, the CodeMirror keys run in order; see `scene_source`.
+            "source" => self.scene_source(args, step, window, cx),
             other => {
                 eprintln!("markie-rs scene: unknown scene {other}");
                 true

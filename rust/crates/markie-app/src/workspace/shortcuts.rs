@@ -8,7 +8,9 @@ use super::Workspace;
 use super::dialog_chrome::{Tokens, fade, section_label};
 use super::palette::{PaletteCommand, commands};
 
-/// Commands with a shortcut, grouped in first-seen order like Electron's Map.
+/// Commands with a shortcut, grouped in first-seen order like Electron's Map,
+/// then Source's own keys (`source_keys.rs`), which work only in Source text
+/// and so are not palette commands.
 pub(super) fn shortcut_groups() -> Vec<(&'static str, Vec<PaletteCommand>)> {
     let mut groups: Vec<(&'static str, Vec<PaletteCommand>)> = Vec::new();
     for c in commands().into_iter().filter(|c| c.shortcut.is_some()) {
@@ -17,8 +19,32 @@ pub(super) fn shortcut_groups() -> Vec<(&'static str, Vec<PaletteCommand>)> {
             None => groups.push((c.group, vec![c])),
         }
     }
+    let source = SOURCE_KEYS
+        .iter()
+        .map(|(title, keys)| PaletteCommand {
+            title: (*title).into(),
+            group: "Source",
+            shortcut: Some(keys),
+            keywords: "".into(),
+            run: std::rc::Rc::new(|_, _, _| {}),
+        })
+        .collect();
+    groups.push(("Source", source));
     groups
 }
+
+/// The keys Source text adds, as the sheet lists them.
+const SOURCE_KEYS: [(&str, &str); 9] = [
+    ("Move Line Up or Down", "⌥↑ ⌥↓"),
+    ("Copy Line Up or Down", "⇧⌥↑ ⇧⌥↓"),
+    ("Delete Line", "⇧⌘K"),
+    ("Select Next Match", "⌘D"),
+    ("Select Every Match", "⇧⌘L"),
+    ("Go to Line…", "⌥⌘G"),
+    ("New Line Below", "⌘↵"),
+    ("Indent or Outdent", "⌘] ⌘["),
+    ("Add Cursor Above or Below", "⌥⌘↑ ⌥⌘↓"),
+];
 
 impl Workspace {
     pub(super) fn render_shortcuts(&mut self, t: &Tokens, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -97,9 +123,13 @@ mod tests {
         let names: Vec<&str> = shortcut_groups().iter().map(|(g, _)| *g).collect();
         // Format holds Format Tables (⌥⌘T), as Electron's sheet does for a
         // document that can be edited.
-        assert_eq!(names, ["File", "View", "Format", "Help"]);
+        assert_eq!(names, ["File", "View", "Format", "Go", "Help", "Source"]);
         let file = &shortcut_groups()[0].1;
         assert_eq!(file[0].title.as_ref(), "Open File…");
         assert_eq!(file[0].shortcut, Some("⌘O"));
+        let go = &shortcut_groups()[3].1;
+        assert_eq!(go.iter().map(|c| (c.title.to_string(), c.shortcut)).collect::<Vec<_>>(), [("Back".to_string(), Some("⌘[")), ("Forward".to_string(), Some("⌘]"))]);
+        let source = &shortcut_groups()[5].1;
+        assert!(source.iter().any(|c| c.shortcut == Some("⇧⌘L")));
     }
 }

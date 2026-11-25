@@ -1,15 +1,16 @@
-//! Version history, drawn like Electron's `src/components/history-dialog.tsx`
-//! (the dialog the stable 0.9.7 build shows): a 520pt panel titled
-//! "History: name", one row per version with its time, author, line counts
-//! and Restore.
+//! Recovery history for Word, RTF and ODT documents, drawn like Electron's
+//! `src/components/history-dialog.tsx`: a 520pt panel titled "History:
+//! name", one row per revision with its time, author, line counts and
+//! Restore. Text documents have the full History page instead
+//! (`history_page.rs`); Electron's document shell keeps a dialog of its own
+//! for these formats too.
 //!
-//! Markie RS adds the diff view Electron keeps for its nightly history mode:
-//! click a row and it opens underneath, showing what that save changed
-//! against the version before it, in the same green and red Electron's
-//! `version-history.css` uses.
+//! One press on a row selects it and opens what that save changed under it,
+//! in the green and red of Electron's `version-history.css`. Pressing the
+//! row again leaves it open: nothing folds closed under the pointer.
 //!
-//! Restoring never writes, as in Electron: the version is loaded into the
-//! editor as unsaved, so looking through history cannot cost anything.
+//! Restoring never writes, as in Electron: the revision becomes the open,
+//! unsaved document.
 
 use std::collections::HashMap;
 
@@ -20,7 +21,7 @@ use markie_core::history::Version;
 
 use super::dialog_chrome::{self as chrome, Tokens, fade, shadow};
 use super::overlay::Overlay;
-use super::{DocKind, OpenDoc, Workspace};
+use super::{DocKind, Workspace};
 use crate::actions::ShowHistory;
 
 const INITIAL_ROWS: usize = 30;
@@ -151,7 +152,14 @@ impl Workspace {
             self.close_dialog(window, cx);
             return;
         }
+        if self.history_page_open() {
+            return self.close_history_page(window, cx);
+        }
         let Some(doc) = &self.doc else { return };
+        if !matches!(doc.kind, DocKind::Office(_)) {
+            self.close_dialog(window, cx);
+            return self.open_history_page(window, cx);
+        }
         // Office documents keep recovery revisions (office.rs), newest first.
         let entries = if matches!(doc.kind, DocKind::Office(_)) {
             self.office_versions(&doc.path)
@@ -181,9 +189,10 @@ impl Workspace {
         }
     }
 
-    fn history_toggle_row(&mut self, stamp: String, cx: &mut Context<Self>) {
+    /// One press selects the row and shows its changes.
+    fn history_select_row(&mut self, stamp: String, cx: &mut Context<Self>) {
         if let Overlay::History(h) = &mut self.dialogs.open {
-            h.open_row = if h.open_row.as_deref() == Some(stamp.as_str()) { None } else { Some(stamp) };
+            h.open_row = Some(stamp);
         }
         cx.notify();
     }
@@ -205,18 +214,7 @@ impl Workspace {
             self.restore_office_version(&stamp, window, cx);
             return;
         }
-        let Some(OpenDoc { kind: DocKind::Text { .. }, .. }) = &self.doc else { return };
-        self.pending_editor_text = Some(self.editor_text(&text, cx));
-        if self.rich_active() {
-            self.load_rich(&text, cx);
-        }
-        self.update_stats(&text);
-        self.dirty = true;
-        // Loaded as unsaved, never written (`onRestore`): reading history
-        // must not cost anyone the document. The journal keeps it.
-        self.autosave.cancel();
-        self.schedule_journal(&text, cx);
-        cx.notify();
+        self.load_version_unsaved(text, cx);
     }
 
     pub(super) fn render_history_dialog(&mut self, t: &Tokens, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -307,7 +305,8 @@ impl Workspace {
                                     .cursor_pointer()
                                     .when(is_open, |el| el.bg(hover))
                                     .hover(move |el| el.bg(hover))
-                                    .on_click(cx.listener(move |this, _, _, cx| this.history_toggle_row(stamp.clone(), cx)))
+                                    // On the press, so nothing can move between press and release.
+                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.history_select_row(stamp.clone(), cx)))
                                     .child(
                                         div()
                                             .flex_1()
@@ -340,6 +339,7 @@ impl Workspace {
                                                 |el| el.opacity(0.4),
                                             )
                                             .child("Restore")
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 cx.stop_propagation();
                                                 if let Some(text) = restore_text.clone() {

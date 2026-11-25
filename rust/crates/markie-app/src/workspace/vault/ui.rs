@@ -490,7 +490,10 @@ impl VaultPage {
     }
 
     fn settings_row(icon: IconName, title: &'static str, state: Option<(&'static str, Hsla)>, text: &'static str, p: &Palette) -> Div {
+        // min_w_0: beside a card's buttons the row gives way and its text
+        // wraps, so the buttons stay inside the card.
         h_flex()
+            .min_w_0()
             .gap(px(12.))
             .items_start()
             .child(div().mt(px(1.)).flex_none().text_color(p.muted).child(Icon::new(icon)))
@@ -580,6 +583,7 @@ impl VaultPage {
                 .when(self.restore_file.is_none(), |el| {
                     el.child(
                         h_flex()
+                            .flex_none()
                             .gap(px(8.))
                             .child(button("vault-backup", "Back up…", None, Tone::Secondary, busy, &p).when(!busy, |b| b.on_click(cx.listener(|this, _, window, cx| this.back_up(window, cx)))))
                             .child(button("vault-restore-choose", "Restore…", None, Tone::Secondary, busy, &p).when(!busy, |b| b.on_click(cx.listener(|this, _, window, cx| this.choose_backup(window, cx))))),

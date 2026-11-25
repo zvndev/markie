@@ -12,7 +12,9 @@ use super::overlay::{Overlay, SettingsSection};
 use crate::actions::OpenSettings;
 use crate::themes;
 
-pub(crate) const NOT_YET: &str = "Not in Markie RS yet";
+/// The Mac app (the `nightly` feature) is named Markie, so "Markie RS" there
+/// would name an app the person does not have. The control is still not built.
+pub(crate) const NOT_YET: &str = if markie_core::paths::NIGHTLY { "Not built yet" } else { "Not in Markie RS yet" };
 
 const SECTIONS: [(SettingsSection, &str); 5] = [
     (SettingsSection::Account, "Account"),
@@ -116,27 +118,45 @@ impl Workspace {
             SettingsSection::Agents => self.render_agents_section(t, cx),
             SettingsSection::Advanced => self.render_advanced(t, window, cx),
         };
+        // The title and the tab bar stay put; only the tab's body scrolls, so a
+        // tall tab (Files) never runs past the window and its bottom padding
+        // shows once scrolled to the end. Each tab keeps its own scroll.
+        let tab_label = SECTIONS.iter().find(|(id, _)| *id == section).map_or("Account", |(_, l)| *l);
+        let body = div()
+            .id(SharedString::from(format!("settings-body-{tab_label}")))
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px(px(20.))
+            .pt(px(20.))
+            .pb(px(20.))
+            .child(body);
         self.panel(t, 12.)
             .id("settings-panel")
             .w(px(680.))
             .max_w(relative(0.94))
             .max_h(max_h)
-            .overflow_y_scroll()
-            .p(px(20.))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px(px(20.))
+                    .pt(px(20.))
                     .mb(px(16.))
                     .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Settings"))
                     .child(self.close_button("settings-close", t, cx)),
             )
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .gap(px(4.))
-                    .mb(px(20.))
+                    .mx(px(20.))
                     .border_b_1()
                     .border_color(t.border)
                     .children(SECTIONS.iter().map(|(id, label)| {
@@ -679,6 +699,13 @@ mod link_preview_tests {
         let style = text.style();
         assert_eq!(style.flex_grow, Some(1.));
         assert_eq!(style.min_size.width, Some(gpui_kit::px(0.).into()));
+    }
+
+    #[test]
+    fn the_not_yet_tag_names_this_build() {
+        // The dev build is Markie RS beside the shipping Markie; the Mac app is Markie.
+        assert_eq!(super::NOT_YET.contains("Markie RS"), !markie_core::paths::NIGHTLY);
+        assert_eq!(crate::default_apps::note().contains("side build"), !markie_core::paths::NIGHTLY);
     }
 
     #[test]

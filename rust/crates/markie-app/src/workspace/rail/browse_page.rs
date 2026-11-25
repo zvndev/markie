@@ -75,7 +75,11 @@ impl Workspace {
     /// The whole page, in place of the document.
     pub(in crate::workspace) fn render_browse_page(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = themes::palette(cx);
-        let gutter = super::super::recent_page::page_gutter(f32::from(window.viewport_size().width));
+        // Past the page column's width the page stays against the rail, as
+        // Finder keeps its sidebar, and the spare room is on the right: the
+        // folder tree sits next to the rail, and the header, toolbar and list
+        // keep the column's width so names stay near their dates.
+        let spare = 2. * super::super::recent_page::page_gutter(f32::from(window.viewport_size().width));
         let lib = &self.library;
         let view = self.shell.browse.view.clone().unwrap_or_default();
         let total = lib.docs().len();
@@ -91,7 +95,8 @@ impl Workspace {
             .gap(px(10.))
             .border_b_1()
             .border_color(p.border)
-            .px(px(20. + gutter))
+            .pl(px(20.))
+            .pr(px(20. + spare))
             .child(div().flex_none().text_color(p.foreground).child(Icon::new(IconName::Laptop)))
             .child(div().flex_none().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Documents on this Mac"))
             .when(lib.scanning, |el| el.child(Spinner::new().small().color(p.muted)))
@@ -131,21 +136,17 @@ impl Workspace {
                 ))
                 .into_any_element();
         }
-        page.child(self.render_browse_toolbar(&p, cx).px(px(20. + gutter)))
+        page.child(self.render_browse_toolbar(&p, cx).pl(px(20.)).pr(px(20. + spare)))
             .when(lib.truncated, |el| {
-                el.child(div().flex_none().px(px(20. + gutter)).pt(px(12.)).child(banner(Kind::Info, truncation_text(lib.truncation), &p)))
+                el.child(div().flex_none().pl(px(20.)).pr(px(20. + spare)).pt(px(12.)).child(banner(Kind::Info, truncation_text(lib.truncation), &p)))
             })
             .child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
-                    // The tree and the list share the page's column; past it the
-                    // column is closed by hairlines on both sides.
-                    .mx(px(gutter))
-                    .when(gutter > 0., |el| el.border_x_1().border_color(p.border))
                     .child(self.render_browse_tree(view.clone(), &p, cx))
-                    .child(self.render_browse_pane(view, &p, cx)),
+                    .child(self.render_browse_pane(view, spare, &p, cx)),
             )
             .into_any_element()
     }
@@ -335,7 +336,9 @@ impl Workspace {
     }
 
     /// The right column: where you are, then what is there.
-    fn render_browse_pane(&self, view: Rc<View>, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    /// `spare` is the room right of the page column, left empty on a wide
+    /// window; the pane's hairlines still run through it.
+    fn render_browse_pane(&self, view: Rc<View>, spare: f32, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *p;
         let lib = &self.library;
         let text = lib.text().trim().to_string();
@@ -372,7 +375,7 @@ impl Workspace {
             .h(px(44.))
             .gap(px(12.))
             .pl(px(14.))
-            .pr(px(20.))
+            .pr(px(20. + spare))
             .border_b_1()
             .border_color(p.border.opacity(0.7))
             .child(trail)
@@ -423,15 +426,16 @@ impl Workspace {
             .h_full()
             .child(bar)
             .when_some(self.shell.browse.gone.clone(), |el, name| {
-                el.child(div().flex_none().px(px(20.)).pt(px(12.)).child(banner(Kind::Info, format!("“{name}” is no longer there. This is the closest folder that still is."), &p)))
+                el.child(div().flex_none().pl(px(20.)).pr(px(20. + spare)).pt(px(12.)).child(banner(Kind::Info, format!("“{name}” is no longer there. This is the closest folder that still is."), &p)))
             })
-            .child(div().flex_1().min_h_0().flex().flex_col().py(px(6.)).child(body))
+            .child(div().flex_1().min_h_0().flex().flex_col().py(px(6.)).pr(px(spare)).child(body))
             .when(typed && !view.pane.is_empty(), |el| {
                 el.child(
                     h_flex()
                         .flex_none()
                         .justify_between()
-                        .px(px(20.))
+                        .pl(px(20.))
+                        .pr(px(20. + spare))
                         .py(px(7.))
                         .border_t_1()
                         .border_color(p.border.opacity(0.7))

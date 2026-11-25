@@ -52,7 +52,8 @@ pub(super) fn page_width(viewport: f32) -> f32 {
 
 /// The widest the column of a document page (Recent, Cloud, Browse) gets,
 /// padding included: about six cards, or a list row whose name, age and
-/// badge still read as one line. Past it the page centres the column.
+/// badge still read as one line. Past it Recent and Cloud centre the column;
+/// Browse keeps it against the rail, with its folder tree, as Finder does.
 pub(super) const PAGE_MAX: f32 = 1200.;
 
 /// Extra room on each side of the column once the window is wider than

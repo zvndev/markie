@@ -61,6 +61,9 @@ pub(crate) fn available() -> bool {
 }
 
 /// `~/Documents/Markie/Google Docs`, unless Settings chose another folder.
+/// The most characters of the import folder's path Settings shows.
+const FOLDER_CHARS: usize = 72;
+
 pub(crate) fn default_folder() -> PathBuf {
     paths::default_root().join("Google Docs")
 }
@@ -545,7 +548,10 @@ impl Workspace {
         let records = g.records.clone();
         let busy = job.is_some();
         let home = paths::home_dir();
-        let folder_shown = markie_core::path_display::compact_home_path(&folder.to_string_lossy(), &home.to_string_lossy());
+        // `~` for home and the middle cut when still long; the whole path is
+        // in the tooltip. 72 Menlo characters fill the row beside Change….
+        let folder_shown = markie_core::path_display::fit_path(&folder, &home, FOLDER_CHARS);
+        let folder_full: SharedString = folder.to_string_lossy().into_owned().into();
 
         let muted = |text: String| div().text_size(px(11.)).line_height(px(17.)).text_color(t.muted).child(text);
         let button = |id: &'static str, label: &str| overlay_button(id, label, t).when(busy, |b| b.opacity(0.5));
@@ -591,7 +597,16 @@ impl Workspace {
                     .flex_1()
                     .min_w_0()
                     .child(div().text_size(px(12.)).text_color(t.foreground).child("Import folder"))
-                    .child(div().text_size(px(11.)).font_family("Menlo").text_color(t.muted).truncate().child(folder_shown)),
+                    .child(
+                        div()
+                            .id("google-folder-path")
+                            .text_size(px(11.))
+                            .font_family("Menlo")
+                            .text_color(t.muted)
+                            .truncate()
+                            .child(folder_shown)
+                            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(folder_full.clone()).build(window, cx)),
+                    ),
             )
             .child(button("google-folder", "Change\u{2026}").on_click(cx.listener(|this, _, window, cx| this.google_change_folder(window, cx))));
 

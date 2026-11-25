@@ -49,6 +49,8 @@ mod file_ops;
 mod first_run;
 mod folder_tree;
 mod history_dialog;
+mod history_model;
+mod history_page;
 mod library_rows;
 mod library_area;
 mod live_docs;
@@ -209,6 +211,8 @@ pub struct Workspace {
     side: SidePanel,
     versions: Vec<Version>,
     viewing_version: Option<(String, String)>,
+    /// The History page (`history_page.rs`), when it is up.
+    history_page: Option<history_page::HistoryPage>,
     /// Document zoom (1.0 = 100%) and reading column width, shared by every
     /// document like the Electron app's `markie.documents.zoom.v1`.
     zoom: f32,
@@ -394,6 +398,7 @@ impl Workspace {
             side: SidePanel::None,
             versions: Vec::new(),
             viewing_version: None,
+            history_page: None,
             pending_editor_text: None,
             collab: collab::Collab::default(),
             cloud_panel: cx.new(|cx| account::CloudPanel::new(window, cx)),
@@ -1904,42 +1909,48 @@ impl Render for Workspace {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(self.render_title_bar(cx))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(self.render_rail(cx))
-                    .children(self.render_side_panel(cx))
-                    .map(|el| {
-                        if self.workspace_page_open() {
-                            el.child(div().flex_1().min_w_0().h_full().child(self.render_workspace_page(window, cx)))
-                        } else {
-                            el.child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h_full()
-                                    .overflow_hidden()
-                                    .children(banner)
-                                    .children(self.render_untitled_office_offer(cx))
-                                    .children(cloud_banner)
-                                    .children(self.render_live_banner(cx))
-                                    .child(
-                                        div()
-                                            .relative()
-                                            .flex_1()
-                                            .min_h_0()
-                                            .overflow_hidden()
-                                            .child(self.render_document(cx))
-                                            .children(self.render_comments(window, cx)),
-                                    ),
-                            )
-                            .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))
-                        }
-                    }),
-            )
+            .map(|root| {
+                // The History page is a mode of the document that covers the
+                // whole window, its own title bar included, as Electron's.
+                if self.history_page_open() {
+                    return root.child(self.render_history_page(window, cx));
+                }
+                root.child(self.render_title_bar(cx)).child(
+                    h_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .child(self.render_rail(cx))
+                        .children(self.render_side_panel(cx))
+                        .map(|el| {
+                            if self.workspace_page_open() {
+                                el.child(div().flex_1().min_w_0().h_full().child(self.render_workspace_page(window, cx)))
+                            } else {
+                                el.child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h_full()
+                                        .overflow_hidden()
+                                        .children(banner)
+                                        .children(self.render_untitled_office_offer(cx))
+                                        .children(cloud_banner)
+                                        .children(self.render_live_banner(cx))
+                                        .child(
+                                            div()
+                                                .relative()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .overflow_hidden()
+                                                .child(self.render_document(cx))
+                                                .children(self.render_comments(window, cx)),
+                                        ),
+                                )
+                                .children(history.map(|h| div().w(px(300.)).h_full().flex_none().child(h)))
+                            }
+                        }),
+                )
+            })
             .children((self.side == SidePanel::Stats).then(|| self.render_stats(window, cx)))
             .children(self.render_live_preview(cx))
             .children(self.render_row_menu(cx))

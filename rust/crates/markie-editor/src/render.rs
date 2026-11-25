@@ -510,7 +510,27 @@ impl RichView {
                     .justify_center()
                     .px(px(pad_x))
                     .pt(px(snapped(gap, look.snap)))
-                    .child(div().w_full().max_w(col).child(el))
+                    .child(div().w_full().max_w(col).flex().flex_col().child(match self.block_tints.iter().find(|t| t.0 == b) {
+                        // `.markie-vh-block`: 0.9em out to each side, a
+                        // 3px edge on the left, rounded on the right.
+                        Some(&(_, fill, edge)) => {
+                            let em = look.size;
+                            div()
+                                .ml(px(-0.9 * em))
+                                .mr(px(-0.9 * em))
+                                .pl(px(0.9 * em - 3.))
+                                .pr(px(0.9 * em))
+                                .py(px(0.35 * em))
+                                .bg(fill)
+                                .border_l(px(3.))
+                                .border_color(edge)
+                                .rounded_tr(px(6.))
+                                .rounded_br(px(6.))
+                                .child(el)
+                                .into_any_element()
+                        }
+                        None => el,
+                    }))
                     .child(
                         canvas(move |bounds, _, _| {
                             store.borrow_mut().blocks.insert(b, bounds);

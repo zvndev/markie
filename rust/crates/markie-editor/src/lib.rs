@@ -341,6 +341,10 @@ pub struct RichView {
     pub remote: Vec<RemoteCursor>,
     /// Commented passages to tint (local comments), with their colour.
     pub comment_marks: Vec<(Pos, Pos, Hsla)>,
+    /// Whole blocks drawn as a band with a coloured left edge: (block, fill,
+    /// edge). The History page marks a block only one version has this way
+    /// (Electron's `.markie-vh-block`).
+    pub block_tints: Vec<(usize, Hsla, Hsla)>,
     /// Undo and redo belong to the live room's shared history.
     pub collab_undo: bool,
     /// The template's typography and doc rule (`style.rs`).
@@ -461,6 +465,7 @@ impl RichView {
             link_previews: true,
             remote: Vec::new(),
             comment_marks: Vec::new(),
+            block_tints: Vec::new(),
             collab_undo: false,
             style: style::DocStyle::default(),
             doc_font: "system",

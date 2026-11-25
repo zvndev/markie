@@ -27,9 +27,13 @@ What that changes for everything below:
 - **That second case is the roll back, on purpose.** To move the Mac nightly back to Electron,
   publish an Electron super-nightly with a version above the newest Rust build (for example
   `MARKIE_PRIVATE_VERSION=0.10.1-super-nightly.1`). The Rust runbook's "Roll back" has both ways.
-- `npm run markie:use -- private` installs the newest Electron super-nightly built on this Mac. That
-  build then updates itself into the Rust app again, unless the lane's feed has been pointed back
-  at an Electron build first.
+- `npm run markie:use -- private` installs the highest super-nightly built on this Mac. That is the
+  Rust app's release ZIP from the `rust/markie-rs` checkout (`rust/target/nightly/<version>/`),
+  checked against the feed published beside it. With no Rust ZIP on disk it falls back to the
+  highest app in `.release/private-artifacts`. An Electron one there updates itself into the Rust
+  app, unless the lane's feed has been pointed back at an Electron build first.
+- `npm run markie:use -- public` quits whichever app is installed, Electron or Rust, before it
+  swaps in the stable build.
 - The Rust app keeps its own data folder, `~/Library/Application Support/Markie Nightly`. It reads
   `Markie Super-nightly` once, from a copy, and never writes it.
 

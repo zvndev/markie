@@ -38,7 +38,7 @@ The spec was the Electron source: `formatting-toolbar.tsx`, `doc-toolbar.tsx`, `
 | Inline code | SF Mono at 0.88 em, status yellow, surface fill, doc-rule edge, 5 px corners, 0.4 em side padding |
 | Links | The template's link colour, no underline |
 | Marks | Strong at weight 650 in the page's ink, even inside a quote or a finished task; strikethrough muted; underline; colour; highlight |
-| Tables | Columns sized to their text; bold header cells, centred unless aligned; 0.55 em by 1 em body padding; a doc-rule line under each body row; row hover in the surface |
+| Tables | Chromium's automatic table layout: each column between its widest word and its longest line, sharing the room in proportion, with `min-width: 3rem` (`table_layout.rs`). One list of widths sizes the cells, the rows, the grid and the header. Words break after hyphens. Bold header cells, centred unless aligned; every cell centred top to bottom; 0.55 em by 1 em body padding; a doc-rule line under each body row; row hover in the surface. A table its words cannot fit scrolls sideways inside its box, as `display: block; overflow-x: auto` does |
 | Rules | 1 px doc rule, 2 em above and below |
 | Pictures | Natural size, 8 px corners; selected shows a 2 px blue outline 2 px off the edge |
 | Math | Display formulas centred with 1 em margins; inline formulas sit in the line |
@@ -76,7 +76,7 @@ Nothing here adds per-frame work over what phase 2b did:
 
 - Block margins are a match on each block's first and last node, inside the loop that already places blocks.
 - The section rail reads the block tops from that same loop, and an outline cached per document version.
-- Tables shape each cell's text once a frame, through GPUI's line cache, and only for tables on screen.
+- Tables shape each cell's text once a frame, through GPUI's line cache, and only for tables on screen. Since the table styles pass they also measure each cell's widest word and longest line each frame, from the same shaped runs. A table is laid out for the width its box had in the last frame, and asks for one more frame when that width changes.
 - Code blocks lost syntax highlighting, which was the most expensive leaf.
 - The page's template style is looked up once per theme change, not per frame.
 
@@ -118,3 +118,21 @@ Task list pass on 2026-11-25 (`.autoloop/runs/task-list-style/`, Electron `main`
 - A tight list item that opened with bold, italic, strike or a link (`- [ ] **Lead.** text`) used to show its whole list as raw source in a bordered box. It never depended on the Markdown style: the old parser made that list unreadable in all six styles, Spacious included (`rs-before-sheet.png`). It is fixed in the parser, so every style and face gets it.
 - Task items with every mark, nested, ordered and quoted task lists match Electron in all six styles, light and dark (`sbs/<style>-<mode>-sbs.png`, `rs-after-sheet.png`), and in 25 body faces (`rs-fonts-sheet.png`).
 - Two drawing fixes came out of it: bold keeps the page's ink inside a muted quote or finished task, and Minimal's struck finished item strikes its bold, italic and code too.
+
+## Table styles pass (2026-11-25)
+
+Kirby saw rows, fills and the header stop short of a table's text in View, in the Default style with the Skills panel open, and one cell sitting higher than its row. Two causes:
+
+- Column widths, row widths and the grid were sized from different numbers, which disagreed whenever the room changed (style, font, size, zoom, page width, pane width). They now share one list of widths from `table_layout.rs`.
+- Pixel snapping shaved up to half a point off a narrow column, so a word measured to the hair wrapped onto a second line. Its row grew a line and the other cells centred in it. Each cell keeps a point of slack (`cell_edge`).
+
+Off screen checks:
+
+| Check | Result |
+|---|---|
+| `table-sweep.py run` on `fixtures/tables.md`, 75 combinations | Every table reports `ok`: rows no wider than a box that does not scroll, no cell text past the right edge, no cell narrower than a word |
+| `shoot.mjs` `doc` scene, six styles at 640 and 1280 | Header alignment, vertical centring, row lines, grid and hyphen breaks match Electron's `RichView` |
+| Forced overflow, zoom 150 % in a 700 pt window with the panel open | The wide table reports `scrolls` inside its own box |
+
+Not checked: a real trackpad scroll of an overflowing table, which needs the real screen.
+

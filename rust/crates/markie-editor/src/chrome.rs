@@ -284,6 +284,67 @@ impl RichView {
         }
     }
 
+    /// The document's face and size with nothing selected, as the toolbar's
+    /// font menu and size stepper set them (the app's scene mode uses it).
+    /// An unknown font id leaves the face as it is.
+    pub fn scene_doc_font(&mut self, font: &str, size: Option<f32>, cx: &mut Context<Self>) {
+        if let Some((id, ..)) = DOC_FONTS.iter().find(|(id, ..)| *id == font) {
+            self.doc_font = id;
+        }
+        if let Some(size) = size {
+            self.doc_size = clamp_font_size(size);
+        }
+        self.heights.iter_mut().for_each(|h| *h = None);
+        cx.notify();
+    }
+
+    /// One line per table drawn in the last frame: its box width, the rows'
+    /// width, whether it scrolls, and anything that disagrees: rows wider
+    /// than a box that does not scroll, or a cell's text past the table's
+    /// right edge. The app's scene mode prints it.
+    pub fn table_report(&self) -> Vec<String> {
+        let s = self.store.borrow();
+        let mut keys: Vec<_> = s.table_boxes.keys().cloned().collect();
+        keys.sort();
+        keys.iter()
+            .map(|key| {
+                let (bounds, left, body, overflows) = s.table_boxes[key];
+                let right = left + px(body).min(bounds.size.width);
+                let mut problems = Vec::new();
+                if !overflows && body > f32::from(bounds.size.width) + 0.5 {
+                    problems.push(format!("rows {body:.1} wider than the box"));
+                }
+                let escaping = s
+                    .leaves
+                    .iter()
+                    .filter(|(k, p)| k.0 == key.0 && !overflows && p.bounds.origin.y >= bounds.origin.y && p.bounds.origin.y < bounds.origin.y + bounds.size.height && p.bounds.right() > right + px(0.5))
+                    .count();
+                if escaping > 0 {
+                    problems.push(format!("{escaping} cells past the right edge"));
+                }
+                // A cell narrower than its widest word cuts the word across
+                // lines, and the row then grows by a line its other cells
+                // centre in.
+                let cut = s
+                    .leaves
+                    .iter()
+                    .filter(|(k, p)| k.0 == key.0 && s.table_words.get(*k).is_some_and(|w| f32::from(p.bounds.size.width) + 0.01 < *w))
+                    .count();
+                if cut > 0 {
+                    problems.push(format!("{cut} cells narrower than a word"));
+                }
+                format!(
+                    "table block {} box {:.1} rows {:.1} {} {}",
+                    key.0,
+                    f32::from(bounds.size.width),
+                    body,
+                    if overflows { "scrolls" } else { "fits" },
+                    if problems.is_empty() { "ok".to_string() } else { problems.join(", ") }
+                )
+            })
+            .collect()
+    }
+
     /// The size box, made once, and kept showing the current size while it
     /// is not being typed in.
     fn size_input(&mut self, size: f32, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {

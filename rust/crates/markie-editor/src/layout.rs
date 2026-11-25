@@ -230,6 +230,11 @@ fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
                     let start = k;
                     while k < chars.len() && !chars[k].1.is_whitespace() {
                         k += 1;
+                        // Chromium may break after a hyphen inside a word
+                        // ("keepers-" / "log", "ENG-" / "8575").
+                        if hyphen_break(&chars, start, k) {
+                            break;
+                        }
                     }
                     while k < chars.len() && chars[k].1.is_whitespace() {
                         k += 1;
@@ -248,7 +253,7 @@ fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
                         ascent: shaped.ascent,
                         descent: shaped.descent,
                         fit: lead + fit + trail,
-                        joins_next: trimmed.len() == piece.len(),
+                        joins_next: trimmed.len() == piece.len() && !ends_in_hyphen(piece),
                         kind: PlacedKind::Text { chars: char_bytes(piece), shaped, style: style.clone(), lead, seg: seg_index },
                         text: Some((piece.to_string(), style.clone())),
                     });
@@ -257,6 +262,18 @@ fn pieces(spec: &LeafSpec, window: &Window) -> Vec<Piece> {
         }
     }
     out
+}
+
+/// A break opportunity after `chars[k - 1]`: a hyphen with a character of
+/// the word before it and a letter or digit after it.
+fn hyphen_break(chars: &[(usize, char)], start: usize, k: usize) -> bool {
+    k > start + 1 && chars[k - 1].1 == '-' && chars.get(k).is_some_and(|c| c.1.is_alphanumeric())
+}
+
+/// A piece that ends in a hyphen after part of a word: the next run may
+/// start on the next line, as with a space.
+fn ends_in_hyphen(piece: &str) -> bool {
+    piece.ends_with('-') && piece.chars().count() > 1
 }
 
 /// `text-transform: uppercase`, one character for one, so every unit of the
@@ -271,6 +288,40 @@ fn uppercase(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// CSS's min-content and max-content widths of a leaf, as `layout` breaks
+/// it: its widest word, and its longest line when nothing wraps. A table
+/// sizes its columns from these, so a column is never narrower than a word
+/// its cells cannot break, and text fits the width it was measured for.
+pub fn intrinsic(spec: &LeafSpec, window: &Window) -> (Pixels, Pixels) {
+    let start = spec.indent.max(px(0.)) + spec.prefix.as_ref().map(|(t, s)| shape(t, s, window).width).unwrap_or(px(0.));
+    let ps = pieces(spec, window);
+    let (mut min, mut max) = (px(0.), start);
+    let mut x = start;
+    let mut i = 0;
+    while i < ps.len() {
+        if matches!(ps[i].kind, PlacedKind::Break) {
+            x = px(0.);
+            i += 1;
+            continue;
+        }
+        // One word: pieces up to one that ends in a space, as `layout` groups them.
+        let (mut full, mut fit) = (px(0.), px(0.));
+        while i < ps.len() && !matches!(ps[i].kind, PlacedKind::Break) {
+            let p = &ps[i];
+            fit = full + p.fit;
+            full += p.width;
+            i += 1;
+            if !p.joins_next {
+                break;
+            }
+        }
+        min = min.max(fit);
+        max = max.max(x + fit);
+        x += full;
+    }
+    (min, max)
 }
 
 /// Lay the leaf out in `width`.
@@ -733,5 +784,44 @@ impl Laid {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ends_in_hyphen, hyphen_break};
+
+    /// Where a word may break, as Chromium broke the words of a table in
+    /// Electron's frame (`.autoloop/runs/table-styles/compare`).
+    fn breaks(word: &str) -> Vec<String> {
+        let chars: Vec<(usize, char)> = word.char_indices().collect();
+        let (mut out, mut start, mut k) = (Vec::new(), 0, 0);
+        while k < chars.len() {
+            k += 1;
+            if hyphen_break(&chars, start, k) || k == chars.len() {
+                out.push(chars[start..k].iter().map(|c| c.1).collect());
+                start = k;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn words_break_after_their_hyphens() {
+        assert_eq!(breaks("keepers-log"), ["keepers-", "log"]);
+        assert_eq!(breaks("ENG-8575,"), ["ENG-", "8575,"]);
+        assert_eq!(breaks("NT-0001-AAAA"), ["NT-", "0001-", "AAAA"]);
+        // Not before a hyphen, not after a leading one, not before punctuation.
+        assert_eq!(breaks("-5"), ["-5"]);
+        assert_eq!(breaks("a--b"), ["a--", "b"]);
+        assert_eq!(breaks("end-."), ["end-."]);
+        assert_eq!(breaks("x-"), ["x-"]);
+    }
+
+    #[test]
+    fn a_run_ending_in_a_hyphen_ends_a_word() {
+        assert!(ends_in_hyphen("north-"));
+        assert!(!ends_in_hyphen("-"));
+        assert!(!ends_in_hyphen("north"));
     }
 }

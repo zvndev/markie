@@ -22,6 +22,7 @@ pub mod attach;
 mod behaviour;
 pub use behaviour::NOT_SHARED;
 mod table_bar;
+pub mod table_layout;
 mod math_field;
 pub mod a11y;
 pub mod spell;
@@ -302,6 +303,9 @@ pub struct RichView {
     restrict_local_media: bool,
     pub zoom: f32,
     pub page_width: f32,
+    /// The page column's width in the last frame: a table's room until its
+    /// own box has been measured.
+    table_room: f32,
     pub read_only: bool,
     drag: Option<(Granularity, Pos, Pos)>,
     /// A press inside the selection: where it started, and once the pointer
@@ -438,6 +442,7 @@ impl RichView {
             restrict_local_media: false,
             zoom: 1.0,
             page_width: 0.0,
+            table_room: 0.0,
             read_only: false,
             drag: None,
             text_drag: None,

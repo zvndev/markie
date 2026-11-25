@@ -137,6 +137,15 @@ pub fn start(spec: Spec, handle: AnyWindowHandle, workspace: Entity<Workspace>, 
             clear.clear(cx);
             window.render_to_image()
         });
+        // `report: true` on a document: each table's geometry and anything
+        // that disagrees (markie-editor `table_report`).
+        if spec.name == "doc" && spec.args.get("report").and_then(Value::as_bool).unwrap_or(false) {
+            let _ = cx.update(|cx| {
+                for line in workspace.read(cx).rich.read(cx).table_report() {
+                    eprintln!("markie-rs scene: {line}");
+                }
+            });
+        }
         let code = match image {
             Ok(Ok(img)) => match img.save(&spec.out) {
                 Ok(()) => {
@@ -174,7 +183,34 @@ impl Workspace {
         let user = super::account::signed_in_user(cx);
         let wants_session = args.get("token").is_some();
         match spec.name.as_str() {
-            "doc" => self.doc.is_some(),
+            // The file on the command line. Optional: `zoom` (1.25), `width` (a
+            // page width step: 768, 900, 1040, 1200 or 1600), `font` (a toolbar
+            // font id, "system" is Theme font), `size` (the document's size)
+            // and `panel: "skills"` (the left panel open, so the page is
+            // narrower), set through the functions the toolbar and rail call.
+            "doc" => {
+                if self.doc.is_none() {
+                    return false;
+                }
+                if *step == 0 {
+                    *step = 1;
+                    if let Some(z) = args.get("zoom").and_then(Value::as_f64) {
+                        self.set_zoom(z as f32, cx);
+                    }
+                    if let Some(w) = args.get("width").and_then(Value::as_f64) {
+                        self.set_width_step(w as f32, cx);
+                    }
+                    if arg(args, "panel") == "skills" {
+                        self.select_view(super::rail::LeftView::Skills, cx);
+                    }
+                    let font = arg(args, "font").to_string();
+                    let size = args.get("size").and_then(Value::as_f64).map(|s| s as f32);
+                    self.sync_rich_appearance(cx);
+                    self.rich.update(cx, |r, cx| r.scene_doc_font(&font, size, cx));
+                    return false;
+                }
+                true
+            }
             // The file passed on the command line, live: MARKIE_RS_TEST_SESSION
             // binds it to a shared document on the scratch server. Ready once
             // the room is claimed and a few frames have settled the banner.

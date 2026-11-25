@@ -418,6 +418,8 @@ impl RichView {
             }
             s.blocks.clear();
             s.leaves.clear();
+            s.table_boxes.clear();
+            s.table_words.clear();
             s.atoms.clear();
             s.frame += 1;
         }
@@ -438,13 +440,17 @@ impl RichView {
         // above and below, clamp(1.5rem, 4vw, 3rem) at the sides, then the
         // column at min(100%, --doc-width).
         let vw = f32::from(window.viewport_size().width);
-        let (pad_y, pad_x) = self.sample.unwrap_or(((vw * 0.03).clamp(20., 36.), (vw * 0.04).clamp(24., 48.)));
+        // `@media (max-width: 820px)`: 1rem by 1.25rem in a narrow window.
+        let narrow = (16., 20.);
+        let (pad_y, pad_x) = self.sample.unwrap_or(if vw <= 820. { narrow } else { ((vw * 0.03).clamp(20., 36.), (vw * 0.04).clamp(24., 48.)) });
         let past_end = if self.sample.is_some() { 0. } else { 200. };
         let col = match super::style::width_index(self.page_width) {
             0 => px(self.style.content_width),
             4 => px(100_000.),
             _ => px(self.page_width),
         };
+        // The column a top-level table has: min(100%, --doc-width) inside the padding.
+        self.table_room = (f32::from(viewport.size.width) - 2. * pad_x).min(f32::from(col)).max(0.);
         let first_h1 = self.starts_with_h1();
         let mut prev_bottom: Option<f32> = None;
         let mut tops: Vec<Pixels> = Vec::with_capacity(self.editor.block_count());
@@ -1195,10 +1201,15 @@ impl RichView {
         }
     }
 
-    /// `.markdown-body table`: columns as wide as their text (the table is
-    /// `display: block`, so it does not stretch), header cells bold and
-    /// centred unless aligned, a hairline under each body row. A Markdown
-    /// style changes the borders, the header row, the padding and the width.
+    /// `.markdown-body table`: Chromium's automatic table layout
+    /// (table_layout.rs) over each cell's min-content and max-content
+    /// widths, in the room the table's own box has. Header cells are bold
+    /// and centred unless aligned (TipTap draws them as `th` in the body, so
+    /// the browser's own `th` style holds), every cell is centred top to
+    /// bottom, and a hairline runs under each body row. A table its words
+    /// cannot fit scrolls sideways inside its box (`display: block;
+    /// overflow-x: auto`). A Markdown style changes the borders, the header
+    /// row, the padding and the width.
     #[allow(clippy::too_many_arguments)]
     fn render_table(
         &mut self,
@@ -1229,35 +1240,50 @@ impl RichView {
             "plain" => (FontWeight(500.), look.muted, None),
             _ => (FontWeight::BOLD, look.fg, None),
         };
-        // Column widths from each cell's text on one line.
-        let mut widths = vec![48f32 * look.zoom; ncols];
-        for row in rows {
-            for (c, cell) in row.iter().enumerate() {
-                let text = cell_text(&cell.content);
-                let mut st = look.base(size);
-                if cell.header {
-                    st.font.weight = header_weight;
-                }
-                let w = if text.is_empty() {
-                    0.
-                } else {
-                    let run = TextRun { len: text.len(), font: st.font.clone(), color: st.color, background_color: None, underline: None, strikethrough: None };
-                    f32::from(window.text_system().shape_line(SharedString::from(text), st.size, &[run], None).width)
-                };
-                widths[c] = widths[c].max(w + 2. * padding(cell.header).0 + 2.);
-            }
-        }
-        // Narrower than the column: share the room in proportion.
-        let room = f32::from(self.scroll.bounds().size.width).max(200.) - 2. * (f32::from(window.viewport_size().width) * 0.04).clamp(24., 48.);
-        let total: f32 = widths.iter().sum();
-        if total > room && total > 0. {
-            let k = room / total;
-            widths.iter_mut().for_each(|w| *w *= k);
-        }
-        // `display: table; width: 100%`: the columns share the whole width
-        // in proportion to their text.
         let full = table_width == "full";
         let grid = borders == "grid";
+        // Each column's min-content and max-content width, measured the way
+        // the cells' text is laid out, with the cell's padding (and the
+        // grid's 1px right edge) on top.
+        let mut measured = vec![super::table_layout::Column::default(); ncols];
+        let mut k = *counter;
+        for row in rows {
+            for (c, cell) in row.iter().enumerate() {
+                let mut base = look.base(size);
+                if cell.header {
+                    base.font.weight = header_weight;
+                }
+                let (mut lo, mut hi) = (0f32, 0f32);
+                for n in &cell.content {
+                    let (min, max) = match n {
+                        Node::Paragraph { .. } => {
+                            let m = self.leaf_intrinsic((b, k), look, &base, window);
+                            self.store.borrow_mut().table_words.insert((b, k), m.0);
+                            k += 1;
+                            m
+                        }
+                        other => {
+                            k += markie_rich::editor::tree::leaves(std::slice::from_ref(other)).len();
+                            text_intrinsic(&cell_text(std::slice::from_ref(other)), &base, window)
+                        }
+                    };
+                    lo = lo.max(min);
+                    hi = hi.max(max);
+                }
+                // Padding, the grid's edge and a point of slack for pixel snapping.
+                let edge = super::table_layout::cell_edge(padding(cell.header).0, grid);
+                // `.ProseMirror td, th { min-width: 3rem }`.
+                let floor = 48. * look.zoom;
+                measured[c].min = measured[c].min.max(lo + edge).max(floor);
+                measured[c].max = measured[c].max.max(hi + edge).max(floor);
+            }
+        }
+        // The room: the width this table's box had when last drawn, or the
+        // page column's before that.
+        let key = (b, path.clone());
+        let known = self.store.borrow().tables.get(&key).copied();
+        let room = known.unwrap_or(self.table_room).max(48.) - if grid { 1. } else { 0. };
+        let cols = super::table_layout::columns(&measured, room, full);
         let para = Ctx { nested: true, quote: false, task: false, after_paragraph: false, center: false, ..ctx };
         let mut out_rows = Vec::new();
         for (r, row) in rows.iter().enumerate() {
@@ -1300,21 +1326,13 @@ impl RichView {
                 }
                 let (el, t, bm) = stack(kids, look.snap);
                 let (px_, py_) = padding(cell.header);
-                let width = widths.get(c).copied().unwrap_or(48.);
+                let width = cols.widths.get(c).copied().unwrap_or(0.);
                 let cell_el = div()
                     .w(px(width))
-                    .map(|mut d| {
-                        if full {
-                            // `flex: <width> 0 <width>`: grow by its own share.
-                            d.style().flex_grow = Some(width.max(1.));
-                            d.style().flex_shrink = Some(1.);
-                            d
-                        } else {
-                            d.flex_none()
-                        }
-                    })
+                    .flex_none()
                     .flex()
                     .flex_col()
+                    // `vertical-align: middle`, the browser's own for cells.
                     .justify_center()
                     .px(px(px_))
                     .pt(px(py_ + t))
@@ -1338,9 +1356,9 @@ impl RichView {
             };
             out_rows.push(
                 h_flex()
-                    .id(SharedString::from(format!("row-{b}-{r}")))
+                    .id(SharedString::from(format!("row-{b}-{path:?}-{r}")))
+                    .w_full()
                     .items_stretch()
-                    .when(full, |d| d.w_full())
                     .when(borders == "zebra" && r % 2 == 1, |d| d.bg(surface))
                     .when(!header_row, |d| d.when_some(line, |d, c| d.border_b_1().border_color(c)))
                     .when(!header_row && borders != "minimal", |d| d.hover(move |s| s.bg(surface)))
@@ -1348,9 +1366,48 @@ impl RichView {
                     .into_any_element(),
             );
         }
-        let body = v_flex().when(full, |d| d.w_full()).when(grid, |d| d.border_l_1().border_t_1().border_color(look.rule)).children(out_rows);
-        // `width: fit-content; margin: auto` centres it; otherwise it starts at the left.
-        div().flex().when(table_width == "centered", |d| d.justify_center()).child(body).into_any_element()
+        // One width for the cells, the rows (their fills and lines) and the
+        // grid's edge: the columns' sum.
+        let body = v_flex()
+            .flex_none()
+            .w(px(cols.width + if grid { 1. } else { 0. }))
+            .when(grid, |d| d.border_l_1().border_t_1().border_color(look.rule))
+            .children(out_rows);
+        let store = self.store.clone();
+        let used = known;
+        let (body_width, overflows) = (cols.width + if grid { 1. } else { 0. }, cols.overflows);
+        let centred = table_width == "centered" && !overflows;
+        div()
+            .id(SharedString::from(format!("table-{b}-{path:?}")))
+            .relative()
+            .w_full()
+            .flex()
+            // `width: fit-content; margin: auto` centres it; otherwise it starts at the left.
+            .when(centred, |d| d.justify_center())
+            .when(cols.overflows, |d| d.overflow_x_scroll())
+            .child(body)
+            .child(
+                canvas(
+                    move |bounds, window, _| {
+                        let w = f32::from(bounds.size.width);
+                        let mut s = store.borrow_mut();
+                        // The rows' left edge, for the scene report.
+                        let left = bounds.origin.x + if centred { (bounds.size.width - px(body_width)) / 2. } else { px(0.) };
+                        s.table_boxes.insert(key.clone(), (bounds, left, body_width, overflows));
+                        s.tables.insert(key, w);
+                        // Laid out for another room: lay it out again.
+                        if used.is_none_or(|u| (u - w).abs() > 0.5) {
+                            window.request_animation_frame();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     /// A list item's blocks, stacked; returns its outer margins too.
@@ -1724,54 +1781,7 @@ impl RichView {
     #[allow(clippy::too_many_arguments)]
     fn rich_leaf(&mut self, key: LeafKey, look: &Look, base: SegStyle, line_height: f32, align: Align, extras: LeafExtras, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let units = self.editor.units(key.0, key.1);
-        let size = f32::from(base.size);
-        let mut segs: Vec<Seg> = Vec::new();
-        let mut i = 0;
-        while i < units.len() {
-            match &units[i] {
-                Unit::Char(_, m) => {
-                    let start = i;
-                    let mut text = String::new();
-                    while i < units.len() {
-                        match &units[i] {
-                            Unit::Char(c, m2) if m2 == m => {
-                                text.push(*c);
-                                i += 1;
-                            }
-                            _ => break,
-                        }
-                    }
-                    segs.push(Seg { kind: SegKind::Text(text, style_for(m, &base, look)), units: start..i });
-                }
-                Unit::Atom(Inline::HardBreak) => {
-                    segs.push(Seg { kind: SegKind::Break, units: i..i + 1 });
-                    i += 1;
-                }
-                Unit::Atom(Inline::Math { source }) => {
-                    // KaTeX draws inline formulas at 1.21em too.
-                    let m = self.media.math(source, false, base.color, size * 1.21, look.scale);
-                    let fallback_style = SegStyle { color: gpui_kit::red(), font: look.code_font(&base.font), ..base.clone() };
-                    segs.push(Seg {
-                        kind: match m {
-                            Some(m) => SegKind::Box {
-                                width: px(m.width),
-                                height: px(m.height),
-                                baseline: px(m.baseline),
-                                image: Some(m.image),
-                                fallback: None,
-                            },
-                            None => SegKind::Box { width: px(0.), height: px(0.), baseline: px(0.), image: None, fallback: Some((source.clone(), fallback_style)) },
-                        },
-                        units: i..i + 1,
-                    });
-                    i += 1;
-                }
-                Unit::Atom(Inline::Text { text, marks }) => {
-                    segs.push(Seg { kind: SegKind::Text(text.clone(), style_for(marks, &base, look)), units: i..i + 1 });
-                    i += 1;
-                }
-            }
-        }
+        let mut segs = self.leaf_segs(&units, look, &base);
         let len = units.len();
         let mut deco = self.deco(key, len, look, cx);
         if !self.read_only {
@@ -1813,6 +1823,69 @@ impl RichView {
                 }
             }))
             .into_any_element()
+    }
+
+    /// A rich leaf's runs: its text in its marks, breaks and inline formulas.
+    fn leaf_segs(&mut self, units: &[Unit], look: &Look, base: &SegStyle) -> Vec<Seg> {
+        let size = f32::from(base.size);
+        let mut segs: Vec<Seg> = Vec::new();
+        let mut i = 0;
+        while i < units.len() {
+            match &units[i] {
+                Unit::Char(_, m) => {
+                    let start = i;
+                    let mut text = String::new();
+                    while i < units.len() {
+                        match &units[i] {
+                            Unit::Char(c, m2) if m2 == m => {
+                                text.push(*c);
+                                i += 1;
+                            }
+                            _ => break,
+                        }
+                    }
+                    segs.push(Seg { kind: SegKind::Text(text, style_for(m, base, look)), units: start..i });
+                }
+                Unit::Atom(Inline::HardBreak) => {
+                    segs.push(Seg { kind: SegKind::Break, units: i..i + 1 });
+                    i += 1;
+                }
+                Unit::Atom(Inline::Math { source }) => {
+                    // KaTeX draws inline formulas at 1.21em too.
+                    let m = self.media.math(source, false, base.color, size * 1.21, look.scale);
+                    let fallback_style = SegStyle { color: gpui_kit::red(), font: look.code_font(&base.font), ..base.clone() };
+                    segs.push(Seg {
+                        kind: match m {
+                            Some(m) => SegKind::Box {
+                                width: px(m.width),
+                                height: px(m.height),
+                                baseline: px(m.baseline),
+                                image: Some(m.image),
+                                fallback: None,
+                            },
+                            None => SegKind::Box { width: px(0.), height: px(0.), baseline: px(0.), image: None, fallback: Some((source.clone(), fallback_style)) },
+                        },
+                        units: i..i + 1,
+                    });
+                    i += 1;
+                }
+                Unit::Atom(Inline::Text { text, marks }) => {
+                    segs.push(Seg { kind: SegKind::Text(text.clone(), style_for(marks, base, look)), units: i..i + 1 });
+                    i += 1;
+                }
+            }
+        }
+        segs
+    }
+
+    /// The min-content and max-content widths of one leaf drawn in `base`
+    /// (a table sizes its columns from them).
+    pub(crate) fn leaf_intrinsic(&mut self, key: LeafKey, look: &Look, base: &SegStyle, window: &Window) -> (f32, f32) {
+        let units = self.editor.units(key.0, key.1);
+        let segs = self.leaf_segs(&units, look, base);
+        let spec = LeafSpec { segs, base: base.clone(), line_height: look.line_height, align: Align::Left, len: units.len(), indent: px(0.), prefix: None, snap: look.snap };
+        let (min, max) = super::layout::intrinsic(&spec, window);
+        (f32::from(min), f32::from(max))
     }
 
     /// Code, display math source or a raw block: plain text in mono. Code
@@ -1974,6 +2047,21 @@ fn is_caption(content: &[Inline]) -> bool {
 }
 
 /// A cell's text on one line, to size its column.
+/// Min-content and max-content widths of plain text in `base`: its widest
+/// word and the whole text on one line (cells holding blocks other than a
+/// paragraph).
+fn text_intrinsic(text: &str, base: &SegStyle, window: &Window) -> (f32, f32) {
+    let shape = |t: &str| {
+        let run = TextRun { len: t.len(), font: base.font.clone(), color: base.color, background_color: None, underline: None, strikethrough: None };
+        f32::from(window.text_system().shape_line(SharedString::from(t.to_string()), base.size, &[run], None).width)
+    };
+    if text.trim().is_empty() {
+        return (0., 0.);
+    }
+    let min = text.split_whitespace().map(shape).fold(0f32, f32::max);
+    (min, shape(text.trim_end()).max(min))
+}
+
 fn cell_text(nodes: &[Node]) -> String {
     let mut out = String::new();
     for n in nodes {

@@ -65,6 +65,11 @@ Every release moves through three stages:
 
 Stage 3 never builds anything. It points the stable feeds at the files stage 2 already uploaded.
 
+On the Mac, stage 1 is no longer an Electron build. Since 2026-11-24 the super-nightly lane carries
+the Rust app (`docs/PRIVATE_RELEASES.md`, "On the Mac, this lane now carries the Rust app"), and an
+Electron super-nightly is published there only as its roll back. Stages 2 and 3, and everything
+about Windows and Linux, are as before.
+
 Stage 1 does not feed stage 2 that way. A super-nightly build has its own version
 (`X.Y.Z-super-nightly.N`), its own builder config, a private marker, and a ZIP-only feed on the
 private gateway. Its verification requires that marker and version, so a stable or beta artifact

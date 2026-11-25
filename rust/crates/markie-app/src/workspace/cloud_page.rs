@@ -832,6 +832,11 @@ impl Workspace {
             .children(if files.booting { None } else { self.render_share_requests(cx) });
 
         let (cards, mut targets) = self.cloud_cards(&scope, &files, &p);
+        // Each card's file on this Mac, if it has one: only those can go in a folder.
+        let locals: HashMap<SharedString, Option<PathBuf>> =
+            files.shown.iter().map(|e| (SharedString::from(e.key.clone()), e.path.clone().filter(|p| p.is_file()))).collect();
+        let picked: Vec<(SharedString, Option<PathBuf>)> =
+            self.shell.cloud_grid.selected().into_iter().map(|id| { let l = locals.get(&id).cloned().flatten(); (id, l) }).collect();
         let filtered = q.searching() || !self.cloud.sources.is_empty();
         let documents: AnyElement = if files.booting {
             doc_grid::skeleton(width, doc_grid::columns(width) * 2, &p).into_any_element()
@@ -887,8 +892,18 @@ impl Workspace {
             .id("cloud-page")
             .size_full()
             .bg(p.background)
+            .on_action(cx.listener(|this, _: &super::source::EditSelectAll, _, cx| {
+                this.shell.cloud_grid.select_all();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &super::source::EditUndo, window, cx| {
+                if !this.bulk_undo(window, cx) {
+                    cx.propagate();
+                }
+            }))
             .child(header)
             .child(self.render_cloud_toolbar(&scope, &q, &files, &p, cx).px(px(20. + gutter)))
+            .when(!picked.is_empty(), |el| el.child(div().flex_none().px(px(gutter)).child(self.render_cloud_bulk_bar(picked, &p, cx))))
             .child(
                 div()
                     .id("cloud-workspace-scroll")
@@ -908,6 +923,59 @@ impl Workspace {
                             .child(grid),
                     ),
             )
+            .into_any_element()
+    }
+
+    /// The Cloud page's bar over a selection. Only documents with a file on
+    /// this Mac can go in a folder; the bar says so when some cannot.
+    fn render_cloud_bulk_bar(&self, picked: Vec<(SharedString, Option<PathBuf>)>, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let p = *p;
+        let local: Vec<String> = picked.iter().filter_map(|(_, l)| l.as_ref().map(|p| p.to_string_lossy().into_owned())).collect();
+        let cloud_only = picked.len() - local.len();
+        let in_folder = self.placed_among(&local);
+        let (move_paths, unfile_paths, open_paths) = (local.clone(), local.clone(), local.clone());
+        h_flex()
+            .id("cloud-bulk-bar")
+            .flex_none()
+            .mx(px(super::recent_page::PAGE_PAD))
+            .mt(px(4.))
+            .px(px(10.))
+            .py(px(6.))
+            .gap(px(8.))
+            .rounded(px(9.))
+            .border_1()
+            .border_color(p.blue.opacity(0.45))
+            .bg(p.blue.opacity(if p.dark { 0.14 } else { 0.07 }))
+            .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(super::recent_page::selected_label(picked.len())))
+            .when(cloud_only > 0, |el| el.child(div().min_w_0().truncate().text_size(px(11.5)).text_color(p.muted).child(cloud_only_note(cloud_only, local.is_empty()))))
+            .child(div().flex_1())
+            .child(ui::button("cloud-bulk-move", "Move to Folder…", None, Tone::Primary, local.is_empty(), &p).when(!local.is_empty(), |b| {
+                b.on_click(cx.listener(move |this, _, window, cx| {
+                    let items = move_paths.iter().map(|p| markie_core::projects::folders::Item::File(p.clone())).collect();
+                    this.shell.bulk_pending = Some(this.projects.history.depth());
+                    this.ask_move_to(items, window, cx);
+                }))
+            }))
+            .when(in_folder > 0, |el| {
+                el.child(ui::button("cloud-bulk-unfile", "Remove from Folder", None, Tone::Secondary, false, &p).on_click(cx.listener(move |this, _, window, cx| {
+                    let before = this.projects.history.depth();
+                    this.remove_from_folder(unfile_paths.clone(), window, cx);
+                    if this.projects.history.depth() > before {
+                        this.shell.bulk_undo.push(super::recent_page::BulkUndo::Organize);
+                    }
+                })))
+            })
+            .when(!local.is_empty(), |el| {
+                el.child(ui::button("cloud-bulk-open", "Open", None, Tone::Secondary, false, &p).on_click(cx.listener(move |this, _, window, cx| {
+                    let items: Vec<_> = open_paths.iter().map(|p| markie_core::projects::folders::Item::File(p.clone())).collect();
+                    this.shell.cloud_grid.selection.clear();
+                    this.open_items(&items, window, cx);
+                })))
+            })
+            .child(ui::button("cloud-bulk-clear", "Clear", None, Tone::Quiet, false, &p).on_click(cx.listener(|this, _, _, cx| {
+                this.shell.cloud_grid.selection.clear();
+                cx.notify();
+            })))
             .into_any_element()
     }
 
@@ -1228,6 +1296,11 @@ impl Workspace {
                 let manage = e.share.clone().filter(|_| e.source == Source::ByMe);
                 let gone = local.is_some() && !on_disk;
                 let mut card = DocCard::new(e.key.clone(), e.name.clone(), format);
+                card.selectable = true;
+                if on_disk && let Some(path) = &local {
+                    let item = markie_core::projects::folders::Item::File(path.to_string_lossy().into_owned());
+                    card.drag = Some(super::projects::DragItems::new(vec![item], &|_| e.name.clone()));
+                }
                 card.meta = if gone { format!("Missing on disk · {}", card_meta(e, files.share_list_known, None, None)) } else { card_meta(e, files.share_list_known, media.as_deref(), age.as_deref()) }.into();
                 card.missing = gone;
                 card.created = super::recent_page::created_line(entry_created_ms(e), chrono::Local::now()).map(Into::into);
@@ -1403,6 +1476,16 @@ impl Workspace {
     }
 }
 
+/// Why some selected cloud documents cannot go in a folder.
+pub(super) fn cloud_only_note(n: usize, all: bool) -> String {
+    match (n, all) {
+        (1, true) => "It is only in the cloud. Download it to put it in a folder.".into(),
+        (_, true) => "They are only in the cloud. Download them to put them in a folder.".into(),
+        (1, false) => "1 is only in the cloud and stays out of folders.".into(),
+        (n, false) => format!("{n} are only in the cloud and stay out of folders."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that brings in GPUI's own `test` macro.
@@ -1429,6 +1512,14 @@ mod tests {
 
     fn share(id: &str, name: &str, members: i64, pending: i64) -> SharedByMeDoc {
         SharedByMeDoc { id: id.into(), name: name.into(), updated_at: Some("2026-11-20T10:00:00Z".into()), member_count: members, pending_count: pending }
+    }
+
+    #[test]
+    fn cloud_only_documents_say_why_they_cannot_go_in_a_folder() {
+        use super::cloud_only_note;
+        assert_eq!(cloud_only_note(1, true), "It is only in the cloud. Download it to put it in a folder.");
+        assert_eq!(cloud_only_note(2, false), "2 are only in the cloud and stay out of folders.");
+        assert!(cloud_only_note(3, true).starts_with("They are only in the cloud."));
     }
 
     #[test]

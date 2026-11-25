@@ -72,6 +72,7 @@ mod overlay;
 mod palette;
 mod panels;
 mod projects;
+mod projects_view;
 mod rail;
 mod recent_page;
 mod rich;
@@ -87,6 +88,7 @@ mod strips;
 mod skills;
 pub mod source;
 pub use csv_table::bind_keys as bind_csv_keys;
+pub use projects_view::key_bindings as projects_keys;
 mod source_column;
 mod source_keys;
 mod source_markdown;
@@ -239,6 +241,8 @@ pub struct Workspace {
     cloud_panel: Entity<account::CloudPanel>,
     /// The vault page (workspace/vault.rs), made the first time the Vault view opens.
     vault: Option<Entity<vault::VaultPage>>,
+    /// The vault page's events (Make Private's clean-up).
+    vault_events: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
     /// The person's own theme store, kept aside while an owner's pinned
     /// theme paints a shared document (doc_theme.rs).
@@ -421,6 +425,7 @@ impl Workspace {
             page_width: 768.0,
             source_column: Default::default(),
             vault: None,
+            vault_events: None,
             dialogs: overlay::Dialogs::new(cx),
             _subscriptions: subscriptions,
             menu_key: None,
@@ -1793,6 +1798,7 @@ mod rescan_tests {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.projects.tree_focused = self.projects.focus.contains_focused(window, cx);
         crate::perf::frame_start();
         self.refresh_menus(cx);
         if let Some(path) = self.cloud.pending_link.take() {
@@ -1909,6 +1915,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_duplicate))
             .on_action(cx.listener(Self::on_trash))
+            .on_action(cx.listener(Self::on_make_private))
             .on_action(cx.listener(Self::on_reveal))
             .on_action(cx.listener(Self::on_copy_path))
             .on_action(cx.listener(Self::on_open_account))
@@ -1938,6 +1945,8 @@ impl Render for Workspace {
                     this.close_live_preview(cx);
                     cx.stop_propagation();
                 } else if (this.shell.row_menu.is_some() || this.shell.cloud_row_menu.is_some()) && this.row_menu_key(ev.keystroke.key.as_str(), window, cx) {
+                    cx.stop_propagation();
+                } else if this.projects.menu.is_some() && this.projects_menu_key(ev.keystroke.key.as_str(), window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -1990,6 +1999,7 @@ impl Render for Workspace {
             .children((self.side == SidePanel::Stats).then(|| self.render_stats(window, cx)))
             .children(self.render_live_preview(cx))
             .children(self.render_row_menu(cx))
+            .children(self.render_projects_menu(cx))
             .children(self.render_search(cx))
             .children(self.render_share(window, cx))
             .children(self.render_office_cloud(window, cx))

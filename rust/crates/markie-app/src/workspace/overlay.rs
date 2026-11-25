@@ -49,6 +49,10 @@ pub(super) enum Overlay {
     CloudConflict(super::cloud_strip::ConflictState),
     /// "Stop syncing this document to the cloud?" (library.tsx).
     StopSync { path: PathBuf },
+    /// "Delete the folder …?" in the Projects tab (`projects_view.rs`).
+    DeleteFolder { id: String, name: String, impact: markie_core::projects::folders::DeleteImpact },
+    /// Move to…: a folder for the items, from Projects or Recents.
+    MoveToFolder { items: Vec<markie_core::projects::folders::Item>, focused: usize },
 }
 
 impl Overlay {
@@ -157,6 +161,8 @@ impl Workspace {
             Overlay::ConvertDocument { .. } => (self.render_convert_dialog(&t, cx), false, true),
             Overlay::CloudConflict(_) => (self.render_cloud_conflict(&t, cx), false, false),
             Overlay::StopSync { .. } => (self.render_stop_sync(&t, cx), false, true),
+            Overlay::DeleteFolder { .. } => (self.render_delete_folder(&t, cx), false, true),
+            Overlay::MoveToFolder { .. } => (self.render_move_to(&t, cx), false, true),
         };
         Some(
             div()
@@ -218,6 +224,11 @@ impl Workspace {
                 true
             }
             // Return lands on Keep both, the choice that cannot lose anything.
+            Overlay::DeleteFolder { .. } if key.key == "enter" && plain => {
+                self.confirm_delete_folder(window, cx);
+                true
+            }
+            Overlay::MoveToFolder { .. } if plain => self.move_to_key(&key.key, window, cx),
             Overlay::CloudConflict(_) if key.key == "enter" && plain => {
                 self.cloud_conflict_act(true, window, cx);
                 true

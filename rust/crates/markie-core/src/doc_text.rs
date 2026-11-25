@@ -448,6 +448,14 @@ impl TextCache {
         Some(text)
     }
 
+    /// Forget one file's text: it became private.
+    pub fn remove(&mut self, key: &Path) {
+        if let Some(prior) = self.entries.remove(key) {
+            self.used -= prior.2;
+            self.order.retain(|k| k != key);
+        }
+    }
+
     pub fn set(&mut self, key: &Path, stamp: String, text: Option<std::sync::Arc<str>>) {
         if let Some(prior) = self.entries.remove(key) {
             self.used -= prior.2;

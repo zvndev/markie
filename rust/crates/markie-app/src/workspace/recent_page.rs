@@ -9,6 +9,12 @@
 //!
 //! A card opens on click or Enter, has the Library row's ⋯ and right-click
 //! menu, and a file that is gone stays as "Missing on disk" with Remove.
+//!
+//! Cards are selectable: ⌘-click, ⇧-click, ⌘A, ⇧ with the arrows, Space, or
+//! the checkbox a card shows on hover. Escape clears. With anything
+//! selected a bar over the grid offers Move to Folder… (the Projects tab's
+//! folders), Remove from Folder, Star and Open, each undone by one ⌘Z.
+//! Selected cards drag onto a folder in the Projects tab.
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -24,7 +30,10 @@ use super::doc_preview::{self, Lookup, Want};
 use super::library_rows::{RowAction, SyncStatus};
 use super::rail::{FilterMenu, LeftView, RAIL_WIDTH, TYPE_MENU, filter_field, type_menu_label};
 use super::ui::{self, Tone};
+use super::projects::DragItems;
+use super::source::{EditSelectAll, EditUndo};
 use crate::actions::{NewDocument, Open};
+use markie_core::projects::folders::Item;
 use crate::library::{LibraryTab, SortOrder};
 use crate::themes::{self, Palette};
 
@@ -376,6 +385,16 @@ impl Workspace {
                 card.current = current.as_deref() == Some(doc.path.as_path());
                 card.menu_open = self.shell.row_menu.as_ref().is_some_and(|(open, _)| *open == doc.path);
                 card.action = missing.then(|| "Remove".into());
+                card.selectable = true;
+                let carried: Vec<Item> = if self.shell.recent_grid.selection.contains(&card.id) && self.shell.recent_grid.selection.items.len() > 1 {
+                    self.shell.recent_grid.selected().into_iter().map(|id| Item::File(id.to_string())).collect()
+                } else {
+                    vec![Item::File(doc.path.to_string_lossy().into_owned())]
+                };
+                card.drag = (!missing).then(|| DragItems::new(carried, &|i| match i {
+                    Item::File(p) => Path::new(p).file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+                    Item::Folder(_) => String::new(),
+                }));
                 if self.shell.stars.contains(&doc.path) {
                     card.marks.push(Mark::new("markie/star.svg", MarkTone::Yellow, "Starred"));
                 }
@@ -405,13 +424,24 @@ impl Workspace {
             )
         };
 
+        let selected = self.shell.recent_grid.selected();
         v_flex()
             .id("recent-page")
             .size_full()
             .bg(p.background)
+            .on_action(cx.listener(|this, _: &EditSelectAll, _, cx| {
+                this.shell.recent_grid.select_all();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &EditUndo, window, cx| {
+                if !this.bulk_undo(window, cx) {
+                    cx.propagate();
+                }
+            }))
             .child(header)
             // With no documents at all there is nothing to filter, as on Browse.
             .when(!(self.shell.lists_loaded && total == 0 && !starred && !recent.query_active()), |el| el.child(self.render_recent_toolbar(&p, cx).px(px(20. + gutter))))
+            .when(!selected.is_empty(), |el| el.child(div().flex_none().px(px(gutter)).child(self.render_bulk_bar(&selected, &p, cx))))
             .child(
                 div()
                     .id("recent-page-scroll")
@@ -425,6 +455,117 @@ impl Workspace {
                     .child(body),
             )
             .into_any_element()
+    }
+
+    /// The bar over a selection: how many, and what can be done to all of them.
+    fn render_bulk_bar(&self, ids: &[SharedString], p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let p = *p;
+        let paths: Vec<String> = ids.iter().map(|i| i.to_string()).collect();
+        let in_folder = self.placed_among(&paths);
+        let all_starred = ids.iter().all(|id| self.shell.stars.contains(Path::new(id.as_ref())));
+        let n = ids.len();
+        h_flex()
+            .id("recent-bulk-bar")
+            .flex_none()
+            .mx(px(PAGE_PAD))
+            .mt(px(4.))
+            .mb(px(4.))
+            .px(px(10.))
+            .py(px(6.))
+            .gap(px(8.))
+            .rounded(px(9.))
+            .border_1()
+            .border_color(p.blue.opacity(0.45))
+            .bg(p.blue.opacity(if p.dark { 0.14 } else { 0.07 }))
+            .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(p.foreground).child(selected_label(n)))
+            .child(div().flex_1())
+            .child(ui::button("bulk-move", "Move to Folder…", None, Tone::Primary, false, &p).on_click(cx.listener(|this, _, window, cx| this.bulk_move(window, cx))))
+            .when(in_folder > 0, |el| {
+                el.child(ui::button("bulk-unfile", "Remove from Folder", None, Tone::Secondary, false, &p).on_click(cx.listener(|this, _, window, cx| this.bulk_remove_from_folder(window, cx))))
+            })
+            .child(
+                ui::button("bulk-star", if all_starred { "Unstar" } else { "Star" }, None, Tone::Secondary, false, &p)
+                    .on_click(cx.listener(|this, _, _, cx| this.bulk_star(cx))),
+            )
+            .child(ui::button("bulk-open", "Open", None, Tone::Secondary, false, &p).on_click(cx.listener(|this, _, window, cx| this.bulk_open(window, cx))))
+            .child(
+                ui::button("bulk-clear", "Clear", None, Tone::Quiet, false, &p)
+                    .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Clear the selection  Esc").build(window, cx))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.shell.recent_grid.selection.clear();
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn bulk_items(&self) -> Vec<Item> {
+        self.shell.recent_grid.selected().into_iter().map(|id| Item::File(id.to_string())).collect()
+    }
+
+    /// Move to Folder… for every selected document at once.
+    fn bulk_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let items = self.bulk_items();
+        self.shell.bulk_pending = Some(self.projects.history.depth());
+        self.ask_move_to(items, window, cx);
+    }
+
+    /// Called once Move to… finishes: a move that was recorded gets one ⌘Z.
+    pub(super) fn bulk_move_done(&mut self) {
+        if let Some(before) = self.shell.bulk_pending.take()
+            && self.projects.history.depth() > before
+        {
+            self.shell.bulk_undo.push(BulkUndo::Organize);
+        }
+    }
+
+    fn bulk_remove_from_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self.projects.history.depth();
+        let paths: Vec<String> = self.shell.recent_grid.selected().into_iter().map(|id| id.to_string()).collect();
+        self.remove_from_folder(paths, window, cx);
+        if self.projects.history.depth() > before {
+            self.shell.bulk_undo.push(BulkUndo::Organize);
+        }
+        cx.notify();
+    }
+
+    /// Star every selected document, or unstar them when all are starred.
+    fn bulk_star(&mut self, cx: &mut Context<Self>) {
+        let Some(reg) = self.registry.clone() else { return };
+        let paths: Vec<PathBuf> = self.shell.recent_grid.selected().into_iter().map(|id| PathBuf::from(id.as_ref())).collect();
+        let flips = star_flips(&paths, &self.shell.stars);
+        for p in &flips {
+            let _ = reg.toggle_star(p, "file");
+        }
+        if !flips.is_empty() {
+            self.shell.bulk_undo.push(BulkUndo::Star(flips));
+        }
+        self.refresh_lists(cx);
+        cx.notify();
+    }
+
+    fn bulk_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let items = self.bulk_items();
+        self.shell.recent_grid.selection.clear();
+        self.open_items(&items, window, cx);
+    }
+
+    /// ⌘Z on the Recent page: the last bulk action. False when there is none.
+    pub(super) fn bulk_undo(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(last) = self.shell.bulk_undo.pop() else { return false };
+        match last {
+            BulkUndo::Organize => self.projects_undo(false, window, cx),
+            BulkUndo::Star(paths) => {
+                if let Some(reg) = self.registry.clone() {
+                    for p in &paths {
+                        let _ = reg.toggle_star(p, "file");
+                    }
+                }
+                self.refresh_lists(cx);
+            }
+        }
+        cx.notify();
+        true
     }
 
     /// One row, laid out as the Browse page's: filter by name, type, sort,
@@ -578,6 +719,15 @@ impl Workspace {
                 self.shell.recent_grid.cursor = ids.get(n as usize).cloned();
                 self.shell.recent_grid.focus.focus(window, cx);
             }
+            // `select: [n, …]`: cards picked as ⌘-clicks pick them.
+            for n in args.get("select").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(serde_json::Value::as_u64) {
+                if let Some(id) = ids.get(n as usize) {
+                    self.shell.recent_grid.press(id, true, false);
+                }
+            }
+            if args.get("select").is_some() {
+                self.shell.recent_grid.focus.focus(window, cx);
+            }
             if text("menu") == "row" {
                 if let Some(id) = ids.get(1) {
                     self.open_row_menu(PathBuf::from(id.as_ref()), point(px(520.), px(330.)), cx);
@@ -591,8 +741,30 @@ impl Workspace {
     }
 }
 
+/// One bulk action on the Recent page, to put back on ⌘Z.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum BulkUndo {
+    /// A move or Remove from Folder: the folder history holds it.
+    Organize,
+    /// These stars were flipped.
+    Star(Vec<PathBuf>),
+}
+
+/// "1 document selected", "3 documents selected".
+pub(super) fn selected_label(n: usize) -> String {
+    if n == 1 { "1 document selected".into() } else { format!("{n} documents selected") }
+}
+
+/// Which stars Star flips: all of them off when every one is starred,
+/// otherwise on for the ones that are not.
+pub(super) fn star_flips(paths: &[PathBuf], stars: &std::collections::HashSet<PathBuf>) -> Vec<PathBuf> {
+    let all = !paths.is_empty() && paths.iter().all(|p| stars.contains(p));
+    paths.iter().filter(|p| stars.contains(*p) == all).cloned().collect()
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{selected_label, star_flips};
     use super::{Group, count_line, empty_copy, group_of, grouped, groups_by_time, meta_line, page_width, sync_mark};
     use crate::library::{LibraryTab, SortOrder};
     use crate::workspace::library_rows::SyncStatus;
@@ -656,6 +828,19 @@ mod tests {
         assert_eq!(meta_line(0., ms(at(2026, 11, 22, 9, 0)), false, now), "Edited yesterday");
         assert_eq!(meta_line(0., 0., false, now), "");
         assert_eq!(meta_line(ms(now), ms(now), true, now), "Missing on disk");
+    }
+
+    #[test]
+    fn star_stars_the_rest_or_unstars_all_and_the_bar_counts() {
+        use std::path::PathBuf;
+        let (a, b) = (PathBuf::from("/n/a.md"), PathBuf::from("/n/b.md"));
+        let some: std::collections::HashSet<PathBuf> = [a.clone()].into();
+        assert_eq!(star_flips(&[a.clone(), b.clone()], &some), vec![b.clone()], "the unstarred one gets a star");
+        let all: std::collections::HashSet<PathBuf> = [a.clone(), b.clone()].into();
+        assert_eq!(star_flips(&[a.clone(), b.clone()], &all), vec![a, b], "all starred: all lose it");
+        assert!(star_flips(&[], &all).is_empty());
+        assert_eq!(selected_label(1), "1 document selected");
+        assert_eq!(selected_label(4), "4 documents selected");
     }
 
     #[test]

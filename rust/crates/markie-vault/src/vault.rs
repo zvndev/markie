@@ -57,13 +57,13 @@ fn wrapping_key(passphrase: &str, header: &VaultHeader) -> Result<Zeroizing<[u8;
     Ok(key)
 }
 
-fn gcm_encrypt(key: &[u8; 32], iv: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, VaultError> {
+pub(crate) fn gcm_encrypt(key: &[u8; 32], iv: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, VaultError> {
     Aes256Gcm::new(key.into())
         .encrypt(Nonce::from_slice(iv), Payload { msg: plaintext, aad })
         .map_err(|_| VaultErrorCode::Unavailable.into())
 }
 
-fn gcm_decrypt(key: &[u8; 32], iv: &[u8], aad: &[u8], ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>, VaultError> {
+pub(crate) fn gcm_decrypt(key: &[u8; 32], iv: &[u8], aad: &[u8], ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>, VaultError> {
     Aes256Gcm::new(key.into())
         .decrypt(Nonce::from_slice(iv), Payload { msg: ciphertext, aad })
         .map(Zeroizing::new)

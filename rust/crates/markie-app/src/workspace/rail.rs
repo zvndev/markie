@@ -154,6 +154,10 @@ pub(super) struct Shell {
     pub cloud_row_menu: Option<(super::library_rows::CloudRow, Point<Pixels>)>,
     /// The focused item of the open row menu (`FileMenu` focuses the first).
     pub row_menu_focus: usize,
+    /// The Recent page's bulk actions, newest last, for ⌘Z (`recent_page.rs`).
+    pub bulk_undo: Vec<super::recent_page::BulkUndo>,
+    /// Move to Folder… is open from the Recent page: the history depth before it.
+    pub bulk_pending: Option<usize>,
     pub search_open: bool,
     pub search: Library,
     search_input: Entity<InputState>,
@@ -233,6 +237,8 @@ impl Shell {
             row_menu: None,
             cloud_row_menu: None,
             row_menu_focus: 0,
+            bulk_undo: Vec::new(),
+            bulk_pending: None,
             search_open: false,
             search,
             search_input,
@@ -816,6 +822,17 @@ impl Workspace {
             .when(!disabled, |el| el.on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx))))
     }
 
+    /// The Library panel on its Projects tab, for scenes.
+    #[cfg(feature = "scene")]
+    pub(super) fn show_projects_tab(&mut self, cx: &mut Context<Self>) {
+        if !(self.shell.panel_open && self.shell.view == LeftView::Library) {
+            self.select_view(LeftView::Library, cx);
+        }
+        self.shell.lib_tab = LibTab::Projects;
+        self.compute_projects(cx);
+        cx.notify();
+    }
+
     /// The docked panel, when one is open.
     pub(super) fn render_side_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let s = &self.shell;
@@ -934,6 +951,15 @@ impl Workspace {
                     .when(on, |el| el.bg(segment_on(&p)))
                     .hover(|s| s.text_color(p.foreground))
                     .child(label)
+                    // A document dragged over the Projects tab opens it, so
+                    // it can be dropped on a folder there.
+                    .on_drag_move(cx.listener(move |this, ev: &DragMoveEvent<super::projects::DragItems>, _, cx| {
+                        if tab == LibTab::Projects && this.shell.lib_tab != tab && ev.bounds.contains(&ev.event.position) {
+                            this.shell.lib_tab = tab;
+                            this.compute_projects(cx);
+                            cx.notify();
+                        }
+                    }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.shell.lib_tab = tab;
                         if tab == LibTab::Projects {
@@ -1171,6 +1197,14 @@ impl Workspace {
                 this.shell.row_menu = None;
                 this.open_row_menu(context_path.clone(), ev.position, cx);
             }))
+            .when(!missing, |el| {
+                let item = markie_core::projects::folders::Item::File(doc.path.to_string_lossy().into_owned());
+                let drag = super::projects::DragItems::new(vec![item], &|_| doc.name.clone());
+                let p = *p;
+                el.on_drag(drag, move |d: &super::projects::DragItems, _, _, cx| {
+                    cx.new(|_| super::projects::DragPreview { label: d.label.clone(), count: d.items.len(), palette: p })
+                })
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.shell.row_menu = None;
                 // Electron opens a row only while its file exists.

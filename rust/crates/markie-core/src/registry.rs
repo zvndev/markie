@@ -109,9 +109,11 @@ impl Registry {
         // registry.js's v1 (md_meta, project_*) and v2 (projects) tables,
         // created idempotently, and the PRAGMA they are guarded by.
         crate::projects::store::ensure_tables(&db)?;
+        // v3: Markie's own folders (`projects::folders`).
+        crate::projects::folders::ensure_tables(&db)?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version < 2 {
-            db.pragma_update(None, "user_version", 2)?;
+        if version < 3 {
+            db.pragma_update(None, "user_version", 3)?;
         }
         Ok(Self { db })
     }
@@ -127,6 +129,28 @@ impl Registry {
     pub fn forget(&self, path: &Path) -> Result<()> {
         self.db.execute("DELETE FROM files WHERE path = ?1", params![key(path)])?;
         self.db.execute("DELETE FROM md_stars WHERE path = ?1", params![key(path)])?;
+        Ok(())
+    }
+
+    /// Make Private: every row that names `path`, in every path-keyed table
+    /// (Recents, stars, Projects pins and assignments, metadata, the cloud
+    /// record), and its entry in the Library snapshot. Workspace roots are
+    /// folders and stay. Secure delete zeroes the freed pages, and the WAL is
+    /// checkpointed and truncated, so the old rows do not linger in the file.
+    pub fn purge_path(&self, path: &Path) -> Result<()> {
+        self.db.pragma_update(None, "secure_delete", "ON")?;
+        let tx = self.db.unchecked_transaction()?;
+        for table in self.path_keyed_tables()? {
+            if table != "workspace_roots" {
+                tx.execute(&format!("DELETE FROM \"{table}\" WHERE path = ?1"), params![key(path)])?;
+            }
+        }
+        tx.commit()?;
+        if let Some(mut snapshot) = self.load_snapshot()? {
+            snapshot.files.retain(|f| f.path != path);
+            self.save_snapshot(&snapshot)?;
+        }
+        self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
         Ok(())
     }
 
@@ -351,6 +375,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn purge_path_removes_every_row_but_roots() {
+        let reg = Registry::in_memory().unwrap();
+        let doc = Path::new("/fixture/secret plan.md");
+        reg.track_opened(doc).unwrap();
+        reg.track_opened(Path::new("/fixture/other.md")).unwrap();
+        reg.set_star(doc, "star").unwrap();
+        reg.add_root(Path::new("/fixture")).unwrap();
+        crate::projects::store::pin_set(reg.conn(), &key(doc), "Plans", None).unwrap();
+        reg.set_cloud_record(doc, &serde_json::json!({"cloudDocId": "fixture"})).unwrap();
+        reg.purge_path(doc).unwrap();
+        assert_eq!(reg.recent(10).unwrap().len(), 1);
+        assert!(!reg.is_starred(doc).unwrap());
+        assert!(crate::projects::store::pins_all(reg.conn()).unwrap().is_empty());
+        assert!(reg.cloud_record::<serde_json::Value>(doc).unwrap().is_none());
+        assert_eq!(reg.roots().unwrap(), vec![PathBuf::from("/fixture")]);
+    }
+
+    #[test]
     fn recents_roots_stars_settings() {
         let reg = Registry::in_memory().unwrap();
         reg.track_opened(Path::new("/a/one.md")).unwrap();
@@ -374,14 +416,14 @@ mod tests {
     }
 
     #[test]
-    fn user_version_is_two_with_the_project_tables() {
+    fn user_version_is_three_with_the_project_and_folder_tables() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("registry.db");
         for _ in 0..2 {
             let reg = Registry::open(&path).unwrap();
             let v: i64 = reg.conn().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-            assert_eq!(v, 2);
-            for table in ["md_meta", "project_pins", "project_blocks", "project_assignments", "projects_config", "projects"] {
+            assert_eq!(v, 3);
+            for table in ["md_meta", "project_pins", "project_blocks", "project_assignments", "projects_config", "projects", "folders", "folder_items", "folder_released"] {
                 let n: i64 = reg.conn().query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1", [table], |r| r.get(0)).unwrap();
                 assert_eq!(n, 1, "{table}");
             }

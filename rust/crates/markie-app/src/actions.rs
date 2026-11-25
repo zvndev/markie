@@ -44,6 +44,8 @@ actions!(
         SourceMode,
         SplitMode,
         MakeInteractive,
+        // Move the open file into the vault, encrypted (workspace/vault/private_ui.rs).
+        MakePrivate,
         MoveDocument,
         Print,
         ExportPdfDark,

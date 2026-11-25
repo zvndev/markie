@@ -6,12 +6,13 @@
 //! - "Organizing rules for Projects": opens `Projects.md`.
 //! - "Connect an agent (MCP)": the rail's robot button.
 
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::Workspace;
 use super::dialog_chrome::{Tokens, section_label};
 use super::rail::LeftView;
-use super::settings::{checkbox, overlay_button};
+use super::settings::overlay_button;
 
 /// The registry key. Absent means off: the panel used to be on the rail for
 /// everyone, and Kirby wants it gone until it is asked for.
@@ -75,10 +76,12 @@ impl Workspace {
                                     "Adds a button to the left rail that lists the skills, instructions and agent files on this Mac, from Claude, Codex, Gemini and Cursor.",
                                 )),
                         )
-                        .child(checkbox(on, false, t))
+                        .child(switch(on, t))
                         .on_click(cx.listener(move |this, _, _, cx| this.set_skills_enabled(!on, cx))),
                 ),
             )
+            // Projects: the automatic grouping, then the rules it follows.
+            .child(div().mb(px(20.)).child(self.render_auto_organize_setting(t, cx)))
             .child(action_row(
                 "Organizing rules for Projects",
                 "Projects.md tells Markie how to group your documents into projects. Edit it in plain words and the Library follows.",
@@ -110,6 +113,29 @@ impl super::rail::Shell {
         self.view = without_skills(self.view);
         self.previous_panel = without_skills(self.previous_panel);
     }
+}
+
+/// The on/off switch the Projects row beside it uses, so the section reads
+/// as one set of controls.
+fn switch(on: bool, t: &Tokens) -> Div {
+    let track_off = super::dialog_chrome::fade(t.muted, 0.35);
+    div()
+        .flex_none()
+        .mt(px(2.))
+        .w(px(34.))
+        .h(px(20.))
+        .rounded_full()
+        .p(px(2.))
+        .bg(if on { t.blue } else { track_off })
+        .flex()
+        .when(on, |el| el.justify_end())
+        .child(div().size(px(16.)).rounded_full().bg(gpui_kit::white()).shadow(vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.2),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(2.),
+            spread_radius: px(0.),
+            inset: false,
+        }]))
 }
 
 fn text(t: &Tokens) -> Div {

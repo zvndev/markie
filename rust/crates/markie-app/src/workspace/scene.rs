@@ -358,6 +358,14 @@ impl Workspace {
             "vault" => self.scene_vault(args, step, window, cx),
             // {state?, filter?, type?, open?: [..], ...}: Browse, see `scene_browse`.
             "browse" => self.scene_browse(args, step, window, cx),
+            // {folders, recents?, select?, drop?, menu?, confirm?, moveto?,
+            //  rename?, auto?, filter?}: the Projects tab, see `scene_projects`.
+            "projects" => {
+                if *step == 0 {
+                    self.scene_seed_recents(args, cx);
+                }
+                self.scene_projects(args, step, window, cx)
+            }
             // {width?, filter?, ...}: the Skills panel, see `scene_skills`.
             "skills" => {
                 if *step == 0 {

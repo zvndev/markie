@@ -109,9 +109,11 @@ impl Registry {
         // registry.js's v1 (md_meta, project_*) and v2 (projects) tables,
         // created idempotently, and the PRAGMA they are guarded by.
         crate::projects::store::ensure_tables(&db)?;
+        // v3: Markie's own folders (`projects::folders`).
+        crate::projects::folders::ensure_tables(&db)?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version < 2 {
-            db.pragma_update(None, "user_version", 2)?;
+        if version < 3 {
+            db.pragma_update(None, "user_version", 3)?;
         }
         Ok(Self { db })
     }
@@ -414,14 +416,14 @@ mod tests {
     }
 
     #[test]
-    fn user_version_is_two_with_the_project_tables() {
+    fn user_version_is_three_with_the_project_and_folder_tables() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("registry.db");
         for _ in 0..2 {
             let reg = Registry::open(&path).unwrap();
             let v: i64 = reg.conn().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-            assert_eq!(v, 2);
-            for table in ["md_meta", "project_pins", "project_blocks", "project_assignments", "projects_config", "projects"] {
+            assert_eq!(v, 3);
+            for table in ["md_meta", "project_pins", "project_blocks", "project_assignments", "projects_config", "projects", "folders", "folder_items", "folder_released"] {
                 let n: i64 = reg.conn().query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1", [table], |r| r.get(0)).unwrap();
                 assert_eq!(n, 1, "{table}");
             }

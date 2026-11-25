@@ -9,6 +9,7 @@
 pub mod assign;
 pub mod cluster;
 pub mod config;
+pub mod folders;
 pub mod frontmatter;
 pub mod meta;
 pub mod rules;
@@ -49,6 +50,11 @@ pub struct ProjectsState {
     pub home: String,
     /// Metadata still owed for some files (the time budget ran out).
     pub preparing: bool,
+    /// Automatic grouping is on (Settings): `taxonomy` holds the files no
+    /// folder holds, grouped by rules and time. Off, it is empty.
+    pub auto: bool,
+    /// The one-time conversion of older groups into folders ran just now.
+    pub migration: Option<folders::Migration>,
 }
 
 /// The whole `useProjects` pipeline: refresh metadata, read decisions, parse
@@ -62,6 +68,61 @@ pub fn compute(
     meta_budget: std::time::Duration,
 ) -> anyhow::Result<ProjectsState> {
     store::ensure_tables(db)?;
+    folders::ensure_tables(db)?;
+    let home_s = home.to_string_lossy().into_owned();
+    let mut migration = None;
+    if !folders::migrated(db)? {
+        if folders::has_old_groups(db)? {
+            // Convert what the old tab showed, once its metadata is complete.
+            let built = build(db, index, config_dir, home, meta_budget, &std::collections::HashSet::new())?;
+            if built.preparing {
+                return Ok(ProjectsState { preparing: true, config_path: built.config_path, home: home_s, ..Default::default() });
+            }
+            migration = Some(folders::migrate_from_taxonomy(db, &built.taxonomy)?);
+        } else {
+            folders::mark_migrated(db)?;
+        }
+    }
+    let auto = folders::auto_organize(db)?;
+    if !auto {
+        let cfg = config::config_path(config_dir);
+        return Ok(ProjectsState { config_path: cfg, home: home_s, auto, migration, ..Default::default() });
+    }
+    // Hand placement wins: rules and clustering see only the rest.
+    let placed = folders::placed_paths(db)?;
+    let built = build(db, index, config_dir, home, meta_budget, &placed)?;
+    Ok(ProjectsState {
+        taxonomy: built.taxonomy,
+        rules_error: built.rules_error,
+        config_path: built.config_path,
+        home: home_s,
+        preparing: built.preparing,
+        auto,
+        migration,
+    })
+}
+
+struct Built {
+    taxonomy: Taxonomy,
+    rules_error: Option<String>,
+    config_path: std::path::PathBuf,
+    preparing: bool,
+}
+
+/// The `useProjects` pipeline: refresh metadata, read decisions, parse rules
+/// with a last-known-good fallback, build the tree, and persist the derived
+/// cache. `exclude` are files placed in folders by hand.
+fn build(
+    db: &rusqlite::Connection,
+    index: &[crate::index::IndexedDoc],
+    config_dir: &std::path::Path,
+    home: &std::path::Path,
+    meta_budget: std::time::Duration,
+    exclude: &std::collections::HashSet<String>,
+) -> anyhow::Result<Built> {
+    let index: Vec<crate::index::IndexedDoc> =
+        index.iter().filter(|d| !exclude.contains(d.path.to_string_lossy().as_ref())).cloned().collect();
+    let index = &index[..];
     let mut known = store::meta_all(db)?;
     let fresh = meta::refresh_meta(index, &known, home, meta_budget);
     if !fresh.updated.is_empty() {
@@ -125,7 +186,7 @@ pub fn compute(
         store::config_set(db, "rules-known-good", &cfg.content)?;
         store::config_set(db, "rules-error", "")?;
     }
-    Ok(ProjectsState { taxonomy, rules_error, config_path: cfg.path, home: home_s, preparing: fresh.remaining > 0 })
+    Ok(Built { taxonomy, rules_error, config_path: cfg.path, preparing: fresh.remaining > 0 })
 }
 
 pub(crate) fn min_of(values: impl IntoIterator<Item = f64>) -> f64 {
@@ -163,6 +224,8 @@ mod tests {
         assert_eq!(index[2].format, FormatKind::Csv);
         let db = rusqlite::Connection::open_in_memory().unwrap();
         let cfg_dir = h.join("Documents/Markie");
+        super::store::ensure_tables(&db).unwrap();
+        super::folders::set_auto_organize(&db, true).unwrap();
         let s = super::compute(&db, &index, &cfg_dir, h, std::time::Duration::from_secs(5)).unwrap();
         assert!(!cfg_dir.exists(), "computing never writes the config document");
         assert_eq!(s.taxonomy.projects.len(), 1);
@@ -180,6 +243,97 @@ mod tests {
         let s = super::compute(&db, &index, &cfg_dir, h, std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(s.rules_error.as_deref(), Some("markie_rules must be a mapping"));
         assert_eq!(s.taxonomy.projects.len(), 1, "the last good rules still build the tree");
+    }
+
+    fn fixture_index(h: &std::path::Path, files: &[(&str, f64)]) -> Vec<crate::index::IndexedDoc> {
+        files
+            .iter()
+            .map(|(rel, mtime)| {
+                let p = h.join(rel);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(&p, "# made up\n").unwrap();
+                let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                crate::index::IndexedDoc {
+                    format: crate::formats::classify(&name),
+                    name,
+                    dir: p.parent().unwrap().into(),
+                    path: p,
+                    mtime_ms: *mtime,
+                    size: 1,
+                    snippet: None,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_new_install_starts_with_no_folders_and_grouping_off() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path();
+        std::fs::create_dir_all(h.join("code/garden/.git")).unwrap();
+        let index = fixture_index(h, &[("code/garden/notes.md", 1_000.0), ("code/garden/plan.md", 2_000.0)]);
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        let cfg = h.join("Documents/Markie");
+        let s = super::compute(&db, &index, &cfg, h, std::time::Duration::from_secs(5)).unwrap();
+        assert!(!s.auto);
+        assert_eq!(s.migration, None);
+        assert!(s.taxonomy.projects.is_empty(), "nothing is grouped automatically");
+        assert!(super::folders::tree(&db).unwrap().is_empty());
+        assert!(super::folders::migrated(&db).unwrap());
+        // Turned on in Settings, rules and clustering come back, for files no folder holds.
+        super::folders::set_auto_organize(&db, true).unwrap();
+        let s = super::compute(&db, &index, &cfg, h, std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(s.taxonomy.projects[0].key, "garden");
+        let f = super::folders::create_folder(&db, None, "Mine").unwrap();
+        super::folders::place_files(&db, &[index[0].path.to_string_lossy().into_owned()], &f, None).unwrap();
+        let s = super::compute(&db, &index, &cfg, h, std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(s.taxonomy.projects[0].file_count, 1, "hand placement wins over the rules");
+    }
+
+    #[test]
+    fn an_install_with_groups_converts_them_once_into_folders() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path();
+        std::fs::create_dir_all(h.join("code/orchard/.git")).unwrap();
+        const HOUR: f64 = 3_600_000.0;
+        let index = fixture_index(
+            h,
+            &[
+                ("code/orchard/docs/pruning.md", 10.0 * HOUR),
+                ("code/orchard/docs/harvest.md", 10.5 * HOUR),
+                ("code/orchard/readme.md", 900.0 * HOUR),
+                ("Documents/Recipes/soup.md", 50.0 * HOUR),
+                ("loose.md", 70.0 * HOUR),
+            ],
+        );
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        let cfg = h.join("Documents/Markie");
+        // The old app's decisions: a renamed project and a hand-made empty one.
+        super::store::ensure_tables(&db).unwrap();
+        super::store::project_set_name(&db, "orchard", Some("Orchard Co-op")).unwrap();
+        super::store::project_create(&db, "Someday").unwrap();
+        let s = super::compute(&db, &index, &cfg, h, std::time::Duration::from_secs(5)).unwrap();
+        let m = s.migration.clone().expect("converted");
+        assert!(!s.auto, "automatic grouping is switched off");
+        assert!(s.taxonomy.projects.is_empty());
+        let t = super::folders::tree(&db).unwrap();
+        let mut names: Vec<&str> = t.iter().map(|n| n.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["Orchard Co-op", "Recipes", "Someday"], "Unfiled stays Unsorted");
+        let orchard = t.iter().find(|n| n.name == "Orchard Co-op").unwrap();
+        assert_eq!(orchard.file_count(), 3);
+        assert_eq!(orchard.children.len(), 1, "the block of two became a subfolder");
+        assert_eq!(orchard.children[0].files.len(), 2);
+        assert_eq!(orchard.files.len(), 1, "the loose file sits in the project folder");
+        let recipes = t.iter().find(|n| n.name == "Recipes").unwrap();
+        assert_eq!((recipes.children.len(), recipes.files.len()), (0, 1));
+        assert_eq!(m.files, 4);
+        assert!(super::folders::folder_of(&db, &h.join("loose.md").to_string_lossy()).unwrap().is_none());
+        // Once: a second pass, or deleting a folder, never brings them back.
+        super::folders::delete_folder(&db, &recipes.id).unwrap();
+        let s = super::compute(&db, &index, &cfg, h, std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(s.migration, None);
+        assert_eq!(super::folders::tree(&db).unwrap().len(), 2);
     }
 
     #[test]

@@ -7,6 +7,32 @@ workflow, or uploads to public storage. Publication is only to the dedicated
 authenticated private gateway. A private build is not DRM for public source or
 independently built derivatives.
 
+## On the Mac, this lane now carries the Rust app
+
+Kirby's direction on 2026-11-24: there is one nightly on the Mac, and it is the Rust app
+(branch `rust/markie-rs`, runbook `docs/rust-port/NIGHTLY.md` there). From the first Rust
+super-nightly, `0.10.0-super-nightly.1`, this lane's feed names a Rust build. It has Markie's
+identity (`com.zvn.markie`, the same Developer ID team), so an installed Electron super-nightly
+updates itself into it through electron-updater and Squirrel.Mac, and the Rust app then updates
+itself from the same feed. The gateway did not change for this, and the Electron build tooling
+below did not either. Windows is not involved: this lane was always Mac only, and Windows stays on
+Electron.
+
+What that changes for everything below:
+
+- **Do not run `publish-private` as a routine stage any more.** It replaces the lane's feed with an
+  Electron build. With a version below the Rust build's, no Rust install takes it, and the lane
+  then points at a build nobody on the lane can use until the next Rust publish. With a version
+  above it, every Rust install updates itself back into Electron.
+- **That second case is the roll back, on purpose.** To move the Mac nightly back to Electron,
+  publish an Electron super-nightly with a version above the newest Rust build (for example
+  `MARKIE_PRIVATE_VERSION=0.10.1-super-nightly.1`). The Rust runbook's "Roll back" has both ways.
+- `npm run markie:use -- private` installs the newest Electron super-nightly built on this Mac. That
+  build then updates itself into the Rust app again, unless the lane's feed has been pointed back
+  at an Electron build first.
+- The Rust app keeps its own data folder, `~/Library/Application Support/Markie Nightly`. It reads
+  `Markie Super-nightly` once, from a copy, and never writes it.
+
 ## Configuration and provenance
 
 `electron-builder.private.cjs` derives the real Markie bundle configuration, but
@@ -143,33 +169,14 @@ Those tests do not establish a valid Developer ID artifact, notary acceptance,
 owner-only gateway authorization, a successful installed app/update or native
 Windows distribution. The root records that separate exact-artifact evidence.
 
-## The second lane: `rs-nightly` (Markie Nightly, the Rust build)
+## The `rs-nightly` lane is retired
 
-The same gateway serves a second, separate lane for Markie Nightly, the private build of
-Markie RS. Nothing about the super-nightly lane changed to add it: a test in
-`server/src/private-releases.test.ts` replays a fixed super-nightly session and compares every
-status, header and body byte with a digest recorded from the gateway before the second lane existed.
-
-| | `super-nightly` | `rs-nightly` |
-|---|---|---|
-| Prefix | `/private-releases/super-nightly/:filename` | `/private-releases/rs-nightly/:filename` |
-| Feed | `super-nightly-mac.yml` (and `super-nightly.yml`) | `rs-nightly-mac.yml` |
-| Version | `X.Y.Z-super-nightly.<parts>` | `X.Y.Z-rs-nightly.N`, N a plain number |
-| Artifacts | `Markie-<version>-<arch>[-mac].zip`, `.dmg`, and their `.blockmap` | `Markie-Nightly-<version>-arm64.zip` only |
-| Folder | `PRIVATE_RELEASE_ROOT` itself | `PRIVATE_RELEASE_ROOT/rs-nightly`, made on first use, mode 0700 |
-
-Both lanes share the rest: every GET and HEAD checks the bearer token against Markie Cloud and
-serves only the owner, every refusal is the same 404, a PUT needs `x-markie-publish-key`, base64
-`x-markie-sha512` and an exact `Content-Length`, artifacts are write-once, the cap is 512 MiB, and
-a feed is accepted only after every artifact it names is on disk with the size and SHA-512 it
-states, then swapped in last. A feed can name only its own lane's artifacts, and neither prefix can
-reach the other lane's files. `/private-releases/access` still answers for super-nightly alone;
-Markie Nightly asks for its feed directly, and a 404 there means no updates.
-
-No new configuration: the lane needs no environment variable and no infra change beyond deploying
-an image built from a commit that has it. The builder, signer, updater and publisher for this lane
-live with Markie RS, on branch `rust/markie-rs` (`docs/rust-port/NIGHTLY.md`), not in this repo's
-Electron release tooling.
+For a few hours on 2026-11-24 the Rust build shipped as a separate app, Markie Nightly
+(`com.zvn.markie.nightly`), on a second lane of this gateway, `/private-releases/rs-nightly/`.
+That plan was replaced the same day by the one above. The lane is still in
+`server/src/private-releases.ts` and holds versions `0.1.0-rs-nightly.1` and `.2`; nothing reads it.
+Removing the lane and its tests is a later server change. Until then it costs nothing: it has its
+own folder, and the test that pins the super-nightly lane's answers byte for byte still holds.
 
 ## Moving Kirby's Mac between the private and public lanes
 

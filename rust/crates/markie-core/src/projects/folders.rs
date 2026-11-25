@@ -679,6 +679,20 @@ impl History {
         out
     }
 
+    /// Remember an action the caller ran itself, in steps across several
+    /// frames, from the state `before` it began: one ⌘Z for all of it.
+    /// Nothing is remembered when it changed nothing.
+    pub fn push(&mut self, db: &Connection, label: &str, before: Snapshot) -> Result<()> {
+        if Snapshot::take(db)? != before {
+            self.undo.push((label.to_string(), before));
+            if self.undo.len() > HISTORY_LIMIT {
+                self.undo.remove(0);
+            }
+            self.redo.clear();
+        }
+        Ok(())
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

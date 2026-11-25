@@ -20,6 +20,7 @@
 //! | `disk`      | `electron/disk-memory.js` (own write or outside edit)|
 
 pub mod autosave;
+pub mod bring_docs;
 pub mod clock;
 pub mod csv;
 pub mod csv_table;

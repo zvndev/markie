@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -274,11 +274,17 @@ struct Walker<'a> {
     depth_capped: bool,
     /// Documents found so far, for whoever is watching the walk.
     found: Option<&'a AtomicUsize>,
+    /// Set by whoever started the walk to stop it early.
+    cancel: Option<&'a AtomicBool>,
 }
 
 impl Walker<'_> {
     fn visit(&mut self, dir: &Path, depth: usize) {
         if self.stopped.is_some() {
+            return;
+        }
+        if self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            self.stopped = Some(Truncation::Time);
             return;
         }
         if depth > self.opts.budget.max_depth {
@@ -389,6 +395,12 @@ pub fn scan(opts: &ScanOptions) -> IndexSnapshot {
 /// [`scan`], storing the number of documents found so far in `found` after
 /// each folder, so a view can show the walk moving.
 pub fn scan_counting(opts: &ScanOptions, found: Option<&AtomicUsize>) -> IndexSnapshot {
+    scan_cancellable(opts, found, None)
+}
+
+/// [`scan_counting`] that stops at the next folder once `cancel` is set. A
+/// cancelled walk reports [`Truncation::Time`]: it ended before it was done.
+pub fn scan_cancellable(opts: &ScanOptions, found: Option<&AtomicUsize>, cancel: Option<&AtomicBool>) -> IndexSnapshot {
     let roots: Vec<PathBuf> = opts.roots.clone();
     let mut walker = Walker {
         opts,
@@ -404,6 +416,7 @@ pub fn scan_counting(opts: &ScanOptions, found: Option<&AtomicUsize>) -> IndexSn
         stopped: None,
         depth_capped: false,
         found,
+        cancel,
     };
     for target in scan_targets(opts) {
         if walker.stopped.is_some() {

@@ -26,6 +26,15 @@ pub struct Store {
     pub atoms: HashMap<LeafKey, Bounds<Pixels>>,
     /// Each drawn block's bounds, for the heights of blocks not drawn.
     pub blocks: HashMap<usize, Bounds<Pixels>>,
+    /// Each table's box width when last drawn, by its block and path: the
+    /// room its columns share. Kept from frame to frame.
+    pub tables: HashMap<(usize, Vec<usize>), f32>,
+    /// Each table drawn this frame: its box, the rows' left edge and width,
+    /// and whether it scrolls (for the scene report).
+    pub table_boxes: HashMap<(usize, Vec<usize>), (Bounds<Pixels>, Pixels, f32, bool)>,
+    /// Each table cell's widest word (its min-content width less padding),
+    /// for the scene report.
+    pub table_words: HashMap<LeafKey, f32>,
     /// The frame these were drawn in; older entries are stale.
     pub frame: u64,
 }

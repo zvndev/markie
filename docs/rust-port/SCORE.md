@@ -1,6 +1,6 @@
 # Markie RS parity score
 
-The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-csv-table` (editors 7.10 to 7.18 added for the CSV table of Electron PR #149: eight PASS, one NEEDS-CAPTURE), then on 2026-11-24 branch `t3/markie-rs-styles-fonts` (Electron's Markdown styles and font library, PRs #150 and #151: 16 new rows across four audits), then branch `t3/markie-rs-live-notice` (cloud 11.2 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-skills-rows` (agents 16.1 is now IMPROVEMENT; the totals do not move), then on 2026-11-25 branch `t3/markie-rs-nav-history` (Back and Forward, library 29.12, IMPROVEMENT; the full-page History, editors 13.2, 13.8 and 13.9, IMPROVEMENT; Source's CodeMirror keys, editors 7.19 to 7.27, nine PASS: 12 new rows, all met).
+The overall score across the five audits, and the rules behind it. Updated 2026-11-23 at `rust/markie-rs` 91a29ca plus the rescore commit, then branch `t3/markie-rs-share-dialog` (30.1, 14.1.1, 14.1 and 21.1.4 closed by the background comparison), then branch `t3/markie-rs-katex-look` (23.3 closed: Export HTML math drawn as Electron's KaTeX), then branch `t3/markie-rs-browse-ux` (library 3.1 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-home-pages` (library 1.2 and cloud 14.1.2, 14.1.3 and 30.1 are now IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-csv-table` (editors 7.10 to 7.18 added for the CSV table of Electron PR #149: eight PASS, one NEEDS-CAPTURE), then on 2026-11-24 branch `t3/markie-rs-styles-fonts` (Electron's Markdown styles and font library, PRs #150 and #151: 16 new rows across four audits), then branch `t3/markie-rs-live-notice` (cloud 11.2 is now an IMPROVEMENT; the totals do not move), then branch `t3/markie-rs-skills-rows` (agents 16.1 is now IMPROVEMENT; the totals do not move), then on 2026-11-25 branch `t3/markie-rs-nav-history` (Back and Forward, library 29.12, IMPROVEMENT; the full-page History, editors 13.2, 13.8 and 13.9, IMPROVEMENT; Source's CodeMirror keys, editors 7.19 to 7.27, nine PASS: 12 new rows, all met), then branch `t3/markie-rs-source-markdown-keys` (Source's Markdown keys from `@codemirror/lang-markdown`, editors 7.28 to 7.30: three new PASS rows).
 
 ## Overall
 
@@ -8,12 +8,12 @@ The overall score across the five audits, and the rules behind it. Updated 2026-
 |---|---|---|---|
 | [Agents, Darkmown, Live Docs, export](AUDIT-AGENTS-WEB.md) | 55 | 55 | 100% |
 | [Cloud, collaboration, sharing, sign-in](AUDIT-CLOUD.md) | 83 | 79 | 95.2% |
-| [Editors, autosave, history](AUDIT-EDITORS.md) | 81 | 75 | 92.6% |
+| [Editors, autosave, history](AUDIT-EDITORS.md) | 84 | 78 | 92.9% |
 | [Library, search, settings, menus](AUDIT-LIBRARY-SETTINGS.md) | 101 | 98 | 97.0% |
 | [Office, platform, vault (macOS)](AUDIT-OFFICE-PLATFORM.md) | 61 | 58 | 95.1% |
-| **Total** | **381** | **365** | **95.8%** |
+| **Total** | **384** | **368** | **95.8%** |
 
-The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 13 are met. The eight CSV sheet rows (editors 7b, Electron PR #154) then made it 353 of 369; all eight are met. Back and Forward, the History page and Source's keys (2026-11-25) added 12 rows, all met: 365 of 381.
+The total was 332 of 345 (96.2%) before the Markdown style and font rows. Those added 16 rows, of which 13 are met. The eight CSV sheet rows (editors 7b, Electron PR #154) then made it 353 of 369; all eight are met. Back and Forward, the History page and Source's keys (2026-11-25) added 12 rows, all met: 365 of 381. Source's Markdown keys (list continuation, markup deletion, paste as link) added three, all met: 368 of 384.
 
 Target set by Kirby on 2026-11-22: 98.5% or better.
 
@@ -53,4 +53,4 @@ Score = (PASS + IMPROVEMENT) ÷ (all rows − every EXCLUDED class).
 | Library 28.S4, 28.S5, 28.F2 | A scheduled screen session of about 15 minutes: the Markdown style section, the style editor and the font menus with a real pointer, beside Electron's. The checks are written in each audit row |
 | Editors 7.4 and group 7.0 | Stay open: Kirby kept 36 languages |
 
-If every row above closes except the last two, the score is 379 of 381, which is 99.5%.
+If every row above closes except the last two, the score is 382 of 384, which is 99.5%.

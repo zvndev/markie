@@ -4,19 +4,19 @@ Date: 2026-11-22. Branch: `t3/markie-rs-editor-parity-1`, from `rust/markie-rs` 
 
 ## Score
 
-**Parity: 75 of 81 scored rows (92.6%): 71 PASS and 4 IMPROVEMENT.** Rescored on 2026-11-22 with Kirby's rulings: 8.13 is an IMPROVEMENT, so its group 8.11 passes. On 2026-11-24 section 7a added nine rows for the CSV table (Electron PR #149): eight PASS and one NEEDS-CAPTURE. Later that day section 7b added eight PASS rows for the CSV sheet look (Electron PR #154), counted once #154 merged. On 2026-11-25 (branch `t3/markie-rs-nav-history`) Source gained the CodeMirror keys it lacked (rows 7.19 to 7.27, nine PASS), and History became Electron's full-page view (13.2 is now an IMPROVEMENT; 13.8 and 13.9 are new IMPROVEMENT rows).
+**Parity: 78 of 84 scored rows (92.9%): 74 PASS and 4 IMPROVEMENT.** Rescored on 2026-11-22 with Kirby's rulings: 8.13 is an IMPROVEMENT, so its group 8.11 passes. On 2026-11-24 section 7a added nine rows for the CSV table (Electron PR #149): eight PASS and one NEEDS-CAPTURE. Later that day section 7b added eight PASS rows for the CSV sheet look (Electron PR #154), counted once #154 merged. On 2026-11-25 (branch `t3/markie-rs-nav-history`) Source gained the CodeMirror keys it lacked (rows 7.19 to 7.27, nine PASS), and History became Electron's full-page view (13.2 is now an IMPROVEMENT; 13.8 and 13.9 are new IMPROVEMENT rows). Later that day (branch `t3/markie-rs-source-markdown-keys`) Source gained `@codemirror/lang-markdown`'s keys: list continuation, markup deletion and paste as link (rows 7.28 to 7.30, three PASS).
 
 | Status | Rows |
 |---|---|
-| PASS | 71 |
+| PASS | 74 |
 | IMPROVEMENT | 4 (8.13: no TipTap rewrites of untouched text; 13.2, 13.8, 13.9: the full-page History with one-press rows and Older and Newer arrows) |
 | FAIL | 2 (7.4, kept at 36 languages by Kirby's choice, and its group 7.0) |
 | NEEDS-CAPTURE | 4 (7.9, the 50 MB timing; 7.18, the CSV table with a real pointer and beside Electron's frame; 8.6, a real trackpad pinch; their group 8.0) |
 | EXCLUDED | 0 |
 | EXCLUDED-PLATFORM | 0 |
-| Total | 81 |
+| Total | 84 |
 
-Score = (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED) = 75 ÷ 81. IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron (Kirby, 2026-11-22); it counts as meeting parity. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
+Score = (PASS + IMPROVEMENT) ÷ (all rows − EXCLUDED) = 78 ÷ 84. IMPROVEMENT means Markie RS deliberately differs to fix a flaw in Electron (Kirby, 2026-11-22); it counts as meeting parity. Group rows ("What the user can do:", "Compatibility:") are scored too: a group is PASS only when every child is PASS.
 
 The screen was locked for the whole run (`IOConsoleLocked = Yes`). No captures were taken and no app was launched. Visual and live-gesture rows are NEEDS-CAPTURE, with their steps below.
 
@@ -88,6 +88,12 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 | 7.26 | ⌘[ ⌘] outdent and indent in Source | PASS | `defaultKeymap` `indentLess`, `indentMore` / `source::key_bindings`; `cmd_brackets_go_back_and_forward_but_indent_in_source_text` | Back and Forward took ⌘[ ⌘] app-wide; Source text keeps them, bound to `Input && mode == editor` after the app's keys (GPUI ranks a binding with no context as deep as the focus). |
 | 7.27 | The rest of CodeMirror's basic setup a writer uses | PASS | sweep below; `source_keys::key_bindings`, `every_key_is_bound_in_source_text_only` | Fixed in the sweep: ⌘G ⇧⌘G (Electron's find bar keys, missing in Source), ⌃L, ⇧⌘\, ⌘Home ⌘End with ⇧, and the macOS Emacs keys. The rarely used ones left are listed as NOT BUILT below and not scored. |
 
+| 7.28 | ↵ continues Markdown markup (`insertNewlineContinueMarkup`) | PASS | `@codemirror/lang-markdown` 6.5.2 `insertNewlineContinueMarkupCommand` / `workspace/source_markdown.rs` `continue_markup`; 12 tests in `source_markdown::tests`; `source` scenes `bullets`, `ordered`, `tasks-quotes-nested-fence`, `crlf` | Was missing. Bullets, numbers (renumbering the items below, from any start), tasks (the new one unchecked), quotes and lists in quotes, nested lists at their indent, loose lists kept loose. ↵ in the middle of an item splits it. ↵ on an empty item ends the list, outdents a nested one, or drops `> ` after two empty quoted lines; an empty second item first makes the list loose, as CodeMirror does. Nothing happens in fenced code. CRLF documents get CRLF. |
+| 7.29 | ⌫ after list or quote markup removes one level (`deleteMarkupBackward`) | PASS | `deleteMarkupBackward` / `delete_markup`; `backspace_removes_one_level_of_markup`, `backspace_elsewhere_is_left_to_the_editor`; scene `bullets` | Was missing. A later item's marker becomes spaces (so the text joins the item above), then the spaces go; a first item's marker, a quote's `>` and extra space after a marker go at once. ⌃H runs it too, where CodeMirror's ⌃H is a plain delete. |
+| 7.30 | A URL pasted over selected text makes a link (`pasteURLAsLink`) | PASS | `pasteURLAsLink` / `paste_url_link`; `a_pasted_url_over_plain_text_makes_a_link`; scene `paste-link` | Was missing. `http(s)://`, `mailto:`, `xmpp:` and `www.` (made `https://`) over plain text give `[text](url)` with the text still selected. Over code, a link, HTML, a mark or across blocks it pastes as usual. The Edit menu's Paste does it too. |
+
+How 7.28 to 7.30 were checked: CodeMirror's own commands ran in Node from the Electron checkout's `node_modules` as an oracle, against the Rust port, on 167 cases (every unit test case and more, each Enter and Backspace case also in CRLF): all 167 agree (`.autoloop/runs/source-markdown-keys/oracle.mjs`, `cases.json`, `cm.json`, `rs.json`). Six off-screen `source` scenes then pressed ↵ and ⌫ through GPUI Kit's own actions in the real editor, with Undo after each command (`report.md`): every command was one undo step, and in a `.txt` file ↵ and ⌫ stayed plain, as Electron leaves the Markdown extension out of plain text. CodeMirror reads Lezer's tree; Markie RS parses with pulldown-cmark and sets each node's end where Lezer's is, and also follows Lezer where it lets an empty item, or a number other than 1, interrupt a paragraph inside a list of its kind (CommonMark does not). Documents over 1 MB parse from the last top-level block before the cursor. Two differences: after Undo the restored text is selected where CodeMirror leaves a caret, as with 7.19 to 7.27; and with several cursors the keys do GPUI Kit's plain newline, delete and paste at each one, where CodeMirror continues markup at each. Markie RS cannot read the cursors, so it tracks the gestures that add them (⌘-click, ⌥-click and drag, ⌥⌘↑↓, ⌘D, ⇧⌘L) and the ones that leave one (a plain click, Escape).
+
 All of 7.19 to 7.27 act on the main cursor when there are several: GPUI Kit does not let an app read every cursor. Evidence beyond the unit tests: a `source` scene ran each line command and Undo in the real editor and logged the text (`.autoloop/runs/source-keys/`): each command was one undo step, and Undo restored the text exactly.
 
 ### CodeMirror's basic setup against Markie RS Source (2026-11-25)
@@ -100,6 +106,7 @@ Electron's Source is `@uiw/react-codemirror` with its full basic setup (`src/com
 | ⌘Home ⌘End, ⇧⌘Home ⇧⌘End | `cursorDocStart`, `cursorDocEnd` | bound to GPUI Kit's moves | FIXED |
 | ⌃← ⌃→ | `cursorSyntaxLeft`, `cursorSyntaxRight` | none | NOT BUILT (rare: moves by syntax node) |
 | ↵ | `insertNewlineAndIndent` | GPUI Kit keeps the line's indentation | PASS |
+| ↵ ⌫ ⌘V in Markdown | `insertNewlineContinueMarkup`, `deleteMarkupBackward`, `pasteURLAsLink` (from `@codemirror/lang-markdown`, outside the six keymaps) | rows 7.28 to 7.30 | FIXED |
 | ⌫ ⌦ ⌥⌫ ⌥⌦ ⌘⌫ ⌘⌦, ⌘A | deletes, select all | GPUI Kit | PASS |
 | ⌥↑ ⌥↓ ⇧⌥↑ ⇧⌥↓ | move and copy lines | rows 7.19, 7.20 | FIXED |
 | ⌥⌘↑ ⌥⌘↓ | `addCursorAbove`, `addCursorBelow` | GPUI Kit | PASS |
@@ -127,7 +134,7 @@ Electron's Source is `@uiw/react-codemirror` with its full basic setup (`src/com
 | ⌃Space and the completion keys | `completionKeymap` | none; Markdown's only completion is HTML tag names after `<` | NOT BUILT (rare) |
 | ( [ { ' " | `closeBrackets` and its ⌫ | GPUI Kit's auto-closing pairs (`LanguageConfig::default`, `auto_close.rs`) | PASS, from the source; not checked by hand |
 
-Found outside the six keymaps: `@codemirror/lang-markdown` adds `insertNewlineContinueMarkup` (↵ in a list item starts the next item, ↵ on an empty item ends the list) and `deleteMarkupBackward`. Markie RS Source has neither. A writer meets this often; it is the first thing to build next.
+Found outside the six keymaps: `@codemirror/lang-markdown` adds `insertNewlineContinueMarkup`, `deleteMarkupBackward` and `pasteURLAsLink`. Markie RS Source lacked all three; they are rows 7.28 to 7.30 now (`workspace/source_markdown.rs`).
 
 ## Section 7a: The CSV table (Electron PR #149)
 

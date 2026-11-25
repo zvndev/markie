@@ -351,21 +351,27 @@ pub(super) fn goto_target(text: &str, current: usize, query: &str) -> Option<usi
 
 /// Go to Line's field, and ⌘D's run of added matches: the query, whether it
 /// was a whole word, every range it selected, and the selection it left.
+/// `multi` is set when a gesture may have left more than one cursor, and
+/// cleared when the selection is set to one again: GPUI Kit does not say
+/// how many there are, and the Markdown keys (`source_markdown.rs`) only
+/// act with one.
 #[derive(Default)]
 pub(super) struct SourceKeys {
     goto: Option<(Entity<InputState>, Subscription)>,
     next: Option<(String, bool, Vec<Range<usize>>, Range<usize>)>,
+    pub(super) multi: bool,
 }
 
 impl Workspace {
-    fn source_text_and_selection(&self, cx: &App) -> (String, Range<usize>) {
+    pub(super) fn source_text_and_selection(&self, cx: &App) -> (String, Range<usize>) {
         let state = self.editor.read(cx);
         (state.text().to_string(), state.selected_range())
     }
 
-    /// Apply one command as one undo step.
-    fn apply_source_edit(&mut self, edit: Edit, window: &mut Window, cx: &mut Context<Self>) {
+    /// Apply one command as one undo step. It leaves one cursor.
+    pub(super) fn apply_source_edit(&mut self, edit: Edit, window: &mut Window, cx: &mut Context<Self>) {
         self.source_keys.next = None;
+        self.source_keys.multi = false;
         self.editor.update(cx, |s, cx| {
             s.set_selected_range(edit.range.clone(), cx);
             s.replace(edit.text, window, cx);
@@ -391,11 +397,13 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &TransposeChars, w, cx| this.source_command(transpose_chars, w, cx)))
             .on_action(cx.listener(|this, _: &SelectLine, _, cx| {
                 let (text, sel) = this.source_text_and_selection(cx);
+                this.source_keys.multi = false;
                 this.editor.update(cx, |s, cx| s.set_selected_range(line_selection(&text, sel), cx));
             }))
             .on_action(cx.listener(|this, _: &CursorMatchingBracket, _, cx| {
                 let (text, sel) = this.source_text_and_selection(cx);
                 if let Some(to) = matching_bracket(&text, sel.end) {
+                    this.source_keys.multi = false;
                     this.editor.update(cx, |s, cx| s.set_selected_range(to..to, cx));
                 }
             }))
@@ -428,6 +436,7 @@ impl Workspace {
         };
         ranges.push(found.clone());
         ranges.sort_by_key(|r| r.start);
+        self.source_keys.multi = true;
         self.editor.update(cx, |s, cx| s.add_selection(found.clone(), cx));
         let left = self.editor.read(cx).selected_range();
         self.source_keys.next = Some((query, full_word, ranges, left));
@@ -444,6 +453,7 @@ impl Workspace {
         let Some(all) = all_occurrences(&text, &text[main.clone()]) else { return };
         let others: Vec<Range<usize>> = all.into_iter().filter(|r| *r != main && (!from_word || is_whole_word(&text, r))).collect();
         self.source_keys.next = None;
+        self.source_keys.multi = !others.is_empty();
         self.editor.update(cx, |s, cx| {
             let scroll = s.scroll_offset();
             s.set_selected_range(main.clone(), cx);
@@ -464,6 +474,9 @@ impl Workspace {
             }
             r
         });
+        if found.is_some() {
+            self.source_keys.multi = false;
+        }
         if found.is_none() {
             window.dispatch_action(Box::new(kit::Search), cx);
         }
@@ -479,6 +492,7 @@ impl Workspace {
                 match goto_target(&text, sel.end, &query) {
                     Some(at) => {
                         this.close_goto_line(window, cx);
+                        this.source_keys.multi = false;
                         this.editor.update(cx, |s, cx| s.set_selected_range(at..at, cx));
                     }
                     None => input.update(cx, |s, cx| s.set_value("", window, cx)),
@@ -542,7 +556,12 @@ impl Workspace {
 impl Workspace {
     /// Source keys in the real editor, without a keyboard: `ops` run in
     /// order, each `{"select": [a, b]}`, `{"cmd": name}` (the actions of this
-    /// module, as their keys run them), `{"undo": true}` or `{"goto": "12:3"}`.
+    /// module, as their keys run them), `{"undo": true}`, `{"goto": "12:3"}`,
+    /// `{"key": "enter"}` or `{"key": "backspace"}` (GPUI Kit's own action,
+    /// dispatched as the key would, so the Markdown keys take it or let it
+    /// through), `{"type": "text"}` (typed at the selection) and
+    /// `{"paste": "https://…"}` (the paste-as-link command with that text,
+    /// since a scene never touches the pasteboard).
     /// Only the main selection can be read back; deleting through several
     /// cursors in a hidden window did not give repeatable results, so the
     /// extra selections ⌘D and ⇧⌘L add are covered by the unit tests.
@@ -572,6 +591,18 @@ impl Workspace {
             }
             if op.get("undo").is_some() {
                 window.dispatch_action(Box::new(kit::Undo), cx);
+            }
+            match op.get("key").and_then(Value::as_str) {
+                Some("enter") => window.dispatch_action(Box::new(kit::Enter { secondary: false, shift: false }), cx),
+                Some("backspace") => window.dispatch_action(Box::new(kit::Backspace), cx),
+                _ => {}
+            }
+            if let Some(t) = op.get("type").and_then(Value::as_str) {
+                let t = t.to_string();
+                self.editor.update(cx, |s, cx| s.replace(t, window, cx));
+            }
+            if let Some(clip) = op.get("paste").and_then(Value::as_str) {
+                self.source_markdown_command(|t, s| super::source_markdown::paste_url_link(t, s, clip), window, cx);
             }
             if let Some(q) = op.get("goto").and_then(Value::as_str) {
                 let (text, sel) = self.source_text_and_selection(cx);

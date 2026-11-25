@@ -151,7 +151,7 @@ impl Workspace {
     /// are taken in the capture phase, before GPUI Kit's own (where ⌥-click
     /// adds a cursor and ⌥⇧-drag selects a block, both kept).
     pub(super) fn source_mouse(&self, editor: impl IntoElement, cx: &mut Context<Self>) -> Div {
-        div()
+        Self::source_markdown_keys(div(), cx)
             .size_full()
             .min_h_0()
             .flex()
@@ -183,6 +183,15 @@ impl Workspace {
     fn source_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         RECT.with(|r| r.borrow_mut().take());
         let m = ev.modifiers;
+        // ⌘-click, ⌥-click and the ⌥ drags can leave several cursors; a
+        // plain click leaves one.
+        if ev.button == MouseButton::Left {
+            if m.alt || m.platform {
+                self.source_keys.multi = true;
+            } else if !m.shift {
+                self.source_keys.multi = false;
+            }
+        }
         if ev.button != MouseButton::Left || ev.click_count != 1 || m.shift || m.control || m.alt == m.platform {
             return;
         }

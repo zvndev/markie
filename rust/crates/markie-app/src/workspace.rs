@@ -88,6 +88,7 @@ pub mod source;
 pub use csv_table::bind_keys as bind_csv_keys;
 mod source_column;
 mod source_keys;
+mod source_markdown;
 pub(crate) mod vault;
 #[cfg(feature = "scene")]
 pub(crate) mod scene;

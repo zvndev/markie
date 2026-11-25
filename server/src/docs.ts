@@ -127,6 +127,8 @@ interface DocRow {
   version: number;
   content: string;
   hash: string;
+  // When the first version landed; NULL on rows older than the column.
+  created_at: string | null;
   updated_at: string;
   deleted_at: string | null;
 }
@@ -225,7 +227,7 @@ docs.get("/", async (c) => {
   }
   const rows = db
     .prepare(
-      "SELECT id, name, version, hash, updated_at FROM docs WHERE owner_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC"
+      "SELECT id, name, version, hash, created_at, updated_at FROM docs WHERE owner_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC"
     )
     .all(user.id) as Omit<DocRow, "owner_id" | "content" | "deleted_at">[];
   // Whether anybody else can reach each owned document. Markie reads this to

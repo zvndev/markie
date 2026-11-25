@@ -33,7 +33,7 @@ plan of record). They are not indexed here.
 | Doc | Status | What it is for |
 | --- | --- | --- |
 | [RELEASING.md](RELEASING.md) | Current | The desktop release runbook: early access, soak, stable, rollback |
-| [PRIVATE_RELEASES.md](PRIVATE_RELEASES.md) | Current | The private super-nightly lane and its gateway. Draft PR #156 updates it for the Rust app on the Mac lane and the retired `rs-nightly` lane; until that merges, its `rs-nightly` section is out of date |
+| [PRIVATE_RELEASES.md](PRIVATE_RELEASES.md) | Current | The private super-nightly lane and its gateway: the Rust app on the Mac lane, Electron's rollback-only publish, and the retired `rs-nightly` lane |
 | [WINDOWS-TESTING.md](WINDOWS-TESTING.md) | Current | Build a Windows test installer on a Mac and check it on a real PC |
 | [SELF-HOSTING.md](SELF-HOSTING.md) | Current | Run your own Markie server |
 | [deploy/DEPLOY.md](../deploy/DEPLOY.md) | Current | The self-hosting kit, and where Markie Cloud's deploy lives |

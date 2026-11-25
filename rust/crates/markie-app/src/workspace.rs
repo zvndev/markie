@@ -48,6 +48,7 @@ mod document_failure;
 mod file_ops;
 mod first_run;
 mod folder_tree;
+pub(crate) mod google_docs;
 mod history_dialog;
 mod history_model;
 mod history_page;
@@ -1908,6 +1909,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_cloud))
             .on_action(cx.listener(Self::on_toggle_library))
             .on_action(cx.listener(Self::on_toggle_vault))
+            .on_action(cx.listener(Self::on_import_google))
+            .on_action(cx.listener(Self::on_refresh_google))
+            .on_action(cx.listener(Self::on_refresh_all_google))
+            .on_action(cx.listener(Self::on_save_google_word))
             .when(output_actions, |root| root.on_action(cx.listener(Self::on_print)).on_action(cx.listener(Self::on_export_pdf_light)))
             .on_action(cx.listener(Self::on_export_pdf_dark))
             .on_action(cx.listener(Self::on_export_html))

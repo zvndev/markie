@@ -5482,6 +5482,7 @@ dependencies = [
  "markie-core",
  "markie-editor",
  "markie-export",
+ "markie-google",
  "markie-migrate",
  "markie-office",
  "markie-office-view",

@@ -22,6 +22,7 @@ markie-editor = { path = "../markie-editor" }
 markie-rich = { path = "../markie-rich" }
 yrs = "=0.28.2"
 markie-vault = { path = "../markie-vault" }
+markie-google = { path = "../markie-google" }
 markie-migrate = { path = "../markie-migrate" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
 getrandom = "0.3"

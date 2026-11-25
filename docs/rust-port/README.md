@@ -25,6 +25,7 @@ Docs written before 2026-11-24 call Markie RS a "side build". That is still true
 | [AUDIT-EDITORS.md](AUDIT-EDITORS.md) | Current | Row-by-row parity for the editors, CSV table, autosave, history and link previews |
 | [AUDIT-LIBRARY-SETTINGS.md](AUDIT-LIBRARY-SETTINGS.md) | Current | Row-by-row parity for the Library, Browse, Projects, search, settings, styles and menus |
 | [AUDIT-OFFICE-PLATFORM.md](AUDIT-OFFICE-PLATFORM.md) | Current | Row-by-row parity for Office documents, OS integration, the vault and crash logs, on macOS |
+| [GOOGLE-DOCS.md](GOOGLE-DOCS.md) | Current | Google Docs import, step one: connect with the Picker, one-way import to Markdown, refresh, Save as Word, the spike tool, and what two-way sync still needs |
 | [SCREEN.md](SCREEN.md) | Current | The rules and tools for comparing screens in the background, without Kirby's display |
 | [PERF.md](PERF.md) | Current | The speed goal, the measurements, and the final comparison still to run |
 | [STYLES-FONTS.md](STYLES-FONTS.md) | Current | How Markdown styles and the font library are carried, and how their data is regenerated from Electron |

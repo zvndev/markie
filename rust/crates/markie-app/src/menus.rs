@@ -90,6 +90,8 @@ pub fn build(state: MenuState) -> Vec<Menu> {
         item("New Text Document", NewTextDocument),
         item("New Darkmown Document", NewDarkmownDocument),
     ];
+    // Under Open…, only when this build carries a Google Desktop OAuth client.
+    file.splice(2..2, crate::workspace::google_docs::menu_items());
     if state.nightly {
         file.push(item("Make Interactive", MakeInteractive));
     }

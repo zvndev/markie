@@ -351,6 +351,7 @@ impl Workspace {
                 }
                 if !missing {
                     card.marks.extend(sync_mark(self.row_status(&doc.path)));
+                    card.marks.extend(super::google_docs::mark(&doc.path));
                 }
                 card
             };

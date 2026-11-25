@@ -8,7 +8,7 @@
 //! screen and nothing on Kirby's display moves. Then the app quits.
 //!
 //! - `MARKIE_RS_SCENE`: `doc`, `csv`, `share`, `office-cloud`, `servers`, `vault`, `browse`,
-//!   `recent`, `launch`, `library`, `cloud`, `skills`, `history`, `nav` or `source`.
+//!   `recent`, `launch`, `library`, `cloud`, `skills`, `history`, `nav`, `source` or `google`.
 //! - `MARKIE_RS_SCENE_ARGS`: a JSON object for the scene (see each one below).
 //! - `MARKIE_RS_SCENE_OUT`: the PNG to write.
 //! - `MARKIE_RS_SCENE_THEME`: `light` (default) or `dark`.
@@ -323,6 +323,8 @@ impl Workspace {
                 }
                 self.scene_servers(args, step, window, cx)
             }
+            // Settings › Files › Google Docs (workspace/google_docs.rs).
+            "google" => self.scene_google(args, step, window, cx),
             // {recents}: the Library panel's Recent list over the open file.
             "library" => {
                 if *step == 0 {

@@ -4,7 +4,7 @@ Written 2026-11-22 against Electron Markie 0.9.7 (`markdown-viewer-zvn` at ae62c
 
 ## Score
 
-**Parity: 98 of 101 = 97.0 % (94 PASS and 4 IMPROVEMENT; 3 NEEDS-CAPTURE), after the nine Markdown style and font rows of 2026-11-24 (end of this file) and Back and Forward (29.12, 2026-11-25). Before them: 91 of 91.** Row 3.1 became an IMPROVEMENT on 2026-11-23 (branch `t3/markie-rs-browse-ux`): Browse is a page, not Electron's narrow panel. Row 1.2 became one the same day (branch `t3/markie-rs-home-pages`): Recent is a page of document cards, and a launch with no file opens on it. Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
+**Parity: 104 of 107 = 97.2 % (94 PASS and 10 IMPROVEMENT; 3 NEEDS-CAPTURE), after the nine Markdown style and font rows of 2026-11-24, Back and Forward (29.12, 2026-11-25) and the six Google Docs import rows (28.G1 to 28.G6, 2026-11-25, end of this file). Before them: 91 of 91.** Row 3.1 became an IMPROVEMENT on 2026-11-23 (branch `t3/markie-rs-browse-ux`): Browse is a page, not Electron's narrow panel. Row 1.2 became one the same day (branch `t3/markie-rs-home-pages`): Recent is a page of document cards, and a launch with no file opens on it. Rescored on 2026-11-22: Kirby excluded the database layout rows (2.2, 2.3, 2.8), which nothing a user sees depends on.
 
 | Count | Rows |
 |---|---|
@@ -249,3 +249,16 @@ Electron PRs #150 and #151, ported on branch `t3/markie-rs-styles-fonts` ([STYLE
 | 28.F4 | Fonts layered template, then style, then the person's own | PASS | `theme::tests::fonts_are_layered_template_then_style_then_the_persons_own` | |
 
 The three open rows wait for the scheduled screen session; each row says what to click and what to compare. A still frame of each state can be drawn beforehand without the screen: `scene.sh style-settings <out> light '{"style":"technical"}' <file>`, then the same with `"editor":true,"group":"tables"` and with `"face":"body"`.
+
+## Google Docs import, 2026-11-25
+
+Branch `t3/markie-rs-google-import` ([GOOGLE-DOCS.md](GOOGLE-DOCS.md)). Electron has no Google Docs import, so each row is an IMPROVEMENT under SCORE.md's rules. Six rows, all met. Hidden until a build carries `MARKIE_GOOGLE_DESKTOP_CLIENT_ID`; the real Google is checked by `rust/scripts/google-spike.sh`, not by these rows.
+
+| ID | Item | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 28.G1 | Settings › Files › Google Docs: connect, disconnect, account, import folder, progress with Cancel, synced Docs with last sync and errors | IMPROVEMENT | `google_docs.rs`; `google_docs::tests` (5); scene `google` light and dark: connected, importing, waiting with a folder warning, not connected | The grant is `drive.file` only, kept in the Keychain service "<profile> Google", and never sent to Markie Cloud. |
+| 28.G2 | File › Import from Google Docs… and the palette's Import, Refresh, Refresh All and Save as Word | IMPROVEMENT | `menus.rs` (`google_docs::menu_items`), `palette.rs` (`google_docs::palette_commands`) | Both lists are empty without a client, so menus and palette are unchanged in such builds. |
+| 28.G3 | A picked Doc becomes `<title>.md`: headings, lists with nesting and checkboxes, tables, code, rules, footnotes, images as links, one heading per tab | IMPROVEMENT | `markie-google` `tests/convert.rs` (15, one made-up fixture per element), `tests/flow.rs` (14, against the fake Google) | Title collisions get " (2)"; a file that is not the Doc's own is never overwritten. |
+| 28.G4 | Refresh from Google, per file and for all; local edits kept as a dated conflict copy | IMPROVEMENT | `tests/flow.rs` refresh and conflict tests | One-way in this step; nothing is written to Google. |
+| 28.G5 | Save as Word beside the Markdown file | IMPROVEMENT | `tests/flow.rs` `save_as_word_writes_beside_the_markdown_and_replaces_its_own_copy` | Google's own `.docx` export. |
+| 28.G6 | A Google mark on synced files in Recents | IMPROVEMENT | `recent_page.rs` (one line), `google_docs::mark`, icon `markie/google-doc.svg` | Not yet captured in a `recent` scene with synced files. |

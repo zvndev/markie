@@ -8,7 +8,7 @@
 //! screen and nothing on Kirby's display moves. Then the app quits.
 //!
 //! - `MARKIE_RS_SCENE`: `doc`, `csv`, `share`, `office-cloud`, `servers`, `vault`, `browse`,
-//!   `recent`, `launch`, `library` or `cloud`.
+//!   `recent`, `launch`, `library`, `cloud` or `skills`.
 //! - `MARKIE_RS_SCENE_ARGS`: a JSON object for the scene (see each one below).
 //! - `MARKIE_RS_SCENE_OUT`: the PNG to write.
 //! - `MARKIE_RS_SCENE_THEME`: `light` (default) or `dark`.
@@ -311,6 +311,21 @@ impl Workspace {
             "vault" => self.scene_vault(args, step, window, cx),
             // {state?, filter?, type?, open?: [..], ...}: Browse, see `scene_browse`.
             "browse" => self.scene_browse(args, step, window, cx),
+            // {width?, filter?, ...}: the Skills panel, see `scene_skills`.
+            "skills" => {
+                if *step == 0 {
+                    if let Some(width) = args.get("width").and_then(Value::as_f64) {
+                        self.shell.panel_width = width as f32;
+                    }
+                    if !(self.shell.panel_open && self.shell.view == super::rail::LeftView::Skills) {
+                        self.select_view(super::rail::LeftView::Skills, cx);
+                    }
+                    self.prepare_skills(window, cx);
+                    *step = 1;
+                    return false;
+                }
+                self.scene_skills(args, step, window, cx)
+            }
             other => {
                 eprintln!("markie-rs scene: unknown scene {other}");
                 true

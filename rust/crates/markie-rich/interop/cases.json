@@ -135,6 +135,10 @@
     {
       "name": "blocks/code with language and quote",
       "markdown": "> quoted\n>\n> - item\n\n```rust\nfn main() {}\n```\n"
+    },
+    {
+      "name": "lists/tight items led by marks",
+      "markdown": "- **Lead.** text after — with a dash.\n- *Beta:* a view -> dates.\n- [Docs](https://example.com/docs) refreshed.\n- ~~Old~~ replaced.\n- plain item (with parentheses).\n\n1. **One** — first (~90 commits).\n2. *Two* second.\n\n- [x] **Ship** it\n- [ ] *Write* docs\n"
     }
   ],
   "editBase": "# Shared doc\n\nFirst paragraph stays put.\n\nSecond paragraph gets\nan edit from Rust.\n\n- [ ] a task\n- [x] done task\n\n| left | right |\n| :--- | ---: |\n| 1 | 2 |\n\nLast line, wrapped\nby hand.\n"

@@ -153,6 +153,12 @@ pub(super) fn created_line(ms: Option<f64>, now: chrono::DateTime<chrono::Local>
     Some(format!("Created {day}"))
 }
 
+/// A narrow list has no room for a Created column beside the name and its
+/// age: the name keeps it. Cards always have the line.
+pub(super) fn shows_created(view: doc_grid::GridView, page_width: f32) -> bool {
+    view == doc_grid::GridView::Grid || page_width >= 720.
+}
+
 /// A card's quiet line: when it was opened, or when the file last changed
 /// for a starred file never opened here.
 pub(super) fn meta_line(opened_ms: f64, modified_ms: f64, missing: bool, now: chrono::DateTime<chrono::Local>) -> String {
@@ -380,7 +386,11 @@ impl Workspace {
                 card.meta = meta_line(recent.opened_ms(&doc.path), doc.mtime_ms, missing, now).into();
                 card.thumb = if missing { Thumb::Tile } else { self.file_thumb(&doc.path, doc.mtime_ms, doc.size) };
                 card.missing = missing;
-                card.created = if missing { None } else { created_line(recent.created_ms(&doc.path), now).map(Into::into) };
+                card.created = if missing || !shows_created(self.shell.recent_grid.view, width) {
+                    None
+                } else {
+                    created_line(recent.created_ms(&doc.path), now).map(Into::into)
+                };
                 card.openable = !missing;
                 card.current = current.as_deref() == Some(doc.path.as_path());
                 card.menu_open = self.shell.row_menu.as_ref().is_some_and(|(open, _)| *open == doc.path);
@@ -586,9 +596,9 @@ impl Workspace {
                 .when(menu == Some(which), |el| el.child(self.render_recent_menu(which, &p, cx)))
         };
         ui::toolbar(&p)
-            .child(div().flex_1().min_w(px(120.)).max_w(px(460.)).child(filter_field(&self.shell.recent_filter, 13., &p)))
-            .child(dropdown(FilterMenu::RecentType, "recent-type", type_label, 150., cx))
-            .child(dropdown(FilterMenu::RecentSort, "recent-sort", recent.sort.label(), 150., cx))
+            .child(div().flex_1().min_w(px(176.)).max_w(px(460.)).child(filter_field(&self.shell.recent_filter, 13., &p)))
+            .child(dropdown(FilterMenu::RecentType, "recent-type", type_label, 136., cx))
+            .child(dropdown(FilterMenu::RecentSort, "recent-sort", recent.sort.label(), 136., cx))
             .child(
                 ui::button("recent-starred", "Starred", Some(if starred { IconName::StarFill } else { IconName::Star }), Tone::Quiet, false, &p)
                     .when(starred, |b| b.bg(p.fg(0.08)).text_color(p.foreground))
@@ -765,8 +775,9 @@ pub(super) fn star_flips(paths: &[PathBuf], stars: &std::collections::HashSet<Pa
 
 #[cfg(test)]
 mod tests {
-    use super::{selected_label, star_flips};
-    use super::{Group, count_line, empty_copy, group_of, grouped, groups_by_time, meta_line, page_width, sync_mark};
+    use super::{created_line, selected_label, shows_created, star_flips};
+    use crate::workspace::doc_grid::GridView;
+    use super::{Group, PAGE_MAX, count_line, empty_copy, group_of, grouped, groups_by_time, meta_line, page_gutter, page_width, sync_mark};
     use crate::library::{LibraryTab, SortOrder};
     use crate::workspace::library_rows::SyncStatus;
     use chrono::TimeZone as _;
@@ -777,6 +788,24 @@ mod tests {
 
     fn ms(t: chrono::DateTime<chrono::Local>) -> f64 {
         t.timestamp_millis() as f64
+    }
+
+    #[test]
+    fn the_created_line_is_a_day_and_nothing_when_unknown() {
+        let now = at(2026, 11, 25, 15, 0);
+        assert_eq!(created_line(Some(ms(at(2026, 11, 25, 9, 0))), now).as_deref(), Some("Created today"));
+        assert_eq!(created_line(Some(ms(at(2026, 11, 24, 9, 0))), now).as_deref(), Some("Created yesterday"));
+        assert_eq!(created_line(Some(ms(at(2026, 11, 3, 9, 0))), now).as_deref(), Some("Created Nov 3"));
+        assert_eq!(created_line(Some(ms(at(2025, 11, 3, 9, 0))), now).as_deref(), Some("Created Nov 3, 2025"));
+        assert_eq!(created_line(None, now), None);
+        assert_eq!(created_line(Some(0.), now), None);
+    }
+
+    #[test]
+    fn a_narrow_list_drops_the_created_column_but_cards_keep_the_line() {
+        assert!(shows_created(GridView::Grid, 400.));
+        assert!(!shows_created(GridView::List, 600.));
+        assert!(shows_created(GridView::List, 1108.));
     }
 
     #[test]
@@ -909,7 +938,7 @@ mod tests {
         assert_eq!(page_width(1280.), PAGE_MAX - 40.);
         assert_eq!(page_width(2400.), PAGE_MAX - 40.);
         assert_eq!(page_gutter(1200.), 0.);
-        assert_eq!(page_gutter(2400.), ((2400. - 52. - PAGE_MAX) / 2.f32).floor());
+        assert_eq!(page_gutter(2400.), ((2400. - 52. - PAGE_MAX) / 2_f32).floor());
         assert_eq!(page_width(100.), 188.);
     }
 

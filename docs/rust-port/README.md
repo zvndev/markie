@@ -25,6 +25,7 @@ Docs written before 2026-11-24 call Markie RS a "side build". That is still true
 | [AUDIT-EDITORS.md](AUDIT-EDITORS.md) | Current | Row-by-row parity for the editors, CSV table, autosave, history and link previews |
 | [AUDIT-LIBRARY-SETTINGS.md](AUDIT-LIBRARY-SETTINGS.md) | Current | Row-by-row parity for the Library, Browse, Projects, search, settings, styles and menus |
 | [AUDIT-OFFICE-PLATFORM.md](AUDIT-OFFICE-PLATFORM.md) | Current | Row-by-row parity for Office documents, OS integration, the vault and crash logs, on macOS |
+| [POLISH-2026-11-25.md](POLISH-2026-11-25.md) | Current | The 2026-11-25 polish pass: the ranked flaw list, what was fixed and the contact sheets |
 | [GOOGLE-DOCS.md](GOOGLE-DOCS.md) | Current | Google Docs import, step one: connect with the Picker, one-way import to Markdown, refresh, Save as Word, the spike tool, and what two-way sync still needs |
 | [SCREEN.md](SCREEN.md) | Current | The rules and tools for comparing screens in the background, without Kirby's display |
 | [PRIVATE-FILES.md](PRIVATE-FILES.md) | Current | Make Private: how private files are stored, the threat model, and the Touch ID keychain audit |

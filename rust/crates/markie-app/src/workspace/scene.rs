@@ -7,7 +7,7 @@
 //! window server is never asked for pixels, so the window never has to be on
 //! screen and nothing on Kirby's display moves. Then the app quits.
 //!
-//! - `MARKIE_RS_SCENE`: `doc`, `csv`, `share`, `office-cloud`, `servers`, `vault`, `browse`,
+//! - `MARKIE_RS_SCENE`: `doc`, `csv`, `share`, `office-cloud`, `servers`, `vault`, `browse`, `settings`, `palette`, `shortcuts`, `welcome`,
 //!   `recent`, `launch`, `library`, `cloud`, `skills`, `history`, `nav`, `source` or `google`.
 //! - `MARKIE_RS_SCENE_ARGS`: a JSON object for the scene (see each one below).
 //! - `MARKIE_RS_SCENE_OUT`: the PNG to write.
@@ -575,6 +575,9 @@ impl Workspace {
                     let sources: Vec<String> = args.get("sources").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
                     self.cloud.sources = super::cloud_page::sources_from_setting(serde_json::to_string(&sources).ok().as_deref());
                     self.scene_cloud_menu(arg(args, "menu"), window, cx);
+                    // `select: [n, …]`: cards picked, as on the Recent page.
+                    let picks: Vec<u64> = args.get("select").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+                    self.scene_cloud_select(&picks, window, cx);
                     *step = 15;
                     cx.notify();
                     return false;

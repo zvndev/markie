@@ -528,6 +528,28 @@ mod tests {
     }
 
     #[test]
+    fn date_created_sorts_newest_first_and_unknown_last() {
+        let docs = vec![doc("a.md", 1., FormatKind::Markdown), doc("b.md", 1., FormatKind::Markdown), doc("c.md", 1., FormatKind::Markdown)];
+        let created: HashMap<PathBuf, f64> = [(PathBuf::from("/x/a.md"), 100.), (PathBuf::from("/x/c.md"), 300.)].into();
+        let hits = query_rows_created(&docs, &LibraryQuery::default(), SortOrder::Created, &HashMap::new(), &created);
+        let names: Vec<&str> = hits.iter().map(|h| docs[h.index].name.as_str()).collect();
+        assert_eq!(names, ["c.md", "a.md", "b.md"]);
+        // The Library panel keeps Electron's four orders; the Recent page adds this one.
+        assert!(!SortOrder::ALL.contains(&SortOrder::Created));
+        assert_eq!(SortOrder::RECENT_PAGE.last(), Some(&SortOrder::Created));
+        assert_eq!(SortOrder::Created.label(), "Date created");
+    }
+
+    #[test]
+    fn a_file_has_a_birth_time_and_a_missing_one_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Garden plan.md");
+        std::fs::write(&file, "beds").unwrap();
+        assert!(birth_ms(&file).is_some_and(|ms| ms > 0.));
+        assert_eq!(birth_ms(&dir.path().join("gone.md")), None);
+    }
+
+    #[test]
     fn sorts_and_filters_one_type() {
         let mut lib = Library::default();
         lib.set_snapshot(IndexSnapshot {

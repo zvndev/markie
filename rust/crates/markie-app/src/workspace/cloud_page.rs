@@ -869,6 +869,9 @@ impl Workspace {
             sections.push(Section::new(Some("Documents"), cards));
         }
         sections.push(snapshot_section);
+        if !super::recent_page::shows_created(self.shell.cloud_grid.view, width) {
+            sections.iter_mut().flat_map(|s| s.cards.iter_mut()).for_each(|c| c.created = None);
+        }
         let targets = Rc::new(targets);
         let grid = doc_grid::render(
             Grid {
@@ -1453,6 +1456,21 @@ impl Workspace {
 
 #[cfg(feature = "scene")]
 impl Workspace {
+    /// Scene mode: the cards at these places picked, as ⌘-clicks pick them.
+    pub(super) fn scene_cloud_select(&mut self, places: &[u64], window: &mut Window, cx: &mut Context<Self>) {
+        let Some(scope) = self.cloud.selected_scope() else { return };
+        let q = self.cloud_query(cx);
+        let ids: Vec<SharedString> = self.cloud_files(&scope, &q).shown.iter().map(|e| SharedString::from(e.key.clone())).collect();
+        for n in places {
+            if let Some(id) = ids.get(*n as usize) {
+                self.shell.cloud_grid.press(id, true, false);
+            }
+        }
+        if !places.is_empty() {
+            self.shell.cloud_grid.focus.focus(window, cx);
+        }
+    }
+
     /// Open one of the page's menus for a scene.
     pub(super) fn scene_cloud_menu(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.cloud.menu = match which {

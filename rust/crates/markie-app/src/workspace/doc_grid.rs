@@ -743,7 +743,7 @@ fn render_row<V: 'static>(card: DocCard, at_cursor: bool, selecting: bool, state
                     div().flex_none().when(!show, |el| el.invisible().group_hover(group.clone(), |s| s.visible())).child(action_button(&card.id, label, on_event.clone(), &p, cx))
                 })),
         )
-        .child(div().w(px(124.)).flex_none().min_w_0().truncate().text_size(px(11.5)).text_color(p.muted).children(card.created.clone()))
+        .when_some(card.created.clone(), |el, created| el.child(div().w(px(124.)).flex_none().min_w_0().truncate().text_size(px(11.5)).text_color(p.muted).child(created)))
         .child(h_flex().w(px(40.)).flex_none().justify_end().gap(px(2.)).children(marks(&card.id, &card.marks, &p)))
         .child(h_flex().w(px(46.)).flex_none().child(format_badge(card.format, &p)))
         .when(card.has_menu, |el| el.child(more_button(&card.id, &group, card.menu_open, at_cursor, on_event.clone(), &p, cx)))

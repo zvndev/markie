@@ -139,11 +139,12 @@ fn switch(on: bool, t: &Tokens) -> Div {
 }
 
 fn text(t: &Tokens) -> Div {
-    div().flex_1().min_w_0().text_size(px(12.)).text_color(t.muted)
+    // As the Projects row beside it: the title in full ink, the line under it muted.
+    div().flex_1().min_w_0().text_size(px(12.5)).text_color(t.foreground)
 }
 
 fn detail(t: &Tokens) -> Div {
-    div().mt(px(2.)).text_size(px(11.)).line_height(px(18.)).text_color(t.muted_soft())
+    div().mt(px(2.)).text_size(px(11.5)).line_height(px(18.)).text_color(t.muted)
 }
 
 /// A section label, a line of explanation and a button on the right.

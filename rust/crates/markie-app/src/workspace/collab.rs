@@ -1110,6 +1110,7 @@ mod shared_by_tests {
             name: format!("{id}.md"),
             version: 1,
             hash: None,
+            created_at: None,
             updated_at: None,
             shared: by.is_some(),
             role: None,

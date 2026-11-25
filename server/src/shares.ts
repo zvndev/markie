@@ -209,7 +209,7 @@ export function shareAccessSummary(docId: string, userId: string) {
 export function sharedDocsFor(userId: string) {
   return db
     .prepare(
-      `SELECT d.id, d.name, d.version, d.hash, d.updated_at, s.role,
+      `SELECT d.id, d.name, d.version, d.hash, d.created_at, d.updated_at, s.role,
               COALESCE(NULLIF(inviter.name, ''), inviter.email) AS shared_by
        FROM shares s
        JOIN docs d ON d.id = s.doc_id
@@ -222,6 +222,7 @@ export function sharedDocsFor(userId: string) {
     name: string;
     version: number;
     hash: string;
+    created_at: string | null;
     updated_at: string;
     role: string;
     shared_by: string | null;

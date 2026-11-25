@@ -1,5 +1,5 @@
 //! Settings, laid out like `src/components/settings.tsx`: Account,
-//! Appearance, Files and Advanced tabs in a 680pt overlay panel. Controls
+//! Appearance, Files, Agents (Markie RS's own) and Advanced tabs in a 680pt overlay panel. Controls
 //! for features Markie RS does not have yet are drawn the same way, greyed,
 //! with a "Not in Markie RS yet" tag, so the layout matches Electron's.
 
@@ -14,10 +14,11 @@ use crate::themes;
 
 pub(crate) const NOT_YET: &str = "Not in Markie RS yet";
 
-const SECTIONS: [(SettingsSection, &str); 4] = [
+const SECTIONS: [(SettingsSection, &str); 5] = [
     (SettingsSection::Account, "Account"),
     (SettingsSection::Appearance, "Appearance"),
     (SettingsSection::Files, "Files"),
+    (SettingsSection::Agents, "Agents"),
     (SettingsSection::Advanced, "Advanced"),
 ];
 
@@ -108,6 +109,7 @@ impl Workspace {
             SettingsSection::Account => self.render_account_section(t, cx),
             SettingsSection::Appearance => self.render_appearance_live(colors_open, t, window, cx),
             SettingsSection::Files => render_files(t),
+            SettingsSection::Agents => self.render_agents_section(t, cx),
             SettingsSection::Advanced => self.render_advanced(t, window, cx),
         };
         self.panel(t, 12.)

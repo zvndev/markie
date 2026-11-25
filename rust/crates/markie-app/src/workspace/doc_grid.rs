@@ -37,7 +37,8 @@ use crate::themes::{Palette, hex, mix};
 pub const CARD_MIN: f32 = 188.;
 pub const GAP: f32 = 16.;
 const THUMB_H: f32 = 138.;
-const FOOT_H: f32 = 58.;
+/// Name, type and age, then when it was created.
+const FOOT_H: f32 = 74.;
 pub const CARD_H: f32 = THUMB_H + FOOT_H;
 const HEADER_H: f32 = 34.;
 const LIST_ROW_H: f32 = 36.;
@@ -133,6 +134,9 @@ pub struct DocCard {
     pub menu_open: bool,
     /// One text button on the card, such as "Remove" or "Manage".
     pub action: Option<SharedString>,
+    /// "Created Nov 3": a line on the card, a column in the list. None when
+    /// the time is unknown, and then nothing is shown.
+    pub created: Option<SharedString>,
 }
 
 impl DocCard {
@@ -150,6 +154,7 @@ impl DocCard {
             has_menu: true,
             menu_open: false,
             action: None,
+            created: None,
         }
     }
 }
@@ -569,7 +574,8 @@ fn render_card<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) 
                 .child(format_badge(card.format, &p))
                 .child(div().flex_1().min_w_0().truncate().text_size(px(11.)).line_height(px(16.)).text_color(if card.missing { p.red } else { p.muted }).child(card.meta.clone()))
                 .children(action),
-        );
+        )
+        .child(div().h(px(14.)).min_w_0().truncate().text_size(px(11.)).line_height(px(14.)).text_color(p.muted).children(card.created.clone()));
     let thumb = div().h(px(THUMB_H)).flex_none().relative().overflow_hidden().bg(tray).child(match &card.thumb {
         Thumb::Page(preview) => sheet(&p).children(preview.blocks.iter().map(|b| block(b, &p))).into_any_element(),
         Thumb::Loading => sheet(&p).into_any_element(),
@@ -608,6 +614,7 @@ fn render_row<V: 'static>(card: DocCard, at_cursor: bool, state_of: fn(&mut V) -
                     div().flex_none().when(!show, |el| el.invisible().group_hover(group.clone(), |s| s.visible())).child(action_button(&card.id, label, on_event.clone(), &p, cx))
                 })),
         )
+        .child(div().w(px(124.)).flex_none().min_w_0().truncate().text_size(px(11.5)).text_color(p.muted).children(card.created.clone()))
         .child(h_flex().w(px(40.)).flex_none().justify_end().gap(px(2.)).children(marks(&card.id, &card.marks, &p)))
         .child(h_flex().w(px(46.)).flex_none().child(format_badge(card.format, &p)))
         .when(card.has_menu, |el| el.child(more_button(&card.id, &group, card.menu_open, at_cursor, on_event.clone(), &p, cx)))

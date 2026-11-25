@@ -148,9 +148,9 @@ impl Workspace {
         self.compute_projects(cx);
     }
 
-    /// "Edit how this is organized": open `Projects.md`, writing the template
+    /// Settings › Agents › "Organizing rules for Projects": open `Projects.md`, writing the template
     /// only now if it does not exist.
-    fn open_projects_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_projects_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match markie_core::projects::config::ensure_config(&paths::default_root()) {
             Ok(cfg) => self.open_path(&cfg.path, window, cx),
             Err(e) => eprintln!("markie-rs: Projects.md unavailable: {e}"),
@@ -295,20 +295,6 @@ impl Workspace {
                 .flex_1()
                 .into_any_element()
             })
-            .child(
-                div()
-                    .id("projects-config")
-                    .flex_none()
-                    .border_t_1()
-                    .border_color(p.border)
-                    .px(px(12.))
-                    .py(px(6.))
-                    .text_size(px(11.))
-                    .text_color(p.muted)
-                    .hover(|s| s.text_color(p.foreground))
-                    .child("Edit how this is organized")
-                    .on_click(cx.listener(|this, _, window, cx| this.open_projects_config(window, cx))),
-            )
             .into_any_element()
     }
 }

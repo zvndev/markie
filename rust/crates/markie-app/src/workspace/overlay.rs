@@ -24,6 +24,9 @@ pub(crate) enum SettingsSection {
     Account,
     Appearance,
     Files,
+    /// Skills & agent files, the Projects rules and MCP: off the rail until
+    /// turned on here, since not everyone uses agents.
+    Agents,
     Advanced,
 }
 

@@ -27,10 +27,15 @@ pub enum SortOrder {
     Recent,
     Name,
     Type,
+    /// "Date created", newest first; Markie RS's own, on the Recent page.
+    Created,
 }
 
 impl SortOrder {
+    /// The Library panel's menu, as Electron's.
     pub const ALL: [SortOrder; 4] = [SortOrder::Default, SortOrder::Recent, SortOrder::Name, SortOrder::Type];
+    /// The Recent page's menu: Electron's, then Date created.
+    pub const RECENT_PAGE: [SortOrder; 5] = [SortOrder::Default, SortOrder::Recent, SortOrder::Name, SortOrder::Type, SortOrder::Created];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -38,6 +43,7 @@ impl SortOrder {
             SortOrder::Recent => "Most recent",
             SortOrder::Name => "Name",
             SortOrder::Type => "Type",
+            SortOrder::Created => "Date created",
         }
     }
 }
@@ -86,6 +92,17 @@ pub struct Library {
     /// Recent rows whose file is gone (`exists: false`): still listed,
     /// "Missing on disk".
     missing: std::collections::HashSet<PathBuf>,
+    /// When each Recent row's file was made (its birth time), in ms. Absent
+    /// when the file system does not say.
+    created_at: HashMap<PathBuf, f64>,
+}
+
+/// A file's creation time (birth time on macOS), in ms; None when the file
+/// system does not keep one or the file is gone.
+pub fn birth_ms(path: &std::path::Path) -> Option<f64> {
+    let made = std::fs::metadata(path).ok()?.created().ok()?;
+    let ms = made.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as f64;
+    (ms > 0.).then_some(ms)
 }
 
 impl Library {
@@ -198,6 +215,23 @@ impl Library {
             })
             .collect();
         (rows, missing)
+    }
+
+    /// Birth times for these rows, each a stat: call it off the main thread.
+    pub fn created_for(rows: &[IndexedDoc]) -> HashMap<PathBuf, f64> {
+        rows.iter().filter_map(|r| Some((r.path.clone(), birth_ms(&r.path)?))).collect()
+    }
+
+    pub fn set_created_at(&mut self, created: HashMap<PathBuf, f64>) {
+        self.created_at = created;
+        if self.sort == SortOrder::Created && self.tab != LibraryTab::All {
+            self.refresh();
+        }
+    }
+
+    /// When a row's file was created, in ms; None when unknown.
+    pub fn created_ms(&self, path: &std::path::Path) -> Option<f64> {
+        self.created_at.get(path).copied().filter(|t| t.is_finite() && *t > 0.)
     }
 
     pub fn set_rows(&mut self, recent: Vec<IndexedDoc>, missing: std::collections::HashSet<PathBuf>, starred: Vec<IndexedDoc>) {
@@ -317,7 +351,7 @@ impl Library {
         if self.tab != LibraryTab::All {
             // The Library panel's lists filter and sort like Electron's
             // `queryLibraryDocuments`, never ranking or reading bodies.
-            self.hits = query_rows(self.source(), &self.query, self.sort, &self.opened_at);
+            self.hits = query_rows_created(self.source(), &self.query, self.sort, &self.opened_at, &self.created_at);
             return;
         }
         let mut hits = self.docs_index.search(self.source(), &self.query);
@@ -327,6 +361,8 @@ impl Library {
             SortOrder::Recent => hits.sort_by(|a, b| docs[b.index].mtime_ms.total_cmp(&docs[a.index].mtime_ms)),
             SortOrder::Name => hits.sort_by_key(|h| docs[h.index].name.to_lowercase()),
             SortOrder::Type => hits.sort_by_key(|h| (docs[h.index].format.label(), docs[h.index].name.to_lowercase())),
+            // The index keeps no birth times: Browse never offers this order.
+            SortOrder::Created => {}
         }
         self.hits = hits;
     }
@@ -368,7 +404,20 @@ fn matches_row(doc: &IndexedDoc, query: &LibraryQuery) -> bool {
 /// `queryLibraryDocuments` over rows in the panel's order (newest open
 /// first): filter, then a stable sort by `compareLibraryDocuments`. Its key
 /// is the path; "Most recent" compares `lastOpenedAt` (0 when unknown).
+#[cfg(test)]
 pub fn query_rows(docs: &[IndexedDoc], query: &LibraryQuery, sort: SortOrder, opened_at: &HashMap<PathBuf, f64>) -> Vec<Hit> {
+    query_rows_created(docs, query, sort, opened_at, &HashMap::new())
+}
+
+/// [`query_rows`] with birth times, for "Date created": newest first, rows
+/// with no known time last.
+pub fn query_rows_created(
+    docs: &[IndexedDoc],
+    query: &LibraryQuery,
+    sort: SortOrder,
+    opened_at: &HashMap<PathBuf, f64>,
+    created_at: &HashMap<PathBuf, f64>,
+) -> Vec<Hit> {
     let mut hits: Vec<Hit> = (0..docs.len())
         .filter(|&i| matches_row(&docs[i], query))
         .map(|index| Hit { index, score: 0, excerpt: None, marks: Vec::new() })
@@ -386,6 +435,10 @@ pub fn query_rows(docs: &[IndexedDoc], query: &LibraryQuery, sort: SortOrder, op
         SortOrder::Type => hits.sort_by(|a, b| {
             library_format_id(docs[a.index].format).cmp(library_format_id(docs[b.index].format)).then_with(|| tie(a.index, b.index))
         }),
+        SortOrder::Created => {
+            let made = |i: usize| created_at.get(&docs[i].path).copied().filter(|t| t.is_finite() && *t > 0.).unwrap_or(0.);
+            hits.sort_by(|a, b| made(b.index).total_cmp(&made(a.index)).then_with(|| tie(a.index, b.index)))
+        }
     }
     hits
 }

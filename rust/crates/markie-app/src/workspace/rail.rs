@@ -111,7 +111,9 @@ pub(super) struct Shell {
     pub _copy_task: Task<()>,
     pub view: LeftView,
     pub panel_open: bool,
-    previous_panel: LeftView,
+    pub(super) previous_panel: LeftView,
+    /// Settings › Agents › "Show Skills & agent files in the sidebar".
+    pub skills_enabled: bool,
     rail_hover: Option<&'static str>,
     pub panel_width: f32,
     /// A resizer drag: where it started and the width then.
@@ -206,6 +208,7 @@ impl Shell {
             view: LeftView::Library,
             panel_open: false,
             previous_panel: LeftView::Library,
+            skills_enabled: false,
             rail_hover: None,
             panel_width: PANEL_DEFAULT_WIDTH,
             panel_drag: None,
@@ -616,19 +619,19 @@ impl Workspace {
                 cx,
                 |this, _, cx| this.select_view(LeftView::Cloud, cx),
             ))
-            .child(self.rail_button(
-                "rail-skills",
-                "markie/skills.svg",
-                "Skills & agent files",
-                active(LeftView::Skills),
-                false,
-                &p,
-                cx,
-                |this, window, cx| {
-                    this.prepare_skills(window, cx);
-                    this.select_view(LeftView::Skills, cx);
-                },
-            ))
+            // Off the rail until Settings › Agents turns it on.
+            .when(self.shell.skills_enabled, |el| {
+                el.child(self.rail_button(
+                    "rail-skills",
+                    "markie/skills.svg",
+                    "Skills & agent files",
+                    active(LeftView::Skills),
+                    false,
+                    &p,
+                    cx,
+                    |this, window, cx| this.show_skills(window, cx),
+                ))
+            })
             .child(self.rail_button(
                 "rail-vault",
                 "markie/vault.svg",
@@ -1277,7 +1280,7 @@ impl Workspace {
             return self.render_recent_page(window, cx);
         }
         if self.shell.view == LeftView::Browse {
-            return self.render_browse_page(cx);
+            return self.render_browse_page(window, cx);
         }
         if self.shell.view == LeftView::Cloud {
             return self.render_cloud_workspace(window, cx);

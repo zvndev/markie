@@ -31,6 +31,7 @@ use crate::library::{Library, PreparedSnapshot};
 pub(crate) mod account;
 mod account_slot;
 mod agents;
+mod agents_setting;
 mod appearance;
 mod style_ui;
 mod chrome;
@@ -444,6 +445,7 @@ impl Workspace {
             }
         }
         this.load_link_previews(cx);
+        this.load_skills_setting();
         this.refresh_lists(cx);
         this.restore_browse_open();
         this.restore_panel_width(window);
@@ -525,14 +527,19 @@ impl Workspace {
         self.lists_generation += 1;
         let generation = self.lists_generation;
         cx.spawn(async move |this, cx| {
-            let (recent, starred) = cx
-                .background_spawn(async move { (Library::recent_rows_for(recent), Library::rows_for(starred)) })
+            let (recent, starred, created) = cx
+                .background_spawn(async move {
+                    let recent = Library::recent_rows_for(recent);
+                    let created = Library::created_for(&recent.0);
+                    (recent, Library::rows_for(starred), created)
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if this.lists_generation == generation {
                     this.library.set_rows(Vec::new(), Default::default(), starred.clone());
                     let (recent, missing) = recent;
                     this.shell.recent.set_rows(recent, missing, starred);
+                    this.shell.recent.set_created_at(created);
                     this.shell.lists_loaded = true;
                     this.shell.invalidate_browse();
                     cx.notify();
@@ -1944,7 +1951,7 @@ impl Render for Workspace {
                 if self.history_page_open() {
                     return root.child(self.render_history_page(window, cx));
                 }
-                root.child(self.render_title_bar(cx)).child(
+                root.child(self.render_title_bar(window, cx)).child(
                     h_flex()
                         .flex_1()
                         .min_h_0()

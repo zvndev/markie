@@ -38,7 +38,19 @@ pub(super) const PAGE_PAD: f32 = 20.;
 /// The width a page's grid has in a window this wide: all of it, so the
 /// grid lines up with the header and adds columns as the window widens.
 pub(super) fn page_width(viewport: f32) -> f32 {
-    (viewport - RAIL_WIDTH - 2. * PAGE_PAD).max(doc_grid::CARD_MIN)
+    ((viewport - RAIL_WIDTH).min(PAGE_MAX) - 2. * PAGE_PAD).max(doc_grid::CARD_MIN)
+}
+
+/// The widest the column of a document page (Recent, Cloud, Browse) gets,
+/// padding included: about six cards, or a list row whose name, age and
+/// badge still read as one line. Past it the page centres the column.
+pub(super) const PAGE_MAX: f32 = 1200.;
+
+/// Extra room on each side of the column once the window is wider than
+/// [`PAGE_MAX`]. The header and toolbar add it to their padding, so their
+/// hairlines still run the full width while every row lines up.
+pub(super) fn page_gutter(viewport: f32) -> f32 {
+    ((viewport - RAIL_WIDTH - PAGE_MAX) / 2.).max(0.).floor()
 }
 
 // ------------------------------------------------------------------ model
@@ -115,6 +127,21 @@ fn ago(then: chrono::DateTime<chrono::Local>, now: chrono::DateTime<chrono::Loca
         _ if then.year() == now.year() => then.format("%b %-d").to_string(),
         _ => then.format("%b %-d, %Y").to_string(),
     }
+}
+
+/// "Created today", "Created yesterday", "Created Nov 3", "Created Nov 3,
+/// 2025": a calendar day, since the hour a file was made rarely matters.
+/// None when the time is unknown, so nothing is shown rather than a guess.
+pub(super) fn created_line(ms: Option<f64>, now: chrono::DateTime<chrono::Local>) -> Option<String> {
+    use chrono::Datelike as _;
+    let then = local(ms?)?;
+    let day = match (now.date_naive() - then.date_naive()).num_days() {
+        d if d <= 0 => "today".to_string(),
+        1 => "yesterday".to_string(),
+        _ if then.year() == now.year() => then.format("%b %-d").to_string(),
+        _ => then.format("%b %-d, %Y").to_string(),
+    };
+    Some(format!("Created {day}"))
 }
 
 /// A card's quiet line: when it was opened, or when the file last changed
@@ -303,9 +330,11 @@ impl Workspace {
         let (total, shown) = (recent.total(), recent.hits().len());
         let starred = recent.tab == LibraryTab::Starred;
         let width = page_width(f32::from(window.viewport_size().width));
+        let gutter = page_gutter(f32::from(window.viewport_size().width));
         let now = chrono::Local::now();
 
         let header = ui::page_header("markie/recent.svg", "Recent", &p)
+            .px(px(20. + gutter))
             .when(self.shell.lists_loaded && (total > 0 || starred), |el| el.child(ui::hint(count_line(shown, total), &p)))
             .child(div().flex_1())
             .child(ui::button("recent-open", "Open file", None, Tone::Quiet, false, &p).on_click(|_, window, cx| window.dispatch_action(Box::new(Open), cx)))
@@ -342,6 +371,7 @@ impl Workspace {
                 card.meta = meta_line(recent.opened_ms(&doc.path), doc.mtime_ms, missing, now).into();
                 card.thumb = if missing { Thumb::Tile } else { self.file_thumb(&doc.path, doc.mtime_ms, doc.size) };
                 card.missing = missing;
+                card.created = if missing { None } else { created_line(recent.created_ms(&doc.path), now).map(Into::into) };
                 card.openable = !missing;
                 card.current = current.as_deref() == Some(doc.path.as_path());
                 card.menu_open = self.shell.row_menu.as_ref().is_some_and(|(open, _)| *open == doc.path);
@@ -381,7 +411,7 @@ impl Workspace {
             .bg(p.background)
             .child(header)
             // With no documents at all there is nothing to filter, as on Browse.
-            .when(!(self.shell.lists_loaded && total == 0 && !starred && !recent.query_active()), |el| el.child(self.render_recent_toolbar(&p, cx)))
+            .when(!(self.shell.lists_loaded && total == 0 && !starred && !recent.query_active()), |el| el.child(self.render_recent_toolbar(&p, cx).px(px(20. + gutter))))
             .child(
                 div()
                     .id("recent-page-scroll")
@@ -389,7 +419,7 @@ impl Workspace {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.shell.recent_grid.scroll)
-                    .px(px(PAGE_PAD))
+                    .px(px(PAGE_PAD + gutter))
                     .pt(px(8.))
                     .pb(px(28.))
                     .child(body),
@@ -399,7 +429,7 @@ impl Workspace {
 
     /// One row, laid out as the Browse page's: filter by name, type, sort,
     /// Starred, then grid or list.
-    fn render_recent_toolbar(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_recent_toolbar(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
         let p = *p;
         let recent = &self.shell.recent;
         let menu = self.shell.filter_menu;
@@ -414,7 +444,7 @@ impl Workspace {
                 .when(menu == Some(which), |el| el.child(self.render_recent_menu(which, &p, cx)))
         };
         ui::toolbar(&p)
-            .child(div().flex_1().min_w(px(180.)).max_w(px(460.)).child(filter_field(&self.shell.recent_filter, 13., &p)))
+            .child(div().flex_1().min_w(px(120.)).max_w(px(460.)).child(filter_field(&self.shell.recent_filter, 13., &p)))
             .child(dropdown(FilterMenu::RecentType, "recent-type", type_label, 150., cx))
             .child(dropdown(FilterMenu::RecentSort, "recent-sort", recent.sort.label(), 150., cx))
             .child(
@@ -437,7 +467,7 @@ impl Workspace {
     fn render_recent_menu(&self, menu: FilterMenu, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *p;
         let rows: Vec<AnyElement> = match menu {
-            FilterMenu::RecentSort => SortOrder::ALL
+            FilterMenu::RecentSort => SortOrder::RECENT_PAGE
                 .iter()
                 .enumerate()
                 .map(|(i, sort)| {
@@ -523,6 +553,7 @@ impl Workspace {
             match text("sort").as_str() {
                 "name" => self.shell.recent.set_sort(SortOrder::Name),
                 "type" => self.shell.recent.set_sort(SortOrder::Type),
+                "created" => self.shell.recent.set_sort(SortOrder::Created),
                 _ => {}
             }
             match text("menu").as_str() {
@@ -687,8 +718,12 @@ mod tests {
 
     #[test]
     fn the_page_is_as_wide_as_the_window_allows() {
-        assert_eq!(page_width(1280.), 1280. - 52. - 40.);
-        assert_eq!(page_width(2400.), 2400. - 52. - 40.);
+        assert_eq!(page_width(1200.), 1200. - 52. - 40.);
+        // Past the column's width the page stops growing and centres it.
+        assert_eq!(page_width(1280.), PAGE_MAX - 40.);
+        assert_eq!(page_width(2400.), PAGE_MAX - 40.);
+        assert_eq!(page_gutter(1200.), 0.);
+        assert_eq!(page_gutter(2400.), ((2400. - 52. - PAGE_MAX) / 2.f32).floor());
         assert_eq!(page_width(100.), 188.);
     }
 

@@ -934,3 +934,13 @@ test("markdownLink escapes exactly as the contract says", () => {
   assert.equal(markdownLink("*bold*_x_ (1).md", link), `[*bold*_x_ (1).md](${link})`);
   assert.equal(markdownLinkFor("Plan.md", "id 1"), `[Plan.md](${ORIGIN}/d/id%201)`);
 });
+
+test("GET /api/docs carries each document's created_at, for the Cloud page's Created column", async () => {
+  const gail = await signUpVerified(app, { name: "Gail", email: "gail@markie.test" });
+  const own = await appDoc(gail, "Garden plan.md", "beds and paths");
+  const docsList = (await call("GET", "/api/docs", { token: gail.token })).data.docs as { id: string; created_at: string | null; updated_at: string }[];
+  const row = docsList.find((d) => d.id === own);
+  assert.ok(row, "the new document is listed");
+  assert.match(String(row.created_at), /^\d{4}-\d{2}-\d{2}T/, "created_at is an ISO time");
+  assert.ok(row.created_at! <= row.updated_at, "it was created no later than it was last changed");
+});

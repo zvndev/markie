@@ -123,6 +123,27 @@ pub(super) fn vrule(p: &Palette) -> Div {
 
 // ---------------------------------------------------------------- workspace
 
+/// The room between the traffic lights' 82pt and the 16pt right margin.
+fn title_bar_content_width(viewport: f32) -> f32 {
+    (viewport - 82. - 16.).max(0.)
+}
+
+/// Below this the title bar drops the wordmark.
+fn title_bar_narrow(viewport: f32) -> bool {
+    viewport < 900.
+}
+
+#[cfg(test)]
+mod title_bar_tests {
+    #[test]
+    fn the_title_bar_fits_the_window_and_drops_the_wordmark_when_narrow() {
+        assert_eq!(super::title_bar_content_width(1280.), 1280. - 98.);
+        assert_eq!(super::title_bar_content_width(40.), 0.);
+        assert!(super::title_bar_narrow(760.));
+        assert!(!super::title_bar_narrow(1280.));
+    }
+}
+
 impl Workspace {
     /// Apply and remember a colour mode. System follows macOS from here on,
     /// including changes while Markie RS runs (see `on_appearance_changed`).
@@ -232,7 +253,7 @@ impl Workspace {
 
     // ------------------------------------------------------------ render
 
-    pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_title_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = themes::palette(cx);
         // An untitled buffer shows no name, as Electron's null fileName.
         // document-workspace.tsx: the vault page names the window "Protected
@@ -258,14 +279,19 @@ impl Workspace {
             p.surface.into()
         };
 
+        // The left group gives way first on a narrow window: the file name
+        // truncates, then the group clips, and Share always stays on screen.
         let left = h_flex()
+            .flex_1()
             .min_w_0()
+            .overflow_hidden()
             .gap(px(10.))
-            .child(self.render_wordmark(&p))
-            .child(vrule(&p))
+            // Narrow: the wordmark steps aside so the file name stays legible.
+            .when(!title_bar_narrow(f32::from(window.viewport_size().width)), |el| el.child(self.render_wordmark(&p)).child(vrule(&p)))
             .child(self.render_nav_buttons(&p, cx))
             .child(
                 h_flex()
+                    .flex_1()
                     .min_w_0()
                     .gap(px(10.))
                     .child(self.action_button(
@@ -280,7 +306,7 @@ impl Workspace {
                         el.child(no_drag(
                             div()
                                 .id("tb-name")
-                                .min_w_0()
+                                .min_w(px(64.))
                                 .max_w(px(288.))
                                 .flex()
                                 .items_center()
@@ -351,7 +377,17 @@ impl Workspace {
             .pr(px(16.))
             .bg(bg)
             .border_color(if p.dark { p.border } else { p.border })
-            .child(h_flex().w_full().h_full().justify_between().gap(px(12.)).child(left).child(right))
+            .child(
+                // A definite width: the kit's bar never shrinks below its
+                // content, so without one a narrow window pushed Share off.
+                h_flex()
+                    .w(px(title_bar_content_width(f32::from(window.viewport_size().width))))
+                    .h_full()
+                    .justify_between()
+                    .gap(px(12.))
+                    .child(left)
+                    .child(right),
+            )
     }
 
     /// The lockup at 64px: lettering in the text colour at 90%, the underline

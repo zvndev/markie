@@ -604,7 +604,7 @@ mod tests {
     }
 
     fn meta(id: &str, v: i64, shared: bool, out: Option<bool>) -> DocMeta {
-        DocMeta { id: id.into(), name: id.into(), version: v, hash: None, updated_at: None, shared, role: shared.then_some(Role::Editor), shared_by: None, shared_out: out, area_id: None }
+        DocMeta { id: id.into(), name: id.into(), version: v, hash: None, created_at: None, updated_at: None, shared, role: shared.then_some(Role::Editor), shared_by: None, shared_out: out, area_id: None }
     }
 
     #[test]

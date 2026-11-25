@@ -201,6 +201,7 @@ impl Workspace {
                         self.set_width_step(w as f32, cx);
                     }
                     if arg(args, "panel") == "skills" {
+                        self.shell.skills_enabled = true;
                         self.select_view(super::rail::LeftView::Skills, cx);
                     }
                     let font = arg(args, "font").to_string();
@@ -363,6 +364,8 @@ impl Workspace {
                     if let Some(width) = args.get("width").and_then(Value::as_f64) {
                         self.shell.panel_width = width as f32;
                     }
+                    // The panel is off by default (Settings › Agents).
+                    self.shell.skills_enabled = true;
                     if !(self.shell.panel_open && self.shell.view == super::rail::LeftView::Skills) {
                         self.select_view(super::rail::LeftView::Skills, cx);
                     }
@@ -383,6 +386,64 @@ impl Workspace {
             // {ops: [...]}: Source mode on the file passed on the command
             // line, the CodeMirror keys run in order; see `scene_source`.
             "source" => self.scene_source(args, step, window, cx),
+            // {section: "account" | "appearance" | "files" | "agents" | "advanced",
+            //  skills?: true}: a Settings tab as its tab opens it. `skills`
+            //  turns on the Skills panel first, as the Agents switch does.
+            "settings" => {
+                if *step == 0 {
+                    use super::overlay::SettingsSection as S;
+                    if args.get("skills").and_then(Value::as_bool).unwrap_or(false) {
+                        self.set_skills_enabled(true, cx);
+                    }
+                    let section = match arg(args, "section") {
+                        "appearance" => S::Appearance,
+                        "files" => S::Files,
+                        "agents" => S::Agents,
+                        "advanced" => S::Advanced,
+                        _ => S::Account,
+                    };
+                    self.open_settings(section, window, cx);
+                    *step = 1;
+                    return false;
+                }
+                *step += 1;
+                *step > 6
+            }
+            // {query?}: the command palette, with words typed in its field.
+            "palette" => {
+                if *step == 0 {
+                    window.dispatch_action(Box::new(crate::actions::CommandPalette), cx);
+                    *step = 1;
+                    return false;
+                }
+                if *step == 1 {
+                    let query = arg(args, "query").to_string();
+                    if !query.is_empty() {
+                        self.scene_palette_type(&query, window, cx);
+                    }
+                }
+                *step += 1;
+                *step > 6
+            }
+            // The keyboard shortcuts sheet, as ⌘/ opens it.
+            "shortcuts" => {
+                if *step == 0 {
+                    window.dispatch_action(Box::new(crate::actions::ShowShortcuts), cx);
+                    *step = 1;
+                    return false;
+                }
+                *step += 1;
+                *step > 6
+            }
+            // A first launch with no file: the welcome document. Needs an
+            // empty scratch data folder.
+            "welcome" => {
+                if self.doc.is_none() {
+                    return false;
+                }
+                *step += 1;
+                *step > 6
+            }
             other => {
                 eprintln!("markie-rs scene: unknown scene {other}");
                 true

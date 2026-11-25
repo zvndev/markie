@@ -48,7 +48,12 @@ pub(super) struct PaletteContext {
     pub csv: bool,
     /// The super-nightly switch.
     pub nightly: bool,
+    /// Settings › Agents has the Skills panel off.
+    pub skills_hidden: bool,
 }
+
+/// The palette entry while the Skills panel is off.
+pub(super) const SKILLS_TURN_ON: &str = "Turn On Skills & Agent Files (Settings › Agents)";
 
 /// Every command, in Electron's order (`commands` in `src/app/page.tsx`),
 /// with the commands Markie RS adds at the end. The shortcuts sheet reads
@@ -126,11 +131,15 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
             ws.browse_focus_filter(window, cx);
         })),
         cmd("Cloud…", "File", None, "synced shared sharing people cloud sync backup invited", action(ShowCloud)),
-        cmd("Skills & agent files…", "File", None, "claude agents codex gemini cursor instructions", Rc::new(|ws, w, cx| {
-            // As the rail button does: the panel is built on first show.
-            ws.prepare_skills(w, cx);
-            ws.select_view(super::rail::LeftView::Skills, cx);
-        })),
+        if ctx.skills_hidden {
+            // Off in Settings: the entry says so, and choosing it turns it on.
+            cmd(SKILLS_TURN_ON, "File", None, "skills agent files claude agents codex gemini cursor instructions settings sidebar", Rc::new(|ws, w, cx| {
+                ws.set_skills_enabled(true, cx);
+                ws.show_skills(w, cx);
+            }))
+        } else {
+            cmd("Skills & agent files…", "File", None, "claude agents codex gemini cursor instructions", Rc::new(|ws, w, cx| ws.show_skills(w, cx)))
+        },
         cmd("New file", "File", Some("⌘N"), "blank create empty document", action(NewDocument)),
         cmd("Share…", "File", None, "collaborate invite live people sync cloud link", Rc::new(|ws, w, cx| ws.open_share(w, cx))),
         cmd("History…", "File", None, "versions restore snapshot revert previous", action(ShowHistory)),
@@ -227,6 +236,15 @@ pub(super) struct PaletteState {
 }
 
 impl Workspace {
+    /// Scene mode: words in the palette's field, as if typed.
+    #[cfg(feature = "scene")]
+    pub(super) fn scene_palette_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Overlay::Palette(p) = &self.dialogs.open {
+            let input = p.input.clone();
+            input.update(cx, |i, cx| i.set_value(text.to_string(), window, cx));
+        }
+    }
+
     pub(super) fn on_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.dialogs.open, Overlay::Palette(_)) {
             self.close_dialog(window, cx);
@@ -258,6 +276,7 @@ impl Workspace {
             editable: text.is_some_and(|d| !d.large),
             csv: doc.is_some_and(|d| d.format == markie_core::formats::FormatKind::Csv),
             nightly: super::comments::nightly(self.registry.as_deref()),
+            skills_hidden: !self.shell.skills_enabled,
         }
     }
 

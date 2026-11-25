@@ -73,8 +73,9 @@ fn truncation_text(why: Option<Truncation>) -> &'static str {
 
 impl Workspace {
     /// The whole page, in place of the document.
-    pub(in crate::workspace) fn render_browse_page(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(in crate::workspace) fn render_browse_page(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = themes::palette(cx);
+        let gutter = super::super::recent_page::page_gutter(f32::from(window.viewport_size().width));
         let lib = &self.library;
         let view = self.shell.browse.view.clone().unwrap_or_default();
         let total = lib.docs().len();
@@ -90,7 +91,7 @@ impl Workspace {
             .gap(px(10.))
             .border_b_1()
             .border_color(p.border)
-            .px(px(20.))
+            .px(px(20. + gutter))
             .child(div().flex_none().text_color(p.foreground).child(Icon::new(IconName::Laptop)))
             .child(div().flex_none().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Documents on this Mac"))
             .when(lib.scanning, |el| el.child(Spinner::new().small().color(p.muted)))
@@ -130,15 +131,19 @@ impl Workspace {
                 ))
                 .into_any_element();
         }
-        page.child(self.render_browse_toolbar(&p, cx))
+        page.child(self.render_browse_toolbar(&p, cx).px(px(20. + gutter)))
             .when(lib.truncated, |el| {
-                el.child(div().flex_none().px(px(20.)).pt(px(12.)).child(banner(Kind::Info, truncation_text(lib.truncation), &p)))
+                el.child(div().flex_none().px(px(20. + gutter)).pt(px(12.)).child(banner(Kind::Info, truncation_text(lib.truncation), &p)))
             })
             .child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
+                    // The tree and the list share the page's column; past it the
+                    // column is closed by hairlines on both sides.
+                    .mx(px(gutter))
+                    .when(gutter > 0., |el| el.border_x_1().border_color(p.border))
                     .child(self.render_browse_tree(view.clone(), &p, cx))
                     .child(self.render_browse_pane(view, &p, cx)),
             )
@@ -146,7 +151,7 @@ impl Workspace {
     }
 
     /// Find, type, sort and starred, in one row.
-    fn render_browse_toolbar(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_browse_toolbar(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
         let p = *p;
         let lib = &self.library;
         let typed = !lib.text().trim().is_empty();

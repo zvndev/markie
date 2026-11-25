@@ -89,10 +89,22 @@ pub(super) enum Sort {
     Recent,
     Name,
     Type,
+    /// Newest first; documents with no known time last.
+    Created,
 }
 
-pub(super) const SORTS: [(Sort, &str); 4] =
-    [(Sort::Default, "Default order"), (Sort::Recent, "Most recent"), (Sort::Name, "Name"), (Sort::Type, "Type")];
+pub(super) const SORTS: [(Sort, &str); 5] =
+    [(Sort::Default, "Default order"), (Sort::Recent, "Most recent"), (Sort::Name, "Name"), (Sort::Type, "Type"), (Sort::Created, "Date created")];
+
+/// When an entry was created, in ms: the server's time for a document it
+/// lists, the file's birth time for one only on this Mac. None when unknown.
+pub(super) fn entry_created_ms(e: &Entry) -> Option<f64> {
+    match &e.doc {
+        Some(d) => d.created_at.as_deref().and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok()).map(|d| d.timestamp_millis() as f64),
+        None if e.share.is_none() => e.path.as_deref().and_then(crate::library::birth_ms),
+        None => None,
+    }
+}
 
 /// `LibraryDocumentQuery`.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -264,6 +276,7 @@ pub(super) fn query(rows: Vec<Entry>, q: &Query) -> Vec<Entry> {
             let primary = match q.sort {
                 Sort::Recent => time(b.updated_at.as_deref()).cmp(&time(a.updated_at.as_deref())),
                 Sort::Type => format_key(format_of(&a.name)).cmp(format_key(format_of(&b.name))),
+                Sort::Created => entry_created_ms(b).unwrap_or(0.).total_cmp(&entry_created_ms(a).unwrap_or(0.)),
                 _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             };
             primary.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())).then_with(|| a.key.cmp(&b.key))
@@ -784,6 +797,7 @@ impl Workspace {
         let q = self.cloud_query(cx);
         let files = self.cloud_files(&scope, &q);
         let width = super::recent_page::page_width(f32::from(window.viewport_size().width));
+        let gutter = super::recent_page::page_gutter(f32::from(window.viewport_size().width));
         let state = connection(files.booting || (self.cloud.checking && files.matched.is_empty() && files.lists == Lists::Loading), files.cloud_error.as_deref());
         let dot = match state {
             Connection::Connected => p.green,
@@ -791,6 +805,7 @@ impl Workspace {
             Connection::Offline | Connection::Problem => p.red,
         };
         let header = ui::page_header("markie/cloud.svg", "Cloud", &p)
+            .px(px(20. + gutter))
             .child(ui::chip(state.label(), dot, &p))
             .child(ui::hint(band_text(files.matched.len(), files.shown.len(), files.lists), &p))
             .children(server_label(scope.origin(), &self.cloud.primary_origin()).map(|s| ui::hint(s, &p)))
@@ -873,7 +888,7 @@ impl Workspace {
             .size_full()
             .bg(p.background)
             .child(header)
-            .child(self.render_cloud_toolbar(&scope, &q, &files, &p, cx))
+            .child(self.render_cloud_toolbar(&scope, &q, &files, &p, cx).px(px(20. + gutter)))
             .child(
                 div()
                     .id("cloud-workspace-scroll")
@@ -881,7 +896,7 @@ impl Workspace {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.shell.cloud_grid.scroll)
-                    .px(px(super::recent_page::PAGE_PAD))
+                    .px(px(super::recent_page::PAGE_PAD + gutter))
                     .pt(px(12.))
                     .pb(px(28.))
                     .child(
@@ -905,7 +920,9 @@ impl Workspace {
         let p = *p;
         let checking = super::account::AccountStore::global(cx).is_some_and(|s| s.read(cx).status == super::account::AuthStatus::Checking);
         let width = super::recent_page::page_width(f32::from(window.viewport_size().width));
+        let gutter = super::recent_page::page_gutter(f32::from(window.viewport_size().width));
         let header = ui::page_header("markie/cloud.svg", "Cloud", &p)
+            .px(px(20. + gutter))
             .child(if checking { ui::chip("Checking", p.yellow, &p) } else { ui::chip("Signed out", p.muted, &p) })
             .child(div().flex_1())
             .child(ui::button("cloud-open", "Open file", None, Tone::Quiet, false, &p).on_click(|_, window, cx| window.dispatch_action(Box::new(Open), cx)));
@@ -923,13 +940,13 @@ impl Workspace {
             .size_full()
             .bg(p.background)
             .child(header)
-            .child(div().flex_1().min_h_0().px(px(super::recent_page::PAGE_PAD)).child(body))
+            .child(div().flex_1().min_h_0().px(px(super::recent_page::PAGE_PAD + gutter)).child(body))
             .into_any_element()
     }
 
     /// One row: filter by name, whose documents, then area, type, order and
     /// grid or list.
-    fn render_cloud_toolbar(&self, scope: &Scope, q: &Query, files: &Files, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_cloud_toolbar(&self, scope: &Scope, q: &Query, files: &Files, p: &Palette, cx: &mut Context<Self>) -> Div {
         let p = *p;
         let areas = self.cloud.listing(scope).map(|l| l.areas.clone()).unwrap_or_default();
         let area_label = self.cloud.area.as_ref().and_then(|id| areas.iter().find(|a| &a.id == id)).map(|a| a.label.clone()).unwrap_or_else(|| "All areas".into());
@@ -1213,6 +1230,7 @@ impl Workspace {
                 let mut card = DocCard::new(e.key.clone(), e.name.clone(), format);
                 card.meta = if gone { format!("Missing on disk · {}", card_meta(e, files.share_list_known, None, None)) } else { card_meta(e, files.share_list_known, media.as_deref(), age.as_deref()) }.into();
                 card.missing = gone;
+                card.created = super::recent_page::created_line(entry_created_ms(e), chrono::Local::now()).map(Into::into);
                 card.openable = on_disk || e.doc.is_some();
                 card.has_menu = menu.is_some();
                 card.menu_open = match &menu {
@@ -1309,6 +1327,7 @@ impl Workspace {
                 let primary = match q.sort {
                     Sort::Recent => b.updated_at.cmp(&a.updated_at),
                     Sort::Type => format_key(a.format).cmp(format_key(b.format)),
+                    Sort::Created => b.created_at.cmp(&a.created_at),
                     _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                 };
                 primary.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())).then_with(|| a.id.cmp(&b.id))
@@ -1321,6 +1340,7 @@ impl Workspace {
             .map(|row| {
                 let mut card = DocCard::new(format!("snapshot:{}", row.id), row.name.clone(), row.format);
                 card.meta = snapshot_card_meta(row, now).into();
+                card.created = super::recent_page::created_line(Some(row.created_at as f64), chrono::Local::now()).map(Into::into);
                 card.has_menu = false;
                 targets.insert(card.id.clone(), Target::Snapshot(scope.clone(), row.clone()));
                 card
@@ -1397,6 +1417,7 @@ mod tests {
             name: name.into(),
             version: 1,
             hash: None,
+            created_at: None,
             updated_at: Some(updated.into()),
             shared,
             role: shared.then_some(Role::Editor),

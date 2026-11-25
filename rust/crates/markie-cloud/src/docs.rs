@@ -23,6 +23,10 @@ pub struct DocMeta {
     pub version: i64,
     #[serde(default)]
     pub hash: Option<String>,
+    /// When the document's first version reached the server. Older servers
+    /// and older rows send none, and then the Cloud page shows none.
+    #[serde(default)]
+    pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
     /// Present on documents shared with this account.

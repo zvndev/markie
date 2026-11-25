@@ -1258,7 +1258,7 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 // The title takes the dialog's own text: 16px, regular.
-                                .child(div().text_size(px(16.)).text_color(p.foreground).child("Readers see my look"))
+                                .child(div().text_size(px(13.5)).text_color(p.foreground).child("Readers see my look"))
                                 .child(div().text_size(px(12.)).text_color(p.muted).child(line)),
                         )
                         .when(drifted, |el| {

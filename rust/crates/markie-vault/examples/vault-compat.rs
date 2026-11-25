@@ -26,6 +26,8 @@ fn err_name(e: &VaultError) -> String {
         VaultError::Storage(c) => format!("storage:{c:?}"),
         VaultError::Device(c) => format!("device:{c:?}"),
         VaultError::Backup => "backup".into(),
+        VaultError::BackupTooNew => "backup:too-new".into(),
+        VaultError::PrivateFilesLocked => "private:locked".into(),
         VaultError::Save { .. } => "save".into(),
     }
 }

@@ -4,7 +4,7 @@
 //! the caller holds the repository behind one lock, which gives the same
 //! one-operation-at-a-time rule. Failed saves keep their encrypted envelope in
 //! memory as recovery, and a later save or remove carries it, as in Electron.
-use crate::backup::{parse_vault_backup, serialize_vault_backup};
+use crate::backup::{parse_vault_backup, serialize_vault_backup, VaultBackup};
 use crate::device::DeviceKeeper;
 use crate::envelope::{limits, VaultDocumentEnvelope, VaultDocumentMetadata, VaultHeader};
 use crate::error::{DeviceFailure, StorageErrorCode, VaultError, VaultErrorCode};
@@ -23,6 +23,14 @@ pub struct VaultEntry {
 pub struct VaultReadResult {
     pub document: DecryptedVaultDocument,
     pub recovery: bool,
+}
+
+/// A restore that passed every check, waiting to be committed.
+pub struct RestorePlan {
+    candidate: Vault,
+    next: StoredVault,
+    expected: Option<u64>,
+    replaced: Option<String>,
 }
 
 pub struct VaultRepository<S: VaultStorage> {
@@ -174,6 +182,13 @@ impl<S: VaultStorage> VaultRepository<S> {
     /// record authenticates. Returns the replaced vault's ID so its keychain secret can go.
     pub fn restore(&mut self, serialized_backup: &str, passphrase: &str, replace: bool) -> Result<Option<String>, VaultError> {
         let backup = parse_vault_backup(serialized_backup)?;
+        let plan = self.plan_restore(&backup, passphrase, replace)?;
+        self.commit_restore(plan)
+    }
+
+    /// Every check a restore makes, with nothing written: the passphrase
+    /// opens the backup and every record authenticates.
+    pub fn plan_restore(&self, backup: &VaultBackup, passphrase: &str, replace: bool) -> Result<RestorePlan, VaultError> {
         let current = self.storage.load()?;
         if current.is_some() && !replace {
             return Err(StorageErrorCode::Conflict.into());
@@ -190,11 +205,18 @@ impl<S: VaultStorage> VaultRepository<S> {
             device_slot: None,
         }
         .validate()?;
-        self.storage.commit(current.as_ref().map(|c| c.revision), &next, true)?;
+        let replaced = current.as_ref().map(|c| header_id(&c.header)).transpose()?;
+        Ok(RestorePlan { candidate, next, expected: current.map(|c| c.revision), replaced })
+    }
+
+    /// Commits a checked restore and opens the restored vault.
+    pub fn commit_restore(&mut self, plan: RestorePlan) -> Result<Option<String>, VaultError> {
+        let RestorePlan { candidate, next, expected, replaced } = plan;
+        self.storage.commit(expected, &next, true)?;
         self.vault.lock();
         self.vault = candidate;
         self.adopt(next);
-        current.map(|c| header_id(&c.header)).transpose()
+        Ok(replaced)
     }
 
     fn adopt(&mut self, validated: StoredVault) {

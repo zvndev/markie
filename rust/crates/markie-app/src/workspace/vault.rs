@@ -22,7 +22,7 @@ use gpui_kit::component::WindowExt as _;
 use markie_core::formats::{self, Newline, Representation, TextEncoding};
 use markie_office::model::{Format, TextEdit};
 use markie_office::rich_document::{OfficeDocument, export_rich_document, open_rich_document, replace_rich_text};
-use markie_vault::backup::{VAULT_BACKUP_FILE_NAME, VAULT_BACKUP_MAX_CHARACTERS, parse_vault_backup, vault_backup_text};
+use markie_vault::backup::{BackupFile, RestoreReport, VAULT_BACKUP_FILE_NAME, read_vault_backup_file, restore_vault_backup_file, write_vault_backup_file};
 use markie_vault::clipboard::{CLEAR_AFTER, SecretClipboard, ThreadScheduler};
 use markie_vault::device::{Biometric, DeviceKeeper, KeychainSecretStore, PromptDeclined, SecretStore, TouchIdKeeper, TouchIdStatus};
 use markie_vault::dotenv::{self, DotenvDocument, LineKind};
@@ -134,7 +134,11 @@ pub fn keychain_service() -> String {
 pub fn failure_copy(failure: &VaultError) -> &'static str {
     match failure {
         VaultError::Save { failure, .. } => failure_copy(failure),
-        VaultError::Backup => "This file is not a Markie vault backup.",
+        VaultError::Backup => "This file is not a Markie vault backup, or it is damaged or incomplete. Nothing was changed.",
+        VaultError::BackupTooNew => "This backup was made by a newer version of Markie. Update Markie, then restore it. Nothing was changed.",
+        VaultError::PrivateFilesLocked => {
+            "This Mac's private files open with a different passphrase. Open them with that passphrase first, then restore. Nothing was changed."
+        }
         VaultError::Device(reason) => match reason {
             DeviceFailure::Missing | DeviceFailure::Stale => {
                 "Touch ID is no longer set up for this vault on this Mac. Use your passphrase, then turn Touch ID on again in Settings."
@@ -154,6 +158,46 @@ pub fn failure_copy(failure: &VaultError) -> &'static str {
         VaultError::Storage(StorageErrorCode::Unavailable) => "Encrypted storage is unavailable. No fallback or plaintext copy was saved.",
         _ => "The operation could not complete. Your current edits were not cleared. No plaintext fallback was saved.",
     }
+}
+
+fn files(n: usize) -> String {
+    if n == 1 { "1 private file".into() } else { format!("{n} private files") }
+}
+
+/// The notice after a backup is saved.
+pub fn backup_saved_copy(private_files: usize) -> String {
+    match private_files {
+        0 => "Backup saved. It opens only with your passphrase.".into(),
+        n => format!("Backup saved with {}, still encrypted. It opens only with your passphrase.", files(n)),
+    }
+}
+
+/// The notice after a restore: what came back, and what was already here.
+pub fn restored_copy(report: &RestoreReport) -> String {
+    let mut out = String::from("Backup restored.");
+    let back = report.private_came_back();
+    let total = back + report.private_already_here;
+    if total == 0 {
+        return out;
+    }
+    out.push_str(&match back {
+        0 => " No private files came back.".to_string(),
+        1 => " 1 private file came back.".to_string(),
+        n => format!(" {n} private files came back."),
+    });
+    if report.private_already_here > 0 {
+        let n = report.private_already_here;
+        out.push_str(&format!(" {} {} already here.", files(n), if n == 1 { "was" } else { "were" }));
+    }
+    if report.private_kept_both > 0 {
+        let n = report.private_kept_both;
+        out.push_str(&format!(
+            " {} differed from {} here with the same ID, so both copies are kept.",
+            files(n),
+            if n == 1 { "the one" } else { "the ones" }
+        ));
+    }
+    out
 }
 
 fn is_auth_failure(e: &VaultError) -> bool {
@@ -383,7 +427,8 @@ pub struct VaultPage {
     touch_id: TouchIdStatus,
     settings_open: bool,
     enrolling: bool,
-    restore_file: Option<(String, String)>,
+    /// A checked backup and its file name, waiting for its passphrase.
+    restore_file: Option<(BackupFile, String)>,
     suggested: Option<zeroize::Zeroizing<String>>,
     offer_touch_id: bool,
     gate: Option<(String, Pending)>,
@@ -952,50 +997,48 @@ impl VaultPage {
         cx.notify();
     }
 
+    /// Asks where first, then streams the backup there: private files can
+    /// be large, so the file is never built in memory.
     fn back_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.run(window, cx, |repo, _| repo.backup(), |this, result, window, cx| match result {
-            Ok(text) => {
-                let dir = dirs::download_dir().unwrap_or_else(markie_core::paths::home_dir);
-                let rx = cx.prompt_for_new_path(&dir, Some(VAULT_BACKUP_FILE_NAME));
-                cx.spawn_in(window, async move |this, cx| {
-                    if let Ok(Ok(Some(path))) = rx.await {
-                        let ok = std::fs::write(&path, text.as_bytes()).is_ok();
-                        this.update(cx, |this, cx| {
-                            if ok {
-                                this.notice = "Backup saved. It opens only with your passphrase.".into();
-                            } else {
-                                this.error = Some("The operation could not complete. Your current edits were not cleared. No plaintext fallback was saved.".into());
-                            }
-                            cx.notify();
-                        })
-                        .ok();
-                    }
-                })
-                .detach();
-            }
-            Err(e) => this.error = Some(failure_copy(&e).into()),
-        });
+        let dir = dirs::download_dir().unwrap_or_else(markie_core::paths::home_dir);
+        let rx = cx.prompt_for_new_path(&dir, Some(VAULT_BACKUP_FILE_NAME));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = rx.await else { return };
+            this.update_in(cx, move |this, window, cx| {
+                this.run_all(
+                    window,
+                    cx,
+                    move |repo, private, _| write_vault_backup_file(&repo.backup()?, private, &path),
+                    |this, result, _, _| match result {
+                        Ok(summary) => this.notice = backup_saved_copy(summary.private_files),
+                        Err(e) => this.error = Some(failure_copy(&e).into()),
+                    },
+                );
+            })
+            .ok();
+        })
+        .detach();
     }
 
+    /// Checks the chosen file in the background: a backup with private files
+    /// is read through once to check its length and digests.
     fn choose_backup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Restore".into()) });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = rx.await else { return };
             let Some(path) = paths.into_iter().next() else { return };
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let read = std::fs::metadata(&path)
-                .ok()
-                .filter(|m| m.len() as usize <= VAULT_BACKUP_MAX_CHARACTERS)
-                .and_then(|_| std::fs::read(&path).ok());
             this.update(cx, |this, cx| {
-                let parsed = read.as_deref().ok_or(VaultError::Backup).and_then(|b| vault_backup_text(b).map(str::to_string)).and_then(|t| {
-                    parse_vault_backup(&t)?;
-                    Ok(t)
-                });
-                match parsed {
-                    Ok(text) => {
-                        this.restore_file = Some((text, name));
-                    }
+                this.error = None;
+                this.notice = "Checking the backup…".into();
+                cx.notify();
+            })
+            .ok();
+            let checked = cx.background_executor().spawn(async move { read_vault_backup_file(&path) }).await;
+            this.update(cx, |this, cx| {
+                this.notice.clear();
+                match checked {
+                    Ok(backup) => this.restore_file = Some((backup, name)),
                     Err(e) => this.error = Some(failure_copy(&e).into()),
                 }
                 cx.notify();
@@ -1006,7 +1049,7 @@ impl VaultPage {
     }
 
     fn restore_backup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((text, _)) = self.restore_file.clone() else { return };
+        let Some((backup, _)) = self.restore_file.clone() else { return };
         let secret = Self::input_text(&self.restore_passphrase, cx);
         if secret.is_empty() {
             return;
@@ -1031,29 +1074,30 @@ impl VaultPage {
             this.update_in(cx, move |this, window, cx| {
                 this.clear_input(&this.restore_passphrase.clone(), window, cx);
                 let was_locked = this.locked;
-                this.run(
+                this.run_all(
                     window,
                     cx,
-                    move |repo, keeper| {
-                        let result = repo.restore(&text, &secret, replace);
+                    move |repo, private, keeper| {
+                        let result = restore_vault_backup_file(repo, private, &backup, &secret, replace);
                         match &result {
                             // The replaced vault's Touch ID secret opens nothing now; delete it.
-                            Ok(Some(old)) => {
-                                let _ = keeper.remove(old);
+                            Ok(report) => {
+                                if let Some(old) = &report.replaced_vault_id {
+                                    let _ = keeper.remove(old);
+                                }
                             }
-                            Ok(None) => {}
                             Err(_) if was_locked => repo.lock(),
                             Err(_) => {}
                         }
                         result
                     },
                     |this, result, window, cx| match result {
-                        Ok(_) => {
+                        Ok(report) => {
                             this.restore_file = None;
                             this.settings_open = false;
                             this.opened = None;
                             this.private_runs.clear();
-                            this.enter_vault("Backup restored.", window, cx);
+                            this.enter_vault(&restored_copy(&report), window, cx);
                         }
                         Err(e) => this.error = Some(failure_copy(&e).into()),
                     },
@@ -1954,6 +1998,15 @@ impl VaultPage {
         ]
     }
 
+    /// A real backup of the scene vault, written in the scratch home.
+    fn scene_backup(&self) -> BackupFile {
+        let path = markie_core::paths::home_dir().join(VAULT_BACKUP_FILE_NAME);
+        let repo = self.repo.lock().unwrap_or_else(|p| p.into_inner());
+        let store = self.private.lock().unwrap_or_else(|p| p.into_inner());
+        write_vault_backup_file(&repo.backup().expect("scene backup"), &store, &path).expect("scene backup file");
+        read_vault_backup_file(&path).expect("scene backup check")
+    }
+
     fn scene_plans_dir() -> PathBuf {
         markie_core::paths::home_dir().join("Documents").join("Plans")
     }
@@ -1974,7 +2027,8 @@ impl VaultPage {
         let touch = args.get("touch_id").and_then(serde_json::Value::as_bool).unwrap_or(false)
             || matches!(state.as_str(), "locked-touch" | "settings-touch" | "gate" | "private-passphrase" | "private-locked-list");
         let private_scene = state.starts_with("private-");
-        let with_private_files = matches!(state.as_str(), "private-items" | "private-open" | "private-locked-list" | "private-done");
+        let with_private_files =
+            matches!(state.as_str(), "private-items" | "private-open" | "private-locked-list" | "private-done" | "private-backup" | "private-restore");
         let with_request = matches!(state.as_str(), "private-create" | "private-unlock" | "private-sheet" | "private-passphrase" | "private-done");
         if *stage >= 9 {
             return true;
@@ -2084,9 +2138,27 @@ impl VaultPage {
                     "file" => open(self, "signed-lease.pdf", window, cx),
                     "settings" | "settings-touch" => self.settings_open = true,
                     "restore" => {
-                        let backup = self.repo.lock().unwrap_or_else(|p| p.into_inner()).backup().expect("scene backup");
+                        let backup = self.scene_backup();
                         self.settings_open = true;
                         self.restore_file = Some((backup, VAULT_BACKUP_FILE_NAME.to_string()));
+                    }
+                    "private-backup" => {
+                        let backup = self.scene_backup();
+                        self.settings_open = true;
+                        self.notice = backup_saved_copy(backup.private_count());
+                    }
+                    "private-restore" => {
+                        // One private file is gone since the backup: the restore brings it back.
+                        let backup = self.scene_backup();
+                        let report = {
+                            let mut repo = self.repo.lock().unwrap_or_else(|p| p.into_inner());
+                            let mut store = self.private.lock().unwrap_or_else(|p| p.into_inner());
+                            if let Some(entry) = store.list().expect("scene list").into_iter().next() {
+                                store.remove(&entry.id).expect("scene remove");
+                            }
+                            restore_vault_backup_file(&mut repo, &mut store, &backup, SCENE_PASSPHRASE, true).expect("scene restore")
+                        };
+                        self.enter_vault(&restored_copy(&report), window, cx);
                     }
                     "search" => {
                         self.writing = true;
@@ -2240,6 +2312,25 @@ mod tests {
         assert!(!should_auto_lock(false, false, false, IDLE_LOCK - Duration::from_secs(1)));
         assert!(!should_auto_lock(false, true, true, IDLE_LOCK));
         assert!(!should_auto_lock(true, false, true, IDLE_LOCK));
+    }
+
+    #[test]
+    fn backup_and_restore_notices_count_private_files() {
+        assert_eq!(backup_saved_copy(0), "Backup saved. It opens only with your passphrase.");
+        assert_eq!(backup_saved_copy(1), "Backup saved with 1 private file, still encrypted. It opens only with your passphrase.");
+        assert!(backup_saved_copy(4).contains("with 4 private files"));
+        assert_eq!(restored_copy(&RestoreReport::default()), "Backup restored.");
+        let report = RestoreReport { private_restored: 3, ..RestoreReport::default() };
+        assert_eq!(restored_copy(&report), "Backup restored. 3 private files came back.");
+        let report = RestoreReport { private_restored: 1, private_already_here: 2, private_kept_both: 1, replaced_vault_id: None };
+        assert_eq!(
+            restored_copy(&report),
+            "Backup restored. 2 private files came back. 2 private files were already here. 1 private file differed from the one here with the same ID, so both copies are kept."
+        );
+        let report = RestoreReport { private_already_here: 1, ..RestoreReport::default() };
+        assert_eq!(restored_copy(&report), "Backup restored. No private files came back. 1 private file was already here.");
+        assert!(failure_copy(&VaultError::BackupTooNew).contains("newer version of Markie"));
+        assert!(failure_copy(&VaultError::PrivateFilesLocked).contains("different passphrase"));
     }
 
     #[test]

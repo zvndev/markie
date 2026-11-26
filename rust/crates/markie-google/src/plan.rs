@@ -691,7 +691,10 @@ fn try_piece(planner: &mut Planner, expected: &mut Vec<String>, c: &Chunk) -> Op
                 eprintln!("piece {c:?} failed:\n want {want:?}\n got {got:?}");
             }
             // Two code blocks side by side are one in a Doc.
-            if c.local.clone().any(|l| matches!(planner.local.blocks[l].kind, Kind::Code(_))) { "code blocks right next to each other" } else { "this edit" }
+            let at = c.remote.start;
+            let n = c.local.len();
+            let code_next_to_code = (at..at + n).any(|i| want[i].starts_with('C') && (i > 0 && want[i - 1].starts_with('C') || want.get(i + 1).is_some_and(|k| k.starts_with('C'))));
+            if code_next_to_code { "code blocks right next to each other" } else { "this edit" }
         }
         Err(why) => {
             if std::env::var_os("MARKIE_PLAN_DEBUG").is_some() {

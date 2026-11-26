@@ -130,7 +130,11 @@ pub fn conflict_copy(db: &Connection, path: &Path, text: &str, now: DateTime<Loc
     Ok(copy)
 }
 
-fn record_for(file: &DriveFile, doc: &Value, markdown: &str, tabs: usize, now: DateTime<Local>, previous: Option<&SyncRecord>) -> SyncRecord {
+pub(crate) fn record_for(file: &DriveFile, doc: &Value, markdown: &str, tabs: usize, now: DateTime<Local>, previous: Option<&SyncRecord>) -> SyncRecord {
+    let access = file.access();
+    // Docs this account doesn't own send suggestions unless the person chose otherwise.
+    let chosen = previous.is_some_and(|p| p.suggest_chosen);
+    let suggest = if chosen { previous.is_some_and(|p| p.suggest) } else { !access.owned && (access.can_edit || access.can_comment) };
     SyncRecord {
         doc_id: file.id.clone(),
         title: doc.get("title").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| file.name.clone()),
@@ -142,6 +146,15 @@ fn record_for(file: &DriveFile, doc: &Value, markdown: &str, tabs: usize, now: D
         tabs,
         docx_path: previous.and_then(|p| p.docx_path.clone()),
         error: None,
+        two_way: previous.is_some_and(|p| p.two_way),
+        suggest,
+        suggest_chosen: chosen,
+        access: Some(access),
+        held: Vec::new(),
+        held_hash: None,
+        conflict: previous.and_then(|p| p.conflict.clone()),
+        stopped: None,
+        pushed_at: previous.and_then(|p| p.pushed_at.clone()),
     }
 }
 
@@ -162,8 +175,9 @@ fn apply_remote(db: &Connection, path: &Path, previous: Option<&SyncRecord>, mar
     Ok(outcome)
 }
 
-/// Import one Doc that `file` describes. A Doc imported before is refreshed in its own file.
-pub fn import_doc(src: &dyn DocsSource, db: &Connection, folder: &Path, file: &DriveFile, now: DateTime<Local>) -> Result<Imported> {
+/// Import one Doc that `file` describes. A Doc imported before is refreshed
+/// in its own file. `two_way` turns two-way sync on for it (it stays on if it was).
+pub fn import_doc(src: &dyn DocsSource, db: &Connection, folder: &Path, file: &DriveFile, now: DateTime<Local>, two_way: bool) -> Result<Imported> {
     let doc = src.document(&file.id)?;
     let converted = doc_to_markdown(&doc);
     let title = doc.get("title").and_then(Value::as_str).unwrap_or(&file.name).to_string();
@@ -180,17 +194,21 @@ pub fn import_doc(src: &dyn DocsSource, db: &Connection, folder: &Path, file: &D
     } else {
         apply_remote(db, &path, previous.as_ref(), &converted.markdown, now)?
     };
-    store::put(db, &path, &record_for(file, &doc, &converted.markdown, converted.tabs, now, previous.as_ref()))?;
+    let mut record = record_for(file, &doc, &converted.markdown, converted.tabs, now, previous.as_ref());
+    record.two_way = two_way || record.two_way;
+    store::put(db, &path, &record)?;
     Ok(Imported { path, title, doc_id: file.id.clone(), outcome })
 }
 
-/// Import what the Picker returned.
+/// Import what the Picker returned. `two_way`: "Keep these Docs in sync both ways".
+#[allow(clippy::too_many_arguments)]
 pub fn import_picked(
     src: &dyn DocsSource,
     db: &Connection,
     folder: &Path,
     ids: &[String],
     now: DateTime<Local>,
+    two_way: bool,
     progress: &mut dyn FnMut(&Progress),
     cancel: &AtomicBool,
 ) -> Result<Report> {
@@ -228,7 +246,7 @@ pub fn import_picked(
             return Err(GoogleError::Cancelled);
         }
         progress(&Progress { done, total, current: file.name.clone() });
-        match import_doc(src, db, folder, &file, now) {
+        match import_doc(src, db, folder, &file, now, two_way) {
             Ok(imported) => report.imported.push(imported),
             Err(GoogleError::NoAccess(_)) if from_folder.is_some() => {
                 let name = from_folder.unwrap_or_default();

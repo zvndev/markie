@@ -25,6 +25,9 @@ pub enum GoogleError {
     Parse(String),
     #[error("Google answered with an error ({status}).")]
     Http { status: u16, message: String },
+    /// 429: too many requests. Markie waits and tries again.
+    #[error("Google asked Markie to slow down. It will try again shortly.")]
+    RateLimited { retry_after_secs: Option<u64> },
     /// The redirect did not belong to the flow Markie started.
     #[error("The answer from Google didn't match this connection. Try again.")]
     State,
@@ -34,6 +37,18 @@ pub enum GoogleError {
     Keychain,
     #[error("Markie couldn't update its records: {0}")]
     Store(String),
+}
+
+impl GoogleError {
+    /// Worth trying again later on its own: the network, a timeout, a 429 or
+    /// a server error. Anything else needs the person or a new pick.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            GoogleError::Network(_) | GoogleError::Timeout | GoogleError::RateLimited { .. } => true,
+            GoogleError::Http { status, .. } => *status >= 500 || *status == 409,
+            _ => false,
+        }
+    }
 }
 
 impl From<std::io::Error> for GoogleError {

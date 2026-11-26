@@ -27,6 +27,7 @@ pub mod model;
 pub mod oauth;
 pub mod plan;
 pub mod store;
+pub mod sync;
 pub mod tokens;
 
 #[cfg(any(test, feature = "fake"))]

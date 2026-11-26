@@ -34,6 +34,58 @@ pub struct SyncRecord {
     /// The last refresh's problem, shown in Settings until a refresh works.
     #[serde(default)]
     pub error: Option<String>,
+    /// Two-way sync: Markie's edits go back to Google. Off means Refresh only.
+    #[serde(default)]
+    pub two_way: bool,
+    /// Markie's edits go to Google as suggestions (`writeMode: SUGGEST`).
+    #[serde(default)]
+    pub suggest: bool,
+    /// Whether `suggest` was set by the person rather than by default.
+    #[serde(default)]
+    pub suggest_chosen: bool,
+    /// What this account may do with the Doc, from Drive's `capabilities`.
+    #[serde(default)]
+    pub access: Option<Access>,
+    /// Local edits that stay here, each reason once in plain words
+    /// ("tables"), with the hash of the file they were found in.
+    #[serde(default)]
+    pub held: Vec<String>,
+    #[serde(default)]
+    pub held_hash: Option<String>,
+    /// The last conflict's copy of Markie's version, until it is compared or dismissed.
+    #[serde(default)]
+    pub conflict: Option<PathBuf>,
+    /// Sync stopped for good: the Doc was trashed or unshared, or the file
+    /// was deleted here. The row says why; the file is kept.
+    #[serde(default)]
+    pub stopped: Option<Stopped>,
+    /// When Markie last sent edits.
+    #[serde(default)]
+    pub pushed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Access {
+    pub owned: bool,
+    pub can_edit: bool,
+    pub can_comment: bool,
+}
+
+impl Access {
+    /// Markie can send edits at all: as edits, or as suggestions.
+    pub fn writable(&self, suggest: bool) -> bool {
+        self.can_edit || (suggest && self.can_comment)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Stopped {
+    Trashed,
+    NoAccess,
+    /// The file was deleted on this Mac.
+    FileDeleted,
 }
 
 impl SyncRecord {
@@ -113,6 +165,23 @@ pub fn move_path(db: &Connection, from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A folder holding synced files was renamed or moved: every record under it follows.
+pub fn move_folder(db: &Connection, from: &Path, to: &Path) -> Result<()> {
+    ensure_table(db)?;
+    let sep = std::path::MAIN_SEPARATOR;
+    let (from, to) = (format!("{}{sep}", from.display()), format!("{}{sep}", to.display()));
+    let rows: Vec<String> = {
+        let mut stmt = db.prepare("SELECT path FROM rs_google_docs WHERE substr(path, 1, length(?1)) = ?1")?;
+        let rows = stmt.query_map([&from], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
+        rows
+    };
+    for old in rows {
+        let new = format!("{to}{}", &old[from.len()..]);
+        db.execute("UPDATE rs_google_docs SET path = ?2 WHERE path = ?1", [&old, &new])?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,8 +196,17 @@ mod tests {
         move_path(&db, Path::new("/g/Plan.md"), Path::new("/g/Plan 2.md")).unwrap();
         assert_eq!(all(&db).unwrap().len(), 1);
         assert!(get(&db, Path::new("/g/Plan.md")).unwrap().is_none());
-        remove(&db, Path::new("/g/Plan 2.md")).unwrap();
+        move_folder(&db, Path::new("/g"), Path::new("/h/sub")).unwrap();
+        assert_eq!(all(&db).unwrap()[0].0, PathBuf::from("/h/sub/Plan 2.md"));
+        remove(&db, Path::new("/h/sub/Plan 2.md")).unwrap();
         assert!(all(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn records_from_step_one_read_as_refresh_only() {
+        let old = r#"{"docId":"d","title":"T","syncedAt":"2026-11-25T10:00:00Z","baseMarkdown":"x"}"#;
+        let rec: SyncRecord = serde_json::from_str(old).unwrap();
+        assert!(!rec.two_way && !rec.suggest && rec.stopped.is_none() && rec.held.is_empty());
     }
 
     #[test]

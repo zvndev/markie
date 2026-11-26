@@ -85,7 +85,11 @@ fn hunks(base: &[&str], other: &[&str], local: bool) -> Vec<Hunk> {
     let mut out = Vec::new();
     let (mut i, mut j) = (0, 0);
     for (bi, oj) in lcs(base, other).into_iter().chain(std::iter::once((base.len(), other.len()))) {
-        if bi > i || oj > j {
+        if bi - i == oj - j && bi - i > 1 {
+            // Several blocks each replaced by one: separate changes, so a
+            // conflict on one of them leaves the others to merge.
+            out.extend((0..bi - i).map(|k| Hunk { b: i + k..i + k + 1, o: j + k..j + k + 1, local }));
+        } else if bi > i || oj > j {
             out.push(Hunk { b: i..bi, o: j..oj, local });
         }
         (i, j) = (bi + 1, oj + 1);
@@ -302,6 +306,8 @@ mod tests {
         assert_eq!(kinds(&["a", "b", "c"], &["a", "X", "c"], &["a", "Y", "c"]), [ChunkKind::Conflict]);
         assert_eq!(kinds(&["a", "b", "c"], &["a", "X", "c"], &["a", "X", "c"]), [ChunkKind::Both]);
         assert_eq!(kinds(&["a", "b", "c"], &["a", "c"], &["a", "b2", "c"]), [ChunkKind::Conflict]);
+        // Two paragraphs edited here, one of them in Google too: only that one conflicts.
+        assert_eq!(kinds(&["a", "b", "c"], &["a", "B", "C"], &["a", "b2", "c"]), [ChunkKind::Conflict, ChunkKind::LocalOnly]);
         assert!(kinds(&["a"], &["a"], &["a"]).is_empty());
     }
 

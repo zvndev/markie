@@ -12,7 +12,7 @@
 //! 2. Does a folder pick cover the Docs inside it, and Docs added later?
 //! 3. What does each Doc convert to, and what do Google's Markdown and .docx exports keep?
 //! 4. Does `changes.list` under drive.file list only picked files?
-use markie_google::api::{DocsSource, GoogleApi};
+use markie_google::api::{DocsSource, GoogleApi, SyncSource};
 use markie_google::config::{ClientConfig, Endpoints};
 use markie_google::convert::doc_to_markdown;
 use markie_google::tokens::Grant;

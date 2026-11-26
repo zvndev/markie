@@ -54,7 +54,7 @@ impl World {
     fn import(&self, ids: &[String]) -> import::Report {
         let cfg = self.google.config();
         let api = GoogleApi::new(&cfg, &self.grant);
-        import::import_picked(&api, &self.db, &self.folder(), ids, now(), &mut |_| {}, &AtomicBool::new(false)).unwrap()
+        import::import_picked(&api, &self.db, &self.folder(), ids, now(), false, &mut |_| {}, &AtomicBool::new(false)).unwrap()
     }
 
     fn refresh(&self, path: &std::path::Path) -> markie_google::Result<Outcome> {

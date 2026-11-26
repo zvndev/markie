@@ -69,9 +69,13 @@ pub(super) fn icon(path: &'static str, size: f32, color: Hsla) -> Svg {
 }
 
 /// The press never reaches the title bar, so a click on a control does not
-/// start a window drag.
-pub(super) fn no_drag<E: InteractiveElement>(el: E) -> E {
+/// start a window drag. Neither does the click: the kit's bar zooms or
+/// minimizes the window (the macOS "double-click a title bar" setting) on
+/// every double click that bubbles up to it, so two quick presses of Back, or
+/// of a button that just turned disabled, resized the whole window.
+pub(super) fn no_drag<E: StatefulInteractiveElement>(el: E) -> E {
     el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+        .on_click(|_, _, cx| cx.stop_propagation())
 }
 
 /// `.markie-toolbar-action:hover` and `.markie-rail-button:hover` fills.

@@ -423,7 +423,10 @@ impl RichView {
             s.atoms.clear();
             s.frame += 1;
         }
-        let viewport = self.scroll.bounds();
+        let viewport = match self.thumbnail {
+            Some(size) => Bounds::new(point(px(0.), px(0.)), size),
+            None => self.scroll.bounds(),
+        };
         if (viewport.size.width - self.heights_width).abs() > px(0.5) {
             self.heights_width = viewport.size.width;
             self.heights.iter_mut().for_each(|h| *h = None);
@@ -457,9 +460,14 @@ impl RichView {
         // Draw what is on screen (with a screen of margin either way), the
         // caret's and selection's ends, and any block not measured yet;
         // the rest is space of its last height.
-        let top_visible = -self.scroll.offset().y;
+        let top_visible = if self.thumbnail.is_some() { px(self.thumb_offset) } else { -self.scroll.offset().y };
         let screen = viewport.size.height.max(px(400.));
-        let (lo, hi) = (top_visible - screen, top_visible + screen * 2.);
+        // A card's window is drawn with a little to spare and no more.
+        let (lo, hi) = if self.thumbnail.is_some() {
+            (top_visible - px(24.), top_visible + viewport.size.height + px(24.))
+        } else {
+            (top_visible - screen, top_visible + screen * 2.)
+        };
         let (a, h) = (self.editor.anchor.block, self.editor.head.block);
         let mut y = px(pad_y);
         let mut blocks: Vec<AnyElement> = Vec::new();
@@ -498,7 +506,7 @@ impl RichView {
                 }
             };
             y += height.unwrap_or(px(30.));
-            if !near && b != a && b != h {
+            if !near && (self.thumbnail.is_some() || (b != a && b != h)) {
                 spacer += height.unwrap_or(px(30.));
                 continue;
             }
@@ -559,6 +567,27 @@ impl RichView {
         // page is, from the same pass.
         self.block_tops = tops;
         self.content_height = y + px(pad_y);
+        if self.thumbnail.is_some() {
+            // A card's miniature: the page alone. No keys, focus, pointer or
+            // scrolling of its own.
+            return div()
+                .size_full()
+                .relative()
+                .overflow_hidden()
+                .bg(theme.background)
+                .text_color(theme.foreground)
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(px(-self.thumb_offset))
+                        .pt(px(pad_y))
+                        .children(blocks)
+                        .child(div().h(px(prev_bottom.unwrap_or(0.) + pad_y)).w_full()),
+                )
+                .into_any_element();
+        }
         let view = cx.entity();
         let store = self.store.clone();
         let focus = self.focus.clone();
@@ -868,7 +897,7 @@ impl RichView {
                 let pos = Pos::new(b, key.1, 0);
                 // TipTap shows no language: the label appears only while the
                 // caret is in the block, so it can still be changed.
-                let here = self.editor.head.block == b && self.editor.head.leaf == key.1;
+                let here = self.thumbnail.is_none() && self.editor.head.block == b && self.editor.head.leaf == key.1;
                 let lang_button = here.then(|| {
                     let label = language.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| "plain text".into());
                     div()
@@ -1177,12 +1206,14 @@ impl RichView {
                         (false, true) => look.muted,
                         (false, false) => look.accent,
                     };
+                    // The box follows the zoom, as the text beside it does.
+                    let z = look.zoom;
                     let bx = div()
                         .id(SharedString::from(format!("task-{b}-{}", ip.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("-"))))
-                        .size(px(16.))
+                        .size(px(16. * z))
                         .flex_none()
-                        .map(|d| if box_style == "round" { d.rounded_full() } else { d.rounded(px(4.)) })
-                        .map(|d| if thin { d.border(px(1.5)) } else { d.border_2() })
+                        .map(|d| if box_style == "round" { d.rounded_full() } else { d.rounded(px(4. * z)) })
+                        .map(|d| d.border(px(if thin { 1.5 } else { 2. } * z.max(0.5))))
                         .border_color(edge)
                         .when(checked && !thin, |d| d.bg(look.link))
                         .flex()
@@ -1192,8 +1223,8 @@ impl RichView {
                         .when(checked, |d| {
                             d.child(
                                 div()
-                                    .text_size(px(11.))
-                                    .line_height(px(11.))
+                                    .text_size(px(11. * z))
+                                    .line_height(px(11. * z))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(if thin { look.link } else { look.background })
                                     .child("✓"),
@@ -1207,8 +1238,8 @@ impl RichView {
                     let (body, _, _) = self.render_item(b, &item.content, ip, counter, depth, item_ctx, look, window, cx);
                     let row = h_flex()
                         .items_start()
-                        .gap(px(8.))
-                        .pl(px(4.))
+                        .gap(px(8. * z))
+                        .pl(px(4. * z))
                         // The box is centred on a 1.6em label, the first line's height.
                         .child(div().h(px(look.size * 1.6)).flex_none().flex().items_center().child(bx))
                         .child(div().flex_1().min_w_0().child(body))
@@ -1521,6 +1552,8 @@ impl RichView {
             let el = match source {
                 Source::Local(p) => Some(img(p)),
                 Source::Inline(i) => Some(img(i)),
+                // A card's miniature never goes to the network for a picture.
+                Source::Remote(_) if self.thumbnail.is_some() => None,
                 Source::Remote(url) => match self.media.remote.get(&url) {
                     Some(media::Remote::Ready(i)) => Some(img(i.clone())),
                     Some(media::Remote::Failed) => None,

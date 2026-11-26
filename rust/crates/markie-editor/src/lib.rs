@@ -368,6 +368,14 @@ pub struct RichView {
     /// preview): the document alone, with this padding (top and bottom,
     /// sides) and no toolbar, rail or room past the end.
     pub sample: Option<(f32, f32)>,
+    /// A document card's miniature (with `sample`): the window it shows,
+    /// this size, and nothing else. It takes no keys, never takes focus,
+    /// handles no pointer at the top of the page and never scrolls itself;
+    /// the card says how far down it shows (`thumb_offset`). Only the blocks
+    /// in that window are drawn, and its size is given rather than read from
+    /// where it was last drawn.
+    pub thumbnail: Option<Size<Pixels>>,
+    pub thumb_offset: f32,
     /// The link under the pointer: its leaf and its units (`a:hover`).
     pub(crate) hovered_link: Option<((usize, usize), std::ops::Range<usize>)>,
     pub(crate) heading_counts: (u64, Vec<(u32, u32)>),
@@ -479,6 +487,8 @@ impl RichView {
             content_height: px(0.),
             outline: (u64::MAX, Vec::new()),
             sample: None,
+            thumbnail: None,
+            thumb_offset: 0.,
             hovered_link: None,
             heading_counts: (u64::MAX, Vec::new()),
             heading_count: (0, 0),
@@ -601,6 +611,21 @@ impl RichView {
     pub fn set_scroll_y(&mut self, y: f32, cx: &mut Context<Self>) {
         self.scroll.set_offset(point(px(0.), px(-y.max(0.))));
         cx.notify();
+    }
+
+    /// Draw as a card's miniature: a window this size, `offset` px down the
+    /// page (see `thumbnail`).
+    pub fn set_thumbnail(&mut self, size: Size<Pixels>, offset: f32, cx: &mut Context<Self>) {
+        if self.thumbnail != Some(size) || self.thumb_offset != offset {
+            self.thumbnail = Some(size);
+            self.thumb_offset = offset;
+            cx.notify();
+        }
+    }
+
+    /// How tall the page was last drawn, padding included, in px.
+    pub fn content_height(&self) -> f32 {
+        f32::from(self.content_height)
     }
 
     pub fn set_appearance(&mut self, zoom: f32, page_width: f32, cx: &mut Context<Self>) {

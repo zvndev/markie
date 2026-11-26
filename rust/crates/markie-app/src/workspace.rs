@@ -336,6 +336,10 @@ impl Workspace {
             if window.is_window_active() && rescan_on_focus(this.last_scan_at, std::time::Instant::now()) {
                 this.rescan(cx);
             }
+            // Google Docs that sync both ways: look at Google now.
+            if window.is_window_active() {
+                this.google_on_focus(window, cx);
+            }
         }));
         subscriptions.extend(Self::watch_window_for_cloud(window, cx));
         let (shell, shell_subs) = rail::Shell::new(color_mode, template, window, cx);
@@ -445,6 +449,7 @@ impl Workspace {
         this._subscriptions.extend(focus);
         this.start_agent_bridge(window, cx);
         this.start_cloud_poll(cx);
+        this.google_start_sync(window, cx);
         if let Some(reg) = &this.registry {
             if let Some(z) = reg.setting("zoom").ok().flatten().and_then(|v| v.parse().ok()) {
                 this.zoom = z;
@@ -1157,6 +1162,7 @@ impl Workspace {
             self.refresh_versions();
         }
         self.cloud_after_save(&path, cx);
+        self.google_after_save(&path, cx);
         Ok(())
     }
 
@@ -1192,6 +1198,12 @@ impl Workspace {
                 }
             }
             // Like Electron, never reload on its own: the strip asks.
+            // Google sync wrote it and nothing here was edited: reload quietly.
+            Some(DiskChange::Changed(theirs)) if !self.dirty && self.google_wrote(&doc.path.clone(), &theirs, cx) => {
+                let path = self.doc.as_ref().map(|d| d.path.clone()).unwrap_or_default();
+                self.load_text(&path, theirs, cx);
+                cx.notify();
+            }
             Some(DiskChange::Changed(theirs)) => {
                 self.settle_edit_now(cx);
                 self.note_disk_change(theirs, cx)

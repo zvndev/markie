@@ -453,19 +453,24 @@ impl Scheduler {
             Err(e) if e.is_transient() => {
                 t.failures += 1;
                 t.retry_at = Some(now + backoff(t.failures));
-                if let GoogleError::RateLimited { retry_after_secs } = e {
-                    self.pause_step += 1;
-                    let wait = retry_after_secs.map(Duration::from_secs).unwrap_or_else(|| backoff(self.pause_step)).max(Duration::from_secs(1));
-                    self.paused_until = Some(now + wait);
-                } else if matches!(e, GoogleError::Network(_) | GoogleError::Timeout) {
-                    self.pause_step += 1;
-                    self.paused_until = Some(now + backoff(self.pause_step));
-                }
+                self.pause_for(e, now);
             }
             Err(_) => {
                 t.failures = 0;
                 t.retry_at = None;
             }
+        }
+    }
+
+    /// A 429 or a network failure, from any call: nothing goes out for a while.
+    pub fn pause_for(&mut self, e: &GoogleError, now: Instant) {
+        if let GoogleError::RateLimited { retry_after_secs } = e {
+            self.pause_step += 1;
+            let wait = retry_after_secs.map(Duration::from_secs).unwrap_or_else(|| backoff(self.pause_step)).max(Duration::from_secs(1));
+            self.paused_until = Some(now + wait);
+        } else if matches!(e, GoogleError::Network(_) | GoogleError::Timeout) {
+            self.pause_step += 1;
+            self.paused_until = Some(now + backoff(self.pause_step));
         }
     }
 

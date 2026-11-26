@@ -2,8 +2,14 @@
 //! client exists: `rust/scripts/google-spike.sh` (see that script).
 //!
 //! It runs the real desktop Picker flow in the system browser and prints a
-//! report. It only reads from Google: no create, update, delete or share
-//! call is made. The grant is kept in memory, never in the Keychain, and is
+//! report. Without `--write-test` it only reads from Google: no create,
+//! update, delete or share call is made.
+//!
+//! With `--write-test` it also makes one new Doc of its own, "Markie sync
+//! test", runs two-way sync against it (both ways, a collaborator's edit
+//! during a write, a conflict, a suggestion), reports, and moves that Doc to
+//! the trash at the end (`markie_google::write_test`). It never writes to any
+//! other Doc: every write is refused unless it names the Doc it made. The grant is kept in memory, never in the Keychain, and is
 //! revoked at the end. With `--out DIR` it also saves each Doc's converted
 //! Markdown, Google's own Markdown export and the `.docx` export there.
 //!
@@ -62,6 +68,7 @@ fn docx_report(bytes: &[u8]) -> String {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    let write_test = args.iter().any(|a| a == "--write-test");
     let id = std::env::var("MARKIE_GOOGLE_DESKTOP_CLIENT_ID").ok();
     let secret = std::env::var("MARKIE_GOOGLE_DESKTOP_CLIENT_SECRET").ok();
     let Some(cfg) = ClientConfig::from_parts(id.as_deref(), secret.as_deref(), Endpoints::google()) else {
@@ -71,7 +78,11 @@ fn main() {
     if let Some(dir) = &out {
         std::fs::create_dir_all(dir).expect("the --out folder");
     }
-    println!("Markie Google Docs spike. Read-only. The grant stays in memory and is revoked at the end.");
+    if write_test {
+        println!("Markie Google Docs spike, with the write test: it makes \u{201c}{}\u{201d}, writes only to it, and trashes it at the end.", markie_google::write_test::TITLE);
+    } else {
+        println!("Markie Google Docs spike. Read-only. The grant stays in memory and is revoked at the end.");
+    }
     println!("\n== 1. Picker flow (Desktop client, loopback redirect, no API key)");
     println!("Your browser opens Google's consent page with the Picker. Pick at least one Doc and one folder that has Docs in it.");
     let grant = Grant::new(MemorySecretStore::default());
@@ -202,6 +213,23 @@ fn main() {
         }
     }
 
+    if write_test {
+        println!("\n== 5. Write test (two-way sync on a Doc the test makes)");
+        let dir = std::env::temp_dir().join(format!("markie-write-test-{}", std::process::id()));
+        match markie_google::write_test::run(&api, &dir, &mut |line| println!("{line}")) {
+            Ok(checks) => {
+                let failed = checks.iter().filter(|c| !c.ok).count();
+                println!("RESULT: {} of {} checks passed.", checks.len() - failed, checks.len());
+            }
+            Err(e) => println!("RESULT: the write test stopped: {e:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     let _ = grant.disconnect(&markie_google::oauth::http_client(), &cfg);
-    println!("\nDone. The grant was revoked. Nothing was written to Google.");
+    if write_test {
+        println!("\nDone. The grant was revoked. The only Doc written to was the test's own, now in the trash.");
+    } else {
+        println!("\nDone. The grant was revoked. Nothing was written to Google.");
+    }
 }

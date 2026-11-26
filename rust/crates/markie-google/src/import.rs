@@ -38,6 +38,8 @@ pub enum Outcome {
     Unchanged,
     /// The local file had edits: they were kept at this path, then Google's text replaced the file.
     ConflictCopy(PathBuf),
+    /// Two-way sync sent Markie's edits to Google; nothing came back.
+    Pushed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

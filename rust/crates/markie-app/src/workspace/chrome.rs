@@ -271,6 +271,7 @@ impl Workspace {
         let dirty = !vault_page
             && (self.dirty || matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(o)) if o.is_dirty(cx)));
         let has_text = !vault_page && matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. }));
+        let google = if vault_page { None } else { self.google_title_status(cx) };
         let document_mode = !vault_page && self.document_mode();
 
         let bg = if p.dark {
@@ -323,6 +324,25 @@ impl Workspace {
                                 })
                                 .child(div().truncate().child(name))
                                 .when(dirty, |el| el.child(div().ml(px(6.)).text_color(p.muted).child("•"))),
+                        ))
+                    })
+                    // A file that syncs with Google Docs says so, quietly.
+                    .when_some(google, |el, (short, long)| {
+                        let tip: SharedString = long.clone().into();
+                        el.child(no_drag(
+                            div()
+                                .id("tb-google")
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .gap(px(5.))
+                                .text_size(px(11.))
+                                .text_color(if short == "Conflict" || short.starts_with("Waiting") { p.fg(0.75) } else { p.muted })
+                                .role(Role::Status)
+                                .aria_label(long)
+                                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                                .child(svg().path("markie/google-doc.svg").size(px(11.)).flex_none().text_color(p.muted))
+                                .child(short),
                         ))
                     })
                     .child(vrule(&p))

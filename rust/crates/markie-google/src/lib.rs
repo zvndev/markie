@@ -12,6 +12,10 @@
 //! - `convert`: a Doc's JSON to Markdown, in Rust.
 //! - `store`: one sync record per imported file: the ground for two-way sync.
 //! - `import`: picking, importing, refreshing with conflict copies, and Save as Word.
+//! - `md`, `merge`, `model`, `plan`: two-way sync's Markdown blocks, three-way
+//!   diff, Doc model and write planner; `sync`: one round, the scheduler and
+//!   change detection; `worker`: the thread that runs them while Markie is open.
+//! - `write_test`: the spike tool's opt-in live write test, on a Doc it makes.
 //! - `fake` (feature `fake` or tests): a local fake Google for tests and scenes.
 //!
 //! Nothing here sends Google data to Markie Cloud.
@@ -29,6 +33,8 @@ pub mod plan;
 pub mod store;
 pub mod sync;
 pub mod tokens;
+pub mod worker;
+pub mod write_test;
 
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;

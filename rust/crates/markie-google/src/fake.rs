@@ -561,6 +561,40 @@ fn api(stream: &mut TcpStream, req: &Request, state: &Mutex<FakeState>) {
     let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
     let granted = |s: &FakeState, id: &str| s.files.get(id).filter(|f| f.granted).cloned();
     match (req.method.as_str(), parts.as_slice()) {
+        ("POST", ["v1", "documents"]) => {
+            // documents.create: a new Doc this app made, so drive.file covers it.
+            let title = serde_json::from_str::<Value>(&req.body).ok().and_then(|b| b.get("title").and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| "Untitled document".into());
+            s.counter += 1;
+            let id = format!("made{}", s.counter);
+            let doc = with_indices(&json!({"tabs": [{"tabProperties": {"tabId": "t.0", "title": "Tab 1"}, "documentTab": {"body": {"content": [{"paragraph": {"elements": [{"textRun": {"content": "\n", "textStyle": {}}}], "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"}}}]}}}]}));
+            let meta = json!({"id": id, "name": title, "mimeType": crate::DOC_MIME, "version": "1", "modifiedTime": "2026-11-26T09:00:00.000Z", "trashed": false});
+            let mut d = doc.clone();
+            d["documentId"] = json!(id);
+            d["title"] = json!(title);
+            let model = DocModel::from_doc(&d).ok();
+            s.files.insert(id.clone(), FakeFile { meta, model, granted: true, rev: 1, ..Default::default() });
+            push_change(&mut s, &id);
+            let mut out = s.files[&id].doc().unwrap();
+            out["documentId"] = json!(id);
+            send_json(stream, 200, &out);
+        }
+        ("PATCH", ["drive", "v3", "files", id]) => {
+            let body: Value = serde_json::from_str(&req.body).unwrap_or_default();
+            // Metadata only: this fake refuses content here, as Markie never sends any.
+            if body.as_object().is_none_or(|o| o.keys().any(|k| k != "trashed")) {
+                return google_error(stream, 400, "this fake takes only {trashed}");
+            }
+            match s.files.get_mut(*id).filter(|f| f.granted) {
+                Some(f) => {
+                    f.meta["trashed"] = body["trashed"].clone();
+                    let meta = f.meta.clone();
+                    let id = id.to_string();
+                    push_change(&mut s, &id);
+                    send_json(stream, 200, &meta);
+                }
+                None => google_error(stream, 404, "File not found."),
+            }
+        }
         ("POST", ["v1", "documents", tail]) if tail.ends_with(":batchUpdate") => {
             let id = tail.trim_end_matches(":batchUpdate").to_string();
             batch_update(stream, &mut s, &id, &req.body);

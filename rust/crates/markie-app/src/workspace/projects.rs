@@ -1123,6 +1123,8 @@ impl Workspace {
         }
         let _ = self.recovery.moved(from, to);
         markie_cloud::comments::local::LocalComments::new(&paths::data_dir()).move_records(from, to);
+        // A synced Google Doc's record follows its file.
+        self.google_follow_move(from, to, cx);
         self.refresh_lists(cx);
         self.compute_projects(cx);
     }

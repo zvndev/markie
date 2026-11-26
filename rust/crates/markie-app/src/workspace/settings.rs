@@ -110,6 +110,8 @@ impl Workspace {
         let body = match section {
             SettingsSection::Account => self.render_account_section(t, cx),
             SettingsSection::Appearance => self.render_appearance_live(colors_open, t, window, cx),
+            // A scene can show the Google section alone, to fit one frame.
+            SettingsSection::Files if cx.try_global::<super::google_docs::GoogleDocs>().is_some_and(|g| g.scene_only) => self.render_google_docs_setting(t, cx),
             SettingsSection::Files => div()
                 .child(self.render_bring_docs_setting(t, cx))
                 .child(self.render_google_docs_setting(t, cx))

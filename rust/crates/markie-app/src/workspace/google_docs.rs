@@ -289,15 +289,15 @@ pub(crate) fn row_state(path: &Path, rec: &SyncRecord, live: Option<Live>, offli
     }
     match live {
         Some(Live::Sending) => return ("Sending\u{2026}".into(), Tone::Busy),
-        Some(Live::Waiting) => return ("Waiting for connection. Your edits are kept and will be sent.".into(), Tone::Warn),
+        Some(Live::Waiting) => return ("Waiting for connection. Your edits are kept and will be sent.".into(), Tone::Quiet),
         Some(Live::Pending) => return ("Edited here \u{b7} sending in a moment".into(), Tone::Busy),
         None => {}
     }
     if offline {
-        return ("Waiting for connection".into(), Tone::Warn);
+        return ("Waiting for connection. Your edits are kept and will be sent.".into(), Tone::Quiet);
     }
     if rec.conflict.is_some() {
-        return ("Conflict: Google\u{2019}s text is in the file, yours is kept beside it. Compare".into(), Tone::Warn);
+        return ("Conflict: Google\u{2019}s text is in the file, and yours is kept beside it.".into(), Tone::Warn);
     }
     if let Some(error) = &rec.error {
         return (error.clone(), Tone::Warn);
@@ -1190,7 +1190,7 @@ impl Workspace {
                             .role(Role::Link)
                             .aria_label(format!("Open {title}. {line}"))
                             .child(div().flex().items_center().gap(px(6.)).child(svg().path("markie/google-doc.svg").size(px(12.)).flex_none().text_color(t.blue)).child(div().text_size(px(12.5)).text_color(t.foreground).truncate().hover(move |el| el.text_color(fg)).child(title.clone())))
-                            .child(div().mt(px(1.)).text_size(px(11.)).line_height(px(16.)).text_color(tone_color).truncate().child(line))
+                            .child(div().mt(px(1.)).text_size(px(11.)).line_height(px(16.)).text_color(tone_color).child(line))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.close_dialog(window, cx);
                                 this.open_path(&open, window, cx)
@@ -1206,7 +1206,7 @@ impl Workspace {
 
     /// Scene `google`: Settings › Files with the Google Docs row.
     /// `{connected?: true, importing?: false, waiting?: false, notice?: "…", empty?: false,
-    ///   states?: false, two_way?: true, only?: false, title?: "synced"}`.
+    ///   states?: false, rows?: n, skip?: n, two_way?: true, only?: false, title?: "synced"}`.
     /// `states` shows one made-up Doc in each sync state; `two_way: false`
     /// unticks the import choice; `only` hides the rest of the Files tab so
     /// the Google section fills the frame; `title` (synced, sending,
@@ -1268,7 +1268,8 @@ impl Workspace {
                 live.insert(v[1].0.clone(), Live::Sending);
                 live.insert(v[2].0.clone(), Live::Waiting);
                 v.truncate(args.get("rows").and_then(serde_json::Value::as_u64).map_or(v.len(), |n| n as usize));
-                v
+                let skip = args.get("skip").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
+                v.into_iter().skip(skip).collect()
             } else {
                 vec![
                     (folder.join("Field notes.md"), rec("d1", "Field notes", 3, None)),

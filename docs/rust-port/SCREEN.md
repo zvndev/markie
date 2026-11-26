@@ -60,7 +60,7 @@ SCENE_SERVER=http://localhost:18991 rust/scripts/screen/scene.sh <scene> <out.pn
 | `palette` | optional `query` (words typed in the field) | The command palette over the file on the command line |
 | `shortcuts` | none | The keyboard shortcuts sheet over the file on the command line |
 | `welcome` | none; needs an empty scratch data folder | A first launch with no file: the welcome document |
-| `google` | optional `connected: false`, `importing: true`, `waiting: true`, `empty: true`, `notice` (a warning line) | Settings › Files with the Google Docs row: made-up synced Docs, one with an error, and the import progress. No network; the grant is in memory (GOOGLE-DOCS.md) |
+| `google` | optional `connected: false`, `importing: true`, `waiting: true`, `empty: true`, `notice` (a warning line), `states: true` (one made-up Doc in each sync state), `rows` and `skip` (which of them), `two_way: false` (the import choice unticked), `only: true` (the Google section alone, to fit a frame), `title` (`synced`, `sending`, `waiting`, `conflict`, `suggesting`, `refresh`: the file on the command line marked as synced, Settings closed, for the title bar) | Settings › Files with the Google Docs row: made-up synced Docs, their sync states and choices, and the import progress. No network and no sync thread; the grant is in memory (GOOGLE-DOCS.md) |
 
 Every scene also takes `style` (a Markdown style preset id, or a whole style store as JSON), `template` (a colour template id) and `code_font`. `MARKIE_RS_SCENE_SIZE=1280x1000` sets the window size; macOS keeps a window no taller than the screen. The Markdown style gallery (`scene/style-gallery.py`, [STYLES-FONTS.md](STYLES-FONTS.md)) draws the Lighthouse sample in four parts for that reason.
 

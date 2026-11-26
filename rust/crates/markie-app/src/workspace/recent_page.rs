@@ -25,6 +25,7 @@ use gpui_kit::*;
 
 use super::Workspace;
 use super::chrome::menu_panel;
+use super::doc_dates::{self, DateRow};
 use super::doc_grid::{self, CardEvent, DocCard, Grid, GridView, Mark, MarkTone, Section, Thumb};
 use super::doc_preview::{self, Lookup, Want};
 use super::library_rows::{RowAction, SyncStatus};
@@ -85,20 +86,14 @@ impl Group {
     }
 }
 
-fn local(ms: f64) -> Option<chrono::DateTime<chrono::Local>> {
-    use chrono::TimeZone as _;
-    if !(ms.is_finite() && ms > 0.) {
-        return None;
-    }
-    chrono::Local.timestamp_millis_opt(ms as i64).single()
-}
-
 /// Today is the same calendar day; This week the six days before it. A
-/// document with no time on record is Earlier.
+/// document with no time on record is Earlier. The days are counted as a
+/// card's dates count them (`doc_dates`), so a card under Today reads
+/// "Today …" and one under This week "Yesterday …" or a weekday.
 pub(super) fn group_of(opened_ms: f64, now: chrono::DateTime<chrono::Local>) -> Group {
-    let Some(then) = local(opened_ms) else { return Group::Earlier };
-    match (now.date_naive() - then.date_naive()).num_days() {
-        d if d <= 0 => Group::Today,
+    let Some(then) = doc_dates::local(opened_ms) else { return Group::Earlier };
+    match doc_dates::days_ago(&then, &now) {
+        0 => Group::Today,
         d if d < 7 => Group::Week,
         _ => Group::Earlier,
     }
@@ -119,60 +114,21 @@ pub(super) fn groups_by_time(tab: LibraryTab, sort: SortOrder) -> bool {
     sort == SortOrder::Recent || (tab == LibraryTab::Recent && sort == SortOrder::Default)
 }
 
-/// "2 hours ago", "yesterday", "Monday", "Nov 3", "Nov 3, 2025".
-fn ago(then: chrono::DateTime<chrono::Local>, now: chrono::DateTime<chrono::Local>) -> String {
-    use chrono::Datelike as _;
-    let seconds = (now - then).num_seconds().max(0);
-    let plural = |n: i64, unit: &str| format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" });
-    if seconds < 60 {
-        return "just now".into();
-    }
-    if seconds < 3600 {
-        return plural(seconds / 60, "minute");
-    }
-    match (now.date_naive() - then.date_naive()).num_days() {
-        d if d <= 0 => plural(seconds / 3600, "hour"),
-        1 => "yesterday".into(),
-        d if d < 7 => then.format("%A").to_string(),
-        _ if then.year() == now.year() => then.format("%b %-d").to_string(),
-        _ => then.format("%b %-d, %Y").to_string(),
-    }
-}
-
-/// "Created today", "Created yesterday", "Created Nov 3", "Created Nov 3,
-/// 2025": a calendar day, since the hour a file was made rarely matters.
-/// None when the time is unknown, so nothing is shown rather than a guess.
-pub(super) fn created_line(ms: Option<f64>, now: chrono::DateTime<chrono::Local>) -> Option<String> {
-    use chrono::Datelike as _;
-    let then = local(ms?)?;
-    let day = match (now.date_naive() - then.date_naive()).num_days() {
-        d if d <= 0 => "today".to_string(),
-        1 => "yesterday".to_string(),
-        _ if then.year() == now.year() => then.format("%b %-d").to_string(),
-        _ => then.format("%b %-d, %Y").to_string(),
-    };
-    Some(format!("Created {day}"))
-}
-
-/// A narrow list has no room for a Created column beside the name and its
-/// age: the name keeps it. Cards always have the line.
+/// A narrow list has no room for a second date column beside the name and
+/// the first: the name keeps it. Cards always have both lines.
 pub(super) fn shows_created(view: doc_grid::GridView, page_width: f32) -> bool {
     view == doc_grid::GridView::Grid || page_width >= 720.
 }
 
-/// A card's quiet line: when it was opened, or when the file last changed
-/// for a starred file never opened here.
-pub(super) fn meta_line(opened_ms: f64, modified_ms: f64, missing: bool, now: chrono::DateTime<chrono::Local>) -> String {
+/// A card's dates: when it was opened (or, for a starred file never opened
+/// here, when it last changed), then when it was created. A missing file has
+/// its own line instead, and an unknown time is left out.
+pub(super) fn card_dates(opened_ms: f64, modified_ms: f64, created_ms: Option<f64>, missing: bool, now: chrono::DateTime<chrono::Local>) -> Vec<DateRow> {
     if missing {
-        return "Missing on disk".into();
+        return Vec::new();
     }
-    if let Some(then) = local(opened_ms) {
-        return format!("Opened {}", ago(then, now));
-    }
-    match local(modified_ms) {
-        Some(then) => format!("Edited {}", ago(then, now)),
-        None => String::new(),
-    }
+    let first = DateRow::at("Opened", opened_ms, now).or_else(|| DateRow::at("Edited", modified_ms, now));
+    first.into_iter().chain(created_ms.and_then(|ms| DateRow::at("Created", ms, now))).collect()
 }
 
 /// "12 documents", or "3 of 12 documents" under a filter.
@@ -385,14 +341,14 @@ impl Workspace {
                 let doc = docs[i];
                 let missing = recent.is_missing(&doc.path);
                 let mut card = DocCard::new(doc.path.to_string_lossy().into_owned(), doc.name.clone(), doc.format);
-                card.meta = meta_line(recent.opened_ms(&doc.path), doc.mtime_ms, missing, now).into();
+                card.meta = if missing { "Missing on disk".into() } else { SharedString::default() };
+                card.dates = card_dates(recent.opened_ms(&doc.path), doc.mtime_ms, recent.created_ms(&doc.path), missing, now);
+                if !shows_created(self.shell.recent_grid.view, width) {
+                    card.dates.truncate(1);
+                }
+                card.base_dir = doc.path.parent().map(Path::to_path_buf);
                 card.thumb = if missing { Thumb::Tile } else { self.file_thumb(&doc.path, doc.mtime_ms, doc.size) };
                 card.missing = missing;
-                card.created = if missing || !shows_created(self.shell.recent_grid.view, width) {
-                    None
-                } else {
-                    created_line(recent.created_ms(&doc.path), now).map(Into::into)
-                };
                 card.openable = !missing;
                 card.current = current.as_deref() == Some(doc.path.as_path());
                 card.menu_open = self.shell.row_menu.as_ref().is_some_and(|(open, _)| *open == doc.path);
@@ -429,6 +385,7 @@ impl Workspace {
                     width,
                     state: |this: &mut Self| &mut this.shell.recent_grid,
                     on_event: Rc::new(|this: &mut Self, id, event, window, cx| this.recent_card_event(id, event, window, cx)),
+                    mini: Some(doc_grid::Mini { pool: self.shell.recent_minis.clone(), style: super::rich::doc_style(cx) }),
                 },
                 &self.shell.recent_grid,
                 window,
@@ -746,11 +703,37 @@ impl Workspace {
                     self.open_row_menu(PathBuf::from(id.as_ref()), point(px(520.), px(330.)), cx);
                 }
             }
+            // `card_scroll: [[n, px], …]`: card n's preview scrolled down this far.
+            for pair in args.get("card_scroll").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(serde_json::Value::as_array) {
+                if let (Some(n), Some(y)) = (pair.first().and_then(serde_json::Value::as_u64), pair.get(1).and_then(serde_json::Value::as_f64)) {
+                    if let Some(id) = ids.get(n as usize) {
+                        self.shell.recent_grid.scrolls.borrow_mut().offsets.insert(id.clone(), y as f32);
+                    }
+                }
+            }
             *step = 3;
             cx.notify();
             return false;
         }
         true
+    }
+}
+
+#[cfg(feature = "scene")]
+impl Workspace {
+    /// The bench's start: the page closed, every thumbnail and live view gone.
+    pub(super) fn scene_bench_reset(&mut self, cx: &mut Context<Self>) {
+        self.select_view(LeftView::Browse, cx);
+        self.shell.previews = Default::default();
+        self.shell.recent_minis.borrow_mut().clear();
+        self.shell.recent_grid.scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    /// Whether every card on screen has its thumbnail.
+    pub(super) fn scene_bench_settled(&self) -> bool {
+        let recent = &self.shell.recent;
+        !self.shell.recent_minis.borrow().owed() && recent.hits().iter().take(24).map(|hit| recent.doc(hit)).all(|doc| recent.is_missing(&doc.path) || self.shell.previews.lookup(&Want::file(&doc.path, doc.mtime_ms, doc.size)) != Lookup::Owed)
     }
 }
 
@@ -777,9 +760,9 @@ pub(super) fn star_flips(paths: &[PathBuf], stars: &std::collections::HashSet<Pa
 
 #[cfg(test)]
 mod tests {
-    use super::{created_line, selected_label, shows_created, star_flips};
+    use super::{card_dates, selected_label, shows_created, star_flips};
     use crate::workspace::doc_grid::GridView;
-    use super::{Group, PAGE_MAX, count_line, empty_copy, group_of, grouped, groups_by_time, meta_line, page_gutter, page_width, sync_mark};
+    use super::{Group, PAGE_MAX, count_line, empty_copy, group_of, grouped, groups_by_time, page_gutter, page_width, sync_mark};
     use crate::library::{LibraryTab, SortOrder};
     use crate::workspace::library_rows::SyncStatus;
     use chrono::TimeZone as _;
@@ -793,14 +776,35 @@ mod tests {
     }
 
     #[test]
-    fn the_created_line_is_a_day_and_nothing_when_unknown() {
+    fn a_card_has_its_opened_and_created_dates_and_nothing_unknown() {
         let now = at(2026, 11, 25, 15, 0);
-        assert_eq!(created_line(Some(ms(at(2026, 11, 25, 9, 0))), now).as_deref(), Some("Created today"));
-        assert_eq!(created_line(Some(ms(at(2026, 11, 24, 9, 0))), now).as_deref(), Some("Created yesterday"));
-        assert_eq!(created_line(Some(ms(at(2026, 11, 3, 9, 0))), now).as_deref(), Some("Created Nov 3"));
-        assert_eq!(created_line(Some(ms(at(2025, 11, 3, 9, 0))), now).as_deref(), Some("Created Nov 3, 2025"));
-        assert_eq!(created_line(None, now), None);
-        assert_eq!(created_line(Some(0.), now), None);
+        let rows = |opened: f64, modified: f64, created: Option<f64>, missing: bool| {
+            card_dates(opened, modified, created, missing, now).into_iter().map(|r| format!("{} {}", r.label, r.value)).collect::<Vec<_>>()
+        };
+        assert_eq!(rows(ms(at(2026, 11, 25, 14, 14)), 0., Some(ms(at(2026, 11, 24, 21, 3))), false), ["Opened Today 2:14 PM", "Created Yesterday 9:03 PM"]);
+        assert_eq!(rows(ms(at(2026, 11, 23, 9, 12)), 0., Some(ms(at(2025, 11, 3, 9, 0))), false), ["Opened Mon 9:12 AM", "Created Nov 3, 2025"]);
+        // Never opened here (a starred file): when it last changed.
+        assert_eq!(rows(0., ms(at(2026, 11, 3, 9, 0)), None, false), ["Edited Nov 3"]);
+        assert!(rows(0., 0., None, false).is_empty());
+        assert!(rows(ms(now), ms(now), Some(ms(now)), true).is_empty(), "a missing file says so instead");
+    }
+
+    #[test]
+    fn a_cards_date_and_its_section_count_the_same_days() {
+        // Late last night: under This week, and it reads Yesterday, not today.
+        let now = at(2026, 11, 23, 0, 20);
+        let late = ms(at(2026, 11, 22, 23, 50));
+        assert_eq!(group_of(late, now), Group::Week);
+        assert_eq!(card_dates(late, 0., None, false, now)[0].value, "Yesterday 11:50 PM");
+        // Just after midnight: Today, and it reads Today.
+        let early = ms(at(2026, 11, 23, 0, 5));
+        assert_eq!(group_of(early, now), Group::Today);
+        assert_eq!(card_dates(early, 0., None, false, now)[0].value, "Today 12:05 AM");
+        // Six days back is still This week, with its weekday; seven is Earlier, with a date.
+        let six = ms(at(2026, 11, 17, 9, 0));
+        let seven = ms(at(2026, 11, 16, 9, 0));
+        assert_eq!((group_of(six, now), card_dates(six, 0., None, false, now)[0].value.as_str()), (Group::Week, "Tue 9:00 AM"));
+        assert_eq!((group_of(seven, now), card_dates(seven, 0., None, false, now)[0].value.as_str()), (Group::Earlier, "Nov 16"));
     }
 
     #[test]
@@ -841,25 +845,6 @@ mod tests {
         assert!(!groups_by_time(LibraryTab::Starred, SortOrder::Default), "stars come in the order they were starred");
         assert!(!groups_by_time(LibraryTab::Recent, SortOrder::Name));
         assert!(!groups_by_time(LibraryTab::Recent, SortOrder::Type));
-    }
-
-    #[test]
-    fn the_quiet_line_says_when_in_plain_words() {
-        let now = at(2026, 11, 23, 15, 0);
-        let line = |t| meta_line(ms(t), 0., false, now);
-        assert_eq!(line(at(2026, 11, 23, 14, 59)), "Opened 1 minute ago");
-        assert_eq!(line(at(2026, 11, 23, 14, 30)), "Opened 30 minutes ago");
-        assert_eq!(line(at(2026, 11, 23, 13, 0)), "Opened 2 hours ago");
-        assert_eq!(line(at(2026, 11, 23, 13, 30)), "Opened 1 hour ago");
-        assert_eq!(line(at(2026, 11, 22, 22, 0)), "Opened yesterday");
-        assert_eq!(line(at(2026, 11, 19, 9, 0)), "Opened Thursday");
-        assert_eq!(line(at(2026, 11, 3, 9, 0)), "Opened Nov 3");
-        assert_eq!(line(at(2025, 11, 3, 9, 0)), "Opened Nov 3, 2025");
-        assert_eq!(meta_line(ms(now), 0., false, now), "Opened just now");
-        // Never opened here (a starred file): when it last changed.
-        assert_eq!(meta_line(0., ms(at(2026, 11, 22, 9, 0)), false, now), "Edited yesterday");
-        assert_eq!(meta_line(0., 0., false, now), "");
-        assert_eq!(meta_line(ms(now), ms(now), true, now), "Missing on disk");
     }
 
     #[test]

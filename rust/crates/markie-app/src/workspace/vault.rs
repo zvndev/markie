@@ -1937,6 +1937,9 @@ impl Workspace {
         self.disk.forget(path);
         private_files::purge_local_copies(&markie_core::paths::data_dir(), path, self.registry.as_deref());
         self.shell.previews.forget(&path.to_string_lossy());
+        // Its live preview goes with it; a Cloud card of it may be any of them.
+        self.shell.recent_minis.borrow_mut().forget(&path.to_string_lossy());
+        self.shell.cloud_minis.borrow_mut().clear();
         self.cloud.bindings.remove(path);
         self.recovered.retain(|d| d.meta.path.as_deref() != Some(&*path.to_string_lossy()));
         self.shell.row_menu = None;

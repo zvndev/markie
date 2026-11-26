@@ -126,6 +126,9 @@ pub fn start(spec: Spec, handle: AnyWindowHandle, workspace: Entity<Workspace>, 
         if spec.name == "csv" && spec.args.get("bench").and_then(Value::as_bool).unwrap_or(false) {
             csv_bench(handle, &workspace, cx);
         }
+        if spec.name == "recent" && spec.args.get("bench").and_then(Value::as_bool).unwrap_or(false) {
+            recent_bench(handle, &workspace, &executor, cx).await;
+        }
         // Settle: text inputs, images and async answers.
         for _ in 0..4 {
             timer(spec.args.get("settle").and_then(Value::as_u64).unwrap_or(700) / 4).await;
@@ -587,6 +590,153 @@ impl Workspace {
                 true
             }
         }
+    }
+}
+
+fn stats(label: &str, frames: &[f64]) {
+    let mut sorted = frames.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let mean = frames.iter().sum::<f64>() / frames.len().max(1) as f64;
+    let over = frames.iter().filter(|f| **f > 1000. / 60.).count();
+    eprintln!(
+        "markie-recent-bench {label} mean {mean:.3} median {:.3} p95 {:.3} max {:.3} frames_over_16.7ms {over} of {}",
+        sorted[sorted.len() / 2],
+        sorted[sorted.len() * 95 / 100],
+        sorted[sorted.len() - 1],
+        frames.len()
+    );
+}
+
+/// The Recent page with many documents (docs/rust-port/PERF.md): opening it
+/// with nothing cached, then scrolling the page and a card's preview. Each
+/// frame figure is main-thread time to draw the frame: render, layout and
+/// paint, live previews included. The window is hidden, so presenting the
+/// frame on the GPU is not in it.
+async fn recent_bench(handle: AnyWindowHandle, workspace: &Entity<Workspace>, executor: &BackgroundExecutor, cx: &mut AsyncApp) {
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.;
+    let frame = |window: &mut Window, cx: &mut App| window.draw(cx).clear(cx);
+    // Open with nothing cached: away from the page, every thumbnail and
+    // live view dropped, then back.
+    let t = Instant::now();
+    let first = cx
+        .update_window(handle, |_, window, cx| {
+            workspace.update(cx, |ws, cx| ws.scene_bench_reset(cx));
+            frame(window, cx);
+            let t = Instant::now();
+            workspace.update(cx, |ws, cx| ws.show_recent_page(cx));
+            frame(window, cx);
+            ms(t)
+        })
+        .unwrap_or(0.);
+    // Then frames as the screen's thumbnails land, until none on screen is owed.
+    let mut opening = Vec::new();
+    loop {
+        executor.timer(Duration::from_millis(8)).await;
+        let (cost, done) = cx
+            .update_window(handle, |_, window, cx| {
+                let t = Instant::now();
+                frame(window, cx);
+                (ms(t), workspace.read(cx).scene_bench_settled())
+            })
+            .unwrap_or((0., true));
+        opening.push(cost);
+        if done || t.elapsed() > Duration::from_secs(20) {
+            break;
+        }
+    }
+    let _ = cx.update_window(handle, |_, _, cx| {
+        let ws = workspace.read(cx);
+        eprintln!("markie-recent-bench documents {}", ws.shell.recent.hits().len());
+        eprintln!("markie-recent-bench open_first_frame_ms {first:.2}");
+        eprintln!("markie-recent-bench open_to_screen_previews_ms {:.1} ({} frames)", ms(t), opening.len());
+    });
+    stats("open_frames_ms", &opening);
+    // The page: 600 frames 40 points apart, down and back up, as a trackpad
+    // scrolls; thumbnails off screen fill in as they come near.
+    // The page: a trackpad gesture that starts in the page's margin and runs
+    // down across the cards, 300 events 40 points apart, then one back up.
+    // Real wheel events, through the window: the grid's router, the latch
+    // and the page's own scroll, as a person's would go.
+    let wheel = |at: Point<Pixels>, dy: f32, phase: TouchPhase| {
+        PlatformInput::Scroll(ScrollEvent { position: at, delta: ScrollDelta::Pixels(point(px(0.), px(dy))), modifiers: Modifiers::default(), touch_phase: phase, source: ScrollSource::Pointer })
+    };
+    let (margin, across) = cx
+        .update_window(handle, |_, _, cx| {
+            let port = workspace.read(cx).shell.recent_grid.scroll.bounds();
+            (point(port.left() + px(6.), port.center().y), point(port.left() + px(120.), port.center().y))
+        })
+        .unwrap_or_default();
+    let page_y = |cx: &mut AsyncApp| cx.update_window(handle, |_, _, cx| f32::from(workspace.read(cx).shell.recent_grid.scroll.offset().y)).unwrap_or(0.);
+    let previews = |cx: &mut AsyncApp| cx.update_window(handle, |_, _, cx| workspace.read(cx).shell.recent_grid.scrolls.borrow().offsets.values().sum::<f32>()).unwrap_or(0.);
+    let (page_before, previews_before) = (page_y(cx), previews(cx));
+    let mut frames = Vec::new();
+    for (sign, phase_start) in [(-1., margin), (1., margin)] {
+        let _ = cx.update_window(handle, |_, window, cx| {
+            window.dispatch_event(wheel(phase_start, 0., TouchPhase::Started), cx);
+            frame(window, cx);
+        });
+        for i in 0..300 {
+            let cost = cx
+                .update_window(handle, |_, window, cx| {
+                    let t = Instant::now();
+                    window.dispatch_event(wheel(across, sign * 40., if i == 299 { TouchPhase::Ended } else { TouchPhase::Moved }), cx);
+                    frame(window, cx);
+                    ms(t)
+                })
+                .unwrap_or(0.);
+            frames.push(cost);
+            if i % 30 == 29 {
+                executor.timer(Duration::from_millis(4)).await;
+            }
+        }
+        if sign < 0. {
+            eprintln!("markie-recent-bench page_gesture_moved_page_px {:.0} moved_previews_px {:.0}", page_before - page_y(cx), previews(cx) - previews_before);
+        }
+    }
+    stats("page_scroll_frame_ms", &frames);
+    // One card's preview: a gesture that starts over it, down to its end
+    // and on, then back up.
+    let target = cx
+        .update_window(handle, |_, _, cx| {
+            let ws = workspace.read(cx);
+            let port = ws.shell.recent_grid.scroll.bounds();
+            let scrolls = ws.shell.recent_grid.scrolls.borrow();
+            scrolls.cards.values().filter(|c| c.max > 120.).filter_map(|c| c.hitbox.as_ref().map(|h| h.bounds.center())).find(|at| port.contains(at))
+        })
+        .ok()
+        .flatten();
+    if let Some(at) = target {
+        let (page_before, previews_before) = (page_y(cx), previews(cx));
+        let mut frames = Vec::new();
+        for sign in [-1., 1.] {
+            let _ = cx.update_window(handle, |_, window, cx| {
+                window.dispatch_event(wheel(at, 0., TouchPhase::Started), cx);
+                frame(window, cx);
+            });
+            for _ in 0..100 {
+                let cost = cx
+                    .update_window(handle, |_, window, cx| {
+                        let t = Instant::now();
+                        window.dispatch_event(wheel(at, sign * 12., TouchPhase::Moved), cx);
+                        frame(window, cx);
+                        ms(t)
+                    })
+                    .unwrap_or(0.);
+                frames.push(cost);
+            }
+            if sign < 0. {
+                eprintln!("markie-recent-bench preview_gesture_moved_preview_px {:.0} moved_page_px {:.0} (handed to the page at its end)", previews(cx) - previews_before, page_before - page_y(cx));
+            }
+        }
+        stats("preview_scroll_frame_ms", &frames);
+    }
+    let _ = cx.update_window(handle, |_, _, cx| {
+        let ws = workspace.read(cx);
+        eprintln!("markie-recent-bench live_views {} (cap {})", ws.shell.recent_minis.borrow().len(), super::doc_mini::MAX_LIVE);
+    });
+    let rss = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).and_then(|s| s.trim().parse::<f64>().ok());
+    if let Some(kb) = rss {
+        eprintln!("markie-recent-bench rss_mb {:.0}", kb / 1024.);
     }
 }
 

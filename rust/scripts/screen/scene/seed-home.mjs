@@ -175,8 +175,102 @@ Two days. One goal.
 `,
 };
 
+// `--cards`: the edge cases of a document card. A Markdown document longer
+// than two pages that uses every element the reader draws, an empty one, one
+// with only front matter, a name too long for its card and a PDF.
+const cards = process.argv.includes("--cards");
+const FIELD_GUIDE = `---
+title: Field guide
+tags: [onboarding]
+---
+# Field guide
+
+Welcome to the **studio**. This guide covers the *first two weeks*: where things are, who to ask, and how we ship. Read it with a coffee; it is meant to be [skimmed](#skim) and kept.
+
+## Your first day
+
+- [x] Collect your laptop from the front desk
+- [x] Join the \`#studio\` channel
+- [ ] Book a walk with your buddy
+- [ ] Read the ~~old~~ new handbook
+
+> We write things down so nobody has to remember them. If you learn something twice, write it here.
+
+## How we plan
+
+1. Each Monday the team picks three goals for the week.
+2. Goals are small enough to finish by Thursday.
+3. Friday is for review, demos and tidying up.
+
+| Day | Focus | Owner |
+| --- | --- | --- |
+| Monday | Goals | Lead |
+| Tuesday | Build | Everyone |
+| Wednesday | Build | Everyone |
+| Thursday | Finish | Everyone |
+| Friday | Review | Lead |
+
+## Tools
+
+Our documents live in Markie. Code lives in the monorepo and builds with one command:
+
+\`\`\`sh
+make setup
+make test
+make run
+\`\`\`
+
+### Writing style
+
+Use plain words and short sentences. Prefer a list to a long paragraph, and a table to a list when there are two dimensions. Headings are labels, not sentences.
+
+### Reviews
+
+Every change gets one reviewer. A review answers two questions: *does it work*, and *will the next person understand it*. Keep comments kind and specific.
+
+---
+
+## The second week
+
+By now you have shipped something small. In the second week you pick up a real project with your buddy. Expect to pair for most of it.
+
+- Pick a project from the board
+- Write a one-page plan
+- Share it on Wednesday
+- Start building on Thursday
+
+### Questions people ask
+
+**Where do I park?** Behind the building, any bay marked green.
+
+**Who approves time off?** Your lead, in the calendar, at least a week ahead.
+
+**What if I break the build?** Tell the channel, fix it or revert it, and write one line about what happened. Everyone has done it.
+
+## Glossary
+
+| Word | Meaning |
+| --- | --- |
+| Ship | Put it in front of people |
+| Demo | Five minutes, a working thing, no slides |
+| Tidy | Delete what nobody uses |
+
+## After the first month
+
+Ask your lead for a check-in. Bring one thing that surprised you and one thing you would change. We read every answer and act on the good ones.
+`;
+const CARD_DOCS = {
+  "Field guide.md": FIELD_GUIDE,
+  "Empty note.md": "",
+  "Front matter only.md": "---\ntitle: Draft\nstatus: idea\n---\n",
+  "A document whose name is far too long to fit on one card.md": "# Long names\n\nThe name runs past the card and is cut with an ellipsis.\n",
+  // A one-page PDF, made up here: a title and a line of text.
+  "Scan.pdf": "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
+};
+
 const docs = path.join(dir, "docs");
 fs.mkdirSync(docs, { recursive: true });
+if (cards) for (const [name, text] of Object.entries(CARD_DOCS)) fs.writeFileSync(path.join(docs, name), text);
 const local = ["Quarterly plan.md", "Launch checklist.md", "Meeting notes.md", "Brand guidelines.md", "Reading list.md", "Pricing table.csv", "Release notes.txt", "settings.json", "deploy.yaml", "Homepage.html"];
 for (const name of local) fs.writeFileSync(path.join(docs, name), DOCS[name]);
 // A Word document: any .docx passed as the third argument is copied in.
@@ -186,6 +280,7 @@ if (word) fs.copyFileSync(word, path.join(docs, "Offer letter.docx"));
 const p = (name) => path.join(docs, name);
 // Hours since each was last opened: today, this week, earlier.
 const recents = [
+  ...(cards ? [{ path: p("Field guide.md"), hours_ago: 0.1 }] : []),
   { path: p("Quarterly plan.md"), hours_ago: 0.4, star: true },
   { path: p("Meeting notes.md"), hours_ago: 2 },
   { path: p("Pricing table.csv"), hours_ago: 5 },
@@ -198,6 +293,14 @@ const recents = [
   { path: p("Reading list.md"), hours_ago: 24 * 12, star: true },
   { path: p("deploy.yaml"), hours_ago: 24 * 20 },
   { path: p("Homepage.html"), hours_ago: 24 * 41 },
+  ...(cards
+    ? [
+        { path: p("A document whose name is far too long to fit on one card.md"), hours_ago: 3 },
+        { path: p("Empty note.md"), hours_ago: 26 },
+        { path: p("Front matter only.md"), hours_ago: 24 * 4 },
+        { path: p("Scan.pdf"), hours_ago: 24 * 300 },
+      ]
+    : []),
 ];
 const out = { docs, recents, word: word ? p("Offer letter.docx") : null };
 

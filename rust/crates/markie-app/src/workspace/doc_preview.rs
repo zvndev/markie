@@ -1,7 +1,10 @@
 //! What a document card's thumbnail shows: the start of the document as a
 //! handful of blocks (title, headings, paragraphs, lists, a table), which
-//! `doc_grid.rs` draws in miniature. No web view and no image: plain data,
-//! built once per file version off the main thread and kept in a cache.
+//! `doc_grid.rs` draws on a small sheet. No web view and no image: plain
+//! data, built once per file version off the main thread and kept in a cache.
+//!
+//! A Markdown document also keeps its head (`Preview::head`), the text the
+//! card's live miniature draws with the reader itself (`doc_mini.rs`).
 //!
 //! - [`from_text`] and [`read_file`] build a [`Preview`]. Both are blocking
 //!   and belong on a background thread.
@@ -60,12 +63,54 @@ impl Block {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Preview {
     pub blocks: Vec<Block>,
+    /// A Markdown document's start, as written: what its card draws live.
+    /// Cut at a line, at most [`HEAD_BYTES`]. None for every other kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    /// Read, and nothing to show: why, for the card to say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blank: Option<Blank>,
+}
+
+/// Why a document that was read shows nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Blank {
+    /// No words at all.
+    Empty,
+    /// Front matter and nothing after it.
+    FrontMatter,
+    /// It is there but could not be read (permissions, a broken file).
+    Unreadable,
+}
+
+impl Blank {
+    pub fn caption(self) -> &'static str {
+        match self {
+            Blank::Empty => "Empty document",
+            Blank::FrontMatter => "Only front matter",
+            Blank::Unreadable => "Can\u{2019}t be read",
+        }
+    }
 }
 
 impl Preview {
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
+
+    fn blank(why: Blank) -> Self {
+        Self { blocks: Vec::new(), head: None, blank: Some(why) }
+    }
+}
+
+/// Whether the text is front matter and nothing else.
+fn only_front_matter(text: &str) -> bool {
+    let mut lines = text.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return false;
+    }
+    let rest: Vec<&str> = lines.collect();
+    rest.iter().position(|l| matches!(l.trim(), "---" | "...")).is_some_and(|end| rest[end + 1..].iter().all(|l| l.trim().is_empty()))
 }
 
 fn clip(text: &str) -> String {
@@ -163,7 +208,7 @@ impl Builder {
     }
     fn finish(mut self) -> Preview {
         self.flush();
-        Preview { blocks: self.blocks }
+        Preview { blocks: self.blocks, ..Preview::default() }
     }
 }
 
@@ -307,7 +352,7 @@ fn prose(text: &str, titled: bool) -> Preview {
 /// Code and data: each line as it stands, in the fixed-width face.
 fn literal(text: &str) -> Preview {
     let blocks = text.lines().filter(|l| !l.trim().is_empty()).take(MAX_LINES).map(|l| Block::Code(clip_keep_indent(l.trim_end()))).collect();
-    Preview { blocks }
+    Preview { blocks, ..Preview::default() }
 }
 
 /// One CSV record's cells, quotes honoured.
@@ -339,7 +384,7 @@ fn csv(text: &str) -> Preview {
     if rows.is_empty() {
         return Preview::default();
     }
-    Preview { blocks: vec![Block::Table(rows)] }
+    Preview { blocks: vec![Block::Table(rows)], ..Preview::default() }
 }
 
 /// The preview of a document's text. `text` is the start of a text file, or
@@ -347,7 +392,14 @@ fn csv(text: &str) -> Preview {
 pub fn from_text(format: FormatKind, text: &str) -> Preview {
     let text = text.trim_start_matches('\u{feff}');
     match format {
-        FormatKind::Markdown | FormatKind::Darkmown => markdown(text),
+        FormatKind::Markdown => {
+            let mut preview = markdown(text);
+            if !preview.is_empty() {
+                preview.head = Some(text.to_string());
+            }
+            preview
+        }
+        FormatKind::Darkmown => markdown(text),
         FormatKind::Csv => csv(text),
         FormatKind::Text => prose(text, false),
         FormatKind::Docx | FormatKind::Doc | FormatKind::Rtf | FormatKind::Odt | FormatKind::Html => prose(text, true),
@@ -357,7 +409,9 @@ pub fn from_text(format: FormatKind, text: &str) -> Preview {
 }
 
 /// The preview of a file's bytes: the head of a text file, or the whole of an
-/// office or HTML file, whose words are taken out first.
+/// office or HTML file, whose words are taken out first. A file with nothing
+/// to show gives a preview with no blocks that says why; a kind with no
+/// preview at all gives None.
 pub fn from_bytes(format: FormatKind, bytes: &[u8]) -> Option<Preview> {
     let preview = match format {
         FormatKind::Unsupported => return None,
@@ -373,10 +427,14 @@ pub fn from_bytes(format: FormatKind, bytes: &[u8]) -> Option<Preview> {
             let text = String::from_utf8_lossy(bytes);
             let whole = bytes.len() < HEAD_BYTES as usize;
             let text = if whole { &text[..] } else { text.rfind('\n').map_or(&text[..], |at| &text[..at]) };
-            from_text(format, text)
+            let preview = from_text(format, text);
+            if preview.is_empty() && matches!(format, FormatKind::Markdown | FormatKind::Darkmown) && only_front_matter(text.trim_start_matches('\u{feff}')) {
+                return Some(Preview::blank(Blank::FrontMatter));
+            }
+            preview
         }
     };
-    (!preview.is_empty()).then_some(preview)
+    Some(if preview.is_empty() { Preview::blank(Blank::Empty) } else { preview })
 }
 
 fn sentences(text: &str) -> String {
@@ -397,8 +455,14 @@ fn sentences(text: &str) -> String {
 /// that is gone, too large to open or not text gives None, and the card shows
 /// a clean tile for its type.
 pub fn read_file(path: &Path, format: FormatKind) -> Option<Preview> {
+    if format == FormatKind::Unsupported {
+        return None;
+    }
     let office = matches!(format, FormatKind::Docx | FormatKind::Doc | FormatKind::Rtf | FormatKind::Odt | FormatKind::Html);
-    let file = std::fs::File::open(path).ok()?;
+    // Gone is not ours to say (the page marks it missing); there but closed
+    // to us is.
+    let unreadable = || path.exists().then(|| Preview::blank(Blank::Unreadable));
+    let Ok(file) = std::fs::File::open(path) else { return unreadable() };
     let limit = if office {
         if file.metadata().ok()?.len() > doc_text::byte_limit(format) {
             return None;
@@ -408,8 +472,14 @@ pub fn read_file(path: &Path, format: FormatKind) -> Option<Preview> {
         HEAD_BYTES
     };
     let mut bytes = Vec::new();
-    file.take(limit).read_to_end(&mut bytes).ok()?;
-    from_bytes(format, &bytes)
+    if file.take(limit).read_to_end(&mut bytes).is_err() {
+        return unreadable();
+    }
+    match from_bytes(format, &bytes) {
+        // An office file whose words could not be taken out: its tile.
+        Some(p) if office && p.blank == Some(Blank::Empty) && !bytes.is_empty() => None,
+        other => other,
+    }
 }
 
 // ------------------------------------------------------------------ cache
@@ -443,7 +513,13 @@ pub enum Lookup {
 struct Saved {
     stamp: String,
     preview: Option<Preview>,
+    /// What a preview holds changed with 2 (a Markdown head): older entries
+    /// are built again.
+    #[serde(default)]
+    v: u8,
 }
+
+const SAVED_VERSION: u8 = 2;
 
 /// Previews by key. One entry per document; a new stamp replaces the old.
 #[derive(Default)]
@@ -517,7 +593,7 @@ impl PreviewCache {
             .map
             .iter()
             .filter(|(key, _)| key.starts_with(CLOUD_PREFIX))
-            .filter_map(|(key, (stamp, preview))| Some((key.clone(), Saved { stamp: stamp.clone(), preview: Some(preview.as_deref()?.clone()) })))
+            .filter_map(|(key, (stamp, preview))| Some((key.clone(), Saved { stamp: stamp.clone(), preview: Some(preview.as_deref()?.clone()), v: SAVED_VERSION })))
             .collect();
         serde_json::to_string(&CloudFile { session: Some(session.to_string()), entries }).unwrap_or_else(|_| "{}".into())
     }
@@ -530,7 +606,7 @@ impl PreviewCache {
             return false;
         }
         for (key, entry) in file.entries {
-            if key.starts_with(CLOUD_PREFIX) {
+            if key.starts_with(CLOUD_PREFIX) && entry.v >= SAVED_VERSION {
                 self.map.entry(key).or_insert((entry.stamp, entry.preview.map(Arc::new)));
             }
         }
@@ -709,10 +785,58 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_unknown_files_have_no_preview() {
-        assert_eq!(from_bytes(FormatKind::Markdown, b"\n\n"), None);
+    fn an_empty_file_says_so_and_unknown_kinds_have_no_preview() {
+        use super::Blank;
+        let blank = |bytes: &[u8]| from_bytes(FormatKind::Markdown, bytes).and_then(|p| p.blank);
+        assert_eq!(blank(b"\n\n"), Some(Blank::Empty));
+        assert_eq!(blank(b"---\ntitle: Plan\ntags: [a]\n---\n\n"), Some(Blank::FrontMatter));
+        assert_eq!(blank(b"---\ntitle: Plan\n---\nWords."), None, "words after the front matter");
+        assert_eq!(from_bytes(FormatKind::Text, b"  \n").and_then(|p| p.blank), Some(Blank::Empty));
         assert_eq!(from_bytes(FormatKind::Unsupported, b"PK\x03\x04"), None);
-        assert!(from_bytes(FormatKind::Markdown, b"hello").is_some());
+        let hello = from_bytes(FormatKind::Markdown, b"hello").unwrap();
+        assert!(!hello.is_empty() && hello.blank.is_none());
+        assert_eq!(Blank::FrontMatter.caption(), "Only front matter");
+    }
+
+    #[test]
+    fn markdown_keeps_its_head_for_the_live_miniature_and_nothing_else_does() {
+        let md = from_bytes(FormatKind::Markdown, b"\xef\xbb\xbf# Plan\n\n- one\n").unwrap();
+        assert_eq!(md.head.as_deref(), Some("# Plan\n\n- one\n"), "the byte order mark is dropped");
+        assert_eq!(from_bytes(FormatKind::Text, b"Plan\n").unwrap().head, None);
+        assert_eq!(from_bytes(FormatKind::Csv, b"a,b\n1,2\n").unwrap().head, None);
+        assert_eq!(from_bytes(FormatKind::Markdown, b"\n").unwrap().head, None, "nothing to draw");
+        // A huge file: only its head, cut at a line.
+        let big = "Line of words in a long document.\n".repeat(4_000);
+        let got = from_bytes(FormatKind::Markdown, &big.as_bytes()[..super::HEAD_BYTES as usize]).unwrap();
+        let head = got.head.unwrap();
+        assert!(head.len() <= super::HEAD_BYTES as usize && head.ends_with("document."));
+    }
+
+    #[test]
+    fn a_file_that_is_there_but_cannot_be_read_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where a file should be: there, and not readable as one.
+        let odd = dir.path().join("folder.md");
+        std::fs::create_dir(&odd).unwrap();
+        assert_eq!(read_file(&odd, FormatKind::Markdown).and_then(|p| p.blank), Some(super::Blank::Unreadable));
+        assert_eq!(read_file(&dir.path().join("gone.md"), FormatKind::Markdown), None, "gone is the page's to say");
+        let pdf = dir.path().join("a.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").unwrap();
+        assert_eq!(read_file(&pdf, FormatKind::Unsupported), None, "a kind with no preview keeps its tile");
+    }
+
+    #[test]
+    fn stored_previews_from_before_the_head_are_built_again() {
+        let mut cache = PreviewCache::default();
+        let key = cloud_key("alice", "https://a.example", "doc");
+        let old = format!("{{\"session\":\"s\",\"entries\":{{\"{key}\":{{\"stamp\":\"v1\",\"preview\":{{\"blocks\":[]}}}}}}}}");
+        assert!(cache.load_cloud(&old, "s"));
+        assert_eq!(cache.len(), 0);
+        cache.put(Want { key: key.clone(), stamp: "v1".into() }, roadmap());
+        let mut next = PreviewCache::default();
+        assert!(next.load_cloud(&cache.save_cloud("s"), "s"));
+        assert_eq!(next.len(), 1);
+        assert!(matches!(next.lookup(&Want { key, stamp: "v1".into() }), Lookup::Ready(p) if p.head.as_deref() == Some("# Roadmap")));
     }
 
     #[test]

@@ -26,6 +26,7 @@ use markie_core::formats::{self, FormatKind};
 use super::Workspace;
 use super::chrome::{icon, menu_panel};
 use super::cloud::{Scope, name};
+use super::doc_dates::DateRow;
 use super::doc_grid::{self, CardEvent, DocCard, Grid, GridView, Mark, MarkTone, Section, Thumb};
 use super::doc_preview::{self, Lookup, Want};
 use super::rail::filter_field;
@@ -364,53 +365,6 @@ pub(super) fn file_size(bytes: usize) -> String {
     format!("{:.1} MB", bytes as f64 / (1024. * 1024.))
 }
 
-/// `updatedAgo` in relative-time.ts.
-pub(super) fn updated_ago(ms: i64, now: chrono::DateTime<chrono::Local>) -> String {
-    use chrono::{Datelike as _, TimeZone as _};
-    if ms <= 0 {
-        return String::new();
-    }
-    let Some(then) = chrono::Local.timestamp_millis_opt(ms).single() else { return String::new() };
-    let delta = (now - then).num_seconds().max(0);
-    if delta < 60 {
-        return "just now".into();
-    }
-    if delta < 3600 {
-        return format!("{}m ago", delta / 60);
-    }
-    let days = (now.date_naive() - then.date_naive()).num_days();
-    if days <= 0 {
-        return format!("{}h ago", delta / 3600);
-    }
-    if days == 1 {
-        return "yesterday".into();
-    }
-    if then.year() == now.year() {
-        return then.format("%b %-d").to_string();
-    }
-    then.year().to_string()
-}
-
-/// The metadata line of a snapshot card.
-pub(super) fn snapshot_meta(row: &SnapshotMeta, now: chrono::DateTime<chrono::Local>) -> String {
-    let role = match row.role {
-        Role::Owner => "Owner",
-        Role::Editor => "Editor",
-        Role::Viewer => "Viewer",
-    };
-    [
-        format_key(row.format).to_uppercase(),
-        role.to_string(),
-        format!("v{}", row.version),
-        file_size(row.byte_length),
-        updated_ago(row.updated_at as i64, now),
-    ]
-    .into_iter()
-    .filter(|s| !s.is_empty())
-    .collect::<Vec<_>>()
-    .join(" · ")
-}
-
 /// `errorPresentation` for the snapshot list.
 pub(super) fn snapshot_error(error: &str) -> (String, String) {
     let lower = error.to_lowercase();
@@ -507,8 +461,8 @@ pub(super) fn server_label(origin: &str, primary: &str) -> Option<String> {
 }
 
 /// A card's quiet line: who owns it or how it is shared, then anything the
-/// row has to say about its media, then the age of a share with no listing row.
-pub(super) fn card_meta(entry: &Entry, share_list_known: bool, media: Option<&str>, age: Option<&str>) -> String {
+/// row has to say about its media. Its dates are rows of their own.
+pub(super) fn card_meta(entry: &Entry, share_list_known: bool, media: Option<&str>) -> String {
     let mut line = match entry.doc.as_ref().filter(|d| d.shared && (d.shared_by.is_some() || d.role.is_some())) {
         Some(d) => {
             let mut line = match &d.shared_by {
@@ -522,17 +476,22 @@ pub(super) fn card_meta(entry: &Entry, share_list_known: bool, media: Option<&st
         }
         None => source_badge_text(entry, share_list_known),
     };
-    for extra in [media, age].into_iter().flatten().filter(|s| !s.is_empty()) {
+    for extra in media.into_iter().filter(|s| !s.is_empty()) {
         line.push_str(" · ");
         line.push_str(extra);
     }
     line
 }
 
-/// A snapshot card's quiet line. Its type is the badge beside it.
-pub(super) fn snapshot_card_meta(row: &SnapshotMeta, now: chrono::DateTime<chrono::Local>) -> String {
-    let meta = snapshot_meta(row, now);
-    meta.split_once(" · ").map_or(meta.clone(), |(_, rest)| rest.to_string())
+/// A snapshot card's quiet line: role, version and size. Its type is the
+/// chip on the card and its dates are rows of their own.
+pub(super) fn snapshot_card_meta(row: &SnapshotMeta) -> String {
+    let role = match row.role {
+        Role::Owner => "Owner",
+        Role::Editor => "Editor",
+        Role::Viewer => "Viewer",
+    };
+    [role.to_string(), format!("v{}", row.version), file_size(row.byte_length)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
 }
 
 /// The cache key of a cloud document's thumbnail: account, server and
@@ -688,6 +647,7 @@ impl Workspace {
         self.shell.cloud_preview_session = Some(session.clone());
         self.shell.cloud_preview_epoch = self.shell.cloud_preview_epoch.wrapping_add(1);
         self.shell.previews.clear_cloud();
+        self.shell.cloud_minis.borrow_mut().clear();
         // On this thread, so nothing of the last account's outlives the change.
         let kept = doc_preview::bind_cloud_file(&cloud_previews_file(), session.as_deref()).unwrap_or_default();
         if let Some(session) = &session {
@@ -869,8 +829,9 @@ impl Workspace {
             sections.push(Section::new(Some("Documents"), cards));
         }
         sections.push(snapshot_section);
+        // A narrow list keeps one line beside the name.
         if !super::recent_page::shows_created(self.shell.cloud_grid.view, width) {
-            sections.iter_mut().flat_map(|s| s.cards.iter_mut()).for_each(|c| c.created = None);
+            sections.iter_mut().flat_map(|s| s.cards.iter_mut()).for_each(|c| c.dates.truncate(usize::from(c.meta.is_empty())));
         }
         let targets = Rc::new(targets);
         let grid = doc_grid::render(
@@ -884,6 +845,7 @@ impl Workspace {
                         this.cloud_card_event(target.clone(), event, window, cx);
                     }
                 }),
+                mini: Some(doc_grid::Mini { pool: self.shell.cloud_minis.clone(), style: super::rich::doc_style(cx) }),
             },
             &self.shell.cloud_grid,
             window,
@@ -1288,8 +1250,9 @@ impl Workspace {
                 let on_disk = local.as_deref().is_some_and(|p| p.is_file());
                 let shared = e.doc.as_ref().is_some_and(|d| d.shared);
                 let media = local.as_deref().and_then(|path| self.cloud.media_note(path)).map(|m| m.trim_start_matches(" · ").to_string());
-                let age = (e.doc.is_none() && e.share.is_some())
-                    .then(|| e.updated_at.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok()).map(|d| super::account::short_ago_ms(d.timestamp_millis())))
+                // A share with no listing row has no created time: when it changed instead.
+                let updated_ms = (e.doc.is_none() && e.share.is_some())
+                    .then(|| e.updated_at.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok()).map(|d| d.timestamp_millis() as f64))
                     .flatten();
                 let menu = match (&local, &e.doc) {
                     (Some(path), _) => Some(MenuKey::Path(path.clone())),
@@ -1304,9 +1267,15 @@ impl Workspace {
                     let item = markie_core::projects::folders::Item::File(path.to_string_lossy().into_owned());
                     card.drag = Some(super::projects::DragItems::new(vec![item], &|_| e.name.clone()));
                 }
-                card.meta = if gone { format!("Missing on disk · {}", card_meta(e, files.share_list_known, None, None)) } else { card_meta(e, files.share_list_known, media.as_deref(), age.as_deref()) }.into();
+                card.meta = if gone { format!("Missing on disk · {}", card_meta(e, files.share_list_known, None)) } else { card_meta(e, files.share_list_known, media.as_deref()) }.into();
                 card.missing = gone;
-                card.created = super::recent_page::created_line(entry_created_ms(e), chrono::Local::now()).map(Into::into);
+                let now = chrono::Local::now();
+                card.dates = entry_created_ms(e)
+                    .and_then(|ms| DateRow::at("Created", ms, now))
+                    .or_else(|| updated_ms.and_then(|ms| DateRow::at("Updated", ms, now)))
+                    .into_iter()
+                    .collect();
+                card.base_dir = local.as_deref().and_then(|p| p.parent()).map(std::path::Path::to_path_buf);
                 card.openable = on_disk || e.doc.is_some();
                 card.has_menu = menu.is_some();
                 card.menu_open = match &menu {
@@ -1415,8 +1384,8 @@ impl Workspace {
             .iter()
             .map(|row| {
                 let mut card = DocCard::new(format!("snapshot:{}", row.id), row.name.clone(), row.format);
-                card.meta = snapshot_card_meta(row, now).into();
-                card.created = super::recent_page::created_line(Some(row.created_at as f64), chrono::Local::now()).map(Into::into);
+                card.meta = snapshot_card_meta(row).into();
+                card.dates = [DateRow::at("Updated", row.updated_at as f64, now), DateRow::at("Created", row.created_at as f64, now)].into_iter().flatten().collect();
                 card.has_menu = false;
                 targets.insert(card.id.clone(), Target::Snapshot(scope.clone(), row.clone()));
                 card
@@ -1642,15 +1611,15 @@ mod tests {
         let docs = vec![doc("a", "alpha.md", "2026-11-21T10:00:00Z", false), theirs, doc("c", "gamma.md", "2026-11-19T10:00:00Z", false)];
         let by_me = vec![share("c", "gamma.md", 2, 1), share("z", "only-shared.md", 1, 0)];
         let rows = entries(&docs, Some(&by_me), &[], |_| None, |_| None, None);
-        let line = |name: &str, media: Option<&str>, age: Option<&str>| card_meta(rows.iter().find(|e| e.name == name).unwrap(), true, media, age);
-        assert_eq!(line("alpha.md", None, None), "Only you");
-        assert_eq!(line("beta.md", None, None), "Shared by Bob Chen · Editor");
-        assert_eq!(line("gamma.md", None, None), "Shared with 2 · 1 invited");
-        assert_eq!(line("gamma.md", Some("media pending"), None), "Shared with 2 · 1 invited · media pending");
-        assert_eq!(line("only-shared.md", None, Some("3d")), "Shared with 1 · 3d");
-        assert_eq!(line("alpha.md", Some(""), None), "Only you", "an empty note adds nothing");
+        let line = |name: &str, media: Option<&str>| card_meta(rows.iter().find(|e| e.name == name).unwrap(), true, media);
+        assert_eq!(line("alpha.md", None), "Only you");
+        assert_eq!(line("beta.md", None), "Shared by Bob Chen · Editor");
+        assert_eq!(line("gamma.md", None), "Shared with 2 · 1 invited");
+        assert_eq!(line("gamma.md", Some("media pending")), "Shared with 2 · 1 invited · media pending");
+        assert_eq!(line("only-shared.md", None), "Shared with 1");
+        assert_eq!(line("alpha.md", Some("")), "Only you", "an empty note adds nothing");
         // Before the shared list is in, a document of mine is only "Yours".
-        assert_eq!(card_meta(&rows[1], false, None, None), "Yours");
+        assert_eq!(card_meta(&rows[1], false, None), "Yours");
     }
 
     #[test]

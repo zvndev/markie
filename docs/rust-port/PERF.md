@@ -202,3 +202,29 @@ Run it again:
 rust/scripts/screen/scene.sh csv out.png light '{"bench":true,"timeout":120}' rows-100k.csv   # markie-csv-bench lines in the scene log; keep SCENE_HOME to read it
 (cd rust && cargo test --release -p markie-core csv_table::tests::times -- --ignored --nocapture)
 ```
+
+## The Recent page: 200 documents with live previews
+
+Date: 2026-11-26, branch `t3/doc-card-previews`. Each Markdown card draws its document with the reader itself (`doc_mini.rs`) and scrolls through its first two pages. 200 made-up documents (`many-fixture.py`: 70% Markdown from a few lines to several pages, the rest text, CSV, JSON and PDF), window 1440 by 1000, two runs.
+
+| | Markie RS |
+|---|---|
+| Open, first frame (every thumbnail and live view dropped first) | 4.6 to 4.9 ms |
+| Open, until every card on screen has its preview | 94 to 97 ms over 4 frames; the slowest frame 17 ms |
+| Scroll the page: one trackpad gesture across the cards, 600 events 40 points apart | 8.3 to 8.5 ms a frame on average, 13.8 to 14.3 ms at p95, 20 ms the slowest; 7 to 9 of 600 over 16.7 ms |
+| Scroll one card's preview, to its end and back | 6.1 ms a frame on average, 8.1 to 8.3 ms at p95; none over 16.7 ms |
+| Live views held | 48, the cap |
+| Memory (RSS) at the end | 232 to 236 MB |
+
+The scrolls are real wheel events dispatched to the window, so they go through the grid's router and the page's own scroll as a person's would. The bench checks the latch too: the page gesture moved the page 9,121 points and no preview; the preview gesture moved its card to the end (417 points) and the rest of the gesture moved the page (756 points).
+
+What keeps it there: a card more than a screen from view draws only its outline; a card a screen away has its live view made and loaded, but only a card on screen draws it; a live view draws only the blocks in the card's window and moves itself, so it never lays out two pages to show 150 points; at most 6 new views are made a frame; the pool holds 48 and drops the least recently drawn. The first try, which drew every card in full and two pages per live view, cost 50 to 60 ms a frame.
+
+Run it again:
+
+```sh
+python3 rust/scripts/screen/scene/many-fixture.py $S 200
+SCENE_HOME=$S/home MARKIE_RS_SCENE_SIZE=1440x1000 rust/scripts/screen/scene.sh recent out.png light \
+  "$(python3 -c "import json;d=json.load(open('$S/many.json'));print(json.dumps({'recents':d['recents'],'bench':True}))")"
+grep markie-recent-bench $S/home/scene-recent.log
+```

@@ -125,6 +125,9 @@ pub(super) struct Shell {
     pub cloud_grid: super::doc_grid::DocGridState,
     /// Card thumbnails, built off the main thread (`doc_preview.rs`).
     pub previews: super::doc_preview::PreviewCache,
+    /// The live Markdown previews on each page's cards (`doc_mini.rs`).
+    pub recent_minis: std::rc::Rc<std::cell::RefCell<super::doc_mini::MiniPool>>,
+    pub cloud_minis: std::rc::Rc<std::cell::RefCell<super::doc_mini::MiniPool>>,
     /// Recent and Starred have been read once: an empty list is really empty.
     pub lists_loaded: bool,
     /// The saved cloud thumbnails have been read from disk for this session.
@@ -221,6 +224,8 @@ impl Shell {
             recent_grid: super::doc_grid::DocGridState::new(Default::default(), cx),
             cloud_grid: super::doc_grid::DocGridState::new(Default::default(), cx),
             previews: Default::default(),
+            recent_minis: Default::default(),
+            cloud_minis: Default::default(),
             lists_loaded: false,
             cloud_previews_loaded: false,
             cloud_preview_session: None,

@@ -21,7 +21,11 @@ pub mod connect;
 pub mod convert;
 pub mod error;
 pub mod import;
+pub mod md;
+pub mod merge;
+pub mod model;
 pub mod oauth;
+pub mod plan;
 pub mod store;
 pub mod tokens;
 

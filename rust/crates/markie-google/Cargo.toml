@@ -12,6 +12,7 @@ markie-vault = { path = "../markie-vault" }
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
+pulldown-cmark.workspace = true
 thiserror = "2"
 url = "2.5"
 base64 = "0.22"
@@ -29,6 +30,5 @@ fake = []
 
 [dev-dependencies]
 tempfile.workspace = true
-pulldown-cmark.workspace = true
 # The fake Google server for the integration tests.
 markie-google = { path = ".", features = ["fake"] }

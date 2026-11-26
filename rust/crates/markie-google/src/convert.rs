@@ -27,6 +27,39 @@ pub struct Converted {
     pub images: usize,
     /// What Markdown could not keep, in plain words.
     pub dropped: BTreeSet<&'static str>,
+    /// For a one-tab Doc: where each Markdown block came from in the Doc.
+    /// Two-way sync maps its diff onto Doc indices with these.
+    pub segments: Vec<Segment>,
+}
+
+/// One Markdown block's origin: its bytes in `markdown`, the Doc index range
+/// of the elements it came from, and why it can't be written back.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Segment {
+    pub bytes: std::ops::Range<usize>,
+    pub src: Src,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Src {
+    /// `startIndex` of the first element, `endIndex` of the last.
+    pub start: Option<i64>,
+    pub end: Option<i64>,
+    pub read_only: Option<&'static str>,
+}
+
+impl Src {
+    fn merge(&mut self, o: &Src) {
+        self.start = match (self.start, o.start) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        self.end = match (self.end, o.end) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        self.read_only = self.read_only.or(o.read_only);
+    }
 }
 
 /// Convert a whole Doc.
@@ -42,21 +75,27 @@ pub fn doc_to_markdown(doc: &Value) -> Converted {
     let mut out = Converted { tabs: tabs.len(), ..Default::default() };
     let multi = tabs.len() > 1;
     let mut parts = Vec::new();
+    let mut segments = Vec::new();
     for tab in &tabs {
         let shift = if multi { tab.depth as u8 + 1 } else { 0 };
         let mut ctx = Ctx::new(tab.content, shift);
         let mut blocks = Vec::new();
         if multi {
             let title = if tab.title.trim().is_empty() { "Untitled tab".to_string() } else { tab.title.trim().to_string() };
-            blocks.push(Block::Text(format!("{} {}", "#".repeat((tab.depth + 1).min(6)), escape_text(&title, false))));
+            blocks.push(Block::Text(format!("{} {}", "#".repeat((tab.depth + 1).min(6)), escape_text(&title, false)), Src::default()));
         }
         let content = body_content(tab.content);
         blocks.extend(ctx.blocks(content));
         blocks.extend(ctx.footnote_blocks());
         out.images += ctx.images;
         out.dropped.extend(ctx.dropped.iter().copied());
-        parts.push(assemble(&blocks));
+        let (text, segs) = assemble(&blocks);
+        if !multi {
+            segments = segs;
+        }
+        parts.push(text);
     }
+    out.segments = segments;
     let mut md = parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n\n");
     if !md.is_empty() {
         md.push('\n');
@@ -93,34 +132,56 @@ fn body_content(tab: &Value) -> &[Value] {
 #[derive(Debug, Clone, PartialEq)]
 enum Block {
     /// A paragraph, heading, rule or table: blank lines around it.
-    Text(String),
+    Text(String, Src),
     /// One list item, already indented and marked: items sit line by line.
-    Item(String),
+    Item(String, Src),
     /// One line of a code block: consecutive lines share a fence.
-    Code(String),
+    Code(String, Src),
 }
 
-fn assemble(blocks: &[Block]) -> String {
+/// The blocks as Markdown, and each output block's bytes and origin.
+fn assemble(blocks: &[Block]) -> (String, Vec<Segment>) {
     let mut out: Vec<String> = Vec::new();
+    let mut segs: Vec<Segment> = Vec::new();
+    // Where the next piece starts once pieces are joined by blank lines.
+    let mut pos = 0usize;
+    let mut push = |out: &mut Vec<String>, piece: String, inner: Vec<(std::ops::Range<usize>, Src)>| {
+        if !out.is_empty() {
+            pos += 2;
+        }
+        for (r, src) in inner {
+            segs.push(Segment { bytes: pos + r.start..pos + r.end, src });
+        }
+        pos += piece.len();
+        out.push(piece);
+    };
     let mut i = 0;
     while i < blocks.len() {
         match &blocks[i] {
-            Block::Text(t) => {
-                out.push(t.clone());
+            Block::Text(t, src) => {
+                push(&mut out, t.clone(), vec![(0..t.len(), src.clone())]);
                 i += 1;
             }
-            Block::Item(_) => {
-                let mut lines = Vec::new();
-                while let Some(Block::Item(t)) = blocks.get(i) {
-                    lines.push(t.clone());
+            Block::Item(..) => {
+                let mut text = String::new();
+                let mut inner = Vec::new();
+                while let Some(Block::Item(t, src)) = blocks.get(i) {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    let lead = t.len() - t.trim_start().len();
+                    inner.push((text.len() + lead..text.len() + t.len(), src.clone()));
+                    text.push_str(t);
                     i += 1;
                 }
-                out.push(lines.join("\n"));
+                push(&mut out, text, inner);
             }
-            Block::Code(_) => {
+            Block::Code(..) => {
                 let mut lines = Vec::new();
-                while let Some(Block::Code(t)) = blocks.get(i) {
+                let mut src = Src::default();
+                while let Some(Block::Code(t, s)) = blocks.get(i) {
                     lines.push(t.clone());
+                    src.merge(s);
                     i += 1;
                 }
                 while lines.last().is_some_and(|l| l.trim().is_empty()) {
@@ -134,11 +195,13 @@ fn assemble(blocks: &[Block]) -> String {
                 }
                 let body = lines.join("\n");
                 let fence = "`".repeat(longest_run(&body, '`').max(2) + 1);
-                out.push(format!("{fence}\n{body}\n{fence}"));
+                let piece = format!("{fence}\n{body}\n{fence}");
+                let len = piece.len();
+                push(&mut out, piece, vec![(0..len, src)]);
             }
         }
     }
-    out.join("\n\n")
+    (out.join("\n\n"), segs)
 }
 
 fn longest_run(s: &str, c: char) -> usize {
@@ -164,6 +227,8 @@ struct Ctx<'a> {
     footnote_order: Vec<(String, String)>,
     images: usize,
     dropped: BTreeSet<&'static str>,
+    /// The element being converted: its indices and why it is read-only.
+    cur: Src,
 }
 
 impl<'a> Ctx<'a> {
@@ -178,15 +243,22 @@ impl<'a> Ctx<'a> {
             footnote_order: Vec::new(),
             images: 0,
             dropped: BTreeSet::new(),
+            cur: Src::default(),
         }
+    }
+
+    fn read_only(&mut self, why: &'static str) {
+        self.cur.read_only.get_or_insert(why);
     }
 
     fn blocks(&mut self, content: &[Value]) -> Vec<Block> {
         let mut out = Vec::new();
         for el in content {
+            self.cur = Src { start: el.get("startIndex").and_then(Value::as_i64), end: el.get("endIndex").and_then(Value::as_i64), read_only: None };
             if let Some(p) = el.get("paragraph") {
                 out.extend(self.paragraph(p));
             } else if let Some(t) = el.get("table") {
+                self.read_only("tables");
                 out.extend(self.table(t));
             } else if el.get("tableOfContents").is_some() {
                 self.dropped.insert("tables of contents");
@@ -198,14 +270,22 @@ impl<'a> Ctx<'a> {
 
     fn paragraph(&mut self, p: &Value) -> Vec<Block> {
         let elements = p.get("elements").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
-        let style = p.pointer("/paragraphStyle/namedStyleType").and_then(Value::as_str).unwrap_or("NORMAL_TEXT");
+        let accepted = accepted_paragraph(p);
+        let style = accepted.style.as_str();
+        if accepted.suggested {
+            self.read_only("suggestions waiting in Google");
+        }
+        if style == "SUBTITLE" {
+            self.read_only("subtitles");
+        }
         let mut spans = self.spans(elements);
         let mut extra = Vec::new();
         // Floating images anchored to this paragraph follow its text.
         if let Some(ids) = p.get("positionedObjectIds").and_then(Value::as_array) {
             for id in ids.iter().filter_map(Value::as_str) {
                 if let Some(link) = self.image_link(self.positioned.and_then(|o| o.get(id)).and_then(|o| o.get("positionedObjectProperties"))) {
-                    extra.push(Block::Text(link));
+                    self.read_only("images");
+                    extra.push(Block::Text(link, self.cur.clone()));
                 }
             }
         }
@@ -213,24 +293,33 @@ impl<'a> Ctx<'a> {
         let plain: String = spans.iter().filter(|s| !s.raw).map(|s| s.text.as_str()).collect();
         let empty = plain.trim().is_empty() && !spans.iter().any(|s| s.raw);
         if has_rule && empty {
-            let mut v = vec![Block::Text("---".into())];
-            v.extend(extra);
+            self.read_only("horizontal lines");
+            let mut v = vec![Block::Text("---".into(), self.cur.clone())];
+            v.extend(extra.into_iter().map(|b| self.with_src(b)));
             return v;
         }
-        let bullet = p.get("bullet");
+        if has_rule {
+            self.read_only("horizontal lines");
+        }
+        let bullet = accepted.bullet.as_ref();
         let heading = heading_level(style).map(|l| (l + self.shift).min(6));
         if bullet.is_none() && heading.is_none() {
             let mono_runs: Vec<&Span> = spans.iter().filter(|s| !s.raw && !s.text.trim().is_empty()).collect();
             let starts_mono = spans.first().is_some_and(|s| s.code && !s.raw);
             if (empty && starts_mono) || (!mono_runs.is_empty() && mono_runs.iter().all(|s| s.code) && !spans.iter().any(|s| s.raw)) {
                 let text: String = spans.iter().map(|s| s.text.replace('\u{b}', "\n")).collect();
-                let mut v: Vec<Block> = text.split('\n').map(|l| Block::Code(l.to_string())).collect();
-                v.extend(extra);
+                if text.contains('\n') {
+                    // A soft break inside a code line: one Docs paragraph, several lines.
+                    self.read_only("code lines with line breaks");
+                }
+                let src = self.cur.clone();
+                let mut v: Vec<Block> = text.split('\n').map(|l| Block::Code(l.to_string(), src.clone())).collect();
+                v.extend(extra.into_iter().map(|b| self.with_src(b)));
                 return v;
             }
         }
         if empty {
-            return extra;
+            return extra.into_iter().map(|b| self.with_src(b)).collect();
         }
         let mut blocks = Vec::new();
         if let Some(level) = heading {
@@ -239,16 +328,26 @@ impl<'a> Ctx<'a> {
                 s.text = s.text.replace('\u{b}', " ");
             }
             let text = render(&spans, false);
-            blocks.push(Block::Text(format!("{} {}", "#".repeat(level as usize), text.trim())));
+            blocks.push(Block::Text(format!("{} {}", "#".repeat(level as usize), text.trim()), Src::default()));
         } else if let Some(bullet) = bullet {
             blocks.push(self.list_item(bullet, &mut spans));
         } else {
             let text = render(&spans, false);
             let text = if style == "SUBTITLE" { format!("*{}*", text.trim()) } else { text };
-            blocks.push(Block::Text(escape_line_starts(text.trim_end())));
+            blocks.push(Block::Text(escape_line_starts(text.trim_end()), Src::default()));
         }
         blocks.extend(extra);
-        blocks
+        blocks.into_iter().map(|b| self.with_src(b)).collect()
+    }
+
+    /// Every block of one paragraph carries the paragraph's origin, read-only
+    /// reasons found while reading it included.
+    fn with_src(&self, b: Block) -> Block {
+        match b {
+            Block::Text(t, _) => Block::Text(t, self.cur.clone()),
+            Block::Item(t, _) => Block::Item(t, self.cur.clone()),
+            Block::Code(t, _) => Block::Code(t, self.cur.clone()),
+        }
     }
 
     fn list_item(&mut self, bullet: &Value, spans: &mut [Span]) -> Block {
@@ -285,7 +384,7 @@ impl<'a> Ctx<'a> {
         let text = escape_line_starts(render(spans, false).trim());
         let pad = " ".repeat(indent.len() + marker.len() + 1);
         let text = text.replace('\n', &format!("\n{pad}"));
-        Block::Item(format!("{indent}{marker} {text}"))
+        Block::Item(format!("{indent}{marker} {text}"), Src::default())
     }
 
     fn table(&mut self, t: &Value) -> Vec<Block> {
@@ -327,15 +426,24 @@ impl<'a> Ctx<'a> {
         };
         let mut lines = vec![fmt(&grid[0]), format!("|{}|", vec![" --- "; cols].join("|"))];
         lines.extend(grid[1..].iter().map(|r| fmt(r)));
-        vec![Block::Text(lines.join("\n"))]
+        vec![Block::Text(lines.join("\n"), self.cur.clone())]
     }
 
     fn spans(&mut self, elements: &[Value]) -> Vec<Span> {
         let mut out = Vec::new();
         for el in elements {
+            if suggested(el, "suggestedDeletionIds") {
+                // The Doc as it reads once every suggestion is accepted.
+                continue;
+            }
+            if suggested(el, "suggestedInsertionIds") || el.get("textRun").and_then(|r| r.get("suggestedTextStyleChanges")).and_then(Value::as_object).is_some_and(|m| !m.is_empty()) {
+                self.read_only("suggestions waiting in Google");
+            }
             if let Some(run) = el.get("textRun") {
                 let text = run.get("content").and_then(Value::as_str).unwrap_or_default();
                 let text = text.strip_suffix('\n').unwrap_or(text);
+                let style = accepted_text_style(run);
+                let run = &serde_json::json!({"textStyle": style});
                 if text.is_empty() {
                     // The paragraph's end: it still tells whether an empty line is code.
                     if out.is_empty() {
@@ -350,24 +458,34 @@ impl<'a> Ctx<'a> {
                 let id = obj.get("inlineObjectId").and_then(Value::as_str).unwrap_or_default();
                 let props = self.objects.and_then(|o| o.get(id)).and_then(|o| o.get("inlineObjectProperties"));
                 if let Some(link) = self.image_link(props) {
+                    self.read_only("images");
                     out.push(Span::raw(link));
                 }
             } else if let Some(f) = el.get("footnoteReference") {
+                self.read_only("footnotes");
                 let id = f.get("footnoteId").and_then(Value::as_str).unwrap_or_default().to_string();
                 let number = f.get("footnoteNumber").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| (self.footnote_order.len() + 1).to_string());
                 let label: String = number.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
                 out.push(Span::raw(format!("[^{label}]")));
                 self.footnote_order.push((id, label));
             } else if let Some(person) = el.get("person") {
+                self.read_only("people chips");
                 let name = person.pointer("/personProperties/name").or_else(|| person.pointer("/personProperties/email")).and_then(Value::as_str).unwrap_or_default();
                 out.push(self.styled(name.to_string(), person.get("textStyle")));
             } else if let Some(rich) = el.get("richLink") {
+                self.read_only("smart chips");
                 let title = rich.pointer("/richLinkProperties/title").and_then(Value::as_str).unwrap_or("link");
                 let mut s = self.styled(title.to_string(), rich.get("textStyle"));
                 s.link = rich.pointer("/richLinkProperties/uri").and_then(Value::as_str).map(str::to_string);
                 out.push(s);
             } else if el.get("equation").is_some() {
+                self.read_only("equations");
                 self.dropped.insert("equations");
+            } else if el.get("horizontalRule").is_none() && el.get("pageBreak").is_none() && el.get("columnBreak").is_none() {
+                // autoText and anything newer: never written over.
+                self.read_only("page numbers and other automatic text");
+            } else if el.get("pageBreak").is_some() || el.get("columnBreak").is_some() {
+                self.read_only("page breaks");
             }
             // horizontalRule, pageBreak, columnBreak, autoText: nothing inline.
         }
@@ -423,10 +541,69 @@ impl<'a> Ctx<'a> {
                     }
                 }
             }
-            out.push(Block::Text(format!("[^{label}]: {}", texts.join(" "))));
+            out.push(Block::Text(format!("[^{label}]: {}", texts.join(" ")), Src { read_only: Some("footnotes"), ..Default::default() }));
         }
         out
     }
+}
+
+fn suggested(el: &Value, key: &str) -> bool {
+    let inner = ["textRun", "inlineObjectElement", "footnoteReference", "horizontalRule", "pageBreak", "person", "richLink", "equation", "autoText", "columnBreak"];
+    inner.iter().filter_map(|k| el.get(*k)).any(|v| v.get(key).and_then(Value::as_array).is_some_and(|a| !a.is_empty()))
+}
+
+/// A run's text style with its suggested changes accepted.
+pub fn accepted_text_style(run: &Value) -> Value {
+    let mut style = run.get("textStyle").cloned().unwrap_or_else(|| serde_json::json!({}));
+    if let Some(changes) = run.get("suggestedTextStyleChanges").and_then(Value::as_object) {
+        for change in changes.values() {
+            let (Some(st), Some(state)) = (change.get("textStyle"), change.get("textStyleSuggestionState")) else { continue };
+            for k in ["bold", "italic", "strikethrough", "underline", "link", "weightedFontFamily", "foregroundColor", "backgroundColor"] {
+                if state.get(format!("{k}Suggested")).and_then(Value::as_bool) == Some(true) {
+                    match st.get(k) {
+                        Some(v) => style[k] = v.clone(),
+                        None => {
+                            if let Some(o) = style.as_object_mut() {
+                                o.remove(k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    style
+}
+
+struct AcceptedParagraph {
+    style: String,
+    bullet: Option<Value>,
+    suggested: bool,
+}
+
+/// A paragraph's named style and bullet with suggested changes accepted.
+fn accepted_paragraph(p: &Value) -> AcceptedParagraph {
+    let mut style = p.pointer("/paragraphStyle/namedStyleType").and_then(Value::as_str).unwrap_or("NORMAL_TEXT").to_string();
+    let mut bullet = p.get("bullet").cloned();
+    let mut suggested = false;
+    if let Some(changes) = p.get("suggestedParagraphStyleChanges").and_then(Value::as_object) {
+        for change in changes.values() {
+            suggested = true;
+            if change.pointer("/paragraphStyleSuggestionState/namedStyleTypeSuggested").and_then(Value::as_bool) == Some(true) {
+                style = change.pointer("/paragraphStyle/namedStyleType").and_then(Value::as_str).unwrap_or("NORMAL_TEXT").to_string();
+            }
+        }
+    }
+    if let Some(changes) = p.get("suggestedBulletChanges").and_then(Value::as_object) {
+        for change in changes.values() {
+            suggested = true;
+            match change.get("bullet") {
+                Some(b) if b.get("listId").is_some() => bullet = Some(b.clone()),
+                _ => bullet = None,
+            }
+        }
+    }
+    AcceptedParagraph { style, bullet, suggested }
 }
 
 fn heading_level(style: &str) -> Option<u8> {
@@ -551,6 +728,48 @@ fn render(spans: &[Span], in_table: bool) -> String {
         out.push_str(&escape_text(trail, in_table));
     }
     out
+}
+
+fn spans_of(runs: &[crate::md::Run]) -> Vec<Span> {
+    runs.iter().map(|r| Span { text: r.text.clone(), bold: r.bold, italic: r.italic, strike: r.strike, code: r.code, link: r.link.clone(), raw: false }).collect()
+}
+
+/// A paragraph, heading or code block written the way the converter writes it.
+pub fn render_block(b: &crate::md::Block) -> String {
+    use crate::md::Kind;
+    let spans = spans_of(&b.runs);
+    match &b.kind {
+        Kind::Heading(n) => {
+            let spans: Vec<Span> = spans.into_iter().map(|mut s| {
+                s.bold = false;
+                s.text = s.text.replace('\u{b}', " ");
+                s
+            }).collect();
+            format!("{} {}", "#".repeat(*n as usize), render(&spans, false).trim())
+        }
+        Kind::Item { level, .. } => render_item(b, *level),
+        Kind::Code(lines) => {
+            let body = lines.join("\n");
+            let fence = "`".repeat(longest_run(&body, '`').max(2) + 1);
+            format!("{fence}\n{body}\n{fence}")
+        }
+        _ => escape_line_starts(render(&spans, false).trim()),
+    }
+}
+
+/// One list item at a nesting level, the way the converter writes it.
+pub fn render_item(b: &crate::md::Block, level: usize) -> String {
+    use crate::md::{Kind, ListKind};
+    let marker = match &b.kind {
+        Kind::Item { list: ListKind::Ordered, .. } => "1.",
+        Kind::Item { list: ListKind::Check, checked: true, .. } => "- [x]",
+        Kind::Item { list: ListKind::Check, .. } => "- [ ]",
+        _ => "-",
+    };
+    let indent = "    ".repeat(level);
+    let text = escape_line_starts(render(&spans_of(&b.runs), false).trim());
+    let pad = " ".repeat(indent.len() + marker.len() + 1);
+    format!("{indent}{marker} {}", text.replace('\n', &format!("\n{pad}")))
 }
 
 fn code_span(text: &str, in_table: bool) -> String {

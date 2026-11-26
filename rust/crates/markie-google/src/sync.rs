@@ -147,6 +147,8 @@ pub fn sync_doc(src: &dyn SyncSource, db: &Connection, path: &Path, now: DateTim
     }
     rec.access = Some(access);
     let local_changed = !rec.matches_base(&local_text);
+    // `file` was read before any Doc read in this round, so the version a
+    // round stores is never newer than the text it stores (see `round`).
     let remote_changed = file.version.is_none() || file.version != rec.version;
     // Edits already found unsendable, in a file that hasn't changed since.
     let held_again = local_changed && rec.held_hash.as_deref() == Some(hash(&local_text).as_str());
@@ -203,8 +205,13 @@ fn round(src: &dyn SyncSource, db: &Connection, path: &Path, rec: &mut SyncRecor
             requests = p.requests.len();
             rec.pushed_at = Some(now.to_rfc3339());
             // Read back what Google now has, collaborator edits included.
-            let doc2 = src.document(&rec.doc_id)?;
+            // Drive's version first, then the Doc: the stored version must
+            // never be newer than the stored text, or a collaborator's edit
+            // landing between the two reads would look already synced and be
+            // skipped by every later round. Read this way round, such an edit
+            // only makes the next round look again.
             let file2 = src.file(&rec.doc_id)?;
+            let doc2 = src.document(&rec.doc_id)?;
             let view2 = remote_view(&doc2).map_err(|e| GoogleError::Parse(e))?;
             (Some(md::parse(&crate::convert::doc_to_markdown(&p.after.to_doc()).markdown)), view2, file2)
         }

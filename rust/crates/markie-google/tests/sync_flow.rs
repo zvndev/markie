@@ -481,3 +481,88 @@ fn random_edits_on_both_sides_converge_without_ping_pong() {
     }
     assert!(checked > 20, "only {checked} seeds were checked");
 }
+
+/// Makes a collaborator's edit just before the `nth` read Markie makes
+/// after its write (0: right after the write; 1: between its two reads).
+struct Inject<'a> {
+    inner: &'a dyn SyncSource,
+    google: &'a FakeGoogle,
+    nth: usize,
+    edit: Vec<Value>,
+    wrote: std::cell::Cell<bool>,
+    reads: std::cell::Cell<usize>,
+    done: std::cell::Cell<bool>,
+}
+unsafe impl Sync for Inject<'_> {}
+impl Inject<'_> {
+    fn before_read(&self, id: &str) {
+        if !self.wrote.get() {
+            return;
+        }
+        if self.reads.get() == self.nth && !self.done.replace(true) {
+            self.google.collaborate(id, &self.edit);
+        }
+        self.reads.set(self.reads.get() + 1);
+    }
+}
+impl DocsSource for Inject<'_> {
+    fn file(&self, id: &str) -> markie_google::Result<DriveFile> {
+        self.before_read(id);
+        self.inner.file(id)
+    }
+    fn document(&self, id: &str) -> markie_google::Result<Value> {
+        self.before_read(id);
+        self.inner.document(id)
+    }
+    fn export(&self, id: &str, mime: &str) -> markie_google::Result<Vec<u8>> {
+        self.inner.export(id, mime)
+    }
+    fn folder_docs(&self, id: &str) -> markie_google::Result<Vec<DriveFile>> {
+        self.inner.folder_docs(id)
+    }
+}
+impl SyncSource for Inject<'_> {
+    fn batch_update(&self, id: &str, requests: &[Value], rev: &str, suggest: bool) -> markie_google::Result<Value> {
+        let r = self.inner.batch_update(id, requests, rev, suggest);
+        self.wrote.set(true);
+        r
+    }
+    fn start_page_token(&self) -> markie_google::Result<String> {
+        self.inner.start_page_token()
+    }
+    fn changed_since(&self, t: &str) -> markie_google::Result<(Vec<String>, String)> {
+        self.inner.changed_since(t)
+    }
+}
+
+/// A collaborator's edit landing right after Markie's write, before either
+/// of the two reads that follow it, reaches the file (at the latest on the
+/// next round), is never undone in Google, and leaves nothing to send. Before
+/// the fix, an edit landing between the Doc read and the version read was
+/// stored as already synced and never reached the file.
+#[test]
+fn a_collaborator_edit_between_the_write_and_the_reread_is_never_lost() {
+    for nth in [0, 1] {
+        let w = World::new();
+        w.google.add_doc("d1", "Plan", 1, plain(&["One", "Two"]));
+        let path = w.import(&["d1"])[0].clone();
+        std::fs::write(&path, "One\n\nTwo, from Markie\n").unwrap();
+        let cfg = w.google.config();
+        let api = GoogleApi::new(&cfg, &w.grant);
+        let inject = Inject { inner: &api, google: &w.google, nth, edit: vec![json!({"insertText": {"location": {"index": 1}, "text": "Yes. "}})], wrote: Default::default(), reads: Default::default(), done: Default::default() };
+        let first = w.sync_with(&inject, &path).unwrap();
+        assert!(inject.done.get(), "read {nth}: the edit was made");
+        assert!(matches!(first.outcome, Synced::Pushed { .. }), "read {nth}: {:?}", first.outcome);
+        let want = "Yes. One\n\nTwo, from Markie\n";
+        assert_eq!(w.google.markdown("d1"), want, "read {nth}");
+        // At most one more round brings it into the file; Google keeps it.
+        let writes = w.writes();
+        let second = w.sync(&path).unwrap();
+        assert_eq!(read(&path), want, "read {nth}: the file has the collaborator's words ({:?})", second.outcome);
+        assert_eq!(w.google.markdown("d1"), want, "read {nth}: nothing was undone in Google");
+        assert_eq!(w.writes(), writes, "read {nth}: no write after the merge");
+        let third = w.sync(&path).unwrap();
+        assert_eq!((third.outcome, third.requests), (Synced::Unchanged, 0), "read {nth}");
+        assert_eq!(w.writes(), writes, "read {nth}");
+    }
+}

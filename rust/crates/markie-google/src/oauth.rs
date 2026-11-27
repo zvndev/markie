@@ -3,7 +3,7 @@
 //! 1. `PickFlow::start` binds `127.0.0.1` on a free port and makes a PKCE pair
 //!    and a state value.
 //! 2. `authorize_url` is the consent page with the Picker on it:
-//!    `scope=drive.file` alone, `trigger_onepick=true`,
+//!    `scope=drive.file` alone, `trigger_onepick=true`, `allow_multiple=true`,
 //!    `allow_folder_selection=true`, `prompt=consent`, `access_type=offline`.
 //!    The app opens it in the system browser. No web view.
 //! 3. Google redirects the browser to the loopback address with `code`,
@@ -107,6 +107,7 @@ impl PickFlow {
                 .append_pair("access_type", "offline")
                 .append_pair("prompt", "consent")
                 .append_pair("trigger_onepick", "true")
+                .append_pair("allow_multiple", "true")
                 .append_pair("allow_folder_selection", "true");
             if let Some(hint) = login_hint.filter(|h| !h.is_empty()) {
                 q.append_pair("login_hint", hint);
@@ -306,6 +307,7 @@ mod tests {
         let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["scope"], crate::DRIVE_FILE_SCOPE);
         assert_eq!(q["trigger_onepick"], "true");
+        assert_eq!(q["allow_multiple"], "true");
         assert_eq!(q["allow_folder_selection"], "true");
         assert_eq!(q["prompt"], "consent");
         assert_eq!(q["code_challenge_method"], "S256");

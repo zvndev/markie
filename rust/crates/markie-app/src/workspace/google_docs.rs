@@ -771,6 +771,10 @@ impl Workspace {
     pub(super) fn google_follow_move(&mut self, from: &Path, to: &Path, cx: &mut Context<Self>) {
         let Some(reg) = &self.registry else { return };
         let _ = if to.is_dir() { store::move_folder(reg.conn(), from, to) } else { store::move_path(reg.conn(), from, to) };
+        // A file moved to another folder takes its images folder along, so its image links keep working.
+        if !to.is_dir() {
+            let _ = markie_google::images::follow_move(reg.conn(), from, to);
+        }
         if cx.try_global::<GoogleDocs>().is_some_and(|g| g.loaded) {
             self.google_reload_records(cx);
         }

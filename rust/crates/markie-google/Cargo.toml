@@ -32,3 +32,5 @@ fake = []
 tempfile.workspace = true
 # The fake Google server for the integration tests.
 markie-google = { path = ".", features = ["fake"] }
+# The image line must survive markie-rich's parse and save (tests/images.rs).
+markie-rich = { path = "../markie-rich" }

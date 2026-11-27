@@ -21,6 +21,11 @@
 //! Compared on normalized blocks, so a sync never bounces back as a change
 //! and never rewrites the file's own spelling (`*` or `-` bullets).
 //!
+//! Images: every Doc read is marked with each image's saved file first
+//! (`images::localize`), downloading again only when the Drive version
+//! moved, so the base, the Doc and the file all hold the same local image
+//! line. Images the Doc no longer has are deleted after the file is written.
+//!
 //! `Scheduler` decides when: local saves debounced, polling every minute and
 //! on focus, backoff on errors and 429s, and at most 50 writes a minute per
 //! person against Google's 60 (<https://developers.google.com/workspace/docs/api/limits>).
@@ -28,6 +33,7 @@
 //! doesn't list `drive.file` picks (unverified), with each Doc's `version`.
 use crate::api::{DriveFile, SyncSource};
 use crate::error::{GoogleError, Result};
+use crate::images::{self, Known, Saved};
 use crate::md::{self, Parsed};
 use crate::merge::{ChunkKind, From, diff3, merged_text};
 use crate::model::Mode;
@@ -175,18 +181,24 @@ fn remember(db: &Connection, path: &Path, mut rec: SyncRecord, e: GoogleError) -
 
 #[allow(clippy::too_many_arguments)]
 fn round(src: &dyn SyncSource, db: &Connection, path: &Path, rec: &mut SyncRecord, file: &DriveFile, local_text: &str, now: DateTime<Local>, history: Option<&History>) -> Result<Report> {
-    let doc = src.document(&rec.doc_id)?;
+    // Google may have changed an image only when the Doc's version moved.
+    let refetch = file.version.is_none() || file.version != rec.version;
+    let prior = Saved::of(rec);
+    let mut doc = src.document(&rec.doc_id)?;
+    let saved = images::localize(src, db, &mut doc, path, &prior, refetch);
     let tabs = crate::convert::doc_to_markdown(&doc).tabs;
     rec.tabs = tabs;
     let base = md::parse(&rec.base_markdown);
     let local = md::parse(local_text);
     let view = match remote_view(&doc) {
         Ok(v) => v,
-        Err(_) => return pull_only(db, path, rec, file, &doc, local_text, now, history, "this Doc's layout"),
+        Err(_) => return pull_only(db, path, rec, file, &doc, local_text, now, history, "this Doc's layout", &prior, saved),
     };
     if tabs > 1 {
-        return pull_only(db, path, rec, file, &doc, local_text, now, history, "Docs with tabs");
+        return pull_only(db, path, rec, file, &doc, local_text, now, history, "Docs with tabs", &prior, saved);
     }
+    let mut known = Known::of(&[&prior, &saved]);
+    let mut final_images = saved.clone();
     let chunks = diff3(&base.keys(), &local.keys(), &view.parsed.keys());
     let access = rec.access.unwrap_or_default();
     let suggest = rec.suggest && (access.can_comment || access.can_edit);
@@ -211,7 +223,9 @@ fn round(src: &dyn SyncSource, db: &Connection, path: &Path, rec: &mut SyncRecor
             // skipped by every later round. Read this way round, such an edit
             // only makes the next round look again.
             let file2 = src.file(&rec.doc_id)?;
-            let doc2 = src.document(&rec.doc_id)?;
+            let mut doc2 = src.document(&rec.doc_id)?;
+            final_images = images::localize(src, db, &mut doc2, path, &prior.overlay(&saved), false);
+            known = Known::of(&[&prior, &saved, &final_images]);
             let view2 = remote_view(&doc2).map_err(|e| GoogleError::Parse(e))?;
             (Some(md::parse(&crate::convert::doc_to_markdown(&p.after.to_doc()).markdown)), view2, file2)
         }
@@ -251,7 +265,7 @@ fn round(src: &dyn SyncSource, db: &Connection, path: &Path, rec: &mut SyncRecor
         (false, false) => Synced::Unchanged,
     };
     if conflict {
-        let copy = crate::import::conflict_copy(db, path, local_text, now)?;
+        let copy = crate::import::conflict_copy(db, path, local_text, now, &known)?;
         rec.conflict = Some(copy.clone());
         outcome = Synced::Conflict { copy, pushed: requests > 0 };
     }
@@ -261,6 +275,8 @@ fn round(src: &dyn SyncSource, db: &Connection, path: &Path, rec: &mut SyncRecor
         }
         markie_core::save::atomic_write(path, merged.as_bytes())?;
     }
+    images::prune(path, &known, &mut final_images, &merged);
+    final_images.store(rec);
     rec.base_markdown = remote2.markdown.clone();
     rec.revision_id = remote2.model.doc.get("revisionId").and_then(Value::as_str).map(str::to_string);
     rec.version = file2.version.clone();
@@ -277,7 +293,20 @@ fn round(src: &dyn SyncSource, db: &Connection, path: &Path, rec: &mut SyncRecor
 /// A Doc Markie can only read: Google's changes come in block by block,
 /// local edits stay here and are named.
 #[allow(clippy::too_many_arguments)]
-fn pull_only(db: &Connection, path: &Path, rec: &mut SyncRecord, file: &DriveFile, doc: &Value, local_text: &str, now: DateTime<Local>, history: Option<&History>, why: &str) -> Result<Report> {
+fn pull_only(
+    db: &Connection,
+    path: &Path,
+    rec: &mut SyncRecord,
+    file: &DriveFile,
+    doc: &Value,
+    local_text: &str,
+    now: DateTime<Local>,
+    history: Option<&History>,
+    why: &str,
+    prior: &Saved,
+    mut saved: Saved,
+) -> Result<Report> {
+    let known = Known::of(&[prior, &saved]);
     let converted = crate::convert::doc_to_markdown(doc);
     let base = md::parse(&rec.base_markdown);
     let local = md::parse(local_text);
@@ -291,7 +320,7 @@ fn pull_only(db: &Connection, path: &Path, rec: &mut SyncRecord, file: &DriveFil
     let held: Vec<String> = if chunks.iter().any(|c| c.kind == ChunkKind::LocalOnly) { vec![why.to_string()] } else { Vec::new() };
     let mut outcome = if merged != local_text { Synced::Pulled } else { Synced::Unchanged };
     if conflict {
-        let copy = crate::import::conflict_copy(db, path, local_text, now)?;
+        let copy = crate::import::conflict_copy(db, path, local_text, now, &known)?;
         rec.conflict = Some(copy.clone());
         outcome = Synced::Conflict { copy, pushed: false };
     }
@@ -301,6 +330,8 @@ fn pull_only(db: &Connection, path: &Path, rec: &mut SyncRecord, file: &DriveFil
         }
         markie_core::save::atomic_write(path, merged.as_bytes())?;
     }
+    images::prune(path, &known, &mut saved, &merged);
+    saved.store(rec);
     rec.base_markdown = converted.markdown;
     rec.revision_id = doc.get("revisionId").and_then(Value::as_str).map(str::to_string);
     rec.version = file.version.clone();

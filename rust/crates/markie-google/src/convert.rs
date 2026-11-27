@@ -4,7 +4,10 @@
 //! Kept: headings (Title is a level-one heading), paragraphs, bold, italic,
 //! strikethrough, links, bulleted, numbered and checked lists with nesting,
 //! tables, code-styled text (a monospace font) as code spans and code
-//! blocks, horizontal rules, footnotes, and images as links.
+//! blocks, horizontal rules, footnotes, and images. An image whose embedded
+//! object carries `markieLocalSrc` (set by `images::localize` once its file
+//! is saved beside the Markdown) is a Markdown image of that file; any other
+//! is a link to Google, which stops working after about half an hour.
 //!
 //! A Doc with more than one tab becomes one file with a level-one heading per
 //! tab; headings inside a tab move down one level per tab depth.
@@ -25,6 +28,9 @@ pub struct Converted {
     pub markdown: String,
     pub tabs: usize,
     pub images: usize,
+    /// The inline and positioned object IDs of the images the Markdown
+    /// shows, in order, each once: what `images::localize` downloads.
+    pub image_ids: Vec<String>,
     /// What Markdown could not keep, in plain words.
     pub dropped: BTreeSet<&'static str>,
     /// For a one-tab Doc: where each Markdown block came from in the Doc.
@@ -88,6 +94,11 @@ pub fn doc_to_markdown(doc: &Value) -> Converted {
         blocks.extend(ctx.blocks(content));
         blocks.extend(ctx.footnote_blocks());
         out.images += ctx.images;
+        for id in std::mem::take(&mut ctx.image_ids) {
+            if !out.image_ids.contains(&id) {
+                out.image_ids.push(id);
+            }
+        }
         out.dropped.extend(ctx.dropped.iter().copied());
         let (text, segs) = assemble(&blocks);
         if !multi {
@@ -226,6 +237,7 @@ struct Ctx<'a> {
     counters: HashMap<(String, usize), usize>,
     footnote_order: Vec<(String, String)>,
     images: usize,
+    image_ids: Vec<String>,
     dropped: BTreeSet<&'static str>,
     /// The element being converted: its indices and why it is read-only.
     cur: Src,
@@ -242,6 +254,7 @@ impl<'a> Ctx<'a> {
             counters: HashMap::new(),
             footnote_order: Vec::new(),
             images: 0,
+            image_ids: Vec::new(),
             dropped: BTreeSet::new(),
             cur: Src::default(),
         }
@@ -283,7 +296,7 @@ impl<'a> Ctx<'a> {
         // Floating images anchored to this paragraph follow its text.
         if let Some(ids) = p.get("positionedObjectIds").and_then(Value::as_array) {
             for id in ids.iter().filter_map(Value::as_str) {
-                if let Some(link) = self.image_link(self.positioned.and_then(|o| o.get(id)).and_then(|o| o.get("positionedObjectProperties"))) {
+                if let Some(link) = self.image_link(id, self.positioned.and_then(|o| o.get(id)).and_then(|o| o.get("positionedObjectProperties"))) {
                     self.read_only("images");
                     extra.push(Block::Text(link, self.cur.clone()));
                 }
@@ -457,7 +470,7 @@ impl<'a> Ctx<'a> {
             } else if let Some(obj) = el.get("inlineObjectElement") {
                 let id = obj.get("inlineObjectId").and_then(Value::as_str).unwrap_or_default();
                 let props = self.objects.and_then(|o| o.get(id)).and_then(|o| o.get("inlineObjectProperties"));
-                if let Some(link) = self.image_link(props) {
+                if let Some(link) = self.image_link(id, props) {
                     self.read_only("images");
                     out.push(Span::raw(link));
                 }
@@ -509,13 +522,21 @@ impl<'a> Ctx<'a> {
         Span { text, bold: flag("bold"), italic: flag("italic"), strike: flag("strikethrough"), code: is_monospace(font), link: url, raw: false }
     }
 
-    /// An image as a Markdown link. Google's `contentUri` works for about half an hour.
-    fn image_link(&mut self, props: Option<&Value>) -> Option<String> {
+    /// An image: a Markdown image of its saved file when `images::localize`
+    /// noted one, otherwise a link. Google's `contentUri` works for about
+    /// half an hour.
+    fn image_link(&mut self, id: &str, props: Option<&Value>) -> Option<String> {
         let embedded = props?.get("embeddedObject")?;
+        self.images += 1;
+        if !id.is_empty() && !self.image_ids.iter().any(|i| i == id) {
+            self.image_ids.push(id.to_string());
+        }
+        let alt = embedded.get("description").or_else(|| embedded.get("title")).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+        if let Some(dest) = embedded.get(crate::images::LOCAL_SRC).and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            return Some(crate::images::markdown_image(alt.unwrap_or_default(), dest));
+        }
         let image = embedded.get("imageProperties");
         let uri = image.and_then(|i| i.get("sourceUri")).or_else(|| image.and_then(|i| i.get("contentUri"))).and_then(Value::as_str).filter(|u| !u.is_empty());
-        let alt = embedded.get("description").or_else(|| embedded.get("title")).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
-        self.images += 1;
         let label = match alt {
             Some(alt) => format!("Image: {}", escape_text(alt, false)),
             None => "Image".to_string(),

@@ -7,6 +7,7 @@
 use crate::error::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -62,6 +63,14 @@ pub struct SyncRecord {
     /// When Markie last sent edits.
     #[serde(default)]
     pub pushed_at: Option<String>,
+    /// The folder beside the file that holds the Doc's images, by name, set
+    /// when the first image is saved (`images.rs`). A rename keeps it.
+    #[serde(default)]
+    pub images_dir: Option<String>,
+    /// Each image Markie saved in that folder: object ID to file name. Only
+    /// these files are ever deleted.
+    #[serde(default)]
+    pub images: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

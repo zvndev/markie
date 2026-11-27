@@ -5,6 +5,10 @@
 //! - Drive `files.list` for the Docs in a picked folder (whether `drive.file`
 //!   covers them is unverified; the spike tool checks).
 //! - Drive `files.export` for Save as Word.
+//! - An image's `contentUri`, to save it beside the Markdown. Google documents
+//!   it as a link that works for about half an hour and carries the reader's
+//!   access itself, so no token goes with it; only https on Google's own
+//!   hosts (or the endpoints this client talks to, the fake in tests).
 //! - Drive `about.get` for the account's email, shown in Settings.
 //! - Drive `changes.getStartPageToken` and `changes.list`, polled by two-way sync.
 //! - Docs `documents.batchUpdate`, the only write two-way sync makes to a Doc.
@@ -75,6 +79,12 @@ pub trait DocsSource: Send + Sync {
     fn export(&self, id: &str, mime: &str) -> Result<Vec<u8>>;
     /// The Google Docs directly inside a folder that Markie can see.
     fn folder_docs(&self, folder_id: &str) -> Result<Vec<DriveFile>>;
+    /// An image's bytes and content type, from its `contentUri`. A source
+    /// that can't fetch images says so, and each image stays a link.
+    fn image(&self, url: &str) -> Result<(Vec<u8>, String)> {
+        let _ = url;
+        Err(GoogleError::NoAccess("images".into()))
+    }
 }
 
 /// What two-way sync adds: writing, and watching for changes.
@@ -189,6 +199,55 @@ impl<'a, S: SecretStore> GoogleApi<'a, S> {
     }
 }
 
+/// Whether Markie may fetch an image from `url`: https on Google's own image
+/// hosts, or the endpoints `cfg` talks to.
+pub fn image_url_allowed(url: &str, cfg: &ClientConfig) -> bool {
+    let Ok(u) = url::Url::parse(url) else { return false };
+    let host = u.host_str().unwrap_or_default().to_ascii_lowercase();
+    let google = ["googleusercontent.com", "google.com", "googleapis.com", "ggpht.com"].iter().any(|d| host == *d || host.ends_with(&format!(".{d}")));
+    if u.scheme() == "https" && google {
+        return true;
+    }
+    [&cfg.endpoints.docs, &cfg.endpoints.drive].iter().filter_map(|e| url::Url::parse(e).ok()).any(|e| e.origin() == u.origin())
+}
+
+/// The client for image downloads: no token, and redirects only to https.
+fn image_client() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::custom(|a| if a.previous().len() >= 3 || a.url().scheme() != "https" { a.stop() } else { a.follow() }))
+        .user_agent(format!("{}/{}", markie_core::paths::APP_NAME, markie_core::paths::APP_VERSION))
+        .build()
+        .expect("an HTTP client")
+}
+
+/// GET an image with no token; at most `MAX_IMAGE_BYTES`.
+pub fn fetch_image(url: &str, cfg: &ClientConfig) -> Result<(Vec<u8>, String)> {
+    use std::io::Read;
+    if !image_url_allowed(url, cfg) {
+        return Err(GoogleError::NoAccess("image host".into()));
+    }
+    let resp = image_client().get(url).send()?;
+    let status = resp.status().as_u16();
+    if !resp.status().is_success() {
+        return Err(match status {
+            403 | 404 => GoogleError::NoAccess(String::new()),
+            _ => GoogleError::Http { status, message: String::new() },
+        });
+    }
+    let mime = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+    let max = crate::images::MAX_IMAGE_BYTES;
+    if resp.content_length().is_some_and(|n| n > max) {
+        return Err(GoogleError::Http { status: 413, message: "image too large".into() });
+    }
+    let mut bytes = Vec::new();
+    resp.take(max + 1).read_to_end(&mut bytes).map_err(|e| GoogleError::Io(e.to_string()))?;
+    if bytes.len() as u64 > max {
+        return Err(GoogleError::Http { status: 413, message: "image too large".into() });
+    }
+    Ok((bytes, mime))
+}
+
 fn error_message(body: &str) -> Option<String> {
     let v: Value = serde_json::from_str(body).ok()?;
     v.pointer("/error/message").and_then(Value::as_str).map(str::to_string)
@@ -233,6 +292,10 @@ impl<S: SecretStore> DocsSource for GoogleApi<'_, S> {
             }
         }
         Ok(out)
+    }
+
+    fn image(&self, url: &str) -> Result<(Vec<u8>, String)> {
+        fetch_image(url, self.cfg)
     }
 }
 

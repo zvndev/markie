@@ -5619,6 +5619,7 @@ dependencies = [
  "keyring",
  "markie-core",
  "markie-google",
+ "markie-rich",
  "markie-vault",
  "pulldown-cmark",
  "reqwest",

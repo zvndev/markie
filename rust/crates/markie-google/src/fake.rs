@@ -17,11 +17,17 @@
 //! - `GET /drive/v3/files/{id}` with `ownedByMe` and `capabilities`,
 //!   `GET /drive/v3/files/{id}/export`, `GET /drive/v3/files?q=...`,
 //!   `GET /drive/v3/about`, `GET /drive/v3/changes/startPageToken`,
-//!   `GET /drive/v3/changes`, all behind a bearer token.
+//!   `GET /drive/v3/changes`, all behind a bearer token;
+//! - `GET /images/{key}`: an image's bytes with its content type, as a Doc's
+//!   `contentUri` serves them, with no token. A Doc names an image's
+//!   `contentUri` `fake-image://{key}`; every `documents.get` hands it out as
+//!   a fresh `http://<this fake>/images/{key}?sig=<n>`, the way Google signs a
+//!   new link on every read.
 //!
 //! Knobs: `throttle` answers the next N API calls with 429; `trash` and
 //! `unshare` end access; `changes_cover_picks: false` makes changes.list
-//! leave picked files out, the unverified case; `offline` refuses connections.
+//! leave picked files out, the unverified case; `offline` refuses connections;
+//! `images_forbidden` answers every image with 403, as an expired link does.
 //! Every Doc in it is made up.
 use crate::model::{DocModel, Mode, Xf, map_point, transform_seq};
 use serde_json::{Value, json};
@@ -127,6 +133,12 @@ pub struct FakeState {
     pub changes: Vec<(u64, String)>,
     /// Refuse every API call as if the network were down (the connection closes).
     pub offline: bool,
+    /// Image bytes and content type by key (`fake-image://{key}`).
+    pub images: HashMap<String, (Vec<u8>, String)>,
+    /// Every image answers 403, as an expired or revoked `contentUri` does.
+    pub images_forbidden: bool,
+    /// How many image downloads were answered with bytes.
+    pub image_gets: usize,
 }
 
 pub struct FakeGoogle {
@@ -357,6 +369,20 @@ impl FakeGoogle {
         self.state.lock().unwrap().log.clone()
     }
 
+    /// Serve `bytes` as `content_type` for a Doc image whose `contentUri` is `fake-image://{key}`.
+    pub fn add_image(&self, key: &str, bytes: &[u8], content_type: &str) {
+        self.state.lock().unwrap().images.insert(key.into(), (bytes.to_vec(), content_type.into()));
+    }
+
+    /// Answer every image download with 403 (or stop doing so).
+    pub fn forbid_images(&self, on: bool) {
+        self.state.lock().unwrap().images_forbidden = on;
+    }
+
+    pub fn image_gets(&self) -> usize {
+        self.state.lock().unwrap().image_gets
+    }
+
     pub fn writes(&self) -> Vec<(String, Value)> {
         self.state.lock().unwrap().writes.clone()
     }
@@ -456,7 +482,44 @@ fn serve(mut stream: TcpStream, state: &Mutex<FakeState>) {
             state.lock().unwrap().refresh_tokens.retain(|r| *r != t);
             send_json(&mut stream, 200, &json!({}));
         }
+        ("GET", p) if p.starts_with("/images/") => image(&mut stream, &req, state),
         _ => api(&mut stream, &req, state),
+    }
+}
+
+/// An image's `contentUri`: no token, as Google's signed links take none.
+fn image(stream: &mut TcpStream, req: &Request, state: &Mutex<FakeState>) {
+    let key = req.path.trim_start_matches("/images/").to_string();
+    let mut s = state.lock().unwrap();
+    if s.offline {
+        return;
+    }
+    if s.images_forbidden || !req.query.contains_key("sig") {
+        drop(s);
+        return send(stream, 403, "text/html", "", b"<html>Forbidden</html>");
+    }
+    match s.images.get(&key).cloned() {
+        Some((bytes, mime)) => {
+            s.image_gets += 1;
+            drop(s);
+            send(stream, 200, &mime, "", &bytes);
+        }
+        None => {
+            drop(s);
+            send(stream, 404, "text/html", "", b"<html>Not found</html>");
+        }
+    }
+}
+
+/// Each `fake-image://{key}` in a Doc becomes a freshly signed link to this fake.
+fn sign_image_links(v: &mut Value, host: &str, sig: u64) {
+    match v {
+        Value::String(s) if s.starts_with("fake-image://") => {
+            *s = format!("http://{host}/images/{}?sig={sig}", &s["fake-image://".len()..]);
+        }
+        Value::Array(a) => a.iter_mut().for_each(|x| sign_image_links(x, host, sig)),
+        Value::Object(o) => o.values_mut().for_each(|x| sign_image_links(x, host, sig)),
+        _ => {}
     }
 }
 
@@ -600,7 +663,11 @@ fn api(stream: &mut TcpStream, req: &Request, state: &Mutex<FakeState>) {
             batch_update(stream, &mut s, &id, &req.body);
         }
         ("GET", ["v1", "documents", id]) => match granted(&s, id).and_then(|f| f.doc()) {
-            Some(doc) if req.query.get("includeTabsContent").map(String::as_str) == Some("true") => send_json(stream, 200, &doc),
+            Some(mut doc) if req.query.get("includeTabsContent").map(String::as_str) == Some("true") => {
+                s.counter += 1;
+                sign_image_links(&mut doc, req.headers.get("host").map(String::as_str).unwrap_or("127.0.0.1"), s.counter);
+                send_json(stream, 200, &doc)
+            }
             Some(_) => google_error(stream, 400, "this fake only answers includeTabsContent=true"),
             None => google_error(stream, 404, "Requested entity was not found."),
         },

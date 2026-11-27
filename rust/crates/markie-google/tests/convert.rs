@@ -152,3 +152,13 @@ fn the_markdown_means_what_the_doc_said() {
     assert_eq!(count(&events("images"), &|e| matches!(e, Event::Start(Tag::Link { .. }))), 3);
     assert_eq!(count(&events("footnotes"), &|e| matches!(e, Event::FootnoteReference(_))), 1);
 }
+
+#[test]
+fn an_image_with_a_saved_file_is_a_markdown_image_of_it() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("images.json")).unwrap()).unwrap();
+    assert_eq!(doc_to_markdown(&doc).image_ids, ["kix.img1", "kix.img2", "kix.pos1"]);
+    doc["tabs"][0]["documentTab"]["inlineObjects"]["kix.img1"]["inlineObjectProperties"]["embeddedObject"][markie_google::images::LOCAL_SRC] = "Images%20images/kix.img1.png".into();
+    let md = doc_to_markdown(&doc).markdown;
+    assert!(md.starts_with("A chart: ![Sales by month](Images%20images/kix.img1.png)\n\n[Image: Logo](https://example.com/logo.png)"), "{md}");
+}

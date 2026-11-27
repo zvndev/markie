@@ -9,10 +9,14 @@
 //! - Refresh re-reads a Doc only when Drive's `version` moved. While sync is
 //!   one-way, a local file edited since the last sync is kept as a dated
 //!   conflict copy beside it before Google's text replaces it.
-//! - Save as Word exports `.docx` beside the Markdown file. One-way.
+//! - Save as Word exports `.docx` beside the Markdown file. One-way. It is
+//!   Google's own export, so it has the Doc's images in it.
+//! - Images are saved beside the file on import and Refresh (`images.rs`); a
+//!   conflict copy gets its own copies of the images it shows.
 use crate::api::{DocsSource, DriveFile};
 use crate::convert::doc_to_markdown;
 use crate::error::{GoogleError, Result};
+use crate::images::{self, Known, Saved};
 use crate::store::{self, SyncRecord};
 use chrono::{DateTime, Local};
 use rusqlite::Connection;
@@ -123,11 +127,13 @@ pub fn reserve(db: &Connection, folder: &Path, stem: &str, ext: &str) -> Result<
 }
 
 /// The dated copy that keeps local edits: `Plan (conflict 2026-11-25 14.03).md`.
-pub fn conflict_copy(db: &Connection, path: &Path, text: &str, now: DateTime<Local>) -> Result<PathBuf> {
+/// The images it shows are copied beside it (`images::copy_for`).
+pub fn conflict_copy(db: &Connection, path: &Path, text: &str, now: DateTime<Local>, images: &Known) -> Result<PathBuf> {
     let folder = path.parent().unwrap_or(Path::new("."));
     let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
     let ext = path.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "md".into());
     let copy = reserve(db, folder, &format!("{stem} (conflict {})", now.format("%Y-%m-%d %H.%M")), &ext)?;
+    let text = images::copy_for(path, &copy, images, text);
     markie_core::save::atomic_write(&copy, text.as_bytes())?;
     Ok(copy)
 }
@@ -157,11 +163,13 @@ pub(crate) fn record_for(file: &DriveFile, doc: &Value, markdown: &str, tabs: us
         conflict: previous.and_then(|p| p.conflict.clone()),
         stopped: None,
         pushed_at: previous.and_then(|p| p.pushed_at.clone()),
+        images_dir: previous.and_then(|p| p.images_dir.clone()),
+        images: previous.map(|p| p.images.clone()).unwrap_or_default(),
     }
 }
 
 /// Write Google's text to `path`, keeping local edits as a conflict copy first.
-fn apply_remote(db: &Connection, path: &Path, previous: Option<&SyncRecord>, markdown: &str, now: DateTime<Local>) -> Result<Outcome> {
+fn apply_remote(db: &Connection, path: &Path, previous: Option<&SyncRecord>, markdown: &str, now: DateTime<Local>, images: &Known) -> Result<Outcome> {
     let local = std::fs::read_to_string(path).ok();
     let mut outcome = Outcome::Updated;
     if let Some(local) = &local {
@@ -170,7 +178,7 @@ fn apply_remote(db: &Connection, path: &Path, previous: Option<&SyncRecord>, mar
         }
         let edited = previous.is_none_or(|p| !p.matches_base(local)) && !local.trim().is_empty();
         if edited {
-            outcome = Outcome::ConflictCopy(conflict_copy(db, path, local, now)?);
+            outcome = Outcome::ConflictCopy(conflict_copy(db, path, local, now, images)?);
         }
     }
     markie_core::save::atomic_write(path, markdown.as_bytes())?;
@@ -180,8 +188,7 @@ fn apply_remote(db: &Connection, path: &Path, previous: Option<&SyncRecord>, mar
 /// Import one Doc that `file` describes. A Doc imported before is refreshed
 /// in its own file. `two_way` turns two-way sync on for it (it stays on if it was).
 pub fn import_doc(src: &dyn DocsSource, db: &Connection, folder: &Path, file: &DriveFile, now: DateTime<Local>, two_way: bool) -> Result<Imported> {
-    let doc = src.document(&file.id)?;
-    let converted = doc_to_markdown(&doc);
+    let mut doc = src.document(&file.id)?;
     let title = doc.get("title").and_then(Value::as_str).unwrap_or(&file.name).to_string();
     let (path, previous, fresh) = match store::by_doc(db, &file.id)? {
         Some((path, rec)) => (path, Some(rec), false),
@@ -190,13 +197,19 @@ pub fn import_doc(src: &dyn DocsSource, db: &Connection, folder: &Path, file: &D
             (reserve(db, folder, &file_stem(&title), "md")?, None, true)
         }
     };
+    let prior = previous.as_ref().map(Saved::of).unwrap_or_default();
+    let mut saved = images::localize(src, db, &mut doc, &path, &prior, true);
+    let known = Known::of(&[&prior, &saved]);
+    let converted = doc_to_markdown(&doc);
     let outcome = if fresh {
         markie_core::save::atomic_write(&path, converted.markdown.as_bytes())?;
         Outcome::New
     } else {
-        apply_remote(db, &path, previous.as_ref(), &converted.markdown, now)?
+        apply_remote(db, &path, previous.as_ref(), &converted.markdown, now, &known)?
     };
+    images::prune(&path, &known, &mut saved, &converted.markdown);
     let mut record = record_for(file, &doc, &converted.markdown, converted.tabs, now, previous.as_ref());
+    saved.store(&mut record);
     record.two_way = two_way || record.two_way;
     store::put(db, &path, &record)?;
     Ok(Imported { path, title, doc_id: file.id.clone(), outcome })
@@ -274,10 +287,16 @@ pub fn refresh(src: &dyn DocsSource, db: &Connection, path: &Path, now: DateTime
         if file.version.is_some() && file.version == record.version && path.exists() {
             return Ok((Outcome::Unchanged, None));
         }
-        let doc = src.document(&record.doc_id)?;
+        let mut doc = src.document(&record.doc_id)?;
+        let prior = Saved::of(&record);
+        let mut saved = images::localize(src, db, &mut doc, path, &prior, true);
+        let known = Known::of(&[&prior, &saved]);
         let converted = doc_to_markdown(&doc);
-        let outcome = apply_remote(db, path, Some(&record), &converted.markdown, now)?;
-        Ok((outcome, Some(record_for(&file, &doc, &converted.markdown, converted.tabs, now, Some(&record)))))
+        let outcome = apply_remote(db, path, Some(&record), &converted.markdown, now, &known)?;
+        images::prune(path, &known, &mut saved, &converted.markdown);
+        let mut fresh = record_for(&file, &doc, &converted.markdown, converted.tabs, now, Some(&record));
+        saved.store(&mut fresh);
+        Ok((outcome, Some(fresh)))
     })();
     match result {
         Ok((outcome, fresh)) => {

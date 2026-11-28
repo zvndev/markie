@@ -17,6 +17,8 @@ members = [
   "crates/markie-update",
   "crates/markie-google",
 ]
+# Patched copies of crates.io dependencies (vendor/README.md).
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.10.0"
@@ -55,3 +57,8 @@ opt-level = 2
 lto = "thin"
 codegen-units = 4
 strip = true
+
+# gpui-base with Markie's patch for large unwrapped documents: see
+# vendor/README.md before changing the gpui-kit version.
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }

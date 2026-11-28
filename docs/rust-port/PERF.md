@@ -4,51 +4,82 @@ Date: 2026-11-22. Goal set by Kirby on 2026-11-21: Markie RS must be much faster
 
 ## Large documents (editors 7.9)
 
-Date: 2026-11-28, branch `t3/markie-rs-perf-79`, Markie RS at `rust/markie-rs` aca9a36 plus the bench, against Electron Markie 0.9.7 (main e8440384 on Electron 42.11.18). Three runs of each, medians.
+Date: 2026-11-28, branch `t3/markie-rs-large-file-speed` (from `t3/markie-rs-perf-79`), against Electron Markie 0.9.7 (main e8440384 on Electron 42.11.18). Three runs of each, medians. The first timed run, on branch `t3/markie-rs-perf-79` before these fixes, is the "Before" column.
 
 ### Summary
 
-- **Markie RS is better at every size on typing, scrolling and memory.** A keystroke costs about 1 ms at any size, against Electron's 5 ms at 1 MB and 130 to 155 ms at 100 MB. A scroll frame costs 1.1 to 1.7 ms, against 2.8 ms at 1 MB and 24 ms at 100 MB. Peak memory is a fifth to a half of Electron's.
-- **Opening is faster up to 10 MB and slower from 50 MB.** At 50 MB Markie RS paints in 950 to 990 ms, Electron in 370 to 640 ms. At 100 MB it is 1.9 s against 0.4 s (text) and 1.4 s (Markdown).
-- **Saving is slower from 10 MB.** 100 ms against 75 to 84 ms at 10 MB, 460 ms against 280 ms at 50 MB, 0.8 to 0.9 s against 0.5 to 0.8 s at 100 MB.
-- **Verdict for 7.9: FAIL.** The rule is PASS only if Markie RS is equal or better everywhere, and open and save are not.
+- **Markie RS is now faster than Electron at every size, in both .md and .txt, on open and on save.** It also keeps its lead in typing, scrolling and memory.
+- **Open**: 100 MB is editable in 341 to 360 ms, against Electron's 640 ms (text) and 1,418 ms (Markdown). Before the fixes it took 1.9 s.
+- **Save**: 100 MB saves in 87 to 114 ms, against Electron's 479 to 557 ms. Before the fixes it took 0.8 to 0.9 s. The main thread is held for 1 to 3 ms of it.
+- **Verdict for 7.9: PASS.** Every row is equal or better.
 - A file of exactly 100,000,000 bytes is refused by both apps before it is read (`MAX_DOC_BYTES`), so "100 MB" here is 99,999,000 bytes.
+
+| Fixture | Editable: Electron | Before | After | Save: Electron | Before | After |
+|---|---|---|---|---|---|---|
+| 1 MB .md | 304 | 101 | 78.7 | 27.0 | 24.2 | 16.6 |
+| 1 MB .txt | 276 | 80.4 | 50.8 | 23.0 | 20.0 | 15.8 |
+| 10 MB .md | 406 | 254 | 98.9 | 74.0 | 99.7 | 22.2 |
+| 10 MB .txt | 283 | 210 | 98.5 | 73.0 | 101 | 42.5 |
+| 50 MB .md | 999 | 952 | 251 | 245 | 466 | 55.0 |
+| 50 MB .txt | 467 | 995 | 196 | 291 | 459 | 52.6 |
+| 100 MB .md | 1,418 | 1,905 | 360 | 557 | 940 | 114 |
+| 100 MB .txt | 640 | 1,895 | 341 | 479 | 806 | 87.0 |
+
+Editable and save are in ms. Electron's columns are from this run, taking turns with the "After" build; "Before" is Markie RS in the first run. Markie RS is 1.9x (100 MB .txt) to 5.4x (1 MB .txt) faster to open, and 1.5x (1 MB .txt) to 5.5x (50 and 100 MB .txt) faster to save.
 
 ### Results
 
-Medians of 3 runs. Load is the 1-minute load average when the run started, on 18 cores.
+Medians of 3 runs. Load is the 1-minute load average when the run started, on 18 cores. "Save, main thread" is how long ⌘S held Markie RS's main thread; the save column is the whole save, until it has landed and been recorded.
 
-| Fixture | App | First paint ms | Editable ms | Peak RSS MB | Scroll frame ms (median / p95 / max) | Key at start ms | Key at end ms | Save ms | Load |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 MB .md | Electron | 318 | 341 | 1,127 | 3.3 / 4.3 / 5.0 | 6.8 | 26.0 | 41 | 446 |
-| 1 MB .md | Markie RS | 98 | 101 | 268 | 1.6 / 2.0 / 4.3 | 1.0 | 1.3 | 24 | 395 |
-| 1 MB .txt | Electron | 320 | 334 | 1,030 | 2.8 / 3.3 / 5.8 | 5.3 | 5.0 | 33 | 472 |
-| 1 MB .txt | Markie RS | 77 | 80 | 161 | 1.1 / 1.4 / 4.4 | 0.9 | 0.8 | 20 | 489 |
-| 10 MB .md | Electron | 407 | 467 | 1,486 | 6.3 / 8.8 / 30.4 | 16.9 | 35.7 | 84 | 418 |
-| 10 MB .md | Markie RS | 249 | 254 | 742 | 1.5 / 1.9 / 5.1 | 1.3 | 1.1 | 100 | 432 |
-| 10 MB .txt | Electron | 262 | 290 | 1,174 | 4.5 / 5.9 / 6.7 | 16.2 | 16.3 | 75 | 430 |
-| 10 MB .txt | Markie RS | 208 | 210 | 330 | 1.4 / 1.6 / 3.8 | 0.7 | 0.8 | 101 | 450 |
-| 50 MB .md | Electron | 642 | 885 | 2,398 | 7.4 / 14.5 / 22.7 | 69.0 | 87.7 | 280 | 328 |
-| 50 MB .md | Markie RS | 950 | 952 | 2,152 | 1.6 / 1.9 / 4.3 | 1.1 | 1.3 | 466 | 351 |
-| 50 MB .txt | Electron | 372 | 447 | 2,386 | 12.6 / 21.1 / 31.8 | 69.1 | 67.6 | 283 | 208 |
-| 50 MB .txt | Markie RS | 992 | 995 | 1,042 | 1.4 / 1.7 / 4.0 | 0.8 | 0.8 | 459 | 233 |
-| 100 MB .md | Electron | 1,438 | 1,797 | 4,118 | 23.6 / 34.9 / 56.8 | 132 | 145 | 792 | 285 |
-| 100 MB .md | Markie RS | 1,902 | 1,905 | 3,569 | 1.7 / 2.1 / 4.5 | 1.2 | 1.1 | 940 | 441 |
-| 100 MB .txt | Electron | 437 | 587 | 3,570 | 24.8 / 39.0 / 56.0 | 154 | 156 | 541 | 337 |
-| 100 MB .txt | Markie RS | 1,893 | 1,895 | 1,938 | 1.3 / 1.7 / 3.9 | 0.7 | 0.7 | 806 | 460 |
+| Fixture | App | First paint ms | Editable ms | Peak RSS MB | Scroll frame ms (median / p95 / max) | Key at start ms | Key at end ms | Save ms | Save, main thread ms | Load |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 MB .md | Electron | 284 | 304 | 1,207 | 3.1 / 3.9 / 4.5 | 6.6 | 26.7 | 27.0 | n/a | 530 |
+| 1 MB .md | Markie RS | 76.2 | 78.7 | 282 | 1.4 / 1.8 / 3.8 | 1.0 | 1.1 | 16.6 | 1.6 | 436 |
+| 1 MB .txt | Electron | 262 | 276 | 1,016 | 2.6 / 3.1 / 3.5 | 5.1 | 4.9 | 23.0 | n/a | 465 |
+| 1 MB .txt | Markie RS | 48.9 | 50.8 | 161 | 1.2 / 1.5 / 3.9 | 0.7 | 0.7 | 15.8 | 1.1 | 496 |
+| 10 MB .md | Electron | 348 | 406 | 1,556 | 4.2 / 5.3 / 16.7 | 15.1 | 34.8 | 74.0 | n/a | 397 |
+| 10 MB .md | Markie RS | 96.4 | 98.9 | 807 | 1.6 / 1.9 / 4.3 | 0.9 | 0.9 | 22.2 | 2.8 | 368 |
+| 10 MB .txt | Electron | 254 | 283 | 1,177 | 4.4 / 5.6 / 10.9 | 17.2 | 16.1 | 73.0 | n/a | 296 |
+| 10 MB .txt | Markie RS | 95.4 | 98.5 | 293 | 1.5 / 1.7 / 4.2 | 0.8 | 0.8 | 42.5 | 1.2 | 277 |
+| 50 MB .md | Electron | 879 | 999 | 2,543 | 7.0 / 14.5 / 25.6 | 67.8 | 83.1 | 245 | n/a | 249 |
+| 50 MB .md | Markie RS | 248 | 251 | 1,989 | 1.6 / 1.9 / 4.2 | 0.9 | 1.0 | 55.0 | 1.6 | 231 |
+| 50 MB .txt | Electron | 374 | 467 | 2,511 | 12.3 / 21.0 / 30.3 | 66.2 | 64.6 | 291 | n/a | 219 |
+| 50 MB .txt | Markie RS | 194 | 196 | 855 | 1.3 / 1.6 / 3.8 | 0.7 | 0.7 | 52.6 | 1.0 | 410 |
+| 100 MB .md | Electron | 1,239 | 1,418 | 4,190 | 20.1 / 35.5 / 50.5 | 116 | 138 | 557 | n/a | 388 |
+| 100 MB .md | Markie RS | 357 | 360 | 2,607 | 1.5 / 1.8 / 4.1 | 0.8 | 0.9 | 114 | 1.5 | 408 |
+| 100 MB .txt | Electron | 491 | 640 | 4,047 | 20.8 / 35.4 / 48.3 | 138 | 130 | 479 | n/a | 264 |
+| 100 MB .txt | Markie RS | 339 | 341 | 1,556 | 1.3 / 1.6 / 3.3 | 0.7 | 0.7 | 87.0 | 1.2 | 261 |
 
-### Where Markie RS is slower, and why
+The peak RSS of 1 MB .md in Markie RS is the median of two runs: on its first run the sampler read 0 twice, once in the full run and once when that sample was run again (`ps` failing under a load of 340 to 570).
 
-| Area | Sizes | Cause | Plan |
-|---|---|---|---|
-| Open | 50 and 100 MB | Linear in the file, about 19 ms a MB. At 100 MB about half (950 ms) is `open_path` (read, decode, the editor's rope, word counts, the disk hash) and half (940 ms) is the first frame. CodeMirror reads the text once and lays out only the screen, which is why Electron's plain text opens in 0.4 s at 100 MB | Profile `open_path` and the editor's first layout at 100 MB; move counting and hashing off the main thread; find the whole-document pass in gpui-kit's first frame |
-| Save | 10 MB and more | Linear, about 9 ms a MB against Electron's 5.5: the rope copied to a string, the History snapshot, the write and the disk hash, all on the main thread | Write and snapshot from a background thread with the text copied once |
+### What changed
 
-Markie RS opens large files without soft wrap (see the first table of hot spots), so its lines run off to the right; Electron wraps. Electron's scroll figures include wrapping long lines; Markie RS's do not.
+Profiled at 100 MB with samply on the scene bench. Before, opening spent about 1.05 s counting words and the outline and about 1 s on the editor's first frame; saving spent most of its time in SHA-256 and in copies of the text, all on the main thread.
+
+| Change | Where | Effect at 100 MB |
+|---|---|---|
+| Word counts and the outline of a document in the large tier (1 MB and up) are counted on a background thread and land a moment after the text shows. Smaller documents count as before | `workspace.rs` `update_stats` | About 1 s off the open, and off every pause in typing |
+| Without soft wrap, gpui-base finds the editor's rows in one pass over the rope's chunks instead of one rope seek per line (1.6 million lines) | `rust/vendor/gpui-base`, patched copy of 0.10.0 (`rust/vendor/README.md`) | About 1 s off the first frame |
+| A large document in Source saves on its own thread. The main thread checks for an outside edit and clones the rope; the thread copies the text once, keeps the History version, writes and hashes, the last three side by side | `workspace/save_job.rs`, `markie_core::document::write_text_document` and `TextWrite` | ⌘S holds the main thread for 1 to 3 ms |
+| SHA-256 uses the ARMv8 instructions (sha2 0.11 instead of 0.10, which ran in software here at about 160 MB/s) | `markie-core/Cargo.toml` | History's two hashes of a save, under the same load: about 1.4 s to about 0.25 s |
+| History skips reading its newest version when its length differs from the file's | `markie-core/src/history.rs` | A 100 MB read and hash saved on most saves |
+| Opening remembers the file's size and modified time from before the read, so the first save does not read the file back to check for an outside edit | `markie-core/src/disk.rs` `remember_read` | A 100 MB read and hash off the first save |
+| UTF-8 decoding keeps the read buffer, and one byte pass checks control characters and line endings; a UTF-8 save without BOM writes the text's own bytes | `markie-core/src/formats.rs`, `document.rs` | Two copies and two char-by-char passes fewer |
+
+What keeps a save exact:
+
+- One save runs at a time. A save asked for while one runs writes the newest text after it.
+- Typing during a save keeps the edited marker, since the save wrote the text as it was when it started.
+- Quitting, closing the window, opening another document, a reload and every save on the main thread wait for a running save to finish (`wait_for_save`).
+- The disk poll skips while a save runs, so Markie's own write is never taken for an outside edit.
+- History reads the old bytes before the new file replaces them, and dates the version from the old file's modified time.
+- After one 100 MB bench save the file held exactly the expected bytes, the History version was byte for byte the original, and the last-write hash matched the file.
+
+Tests: `markie-core` covers exact bytes in UTF-8, UTF-8 with BOM and UTF-16, the version kept and not duplicated, a large text, autosave drafts kept on failure and cleared on success, and a running save waited for (`finishing_a_running_save_waits_for_the_bytes`). The gpui-base patch is checked row for row against the old loop (`unwrapped_rows_match_the_per_row_loop`), and gpui-base's 445 input tests pass with it.
 
 ### What else was running
 
-The Mac was never quiet. Load averages were 170 to 670 on 18 cores during the runs: iOS simulators (Circular and system apps), other agents' `cargo build` and `cargo test` of Markie RS, `swift-frontend`, Spotlight indexing. Kirby used the Mac and opened his own Markie during the run. Both apps ran under the same load, taking turns run by run, so the comparison holds better than the absolute numbers. Expect every number to be lower on a quiet Mac.
+The Mac was never quiet. Load averages were 140 to 570 on 18 cores during the runs: other agents' Rust builds and tests, iOS simulators, Spotlight, and this branch's own `cargo test --workspace` for the first round. Kirby's own Markie was open and was not touched. Both apps ran under the same load, taking turns run by run, so the comparison holds better than the absolute numbers.
 
 ### How it was measured
 
@@ -61,7 +92,7 @@ Nothing was shown on screen and no input reached Kirby's display. The frontmost 
 - **Peak RSS**: sampled every 100 ms over each app's whole process tree for the whole run (open, typing, scrolling, save). Electron's four processes are summed.
 - **Scroll**: 600 frames that sweep the document from top to bottom. Each frame's main-thread cost: Markie RS, setting the offset to the end of the frame's paint; Electron, setting `scrollTop`, CodeMirror's scroll handler and forced style and layout (paint not included, which flatters Electron).
 - **Typing**: 30 keys at the start, then 30 at the end of the document. Markie RS, keystroke to the end of the frame's paint. Electron, from Chromium's own trace: the renderer main thread's busy time from the keydown to the end of the frame's commit, with idle time left out. Waiting for the next frame is in neither.
-- **Save**: Markie RS, its ⌘S function to the frame after. Electron, the menu's save sent to the page until main's write finished: the page's save, IPC, the snapshot, the atomic write.
+- **Save**: Markie RS, its ⌘S function until the save has landed: written, recorded as saved, and the frame after drawn. A large document saves on its own thread, so the main thread's share is reported apart (`save_main_ms`). An autosave still running from the typing finishes, untimed, before ⌘S. Electron, the menu's save sent to the page until main's write finished: the page's save, IPC, the snapshot, the atomic write.
 
 Run it again:
 
@@ -76,7 +107,7 @@ TS
 (cd $S/esrc && BENCH_VITE_CACHE=$S/vite-cache BENCH_OUT=$S/electron-out npx vite build --config vite.bench.config.ts)
 # Electron 42.11.18 for darwin-arm64 from its GitHub release, checked against node_modules/electron/checksums.json, unzipped to $S/electron
 (cd rust && cargo build --release -p markie-app --features scene)
-python3 rust/scripts/bench/large-docs.py run $S --runs 3    # about 45 minutes; resumes if stopped
+python3 rust/scripts/bench/large-docs.py run $S --runs 3    # about 60 minutes under load; resumes if stopped
 python3 rust/scripts/bench/large-docs.py summary $S
 ```
 

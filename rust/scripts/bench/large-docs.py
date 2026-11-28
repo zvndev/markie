@@ -228,7 +228,8 @@ def summary(results):
             rs = [r for r in results if r["fixture"] == fixture and r["app"] == app and "failure" not in r]
             if not rs:
                 continue
-            g = lambda k: med([r[k] for r in rs if r.get(k) is not None])
+            # A peak RSS of 0 is the sampler failing (`ps` under heavy load), not a reading.
+            g = lambda k: med([r[k] for r in rs if r.get(k) is not None and not (k == "peak_rss_mb" and r[k] == 0)])
             gs = lambda k, f: med([r[k][f] for r in rs if isinstance(r.get(k), dict)])
             fmt = lambda x: "n/a" if x is None else (f"{x:,.0f}" if x >= 100 else f"{x:.1f}")
             print(f"| {fixture} | {'Electron' if app == 'electron' else 'Markie RS'} | {fmt(g('first_paint_ms'))} | {fmt(g('editable_ms'))} | {fmt(g('peak_rss_mb'))} | "

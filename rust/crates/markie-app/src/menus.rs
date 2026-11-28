@@ -237,7 +237,8 @@ mod tests {
         let without = build(MenuState::default());
         assert!(!labels(&without[0].items).contains(&"Check for Updates…".to_string()));
         let with = build(MenuState { updates: true, ..Default::default() });
-        assert_eq!(labels(&with[0].items)[..3], ["About Markie RS", "Check for Updates…", "-"]);
+        let about = format!("About {}", markie_core::paths::APP_NAME);
+        assert_eq!(labels(&with[0].items)[..3], [about.as_str(), "Check for Updates…", "-"]);
         assert_eq!(labels(&with[0].items).len(), labels(&without[0].items).len() + 1);
     }
 

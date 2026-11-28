@@ -221,7 +221,10 @@ mod tests {
         assert_eq!(s.len(), 6);
         assert!(s[0].markie && s[1].markie);
         assert!(!s[2].markie && !s[4].markie);
-        assert!(s.iter().all(|f| !f.markie_rs));
+        // The dev build is never the handler; the Mac app is Markie itself.
+        let ours: Vec<bool> = s.iter().map(|f| f.markie_rs).collect();
+        let theirs: Vec<bool> = s.iter().map(|f| f.markie).collect();
+        if markie_core::paths::MAC_APP { assert_eq!(ours, theirs) } else { assert!(ours.iter().all(|o| !o)) }
     }
 
     #[test]

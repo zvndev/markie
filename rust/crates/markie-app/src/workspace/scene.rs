@@ -129,6 +129,9 @@ pub fn start(spec: Spec, handle: AnyWindowHandle, workspace: Entity<Workspace>, 
         if spec.name == "recent" && spec.args.get("bench").and_then(Value::as_bool).unwrap_or(false) {
             recent_bench(handle, &workspace, &executor, cx).await;
         }
+        if spec.name == "doc" && spec.args.get("bench").and_then(Value::as_bool).unwrap_or(false) {
+            doc_bench(handle, &workspace, &executor, cx).await;
+        }
         // Settle: text inputs, images and async answers.
         for _ in 0..4 {
             timer(spec.args.get("settle").and_then(Value::as_u64).unwrap_or(700) / 4).await;
@@ -820,4 +823,161 @@ fn csv_bench(handle: AnyWindowHandle, workspace: &Entity<Workspace>, cx: &mut As
         );
         table.update(cx, |table, cx| table.bench_step("top", cx));
     });
+}
+
+fn spread(label: &str, samples: &[f64]) {
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let n = sorted.len().max(1);
+    let mean = samples.iter().sum::<f64>() / n as f64;
+    let over = samples.iter().filter(|f| **f > 1000. / 60.).count();
+    eprintln!(
+        "markie-doc-bench {label} mean {mean:.3} median {:.3} p95 {:.3} max {:.3} over_16.7ms {over} of {}",
+        sorted.get(n / 2).copied().unwrap_or(0.),
+        sorted.get(n * 95 / 100).copied().unwrap_or(0.),
+        sorted.last().copied().unwrap_or(0.),
+        samples.len()
+    );
+}
+
+/// Editors 7.9 (docs/rust-port/PERF.md): a large document in Source. Run on
+/// a throwaway copy, since it saves. Each figure is main-thread time from the
+/// action to the end of the frame it causes; the window is hidden, so the GPU
+/// presenting the frame is not in it. Keystrokes and wheel events go through
+/// the window as a person's would.
+async fn doc_bench(handle: AnyWindowHandle, workspace: &Entity<Workspace>, executor: &BackgroundExecutor, cx: &mut AsyncApp) {
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.;
+    let frame = |window: &mut Window, cx: &mut App| window.draw(cx).clear(cx);
+    let Some(path) = cx.update(|cx| workspace.read(cx).doc.as_ref().map(|d| d.path.clone())) else {
+        eprintln!("markie-doc-bench no document");
+        return;
+    };
+    let len = |cx: &mut AsyncApp| cx.update(|cx| workspace.read(cx).editor.read(cx).text().len());
+    let key = |c: &'static str| Keystroke::parse(c).expect("keystroke");
+    // Open again, now that the app is up: open_path to the first frame
+    // showing the document, then one keystroke typed at the start of it to
+    // the frame that shows it (the document is editable).
+    let (open_ms, editable_ms, mode) = cx
+        .update_window(handle, |_, window, cx| {
+            let t = Instant::now();
+            workspace.update(cx, |ws, cx| ws.open_path(&path, window, cx));
+            frame(window, cx);
+            let open = ms(t);
+            workspace.update(cx, |ws, cx| {
+                ws.editor.update(cx, |s, cx| s.set_selected_range(0..0, cx));
+                ws.focus_editor(window, cx);
+            });
+            window.dispatch_keystroke(key("x"), cx);
+            frame(window, cx);
+            let mode = format!("{:?} large={}", workspace.read(cx).mode, workspace.read(cx).doc.as_ref().is_some_and(|d| d.large));
+            (open, ms(t), mode)
+        })
+        .unwrap_or_default();
+    let starts_x = cx.update(|cx| workspace.read(cx).editor.read(cx).text().slice(0..1).to_string() == "x");
+    eprintln!("markie-doc-bench mode {mode} bytes {}", len(cx));
+    eprintln!("markie-doc-bench reopen_first_frame_ms {open_ms:.2}");
+    eprintln!("markie-doc-bench reopen_editable_ms {editable_ms:.2} typed_landed {starts_x}");
+    // Typing: 30 characters at the start, then 30 at the end, one frame each.
+    let typing = |at_end: bool, cx: &mut AsyncApp| {
+        let before = len(cx);
+        let samples: Vec<f64> = cx
+            .update_window(handle, |_, window, cx| {
+                workspace.update(cx, |ws, cx| {
+                    let end = if at_end { ws.editor.read(cx).text().len() } else { 0 };
+                    ws.editor.update(cx, |s, cx| s.set_selected_range(end..end, cx));
+                    ws.focus_editor(window, cx);
+                });
+                frame(window, cx);
+                (0..30)
+                    .map(|i| {
+                        let t = Instant::now();
+                        window.dispatch_keystroke(key(if i % 6 == 5 { "space" } else { "e" }), cx);
+                        frame(window, cx);
+                        ms(t)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let landed = len(cx) - before;
+        (samples, landed)
+    };
+    let (start, landed) = typing(false, cx);
+    spread(&format!("type_start_ms landed {landed}"), &start);
+    executor.timer(Duration::from_millis(400)).await;
+    let (end, landed) = typing(true, cx);
+    spread(&format!("type_end_ms landed {landed}"), &end);
+    executor.timer(Duration::from_millis(400)).await;
+    // Scroll: to the top, find the bottom, then 600 frames that sweep the
+    // whole document top to bottom.
+    let center = cx.update_window(handle, |_, window, _| {
+        let size = window.viewport_size();
+        point(size.width / 2., size.height / 2.)
+    }).unwrap_or_default();
+    let offset = |cx: &mut AsyncApp| cx.update(|cx| f32::from(workspace.read(cx).editor.read(cx).scroll_offset().y));
+    let _ = cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |ws, cx| ws.editor.update(cx, |s, cx| s.set_scroll_offset(point(px(0.), px(-1.0e9)), cx)));
+        frame(window, cx);
+        frame(window, cx);
+    });
+    let bottom = offset(cx);
+    let _ = cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |ws, cx| ws.editor.update(cx, |s, cx| s.set_scroll_offset(point(px(0.), px(0.)), cx)));
+        frame(window, cx);
+        frame(window, cx);
+    });
+    let wheel = |dy: f32, phase: TouchPhase| {
+        PlatformInput::Scroll(ScrollEvent { position: center, delta: ScrollDelta::Pixels(point(px(0.), px(dy))), modifiers: Modifiers::default(), touch_phase: phase, source: ScrollSource::Pointer })
+    };
+    // The sweep sets the offset itself: the editor caps how far one wheel
+    // event moves, and a sweep of a 100 MB file by wheel would take hours.
+    let steps = 600;
+    let step = bottom.abs() / steps as f32;
+    let mut sweep = Vec::new();
+    for i in 0..steps {
+        let cost = cx
+            .update_window(handle, |_, window, cx| {
+                let t = Instant::now();
+                let y = -step * (i + 1) as f32;
+                workspace.update(cx, |ws, cx| ws.editor.update(cx, |s, cx| s.set_scroll_offset(point(px(0.), px(y)), cx)));
+                frame(window, cx);
+                ms(t)
+            })
+            .unwrap_or(0.);
+        sweep.push(cost);
+        if i % 30 == 29 {
+            executor.timer(Duration::from_millis(4)).await;
+        }
+    }
+    eprintln!("markie-doc-bench scroll_height_px {:.0} reached_px {:.0}", bottom.abs(), offset(cx).abs());
+    spread("scroll_sweep_frame_ms", &sweep);
+    // A trackpad-like flick back near the top: 240 events 40 points apart.
+    let _ = cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |ws, cx| ws.editor.update(cx, |s, cx| s.set_scroll_offset(point(px(0.), px(0.)), cx)));
+        frame(window, cx);
+    });
+    let mut flick = Vec::new();
+    for i in 0..240 {
+        let cost = cx
+            .update_window(handle, |_, window, cx| {
+                let t = Instant::now();
+                window.dispatch_event(wheel(-40., if i == 0 { TouchPhase::Started } else { TouchPhase::Moved }), cx);
+                frame(window, cx);
+                ms(t)
+            })
+            .unwrap_or(0.);
+        flick.push(cost);
+    }
+    spread("scroll_flick_frame_ms", &flick);
+    // Save: ⌘S's own function, to the frame after it.
+    executor.timer(Duration::from_millis(400)).await;
+    let save_ms = cx
+        .update_window(handle, |_, window, cx| {
+            let t = Instant::now();
+            workspace.update(cx, |ws, cx| ws.save(window, cx));
+            frame(window, cx);
+            ms(t)
+        })
+        .unwrap_or(0.);
+    let on_disk = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    eprintln!("markie-doc-bench save_ms {save_ms:.2} bytes_on_disk {on_disk} dirty_after {}", cx.update(|cx| workspace.read(cx).dirty));
 }

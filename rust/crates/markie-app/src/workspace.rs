@@ -659,7 +659,7 @@ impl Workspace {
             return;
         };
         let tokens = account::shared_tokens();
-        let summary = import::import(&profile, &import::Targets { registry, tokens: &*tokens, data_dir: &paths::data_dir() });
+        let summary = import::import(&profile, &import::Targets { registry, tokens: &*tokens, data_dir: &paths::data_dir(), early_access: paths::PUBLIC });
         import::record(registry, &summary);
         let said = summary.notice().unwrap_or_else(|| {
             if summary.source_missing { "No Markie profile was found to bring anything over from." } else { "Nothing new to bring over from Markie." }.to_string()

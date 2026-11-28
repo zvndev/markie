@@ -5,6 +5,7 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use gpui_kit::component::WindowExt as _;
 
 use super::Workspace;
 use super::dialog_chrome::{self as chrome, Tokens, fade, mix, ring, section_label, shadow};
@@ -12,9 +13,14 @@ use super::overlay::{Overlay, SettingsSection};
 use crate::actions::OpenSettings;
 use crate::themes;
 
-/// The Mac app (the `nightly` feature) is named Markie, so "Markie RS" there
-/// would name an app the person does not have. The control is still not built.
-pub(crate) const NOT_YET: &str = if markie_core::paths::NIGHTLY { "Not built yet" } else { "Not in Markie RS yet" };
+/// Electron's words for its early-access switch (`settings.tsx`).
+const EARLY_ACCESS_LABEL: &str = "Get new versions early";
+const EARLY_ACCESS_DETAIL: &str = "New versions reach you first, and everyone else a few days later. Turning this off moves you back to the current stable build.";
+
+/// The Mac app (the `nightly` or `public` feature) is named Markie, so
+/// "Markie RS" there would name an app the person does not have. The control
+/// is still not built.
+pub(crate) const NOT_YET: &str = if markie_core::paths::MAC_APP { "Not built yet" } else { "Not in Markie RS yet" };
 
 const SECTIONS: [(SettingsSection, &str); 5] = [
     (SettingsSection::Account, "Account"),
@@ -115,7 +121,7 @@ impl Workspace {
             SettingsSection::Files => div()
                 .child(self.render_bring_docs_setting(t, cx))
                 .child(self.render_google_docs_setting(t, cx))
-                .child(render_files(t))
+                .child(self.render_files(t, cx))
                 .into_any_element(),
             SettingsSection::Agents => self.render_agents_section(t, cx),
             SettingsSection::Advanced => self.render_advanced(t, window, cx),
@@ -193,21 +199,20 @@ impl Workspace {
     // --------------------------------------------------------------- advanced
 
     fn render_advanced(&mut self, t: &Tokens, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let running = div()
+            .text_size(px(11.))
+            .text_color(t.muted)
+            .mt(px(4.))
+            .child(format!("You are running {} {}.", markie_core::paths::APP_NAME, markie_core::paths::APP_VERSION));
+        // The public app reads the early-access feed when this is on
+        // (updates.rs); the nightly has one feed and the dev build none.
+        let updates = if markie_core::paths::PUBLIC {
+            self.early_access_setting(t, cx).child(running)
+        } else {
+            setting_block("Updates", EARLY_ACCESS_LABEL, EARLY_ACCESS_DETAIL, false, t).child(running)
+        };
         div()
-            .child(setting_block(
-                "Updates",
-                "Get new versions early",
-                "New versions reach you first, and everyone else a few days later. Turning this off moves you back to the current stable build.",
-                false,
-                t,
-            )
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(t.muted)
-                    .mt(px(4.))
-                    .child(format!("You are running {} {}.", markie_core::paths::APP_NAME, markie_core::paths::APP_VERSION)),
-            ))
+            .child(updates)
             .child(self.link_preview_setting(t, cx))
             // The working switch from logs.rs; absent, as in Electron, when no
             // report address is configured.
@@ -220,69 +225,122 @@ impl Workspace {
 
 // ------------------------------------------------------------------ files
 
-fn render_files(t: &Tokens) -> AnyElement {
+impl Workspace {
+    /// "Open with Markie": who opens each format on a double-click, and on
+    /// the Mac app a button that makes it Markie (default_apps.rs). The dev
+    /// build shows the same list with the buttons disabled.
+    fn render_files(&mut self, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        let claim = crate::default_apps::can_claim();
+        let statuses = crate::default_apps::status();
+        let all_markie = statuses.iter().all(|s| s.markie);
+        let header_button = if claim && !all_markie {
+            claim_button("default-apps-all", "Use Markie for all", t)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    let ids: Vec<&str> = crate::default_apps::FORMATS.iter().map(|f| f.id).collect();
+                    this.claim_default_apps(&ids, window, cx);
+                }))
+                .into_any_element()
+        } else if claim {
+            div().flex_none().text_size(px(11.5)).text_color(t.muted).child("Markie opens all of these").into_any_element()
+        } else {
+            disabled_button("Use Markie for all", t).into_any_element()
+        };
+        div()
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .justify_between()
+                    .gap(px(16.))
+                    .child(
+                        div()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .mb(px(4.))
+                                    .child(section_label("Open with Markie", t))
+                                    .when(!claim, |el| el.child(badge(t))),
+                            )
+                            .child(
+                                div()
+                                    .max_w(px(330.))
+                                    .text_size(px(11.5))
+                                    .line_height(px(18.))
+                                    .text_color(t.muted)
+                                    .child("Choose the file types a double-click in Finder opens here. You can change any of these back in Finder\u{2019}s Get Info."),
+                            ),
+                    )
+                    .child(header_button),
+            )
+            .child(
+                div()
+                    .mt(px(12.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(fade(t.border, 0.7))
+                    .children(crate::default_apps::FORMATS.iter().zip(statuses).enumerate().map(|(i, (f, status))| {
+                        let (id, label, note) = (f.id, &f.label, &f.note);
+                        let exts = f.extensions.join("  ");
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(12.))
+                            .px(px(12.))
+                            .py(px(8.))
+                            .when(i > 0, |el| el.border_t_1().border_color(fade(t.border, 0.6)))
+                            .child(chrome::format_mark(id, "sm", t))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(div().text_size(px(12.5)).child(*label))
+                                    .child(div().text_size(px(10.5)).font_family("Menlo").text_color(t.muted).child(exts))
+                                    .when_some(*note, |el, note| el.child(div().text_size(px(11.)).text_color(t.muted).child(note))),
+                            )
+                            // Who opens it on a double-click today, or the button that makes it Markie.
+                            .child(if status.markie {
+                                div().text_size(px(11.5)).text_color(t.muted).child("Markie").into_any_element()
+                            } else if claim {
+                                claim_button(SharedString::from(format!("default-app-{id}")), "Use Markie", t)
+                                    .on_click(cx.listener(move |this, _, window, cx| this.claim_default_apps(&[id], window, cx)))
+                                    .into_any_element()
+                            } else {
+                                disabled_button(&format!("Use {}", markie_core::paths::APP_NAME), t).into_any_element()
+                            })
+                    })),
+            )
+            .child(div().mt(px(8.)).text_size(px(11.5)).text_color(t.muted).child(crate::default_apps::note()))
+            .into_any_element()
+    }
+
+    /// Make Markie the default for `ids`, then draw the list again from what
+    /// LaunchServices now says. A refusal is said, never hidden.
+    fn claim_default_apps(&mut self, ids: &[&str], window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(problem) = crate::default_apps::claim(ids) {
+            window.push_notification(problem, cx);
+        }
+        cx.notify();
+    }
+}
+
+/// The small bordered button of the Files list, live.
+fn claim_button(id: impl Into<ElementId>, label: &str, t: &Tokens) -> Stateful<Div> {
+    let (fg, hover) = (t.foreground, t.hover_soft());
     div()
-        .child(
-            div()
-                .flex()
-                .items_start()
-                .justify_between()
-                .gap(px(16.))
-                .child(
-                    div()
-                        .child(div().flex().items_center().gap(px(8.)).mb(px(4.)).child(section_label("Open with Markie", t)).child(badge(t)))
-                        .child(
-                            div()
-                                .max_w(px(330.))
-                                .text_size(px(11.5))
-                                .line_height(px(18.))
-                                .text_color(t.muted)
-                                .child("Choose the file types a double-click in Finder opens here. You can change any of these back in Finder\u{2019}s Get Info."),
-                        ),
-                )
-                .child(disabled_button("Use Markie for all", t)),
-        )
-        .child(
-            div()
-                .mt(px(12.))
-                .rounded(px(8.))
-                .border_1()
-                .border_color(fade(t.border, 0.7))
-                .children(crate::default_apps::FORMATS.iter().zip(crate::default_apps::status()).enumerate().map(|(i, (f, status))| {
-                    let (id, label, note) = (&f.id, &f.label, &f.note);
-                    let exts = f.extensions.join("  ");
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .px(px(12.))
-                        .py(px(8.))
-                        .when(i > 0, |el| el.border_t_1().border_color(fade(t.border, 0.6)))
-                        .child(chrome::format_mark(id, "sm", t))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(div().text_size(px(12.5)).child(*label))
-                                .child(div().text_size(px(10.5)).font_family("Menlo").text_color(t.muted).child(exts))
-                                .when_some(*note, |el, note| el.child(div().text_size(px(11.)).text_color(t.muted).child(note))),
-                        )
-                        // Who opens it on a double-click today; Markie RS never claims it.
-                        .child(if status.markie {
-                            div().text_size(px(11.5)).text_color(t.muted).child("Markie").into_any_element()
-                        } else {
-                            disabled_button(&format!("Use {}", markie_core::paths::APP_NAME), t).into_any_element()
-                        })
-                })),
-        )
-        .child(
-            div()
-                .mt(px(8.))
-                .text_size(px(11.5))
-                .text_color(t.muted)
-                .child(crate::default_apps::note()),
-        )
-        .into_any_element()
+        .id(id)
+        .flex_none()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(t.border)
+        .px(px(10.))
+        .py(px(4.))
+        .text_size(px(11.5))
+        .text_color(t.muted)
+        .cursor_pointer()
+        .hover(move |el| el.text_color(fg).bg(hover))
+        .child(label.to_string())
 }
 
 // ---------------------------------------------------------------- widgets
@@ -336,6 +394,34 @@ impl Workspace {
     }
 
     /// `LinkPreviewSetting`: the working switch under Links.
+    /// "Get new versions early", working: `update-channel.json` in this app's
+    /// data folder, read by every update check.
+    fn early_access_setting(&self, t: &Tokens, cx: &mut Context<Self>) -> Div {
+        let on = crate::updates::early_access::read(&markie_core::paths::data_dir());
+        div().mb(px(20.)).child(section_label("Updates", t).mb(px(8.))).child(
+            div()
+                .id("early-access")
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap(px(12.))
+                .py(px(4.))
+                .cursor_pointer()
+                .child(
+                    setting_text(t).child(EARLY_ACCESS_LABEL).child(
+                        div().mt(px(2.)).text_size(px(11.)).line_height(px(18.)).text_color(t.muted_soft()).child(EARLY_ACCESS_DETAIL),
+                    ),
+                )
+                .child(checkbox(on, false, t))
+                .on_click(cx.listener(move |_, _, window, cx| {
+                    if !crate::updates::early_access::write(&markie_core::paths::data_dir(), !on) {
+                        window.push_notification("Markie couldn\u{2019}t save that choice.", cx);
+                    }
+                    cx.notify();
+                })),
+        )
+    }
+
     fn link_preview_setting(&self, t: &Tokens, cx: &mut Context<Self>) -> Div {
         let on = self.rich.read(cx).link_previews;
         div().mb(px(20.)).child(section_label("Links", t).mb(px(8.))).child(
@@ -706,8 +792,8 @@ mod link_preview_tests {
     #[test]
     fn the_not_yet_tag_names_this_build() {
         // The dev build is Markie RS beside the shipping Markie; the Mac app is Markie.
-        assert_eq!(super::NOT_YET.contains("Markie RS"), !markie_core::paths::NIGHTLY);
-        assert_eq!(crate::default_apps::note().contains("side build"), !markie_core::paths::NIGHTLY);
+        assert_eq!(super::NOT_YET.contains("Markie RS"), !markie_core::paths::MAC_APP);
+        assert_eq!(crate::default_apps::note().contains("side build"), !markie_core::paths::MAC_APP);
     }
 
     #[test]

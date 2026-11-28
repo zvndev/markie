@@ -1,9 +1,15 @@
-//! Markie's updates on the super-nightly channel: when to check, and what to tell the user.
+//! Markie's updates on the Mac: when to check, and what to tell the user.
 //!
-//! Only the nightly build (`paths::NIGHTLY`) running from its `.app` bundle
-//! with its real data folder updates itself. The dev "Markie RS" build, a
-//! `cargo run`, a scratch data folder and a local test server never do. What a
-//! check actually does is `markie-update`; docs/rust-port/NIGHTLY.md.
+//! Only the Mac app (`paths::MAC_APP`: the nightly or the public build)
+//! running from its `.app` bundle with its real data folder updates itself.
+//! The dev "Markie RS" build, a `cargo run`, a scratch data folder and a
+//! local test server never do. What a check actually does is `markie-update`;
+//! docs/rust-port/NIGHTLY.md and docs/rust-port/PUBLIC.md.
+//!
+//! The nightly asks the private gateway with the Markie Cloud sign-in. The
+//! public app reads the public store's stable feed, or its early-access feed
+//! when "Get new versions early" is on (`update-channel.json`, the file and
+//! shape Electron Markie keeps), and never needs a sign-in.
 //!
 //! Checks run on their own thread, at launch and every few hours, and from
 //! App › Check for Updates…. An automatic check is silent unless it installed
@@ -20,7 +26,7 @@ use gpui_kit::*;
 use markie_core::paths;
 use markie_update::bundle::SystemTools;
 use markie_update::gateway::Gateway;
-use markie_update::{NightlyVersion, Outcome, UpdateError, Updater};
+use markie_update::{Lane, Outcome, UpdateError, Updater, Version};
 
 actions!(markie_updates, [CheckForUpdates]);
 
@@ -33,22 +39,94 @@ const CHECK_EVERY: Duration = Duration::from_secs(4 * 60 * 60);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     pub target: PathBuf,
-    pub current: NightlyVersion,
+    pub current: Version,
+}
+
+/// Which builds update themselves, and from which channel's feeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    /// The dev build: no updater.
+    None,
+    /// The private gateway, with the Markie Cloud sign-in.
+    SuperNightly,
+    /// The public store's stable feed, or its early-access feed.
+    Public,
+}
+
+impl Channel {
+    pub const fn of_this_build() -> Self {
+        if paths::NIGHTLY {
+            Channel::SuperNightly
+        } else if paths::PUBLIC {
+            Channel::Public
+        } else {
+            Channel::None
+        }
+    }
+
+    /// The version shapes this build may report.
+    fn accepts(self, version: &Version) -> bool {
+        match self {
+            Channel::None => false,
+            Channel::SuperNightly => version.is_super_nightly(),
+            Channel::Public => version.is_public(),
+        }
+    }
+
+    /// The lane a check reads now.
+    pub fn lane(self, early_access: bool) -> Option<&'static Lane> {
+        match self {
+            Channel::None => None,
+            Channel::SuperNightly => Some(&markie_update::SUPER_NIGHTLY),
+            Channel::Public => Some(markie_update::public_lane(early_access)),
+        }
+    }
 }
 
 /// Whether a run updates itself, and what. Pure, so every "no" is tested.
-pub fn decide(nightly: bool, exe: Option<&Path>, scratch: bool, dev_server: bool, version: &str) -> Option<Plan> {
-    if !nightly || scratch || dev_server {
+pub fn decide(channel: Channel, exe: Option<&Path>, scratch: bool, dev_server: bool, version: &str) -> Option<Plan> {
+    if channel == Channel::None || scratch || dev_server {
         return None;
     }
-    Some(Plan { target: markie_update::swap::bundle_of(exe?)?, current: NightlyVersion::parse(version)? })
+    let current = Version::parse(version).filter(|v| channel.accepts(v))?;
+    Some(Plan { target: markie_update::swap::bundle_of(exe?)?, current })
+}
+
+/// "Get new versions early": Electron Markie's `update-channel.json`, in this
+/// app's data folder. `{ "beta": true }` opts in; anything else, a missing
+/// file or a broken one included, is the stable feed, because "I can't tell"
+/// must never move someone onto builds they did not ask for
+/// (`electron/update-channel.js`).
+pub mod early_access {
+    use std::path::{Path, PathBuf};
+
+    pub const FILE: &str = "update-channel.json";
+
+    pub fn path(data_dir: &Path) -> PathBuf {
+        data_dir.join(FILE)
+    }
+
+    /// Only a literal `true` is consent.
+    pub fn parse(text: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(text).ok().and_then(|v| v.get("beta").and_then(|b| b.as_bool())) == Some(true)
+    }
+
+    pub fn read(data_dir: &Path) -> bool {
+        std::fs::read_to_string(path(data_dir)).is_ok_and(|text| parse(&text))
+    }
+
+    /// Whether it stuck, so the switch never shows what is not saved.
+    pub fn write(data_dir: &Path, on: bool) -> bool {
+        let text = format!("{}\n", serde_json::json!({ "beta": on }));
+        std::fs::create_dir_all(data_dir).is_ok() && markie_core::save::atomic_write(&path(data_dir), text.as_bytes()).is_ok()
+    }
 }
 
 fn plan() -> Option<&'static Plan> {
     static PLAN: OnceLock<Option<Plan>> = OnceLock::new();
     PLAN.get_or_init(|| {
         decide(
-            paths::NIGHTLY,
+            Channel::of_this_build(),
             std::env::current_exe().ok().as_deref(),
             std::env::var_os("MARKIE_RS_DATA_DIR").is_some(),
             crate::workspace::account::server_config().dev,
@@ -70,14 +148,24 @@ fn work_dir() -> PathBuf {
 /// One check at a time, whoever asked.
 static CHECKING: AtomicBool = AtomicBool::new(false);
 /// The version this run already swapped in and has not restarted into.
-static PENDING: Mutex<Option<NightlyVersion>> = Mutex::new(None);
+static PENDING: Mutex<Option<Version>> = Mutex::new(None);
 
 /// The whole check, blocking: Keychain read, network, verification, swap.
 fn check(plan: &Plan) -> Result<Outcome, UpdateError> {
-    // The Markie Cloud session this app already holds; never a test server's.
-    let tokens = crate::workspace::account::shared_tokens();
-    let token = markie_cloud::tokens::session_for(&*tokens, markie_cloud::DEFAULT_SERVER).map(|session| session.token);
-    let Some(gateway) = Gateway::production(&format!("Markie/{}", paths::APP_VERSION)) else {
+    let channel = Channel::of_this_build();
+    let Some(lane) = channel.lane(early_access::read(&paths::data_dir())) else {
+        return Err(UpdateError::Io(std::io::Error::other("this build has no update channel")));
+    };
+    // The Markie Cloud session this app already holds, never a test server's,
+    // and only for the lane that needs it: the public store is asked nothing
+    // with a sign-in, and the Keychain is not even read for it.
+    let token = if lane.token {
+        let tokens = crate::workspace::account::shared_tokens();
+        markie_cloud::tokens::session_for(&*tokens, markie_cloud::DEFAULT_SERVER).map(|session| session.token)
+    } else {
+        None
+    };
+    let Some(gateway) = Gateway::for_lane(lane, &format!("Markie/{}", paths::APP_VERSION)) else {
         return Err(UpdateError::Io(std::io::Error::other("no HTTPS client")));
     };
     let pending = *PENDING.lock().unwrap_or_else(|e| e.into_inner());
@@ -229,30 +317,76 @@ pub fn restart(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Notice, Plan, decide, notice, relaunch_command};
+    use super::{Channel, Notice, Plan, decide, early_access, notice, relaunch_command};
     use markie_update::gateway::GatewayError;
-    use markie_update::{NightlyVersion, Outcome, UpdateError};
+    use markie_update::{Outcome, UpdateError, Version};
     use std::path::{Path, PathBuf};
 
     const EXE: &str = "/Applications/Markie.app/Contents/MacOS/markie-rs";
     const V: &str = "0.1.0-super-nightly.7";
 
-    fn version(text: &str) -> NightlyVersion {
-        NightlyVersion::parse(text).unwrap()
+    fn version(text: &str) -> Version {
+        Version::parse(text).unwrap()
     }
 
     #[test]
     fn only_the_installed_nightly_updates_itself() {
-        let plan = decide(true, Some(Path::new(EXE)), false, false, V).unwrap();
+        let nightly = Channel::SuperNightly;
+        let plan = decide(nightly, Some(Path::new(EXE)), false, false, V).unwrap();
         assert_eq!(plan, Plan { target: PathBuf::from("/Applications/Markie.app"), current: version(V) });
         // The dev build, a scratch data folder, a test server, a bare binary
         // from `cargo run`, and a version that is not a nightly's.
-        assert_eq!(decide(false, Some(Path::new(EXE)), false, false, V), None);
-        assert_eq!(decide(true, Some(Path::new(EXE)), true, false, V), None);
-        assert_eq!(decide(true, Some(Path::new(EXE)), false, true, V), None);
-        assert_eq!(decide(true, Some(Path::new("/repo/rust/target/release/markie-rs")), false, false, V), None);
-        assert_eq!(decide(true, None, false, false, V), None);
-        assert_eq!(decide(true, Some(Path::new(EXE)), false, false, "0.1.0"), None);
+        assert_eq!(decide(Channel::None, Some(Path::new(EXE)), false, false, V), None);
+        assert_eq!(decide(nightly, Some(Path::new(EXE)), true, false, V), None);
+        assert_eq!(decide(nightly, Some(Path::new(EXE)), false, true, V), None);
+        assert_eq!(decide(nightly, Some(Path::new("/repo/rust/target/release/markie-rs")), false, false, V), None);
+        assert_eq!(decide(nightly, None, false, false, V), None);
+        assert_eq!(decide(nightly, Some(Path::new(EXE)), false, false, "0.1.0"), None);
+    }
+
+    #[test]
+    fn the_installed_public_app_updates_itself_from_the_public_feeds() {
+        let public = Channel::Public;
+        for v in ["0.10.0", "0.10.0-rc.1", "0.10.1"] {
+            assert_eq!(decide(public, Some(Path::new(EXE)), false, false, v).unwrap().current, version(v));
+        }
+        assert_eq!(decide(public, Some(Path::new(EXE)), false, false, V), None, "a super-nightly version is not this build's");
+        assert_eq!(decide(public, Some(Path::new(EXE)), true, false, "0.10.0"), None);
+        assert_eq!(decide(public, Some(Path::new("/repo/rust/target/release/markie-rs")), false, false, "0.10.0"), None);
+        // Stable unless early access is on, and never the private gateway.
+        assert_eq!(public.lane(false), Some(&markie_update::PUBLIC_STABLE));
+        assert_eq!(public.lane(true), Some(&markie_update::PUBLIC_EARLY));
+        assert_eq!(Channel::SuperNightly.lane(true), Some(&markie_update::SUPER_NIGHTLY), "the nightly has one feed");
+        assert_eq!(Channel::None.lane(false), None);
+        assert!(!public.lane(false).unwrap().token && Channel::SuperNightly.lane(false).unwrap().token);
+    }
+
+    #[test]
+    fn this_build_has_the_channel_its_features_name() {
+        let want = if markie_core::paths::NIGHTLY {
+            Channel::SuperNightly
+        } else if markie_core::paths::PUBLIC {
+            Channel::Public
+        } else {
+            Channel::None
+        };
+        assert_eq!(Channel::of_this_build(), want);
+    }
+
+    #[test]
+    fn early_access_is_on_only_when_the_file_says_exactly_true() {
+        assert!(early_access::parse(r#"{"beta":true}"#));
+        assert!(early_access::parse("{\n  \"beta\": true,\n  \"leftEarlyFrom\": \"0.9.0\"\n}\n"));
+        for off in [r#"{"beta":false}"#, r#"{"beta":"true"}"#, r#"{"beta":1}"#, "{}", "true", "", "{not json", r#"{"Beta":true}"#] {
+            assert!(!early_access::parse(off), "{off:?}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!early_access::read(dir.path()), "no file is stable");
+        assert!(early_access::write(dir.path(), true));
+        assert!(early_access::read(dir.path()));
+        assert_eq!(std::fs::read_to_string(early_access::path(dir.path())).unwrap(), "{\"beta\":true}\n");
+        assert!(early_access::write(dir.path(), false));
+        assert!(!early_access::read(dir.path()));
     }
 
     #[test]

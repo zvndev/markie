@@ -162,7 +162,7 @@ pub(super) fn commands_for(ctx: PaletteContext) -> Vec<PaletteCommand> {
         cmd("Rescan Documents", "File", Some("⌘R"), "index refresh", action(Rescan)),
         // The Mac app brings everything it can use (electron_import.rs); the dev
         // build keeps Electron's own wording and brings nothing.
-        cmd(if markie_core::paths::NIGHTLY { "Import from Markie" } else { "Import Recents and Stars from Markie" }, "File", None, "electron migrate settings vault", action(ImportFromMarkie)),
+        cmd(if markie_core::paths::MAC_APP { "Import from Markie" } else { "Import Recents and Stars from Markie" }, "File", None, "electron migrate settings vault", action(ImportFromMarkie)),
         cmd("Sign In…", "File", None, "account sign in login", action(OpenAccount)),
     ]);
     list.extend(super::google_docs::palette_commands());

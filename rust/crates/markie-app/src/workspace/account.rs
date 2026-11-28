@@ -36,18 +36,25 @@ use super::Workspace;
 use crate::actions::{Open, OpenAccount, OpenSettings, ShowCloud};
 
 /// The Keychain service this build keeps its session under: its profile name,
-/// "Markie RS" or "Markie Nightly". Never an item of Electron Markie's.
+/// "Markie RS", "Markie Nightly" or "Markie App". Never an item of Electron Markie's.
 pub const KEYCHAIN_SERVICE: &str = markie_core::paths::PROFILE_NAME;
 /// The service used while the app talks to a local test server, so test
 /// sessions can never be mistaken for Kirby's real one.
-pub const TEST_KEYCHAIN_SERVICE: &str = if markie_core::paths::NIGHTLY { "Markie Nightly Test" } else { "Markie RS Test" };
+pub const TEST_KEYCHAIN_SERVICE: &str = if markie_core::paths::NIGHTLY {
+    "Markie Nightly Test"
+} else if markie_core::paths::PUBLIC {
+    "Markie App Test"
+} else {
+    "Markie RS Test"
+};
 /// The registry setting that turns on Google and Apple. Off until Markie Cloud
 /// answers `app=markie-rs` with a `markie-rs://` link (zvndev/markie#136).
 pub const BROWSER_SIGN_IN_SETTING: &str = "cloud_browser_sign_in";
 /// Markie Cloud has always handed sign-ins back on `markie://`, which the
-/// nightly answers, so Google and Apple are on there from the start. The dev
-/// build's `markie-rs://` needs a server that knows it, so it stays opt-in.
-pub const BROWSER_SIGN_IN_DEFAULT: bool = markie_core::paths::NIGHTLY;
+/// Mac app (nightly or public) answers, so Google and Apple are on there from
+/// the start. The dev build's `markie-rs://` needs a server that knows it, so
+/// it stays opt-in.
+pub const BROWSER_SIGN_IN_DEFAULT: bool = markie_core::paths::MAC_APP;
 
 // ------------------------------------------------------------------ server
 

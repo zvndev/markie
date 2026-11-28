@@ -1,10 +1,13 @@
 //! The first-run import: what Electron Markie knew, brought into this app.
 //!
-//! The Mac app replaces Electron Markie in place (docs/rust-port/NIGHTLY.md),
-//! but it keeps its own data folder. On its first launch it reads the Electron
-//! profile of the same channel (`paths::ELECTRON_PROFILE`) and carries over
+//! The Mac app replaces Electron Markie in place (docs/rust-port/NIGHTLY.md,
+//! docs/rust-port/PUBLIC.md), but it keeps its own data folder. On its first
+//! launch it reads the Electron profile of the same channel
+//! (`paths::ELECTRON_PROFILE`: `Markie Super-nightly` for the nightly, the
+//! stable `markie` for the public app, never the other one) and carries over
 //! what it can use, so the person finds their library, their look, their
-//! sign-in and their vault where they left them.
+//! sign-in and their vault where they left them. The public app also carries
+//! the "Get new versions early" choice.
 //!
 //! Two rules hold for every line of this file:
 //!
@@ -144,6 +147,9 @@ impl Summary {
         if self.documents > 0 {
             parts.push(count(self.documents, "in-app document", "in-app documents"));
         }
+        if self.settings.iter().any(|s| s == EARLY_ACCESS) {
+            parts.push("early access to new versions".into());
+        }
         let mut text = match parts.as_slice() {
             [] => "Your Markie settings came over.".to_string(),
             parts => format!("Brought over from Markie: {}.", parts.join(", ")),
@@ -163,6 +169,10 @@ pub struct Targets<'a> {
     pub registry: &'a Registry,
     pub tokens: &'a dyn TokenStore,
     pub data_dir: &'a Path,
+    /// Carry Electron's "Get new versions early" choice
+    /// (`update-channel.json`). Only the public app has two feeds to choose
+    /// between; the nightly has one and leaves it.
+    pub early_access: bool,
 }
 
 /// Compared the way the Mac's disk compares names.
@@ -386,6 +396,9 @@ fn documents(data: &ElectronData, to: &Targets, summary: &mut Summary) {
 /// Where `documents` puts them, under the data folder.
 pub const DOCUMENTS_FOLDER: &str = "Imported Documents";
 
+/// The name `Summary::settings` gives the carried early-access choice.
+pub const EARLY_ACCESS: &str = "early_access";
+
 /// Read the Electron profile at `profile` and carry it into `to`.
 pub fn import(profile: &Path, to: &Targets) -> Summary {
     let mut summary = Summary::default();
@@ -419,6 +432,20 @@ pub fn import(profile: &Path, to: &Targets) -> Summary {
         }
     }
 
+    // "Get new versions early": only an explicit opt-in comes over, and only
+    // when this app has made no choice of its own.
+    if to.early_access {
+        let theirs = std::fs::read_to_string(profile.join(crate::updates::early_access::FILE)).ok();
+        let ours = crate::updates::early_access::path(to.data_dir);
+        if theirs.is_some_and(|text| crate::updates::early_access::parse(&text)) && std::fs::symlink_metadata(&ours).is_err() {
+            if crate::updates::early_access::write(to.data_dir, true) {
+                summary.settings.push(EARLY_ACCESS.into());
+            } else {
+                summary.problems.push("the early-access choice could not be saved".into());
+            }
+        }
+    }
+
     // Chromium's stores, decoded from a private copy that is deleted afterwards.
     let scratch = to.data_dir.join(format!(".electron-import-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
     let decoded = (|| {
@@ -447,7 +474,13 @@ static FIRST_LAUNCH: std::sync::Mutex<Option<Summary>> = std::sync::Mutex::new(N
 
 /// The Electron profile this build imports from, if it imports at all.
 pub fn source() -> Option<PathBuf> {
-    Some(dirs::data_dir()?.join(paths::ELECTRON_PROFILE?))
+    source_in(&dirs::data_dir()?, paths::ELECTRON_PROFILE)
+}
+
+/// `profile` under Application Support, if it is one of Electron's folders.
+pub fn source_in(application_support: &Path, profile: Option<&str>) -> Option<PathBuf> {
+    let profile = profile.filter(|p| paths::ELECTRON_PROFILES.contains(p))?;
+    Some(application_support.join(profile))
 }
 
 /// Whether this run may import: the Mac app with its real data folder. Never a
@@ -475,7 +508,8 @@ pub fn at_first_launch() {
     // Marked before the work: an import that crashes is not run again on every launch.
     let _ = registry.set_setting(MARKER, "{\"started\":true}");
     let tokens = crate::workspace::account::shared_tokens();
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| import(&profile, &Targets { registry: &registry, tokens: &*tokens, data_dir: &data_dir })));
+    let targets = Targets { registry: &registry, tokens: &*tokens, data_dir: &data_dir, early_access: paths::PUBLIC };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| import(&profile, &targets)));
     let summary = outcome.unwrap_or_else(|_| Summary { problems: vec!["the import stopped unexpectedly".into()], ..Summary::default() });
     record(&registry, &summary);
     *FIRST_LAUNCH.lock().unwrap_or_else(|e| e.into_inner()) = Some(summary);
@@ -587,7 +621,7 @@ mod tests {
 
     impl Scene {
         fn import(&self) -> Summary {
-            import(&self.profile, &Targets { registry: &self.registry, tokens: &self.tokens, data_dir: &self.data_dir })
+            import(&self.profile, &Targets { registry: &self.registry, tokens: &self.tokens, data_dir: &self.data_dir, early_access: false })
         }
     }
 
@@ -709,7 +743,7 @@ mod tests {
     fn no_profile_a_broken_profile_and_an_overlapping_folder_are_harmless() {
         let s = scene();
         // No Electron profile at all: a clean install.
-        let missing = import(&s.dir.path().join("Nobody Home"), &Targets { registry: &s.registry, tokens: &s.tokens, data_dir: &s.data_dir });
+        let missing = import(&s.dir.path().join("Nobody Home"), &Targets { registry: &s.registry, tokens: &s.tokens, data_dir: &s.data_dir, early_access: true });
         assert!(missing.source_missing && !missing.brought_anything() && missing.notice().is_none());
 
         // A profile whose Chromium store is damaged: the library and the shared
@@ -742,7 +776,7 @@ mod tests {
         for bad in [stable, s.dir.path().join("MARKIE SUPER-NIGHTLY"), s.dir.path().join("Markie Super-nightly"), inside] {
             let registry = Registry::in_memory().unwrap();
             let tokens = MemoryTokenStore::new();
-            let refused = import(&s.profile, &Targets { registry: &registry, tokens: &tokens, data_dir: &bad });
+            let refused = import(&s.profile, &Targets { registry: &registry, tokens: &tokens, data_dir: &bad, early_access: true });
             assert!(refused.problems.iter().any(|p| p.contains("refused")), "{}", bad.display());
             assert!(!refused.brought_anything());
             assert!(tokens::session_for(&tokens, markie_cloud::DEFAULT_SERVER).is_none());
@@ -769,13 +803,125 @@ mod tests {
 
     #[test]
     fn only_the_mac_app_with_its_real_data_folder_imports() {
-        // This test binary is the dev build: no Electron profile is ever its source.
-        assert_eq!(paths::ELECTRON_PROFILE, None);
-        assert!(!applies(false, false));
-        assert_eq!(source(), None);
+        if paths::PUBLIC {
+            // The public app reads Electron stable's profile and nothing else.
+            assert_eq!(paths::ELECTRON_PROFILE, Some("markie"));
+            assert!(applies(false, false));
+            assert_eq!(source().unwrap().file_name().unwrap(), "markie");
+        } else if paths::NIGHTLY {
+            assert_eq!(paths::ELECTRON_PROFILE, Some("Markie Super-nightly"));
+        } else {
+            // The dev build: no Electron profile is ever its source.
+            assert_eq!(paths::ELECTRON_PROFILE, None);
+            assert!(!applies(false, false));
+            assert_eq!(source(), None);
+        }
         assert!(take_notice().is_none());
         // Whatever the build, a scratch folder or a test server never imports.
         assert!(!applies(true, false) && !applies(false, true));
+    }
+
+    #[test]
+    fn the_source_is_only_ever_one_of_electrons_own_folders() {
+        let base = Path::new("/Users/someone/Library/Application Support");
+        assert_eq!(source_in(base, Some("markie")).unwrap(), base.join("markie"), "the public app's source: Electron stable");
+        assert_eq!(source_in(base, Some("Markie Super-nightly")).unwrap(), base.join("Markie Super-nightly"), "the nightly's source");
+        for not_electrons in ["Markie Nightly", "Markie App", "Markie RS", "../markie", "markie/..", ""] {
+            assert_eq!(source_in(base, Some(not_electrons)), None, "{not_electrons}");
+        }
+        assert_eq!(source_in(base, None), None);
+    }
+
+    /// Electron stable's profile, `markie`, from made-up data, with the
+    /// super-nightly's profile beside it holding different made-up data.
+    fn stable_scene() -> Scene {
+        let s = scene();
+        let stable = s.dir.path().join("markie");
+        std::fs::rename(&s.profile, &stable).unwrap();
+        // A super-nightly profile next to it: its own registry, sign-in file and early-access choice.
+        let nightly = s.dir.path().join("Markie Super-nightly");
+        std::fs::create_dir_all(nightly.join("snapshots/nightly-only")).unwrap();
+        std::fs::write(nightly.join("snapshots/nightly-only/v.md"), "nightly history").unwrap();
+        std::fs::write(nightly.join("servers.json"), r#"{"version":1,"servers":[{"origin":"https://nightly-only.example.test"}]}"#).unwrap();
+        std::fs::write(nightly.join(crate::updates::early_access::FILE), "{\"beta\": true}\n").unwrap();
+        let data_dir = s.dir.path().join("Markie App");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let registry = Registry::open(&data_dir.join("registry.db")).unwrap();
+        Scene { dir: s.dir, profile: stable, data_dir, registry, tokens: MemoryTokenStore::new() }
+    }
+
+    impl Scene {
+        fn import_public(&self) -> Summary {
+            import(&self.profile, &Targets { registry: &self.registry, tokens: &self.tokens, data_dir: &self.data_dir, early_access: true })
+        }
+    }
+
+    #[test]
+    fn the_public_app_imports_electron_stables_profile_and_never_the_nightlys() {
+        let s = stable_scene();
+        let nightly = s.dir.path().join("Markie Super-nightly");
+        let (before_stable, before_nightly) = (snapshot(&s.profile), snapshot(&nightly));
+        let summary = s.import_public();
+        assert_eq!(summary.problems, Vec::<String>::new());
+        assert_eq!(snapshot(&s.profile), before_stable, "Electron stable's profile is only read");
+        assert_eq!(snapshot(&nightly), before_nightly, "the nightly profile is never touched");
+
+        // Everything the nightly import carries comes from stable the same way.
+        assert_eq!((summary.recents, summary.folders, summary.stars), (1, 1, 1));
+        assert!(summary.settings.contains(&"themes.v1".to_string()) && summary.settings.contains(&"color_mode".to_string()));
+        assert_eq!(summary.sign_ins, 2);
+        assert_eq!(summary.vault, VaultOutcome::Imported { touch_id: true });
+        let vault = StoredVault::from_json(&std::fs::read_to_string(s.data_dir.join("vault.json")).unwrap()).unwrap();
+        assert_eq!(vault.device_slot, None, "the vault comes without its device slot");
+        assert!(summary.documents > 0);
+        assert_eq!(summary.copied, ["snapshots", "drafts", "servers.json", "agent-permissions.json"]);
+
+        // What was copied is stable's, not the nightly's.
+        assert!(s.data_dir.join("snapshots/abc123").exists());
+        assert!(!s.data_dir.join("snapshots/nightly-only").exists());
+        assert_eq!(std::fs::read_to_string(s.data_dir.join("servers.json")).unwrap(), r#"{"version":1,"servers":[]}"#);
+        // Stable had no early-access file, so the nightly's opt-in did not leak across.
+        assert!(!summary.settings.contains(&EARLY_ACCESS.to_string()));
+        assert!(!crate::updates::early_access::read(&s.data_dir));
+    }
+
+    #[test]
+    fn the_public_app_carries_electrons_early_access_choice_only_when_it_is_an_explicit_yes() {
+        for (theirs, carried) in [("{\n  \"beta\": true\n}\n", true), ("{\"beta\":false,\"leftEarlyFrom\":\"0.9.7\"}", false), ("{\"beta\":\"yes\"}", false), ("not json", false)] {
+            let s = stable_scene();
+            std::fs::write(s.profile.join(crate::updates::early_access::FILE), theirs).unwrap();
+            let summary = s.import_public();
+            assert_eq!(summary.settings.contains(&EARLY_ACCESS.to_string()), carried, "{theirs}");
+            assert_eq!(crate::updates::early_access::read(&s.data_dir), carried, "{theirs}");
+            if carried {
+                assert!(summary.notice().unwrap().contains("early access to new versions"));
+            } else {
+                assert!(!crate::updates::early_access::path(&s.data_dir).exists(), "no file is written for a no: {theirs}");
+            }
+        }
+        // A choice made in this app is never replaced, either way.
+        let s = stable_scene();
+        std::fs::write(s.profile.join(crate::updates::early_access::FILE), "{\"beta\":true}").unwrap();
+        assert!(crate::updates::early_access::write(&s.data_dir, false));
+        let summary = s.import_public();
+        assert!(!summary.settings.contains(&EARLY_ACCESS.to_string()));
+        assert!(!crate::updates::early_access::read(&s.data_dir));
+        // The nightly import leaves the choice alone: it has one feed.
+        let s = stable_scene();
+        std::fs::write(s.profile.join(crate::updates::early_access::FILE), "{\"beta\":true}").unwrap();
+        assert!(!s.import().settings.contains(&EARLY_ACCESS.to_string()));
+        assert!(!crate::updates::early_access::path(&s.data_dir).exists());
+    }
+
+    #[test]
+    fn a_second_public_import_changes_nothing() {
+        let s = stable_scene();
+        std::fs::write(s.profile.join(crate::updates::early_access::FILE), "{\"beta\":true}").unwrap();
+        assert!(s.import_public().brought_anything());
+        let second = s.import_public();
+        assert_eq!(second.problems, Vec::<String>::new());
+        assert_eq!((second.settings.len(), second.sign_ins, second.documents, second.copied.len()), (0, 0, 0, 0));
+        assert_eq!(second.vault, VaultOutcome::AlreadyHere);
     }
 
     /// The runbook's two tables are this file's two lists. A change to what the

@@ -66,6 +66,9 @@ gpui-scene = { package = "gpui-pre", version = "=0.3.12", optional = true, defau
 # The Mac app on the super-nightly channel: identity in markie-core, updater
 # and first-run import on. Built by scripts/nightly-release.sh, never by default.
 nightly = ["markie-core/nightly"]
+# The public Mac app (docs/rust-port/PUBLIC.md). Built by
+# scripts/public-release.sh, never by default, never with `nightly`.
+public = ["markie-core/public"]
 scene = ["dep:gpui-scene", "dep:gpui-scene-macos"]
 
 [dev-dependencies]

@@ -31,6 +31,7 @@ import {
   resolveSoakDays,
   setHold,
 } from "./lib/early-state.mjs";
+import { createRetryingFetch } from "./lib/fetch-retry.mjs";
 import {
   MAC_RELEASE_PLAN_FILE,
   artifactVersion,
@@ -51,6 +52,10 @@ import {
 } from "./linux-build-evidence.mjs";
 
 export { expectedLinuxArtifacts };
+
+// Every request in this file goes through it: Backblaze drops idle keep-alive
+// sockets, and a reused dead one fails a publish after its uploads landed.
+const fetch = createRetryingFetch(globalThis.fetch);
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const builderConfigPath = path.join(rootDir, "electron-builder.config.cjs");

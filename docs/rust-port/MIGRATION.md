@@ -119,7 +119,7 @@ The first-run import in the nightly build now does this work ([NIGHTLY.md](NIGHT
 | Vault | Imported without its device slot. The first unlock takes the passphrase, then Touch ID can be turned on again |
 | Theme and settings | The keys the app uses are mapped, listed in NIGHTLY.md |
 
-Still worth doing before the public Mac cutover: regenerate the fixture with the last Electron build (`fixtures/generate/make-fixture.sh`) and run the tests again.
+Done for the public Mac cutover (2026-11-28, [PUBLIC.md](PUBLIC.md)): the fixture was regenerated with Electron 42.11.18, the version in zvndev/markie `main`'s package-lock and the last Electron build, from fresh made-up data, and the import tests pass on it. The binary came from Electron's own download cache, checked against `node_modules/electron/checksums.json`, through `MARKIE_FIXTURE_ELECTRON`. The generator now runs Electron with no Dock icon.
 
 ## Risks
 

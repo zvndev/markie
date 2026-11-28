@@ -10,7 +10,7 @@ Before planning from a doc, check its status here. Archived docs are history. Th
 - **Reference**: design notes for a built feature, true as of the doc's date. Their status words ("Not built", "Open items") can lag. What works today is in the audits and SCORE.md.
 - **Archived**: superseded plans, finished spikes and decided research, in [archive/](archive/). Do not plan from them.
 
-Docs written before 2026-11-24 call Markie RS a "side build". That is still true of the dev build, `Markie RS.app`. The nightly build is Markie itself on the Mac super-nightly channel ([NIGHTLY.md](NIGHTLY.md)).
+Docs written before 2026-11-24 call Markie RS a "side build". That is still true of the dev build, `Markie RS.app`. The nightly build is Markie itself on the Mac super-nightly channel ([NIGHTLY.md](NIGHTLY.md)), and the public build is Markie on Apple silicon Macs from 0.10.0 ([PUBLIC.md](PUBLIC.md)).
 
 ## Index
 
@@ -19,6 +19,7 @@ Docs written before 2026-11-24 call Markie RS a "side build". That is still true
 | [PLATFORMS.md](PLATFORMS.md) | Current | The platform plan: which app runs where, and the order of the work |
 | [SCORE.md](SCORE.md) | Current | The parity score across the five audits, its rules, and the rows still open |
 | [NIGHTLY.md](NIGHTLY.md) | Current | The Rust app as the Mac super-nightly: identity, the update from Electron, first-run import, release and roll back |
+| [PUBLIC.md](PUBLIC.md) | Current | The public Mac lane from 0.10.0: Apple silicon on Markie RS, the public feeds, the stable-profile import, the MCP path, default apps, and `public-release.sh` |
 | [PARITY.md](PARITY.md) | Current | What Electron Markie 0.9.7 does, feature by feature. The spec the audits score against. Later Electron features are added as rows in the audits |
 | [AUDIT-AGENTS-WEB.md](AUDIT-AGENTS-WEB.md) | Current | Row-by-row parity for agents, Skills, Darkmown, Live Docs and export |
 | [AUDIT-CLOUD.md](AUDIT-CLOUD.md) | Current | Row-by-row parity for cloud sync, collaboration, comments, sharing and sign-in |

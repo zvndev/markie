@@ -273,15 +273,11 @@ To go forward again after B, publish a Rust build as usual. Its feed replaces th
 - Electron's profile was never written, so it is as it was at the hand-over. Anything done in the Rust app since then is in the Rust folder only. Documents are ordinary files and are the same for both.
 - A Rust to Rust update can also be undone locally: the previous bundle is at `~/Library/Application Support/Markie Nightly/updates/previous/Markie.app`. Create `…/Markie Nightly/updates/paused` first, or the app updates again 20 seconds after launch.
 
-## The public Mac cutover, later
+## The public Mac lane
 
-Nothing for it is built. The design leaves room for it to follow the same path:
+Built: [PUBLIC.md](PUBLIC.md). The public app is a third identity in `paths.rs` (the `public` feature): the same name, bundle id, scheme and document types, its own data folder `Markie App`, the import from Electron stable's `markie` profile, and the public store's `latest-mac.yml` and `beta-mac.yml` with no token. It takes only the arm64 ZIP; Intel Macs stay on Electron. Its bundle keeps Electron's MCP path, `Contents/Resources/mcp/markie-mcp.mjs`, working, and its Settings claim default apps. `rust/scripts/public-release.sh` builds it.
 
-- The public Mac feed is `latest-mac.yml` on the public store, read by electron-updater's same provider code. A Rust build there needs the same three things as here: Markie's bundle id, the same team's signature, a ZIP named for arm64 and a version above the last Electron one. Intel Macs need an answer first: the Rust build is arm64 only, and electron-updater picks by `arm64` in the file name.
-- Windows keeps its own feed, `latest.yml` in its own directory, which `electron-builder.config.cjs` already separates from the Mac's. A Mac cutover publishes only Mac files.
-- `paths.rs` takes a third identity block for it: the same name and bundle id, its own `PROFILE_NAME` and `CHANNEL`, and `ELECTRON_PROFILE` set to `markie`. The import, the updater and the scripts read those constants.
-- The updater's gateway, feed name and the publisher's destination are the super-nightly lane's today. A public channel needs its own, without the owner check.
-- Two things to settle then, not now: Markie's bundled MCP server path inside the app (`Contents/Resources/mcp/markie-mcp.mjs` exists in both, but the Rust app answers through its adapter), and claiming a default app from Settings, which the Rust app shows but cannot yet change.
+The nightly keeps its identity, its gateway feed, its bundle layout and `nightly-release.sh`. Two shared changes reach it too: the updater now also requires Gatekeeper to accept a download as `Notarized Developer ID`, which every published nightly is, and Settings › Files claims default apps on both Mac builds.
 
 ## Tests
 

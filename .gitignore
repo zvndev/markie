@@ -53,6 +53,9 @@ yarn-error.log*
 dist-windows/
 # Linux packages fetched from CI for publishing (release:prepare:linux).
 dist-linux/
+# The Electron app the Mac cutover handoff check updates from
+# (electron-builder.update-harness.cjs). Never released.
+dist-harness/
 # Agent worktrees.
 /.claude/worktrees/
 *.dmg

@@ -5,7 +5,9 @@ import {
   copyFileSync,
   createReadStream,
   existsSync,
+  linkSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -13,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -28,6 +31,17 @@ import {
   resolveSoakDays,
   setHold,
 } from "./lib/early-state.mjs";
+import {
+  MAC_RELEASE_PLAN_FILE,
+  artifactVersion,
+  assertNoElectronArm64,
+  bridgeFromFeed,
+  buildCutoverFeeds,
+  macCutoverConfig,
+  parseCodesignDetails,
+  readRustRelease,
+  updaterChoice,
+} from "./lib/mac-cutover.mjs";
 import {
   expectedLinuxArtifacts,
   linuxChecksumFile,
@@ -49,7 +63,7 @@ const assert = (condition, message) => {
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
 const writeJson = (file, value) => writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 const packageJson = () => readJson(path.join(rootDir, "package.json"));
-const releaseManifest = () => readJson(releaseManifestPath);
+const releaseManifest = () => io.manifest();
 
 // Everything the early-access stage and promotion touch outside this process,
 // in one place, so tests can replace the bucket, git, and the clock without
@@ -58,9 +72,14 @@ const releaseManifest = () => readJson(releaseManifestPath);
 // call helpers declared further down this file.
 const io = {
   root: rootDir,
+  manifest: () => readJson(releaseManifestPath),
   now: () => new Date(),
   pollDelayMs: 5000,
   packageVersion: () => readJson(path.join(io.root, "package.json")).version,
+  // The version a Mac release is keyed by. Before the cutover it is the
+  // package version. Under it, it is what prepare recorded: the Rust version
+  // for a Rust-only release, the package version otherwise.
+  macReleaseVersion: () => macReleaseVersion(),
   releaseGitState: () => assertReleaseGitState(),
   promoteGitState: (commit) => assertPromoteGitState(commit),
   publishCredentials: () => assertPublishCredentials(),
@@ -75,7 +94,9 @@ const io = {
       ? publishWindowsFiles(files, version)
       : platform === "linux"
         ? publishLinuxFiles(files, version)
-        : publishFiles(files, version),
+        : platform === "mac-intel"
+          ? publishMacIntelFiles(files, version)
+          : publishFiles(files, version),
   log: (line) => console.log(line),
 };
 
@@ -308,17 +329,16 @@ function macAppPaths() {
   ];
 }
 
-function expectedMacArtifacts(version) {
-  return [
-    `Markie-${version}-arm64.zip`,
-    `Markie-${version}-x64.zip`,
-    `Markie-${version}-arm64.dmg`,
-    `Markie-${version}-x64.dmg`,
-  ];
+// Both arches before the Mac cutover. Under it, Electron builds x64 only, so
+// the build output (and the feed electron-builder writes for it) is x64 only.
+const MAC_ARCHS = ["arm64", "x64"];
+
+function expectedMacArtifacts(version, archs = MAC_ARCHS) {
+  return ["zip", "dmg"].flatMap((ext) => archs.map((arch) => `Markie-${version}-${arch}.${ext}`));
 }
 
-function macDiskImages(version, root = rootDir) {
-  return expectedMacArtifacts(version)
+function macDiskImages(version, root = rootDir, archs = MAC_ARCHS) {
+  return expectedMacArtifacts(version, archs)
     .filter((name) => name.endsWith(".dmg"))
     .map((name) => path.join(root, "dist", name));
 }
@@ -359,7 +379,7 @@ export function notarytoolSubmitPlan(file, credentials = process.env) {
   };
 }
 
-export async function refreshMacFeedIntegrity(version, root = rootDir) {
+export async function refreshMacFeedIntegrity(version, root = rootDir, archs = MAC_ARCHS) {
   assertVersion(version);
   const dist = path.join(root, "dist");
   const feedName = macFeedFile(version);
@@ -367,7 +387,7 @@ export async function refreshMacFeedIntegrity(version, root = rootDir) {
   const feed = yaml.load(readFileSync(feedPath, "utf8"), { schema: yaml.JSON_SCHEMA });
   assert(feed && typeof feed === "object", `${feedName} must contain an object`);
   assert(Array.isArray(feed.files), `${feedName} must contain files`);
-  const expectedNames = new Set(expectedMacArtifacts(version));
+  const expectedNames = new Set(expectedMacArtifacts(version, archs));
   const updated = new Map();
   for (const entry of feed.files) {
     const name = decodeURIComponent(entry.url ?? "");
@@ -391,6 +411,10 @@ export async function refreshMacFeedIntegrity(version, root = rootDir) {
 }
 
 export async function verifyLocalMacArtifacts({ root = rootDir, verifyTrust = false } = {}) {
+  // Under the Mac cutover the release is staged in two directories, one per
+  // feed, and checked by its own verifier. Below is the pre-cutover layout.
+  const cutover = macCutoverConfig(releaseManifest());
+  if (cutover) return verifyLocalMacCutover({ root, verifyTrust, cutover });
   const version = assertVersion(readJson(path.join(root, "package.json")).version);
   const dist = path.join(root, "dist");
   const feedName = macFeedFile(version);
@@ -432,18 +456,8 @@ export async function verifyLocalMacArtifacts({ root = rootDir, verifyTrust = fa
     const updaterPath = path.posix.dirname(publicMacPlatform(manifest).feed.path);
     for (const appPath of macAppPaths()) {
       assert(existsSync(appPath), `missing packaged app: ${path.relative(rootDir, appPath)}`);
-      const updateConfigPath = path.join(appPath, "Contents/Resources/app-update.yml");
-      assert(existsSync(updateConfigPath), `missing updater config: ${path.relative(rootDir, updateConfigPath)}`);
-      const updateConfig = readFileSync(updateConfigPath, "utf8");
-      for (const snippet of [
-        `provider: ${manifest.storage.provider}`,
-        `bucket: ${manifest.storage.bucket}`,
-        `endpoint: ${manifest.storage.endpoint}`,
-        `region: ${manifest.storage.region}`,
-        `path: ${updaterPath}`,
-      ]) {
-        assert(updateConfig.includes(snippet), `packaged updater config is missing ${snippet}`);
-      }
+      assertPackagedUpdateConfig(appPath, manifest, updaterPath);
+      assertNoHarnessMarker(appPath);
       run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
       run("spctl", ["-a", "-vvv", "-t", "install", appPath]);
       run("xcrun", ["stapler", "validate", appPath]);
@@ -545,8 +559,8 @@ function assertMacReleaseToolchain() {
   assert(typeof blockMapBuilder() === "function", "electron-builder's blockmap builder is not a function");
 }
 
-async function notarizeMacDiskImages(version) {
-  for (const file of macDiskImages(version)) {
+async function notarizeMacDiskImages(version, archs = MAC_ARCHS) {
+  for (const file of macDiskImages(version, rootDir, archs)) {
     assert(existsSync(file), `missing disk image for notarization: ${path.basename(file)}`);
     const submission = notarytoolSubmitPlan(file);
     run("xcrun", submission.args, { displayArgs: submission.displayArgs });
@@ -558,11 +572,17 @@ async function notarizeMacDiskImages(version) {
     rmSync(blockmap, { force: true });
     await buildBlockMap(file, blockmap);
   }
-  await refreshMacFeedIntegrity(version);
+  await refreshMacFeedIntegrity(version, rootDir, archs);
 }
 
-async function prepareMac() {
+async function prepareMac(options = {}) {
   assert(process.platform === "darwin", "macOS releases must be prepared on macOS");
+  const cutover = macCutoverConfig(releaseManifest());
+  if (cutover) return prepareMacCutover(cutover, options);
+  assert(
+    !options.rustDir && !options.rustOnly && !options.intelOnly,
+    "--rust-dir, --rust-only and --intel-only belong to the Mac cutover, which this manifest does not declare"
+  );
   const commit = assertReleaseGitState();
   assertMacReleaseCredentials();
   assertMacReleaseToolchain();
@@ -623,8 +643,15 @@ async function verifyRemoteFile(url, entry, deep) {
   assert(sha512 === entry.sha512, `${entry.url} public SHA-512 does not match the updater feed`);
 }
 
-async function verifyWebsiteContract({ expectedVersion, expectedArtifactUrl, allowVersionMismatch = false }) {
+async function verifyWebsiteContract({
+  expectedVersion,
+  expectedArtifactUrl,
+  allowVersionMismatch = false,
+  expectedIntelVersion = null,
+  expectedIntelArtifactUrl = null,
+}) {
   const urls = releaseUrls();
+  const cutover = macCutoverConfig(releaseManifest());
   const latest = await fetchRequired(`${urls.latestJsonUrl}?release-check=${Date.now()}`, {
     redirect: "follow",
     cache: "no-store",
@@ -632,11 +659,21 @@ async function verifyWebsiteContract({ expectedVersion, expectedArtifactUrl, all
   const body = await latest.json();
   assert(body.schemaVersion === 2, "latest release JSON has the wrong schema version");
   assert(body.channel === "stable", "latest release JSON is not the stable channel");
-  if (!allowVersionMismatch) assert(body.version === expectedVersion, `website latest version is ${body.version}`);
+  if (!allowVersionMismatch && expectedVersion) assert(body.version === expectedVersion, `website latest version is ${body.version}`);
   assert(body.downloadPageUrl === urls.downloadPageUrl, "latest release JSON has the wrong download page URL");
   const mac = body.platforms?.find((platform) => platform.id === "mac-arm64");
   assert(mac?.downloadUrl === urls.downloadUrl, "latest release JSON has the wrong stable macOS URL");
-  if (!allowVersionMismatch) assert(mac?.artifactUrl === expectedArtifactUrl, "latest release JSON has stale artifact data");
+  if (!allowVersionMismatch && expectedArtifactUrl) {
+    assert(mac?.artifactUrl === expectedArtifactUrl, "latest release JSON has stale artifact data");
+  }
+  // Under the cutover the two Mac platforms carry their own versions, and the
+  // Intel one resolves from mac-intel/.
+  if (cutover && !allowVersionMismatch) {
+    assert(body.macCutover === cutover.version, `latest release JSON says the Mac cutover is ${body.macCutover ?? "unknown"}`);
+    const intel = body.platforms?.find((platform) => platform.id === "mac-x64");
+    if (expectedIntelVersion) assert(intel?.version === expectedIntelVersion, `latest release JSON has Intel at ${intel?.version}`);
+    if (expectedIntelArtifactUrl) assert(intel?.artifactUrl === expectedIntelArtifactUrl, "latest release JSON has a stale Intel artifact");
+  }
 
   const page = await fetchRequired(urls.downloadPageUrl, { redirect: "follow" });
   assert((page.headers.get("content-type") ?? "").includes("text/html"), "download page is not HTML");
@@ -664,13 +701,30 @@ async function verifyWebsiteContract({ expectedVersion, expectedArtifactUrl, all
       artifactPatternRegExp(route.artifactPattern).test(name),
       `${route.id} download route points at ${name || "nothing"}, expected ${route.artifactPattern}`
     );
-    if (!allowVersionMismatch && route.url === urls.downloadUrl) {
+    if (!allowVersionMismatch && expectedArtifactUrl && route.url === urls.downloadUrl) {
       assert(location === expectedArtifactUrl, "stable download route points at a stale artifact");
+    }
+    if (!allowVersionMismatch && expectedIntelArtifactUrl && route.id === "mac-x64") {
+      assert(location === expectedIntelArtifactUrl, "the Intel download route points at a stale artifact");
     }
   }
 }
 
-export async function verifyPublicMac({ expectedVersion, deep = false, verifyWebsite = true } = {}) {
+/**
+ * @param {{ expectedVersion?: string | null, expectedIntelVersion?: string | null, deep?: boolean, verifyWebsite?: boolean, waitForRoutes?: boolean }} [options]
+ */
+export async function verifyPublicMac({ expectedVersion, expectedIntelVersion = null, deep = false, verifyWebsite = true, waitForRoutes = false } = {}) {
+  const cutover = macCutoverConfig(releaseManifest());
+  if (cutover) {
+    return verifyPublicMacCutover({
+      armVersion: expectedVersion ?? null,
+      intelVersion: expectedIntelVersion,
+      deep,
+      verifyWebsite,
+      waitForRoutes,
+      cutover,
+    });
+  }
   const version = assertVersion(expectedVersion ?? packageJson().version);
   const urls = releaseUrls();
   const response = await fetchRequired(urls.feedUrl, { cache: "no-store" });
@@ -693,6 +747,114 @@ export async function verifyPublicMac({ expectedVersion, deep = false, verifyWeb
     await verifyWebsiteContract({ expectedVersion: version, expectedArtifactUrl: primaryUrl });
   }
   return { version, feed, primaryUrl, urls };
+}
+
+/**
+ * The public Mac layout under the cutover, both feeds, checked the way an
+ * installed app will read them:
+ *
+ *   mac-intel/  Electron x64 ZIP and DMG of one version, nothing arm64.
+ *   mac/        the Rust arm64 ZIP and DMG, and one Electron x64 ZIP (the
+ *               bridge) no newer than mac-intel/, and the same bytes as
+ *               mac-intel/'s ZIP when they share a version. A mac/ feed from
+ *               before the cutover (after a rollback) is checked the old way.
+ *
+ * Then electron-updater's own selection code is run over each feed: an Apple
+ * Silicon Mac must pick the Rust ZIP from mac/, an Intel Mac the bridge from
+ * mac/ and the Intel ZIP from mac-intel/. Then the website routes.
+ *
+ * A null version means "whatever is there", for the half a release did not
+ * touch.
+ */
+async function verifyPublicMacCutover({ armVersion, intelVersion, deep, verifyWebsite, waitForRoutes, cutover }) {
+  const mac = earlyTarget("mac");
+  const intel = earlyTarget("mac-intel");
+  const fileUrl = (target, name) => `${target.artifactBaseUrl}/${encodeURIComponent(name)}`;
+  const names = (feed) => feed.files.map((entry) => decodeURIComponent(entry.url));
+
+  const intelFeed = await fetchFeed(intel.stableFeedUrl);
+  assert(intelFeed, `the public Intel feed ${intel.stableFeedUrl} is missing`);
+  const iv = assertVersion(intelFeed.version);
+  if (intelVersion) assert(iv === intelVersion, `public Intel feed is ${iv}, expected ${intelVersion}`);
+  assert(compareVersions(iv, cutover.version) >= 0, `public Intel feed ${iv} is older than the ${cutover.version} cutover`);
+  const intelExpected = [`Markie-${iv}-x64.zip`, `Markie-${iv}-x64.dmg`];
+  assert(
+    names(intelFeed).length === 2 && intelExpected.every((name) => names(intelFeed).includes(name)),
+    `public Intel feed lists ${names(intelFeed).join(", ")}; expected ${intelExpected.join(", ")}`
+  );
+  assertNoElectronArm64(names(intelFeed).map((name) => ({ name })), []);
+  for (const entry of intelFeed.files) await verifyRemoteFile(fileUrl(intel, decodeURIComponent(entry.url)), entry, deep);
+  const intelZip = intelFeed.files.find((entry) => decodeURIComponent(entry.url) === intelExpected[0]);
+  const onIntel = updaterChoice(intelFeed.text, { arm64Mac: false });
+  assert(onIntel.file === intelExpected[0], `electron-updater on an Intel Mac picks ${onIntel.file} from mac-intel/, expected ${intelExpected[0]}`);
+
+  const macFeed = await fetchFeed(mac.stableFeedUrl);
+  assert(macFeed, `the public macOS feed ${mac.stableFeedUrl} is missing`);
+  const av = assertVersion(macFeed.version);
+  if (armVersion) assert(av === armVersion, `public updater feed is ${av}, expected ${armVersion}`);
+  const legacy = compareVersions(av, cutover.version) < 0;
+  if (legacy) {
+    // Before the cutover, or after rolling it back: the old dual-arch feed.
+    for (const name of expectedMacArtifacts(av)) {
+      assert(names(macFeed).includes(name), `public feed is missing ${name}`);
+    }
+  } else {
+    const bridge = bridgeFromFeed(macFeed, cutover.version);
+    assert(bridge, "the public mac/ feed has no Intel bridge; Intel installs older than the cutover would be stranded");
+    const macExpected = [`Markie-${av}-arm64.zip`, `Markie-${av}-arm64.dmg`, bridge.name];
+    assert(
+      names(macFeed).length === 3 && macExpected.every((name) => names(macFeed).includes(name)),
+      `public mac/ feed lists ${names(macFeed).join(", ")}; expected ${macExpected.join(", ")}`
+    );
+    assert(
+      compareVersions(bridge.version, iv) <= 0,
+      `the Intel bridge ${bridge.name} is newer than the Intel feed ${iv}`
+    );
+    if (bridge.version === iv) {
+      assert(bridge.sha512 === intelZip.sha512, `the Intel bridge ${bridge.name} is not the same bytes as mac-intel/'s`);
+    }
+    const onArm = updaterChoice(macFeed.text, { arm64Mac: true });
+    assert(onArm.file === macExpected[0], `electron-updater on Apple Silicon picks ${onArm.file} from mac/, expected ${macExpected[0]}`);
+    const onOldIntel = updaterChoice(macFeed.text, { arm64Mac: false });
+    assert(onOldIntel.file === bridge.name, `electron-updater on an Intel Mac picks ${onOldIntel.file} from mac/, expected the bridge ${bridge.name}`);
+  }
+  for (const entry of macFeed.files) await verifyRemoteFile(fileUrl(mac, decodeURIComponent(entry.url)), entry, deep);
+
+  const primaryName = names(macFeed).find((name) => artifactPatternRegExp(publicMacPlatform().artifactPattern).test(name));
+  assert(primaryName, "public feed has no primary macOS download artifact");
+  const primaryUrl = fileUrl(mac, primaryName);
+  const intelUrl = fileUrl(intel, intelExpected[1]);
+  if (waitForRoutes) await waitForRouteTarget("mac-x64", intelUrl);
+  if (verifyWebsite) {
+    await verifyWebsiteContract({
+      expectedVersion: armVersion ? av : null,
+      expectedArtifactUrl: armVersion ? primaryUrl : null,
+      expectedIntelVersion: iv,
+      expectedIntelArtifactUrl: intelUrl,
+    });
+  }
+  return { version: av, intelVersion: iv, feed: macFeed, intelFeed, primaryUrl, intelUrl, urls: releaseUrls(), legacy };
+}
+
+// The server caches a resolved release for five minutes, so a route can trail
+// its feed by that much.
+async function waitForRouteTarget(platformId, expectedUrl, attempts = 72) {
+  const manifest = releaseManifest();
+  const siteUrl = manifest.siteUrl.replace(/\/+$/, "");
+  const platform = manifest.platforms.find((entry) => entry.id === platformId);
+  assert(platform, `no ${platformId} platform in the manifest`);
+  let location = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(`${siteUrl}${platform.route}`, { redirect: "manual" });
+      location = response.headers.get("location");
+      if ([301, 302, 307, 308].includes(response.status) && location === expectedUrl) return;
+    } catch {
+      // Retry below.
+    }
+    await new Promise((resolve) => setTimeout(resolve, io.pollDelayMs));
+  }
+  throw new Error(`${siteUrl}${platform.route} did not reach ${expectedUrl} (last: ${location ?? "nothing"})`);
 }
 
 function assertLocalEvidence(version, commit) {
@@ -770,6 +932,7 @@ export async function waitForWebsiteVersion(version, attempts = 72, delayMs = 50
 }
 
 async function publishMac(confirmVersion) {
+  if (macCutoverConfig(releaseManifest())) return publishMacCutover(confirmVersion);
   const version = packageJson().version;
   assert(confirmVersion === version, `pass --confirm-public-release=${version} to publish production`);
   const commit = assertReleaseGitState();
@@ -836,6 +999,7 @@ async function rollbackMac(confirmVersion) {
   // next version by then; the saved previous feed is what proves the version
   // was really published from here.
   assert(confirmVersion, `pass --confirm-rollback=<version> to restore the feed saved before that release`);
+  if (macCutoverConfig(releaseManifest())) return rollbackMacCutover(confirmVersion);
   const version = assertVersion(confirmVersion);
   assertPublishCredentials();
   const previous = evidencePath(version, "previous-latest-mac.yml");
@@ -851,6 +1015,159 @@ async function rollbackMac(confirmVersion) {
   await waitForWebsiteVersion(previousVersion);
   await verifyPublicMac({ expectedVersion: previousVersion, deep: false });
   console.log(`[release] restored the public macOS updater feed to ${previousVersion}`);
+}
+
+// electron-builder's publish command reads the top-level publish block, which
+// is mac/. mac-intel/ gets a generated config of its own, as Windows and Linux
+// do, so a typo cannot write Intel files over the Apple Silicon feed.
+function macIntelPublishConfigPath() {
+  const manifest = releaseManifest();
+  const cutover = macCutoverConfig(manifest);
+  assert(cutover, "mac-intel uploads exist only under the Mac cutover");
+  const dir = path.join(io.root, ".release");
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "publish-mac-intel.json");
+  writeJson(file, {
+    appId: "com.zvn.markie",
+    productName: "Markie",
+    publish: [
+      {
+        provider: manifest.storage.provider,
+        bucket: manifest.storage.bucket,
+        endpoint: manifest.storage.endpoint,
+        region: manifest.storage.region,
+        path: cutover.intelDir,
+      },
+    ],
+  });
+  return file;
+}
+
+function publishMacIntelFiles(files, version) {
+  guardMacUpload("mac-intel", files);
+  run(builderBin(), [
+    "publish",
+    "--config",
+    macIntelPublishConfigPath(),
+    "--files",
+    ...files,
+    "--version",
+    version,
+    "--policy",
+    "always",
+  ]);
+}
+
+/** Direct stable publish under the cutover, for a release Kirby asked to skip early access. */
+async function publishMacCutover(confirmVersion) {
+  const version = io.macReleaseVersion();
+  assert(confirmVersion === version, `pass --confirm-public-release=${version} to publish production`);
+  const commit = io.releaseGitState();
+  io.publishCredentials();
+  const evidence = assertLocalEvidence(version, commit);
+  const local = await io.verifyLocal("mac", { commit });
+  assert(local.version === version, `local macOS artifacts are ${local.version}, expected ${version}`);
+  const units = releaseUnits("mac", local);
+  for (const unit of units) assertEvidenceMatchesArtifacts(evidenceFilesFor(evidence, unit.platform), unit.files);
+
+  await verifyWebsiteContract({ allowVersionMismatch: true });
+  await assertServerKnowsMacCutover();
+  mkdirSync(evidenceDir(version), { recursive: true });
+  for (const unit of units) {
+    const stable = await fetchFeed(unit.target.stableFeedUrl);
+    assert(stable || unit.target.allowsFirstRelease, `the stable ${unit.target.label} feed ${unit.target.stableFeedUrl} is missing`);
+    if (!stable && unit.platform === "mac-intel") assertFirstIntelFeed(version);
+    if (stable) {
+      assertVersion(stable.version);
+      assert(
+        compareVersions(version, stable.version) > 0,
+        `release ${version} must be newer than the public ${unit.target.label} feed ${stable.version}`
+      );
+      writeFileSync(evidencePath(version, unit.target.previousStableFile), stable.text);
+    }
+  }
+  for (const unit of units) {
+    await uploadAndVerifyArtifacts(unit.platform, { version, files: unit.files, feedPath: unit.feedPath }, unit.target.artifactBaseUrl);
+    await verifyArtifactsInBucket(unit.carriedFiles, unit.target.artifactBaseUrl);
+  }
+  // Feeds last, mac-intel/ before mac/.
+  for (const unit of units) {
+    assertFeedMatchesEvidence(
+      parseElectronBuilderFeed(readFileSync(unit.feedPath, "utf8")),
+      [...unit.files, ...unit.carriedFiles],
+      `local ${unit.target.label} feed`
+    );
+    io.publish(unit.platform, [unit.feedPath], version);
+    await waitForFeedVersion(unit.target.stableFeedUrl, version);
+  }
+  const hasMac = units.some((unit) => unit.platform === "mac");
+  const hasIntel = units.some((unit) => unit.platform === "mac-intel");
+  if (hasMac) await waitForWebsiteVersion(version, 72, io.pollDelayMs);
+  const verified = await verifyPublicMac({
+    expectedVersion: hasMac ? version : null,
+    expectedIntelVersion: hasIntel ? version : null,
+    deep: false,
+    waitForRoutes: hasIntel,
+  });
+  const publishedAt = io.now().toISOString();
+  for (const unit of units) {
+    writeEvidence(version, unit.target.publicEvidenceFile, {
+      schemaVersion: 1,
+      version,
+      platform: unit.platform,
+      mode: local.mode,
+      commit,
+      publishedAt,
+      feedUrl: unit.target.stableFeedUrl,
+      ...(unit.platform === "mac"
+        ? { downloadPageUrl: verified.urls.downloadPageUrl, latestJsonUrl: verified.urls.latestJsonUrl, primaryUrl: verified.primaryUrl }
+        : { intelUrl: verified.intelUrl }),
+      files: unit.files,
+      ...(unit.carriedFiles.length > 0 ? { carriedFiles: unit.carriedFiles } : {}),
+      checks: ["remote-size", "remote-sha512", "download-routes", "latest-release-json", "updater-choice"],
+    });
+  }
+  io.log(`[release] Markie ${version} (${local.mode}) is public and verified on ${units.map((unit) => unit.target.label).join(" and ")}`);
+  for (const unit of units) await mirrorStableAfterPublish(unit.platform, version, unit.feedPath);
+}
+
+/**
+ * Restore the feeds saved before a cutover release went stable. mac/ first, so
+ * old installs stop being sent to the bridge before its own feed moves. The
+ * cutover release itself created mac-intel/ and has nothing to restore there:
+ * Intel builds that already took it stay on it, which is safe, because it is
+ * the same Electron app on its own feed.
+ */
+async function rollbackMacCutover(confirmVersion) {
+  const version = assertVersion(confirmVersion);
+  io.publishCredentials();
+  let restored = 0;
+  let macVersion = null;
+  let intelVersion = null;
+  for (const platform of ["mac", "mac-intel"]) {
+    const target = earlyTarget(platform);
+    const previous = evidencePath(version, target.previousStableFile);
+    if (!existsSync(previous)) {
+      io.log(`[release] no ${path.relative(io.root, previous)}; the ${target.label} feed is left as it is`);
+      continue;
+    }
+    const rollbackDir = path.join(evidenceDir(version), "rollback", target.stageDir);
+    mkdirSync(rollbackDir, { recursive: true });
+    const rollbackFeed = path.join(rollbackDir, target.stableFeedFile);
+    copyFileSync(previous, rollbackFeed);
+    const previousVersion = assertVersion(parseElectronBuilderFeed(readFileSync(previous, "utf8")).version);
+    io.publish(platform, [rollbackFeed], previousVersion);
+    await waitForFeedVersion(target.stableFeedUrl, previousVersion);
+    if (platform === "mac") macVersion = previousVersion;
+    else intelVersion = previousVersion;
+    restored += 1;
+  }
+  assert(restored > 0, `nothing was saved before ${version} replaced a stable Mac feed; there is nothing to restore`);
+  if (macVersion) await waitForWebsiteVersion(macVersion, 72, io.pollDelayMs);
+  await verifyPublicMac({ expectedVersion: macVersion, expectedIntelVersion: intelVersion, deep: false });
+  io.log(
+    `[release] restored the public Mac feeds${macVersion ? `: mac/ to ${macVersion}` : ""}${intelVersion ? `, mac-intel/ to ${intelVersion}` : ""}`
+  );
 }
 
 async function status() {
@@ -878,8 +1195,534 @@ async function status() {
   } catch {
     result.linuxFeedVersion = null;
   }
+  const cutover = macCutoverConfig(releaseManifest());
+  if (cutover) {
+    result.macCutover = cutover.version;
+    try {
+      result.macIntelFeedVersion = (await fetchFeed(earlyTarget("mac-intel").stableFeedUrl))?.version ?? null;
+    } catch {
+      result.macIntelFeedVersion = null;
+    }
+  }
   Object.assign(result, await earlyStatus());
   console.log(JSON.stringify(result, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// The Mac cutover (0.10.0)
+//
+// From the manifest's macCutover.version on, Apple Silicon Macs get Markie RS,
+// the Rust app, and Intel Macs stay on Electron. The Rust build arrives
+// finished, signed, notarized and stapled, in rust/target/public/<version>/;
+// Electron builds x64 only. A Mac release is then one of three kinds:
+//
+//   joint       Rust and Intel together under one version (the cutover
+//               itself). Writes mac/ and mac-intel/, and makes this release's
+//               x64 ZIP the Intel bridge in mac/.
+//   rust-only   Rust alone. Writes mac/ only, carrying the bridge forward from
+//               the stable mac/ feed. Keyed by the Rust version.
+//   intel-only  Electron x64 alone. Writes mac-intel/ only.
+//
+// prepare stages each feed's directory under dist/cutover/<platform>/ exactly
+// as it will be uploaded, and records what it did in dist/mac-release.json.
+// The early, promote, publish, rollback and verify steps treat "mac" and
+// "mac-intel" as two platforms of one release. scripts/lib/mac-cutover.mjs
+// explains the bridge rule and holds the pure parts.
+// ---------------------------------------------------------------------------
+
+const MAC_RELEASE_MODES = ["joint", "rust-only", "intel-only"];
+
+// The order feeds are written in: Intel's own feed before mac/, so an old
+// Intel install that takes the bridge finds mac-intel/ already there.
+const FEED_ORDER = ["linux", "mac-intel", "mac", "win"];
+const byFeedOrder = (left, right) => FEED_ORDER.indexOf(left) - FEED_ORDER.indexOf(right);
+
+function macCutoverDir(root, platform) {
+  return path.join(root, "dist", "cutover", platform);
+}
+
+function macPlanPath(root = io.root) {
+  return path.join(root, "dist", MAC_RELEASE_PLAN_FILE);
+}
+
+/** What release:prepare:mac recorded about a cutover release, or null. */
+export function readMacPlan(root = io.root) {
+  const file = macPlanPath(root);
+  return existsSync(file) ? readJson(file) : null;
+}
+
+function macReleaseVersion() {
+  if (!macCutoverConfig(releaseManifest())) return io.packageVersion();
+  const plan = readMacPlan();
+  assert(plan, `missing dist/${MAC_RELEASE_PLAN_FILE}; run release:prepare:mac first`);
+  return assertVersion(plan.version);
+}
+
+const sha512FileSync = (file) => createHash("sha512").update(readFileSync(file)).digest("base64");
+
+/**
+ * The last check before anything is uploaded to mac/ or mac-intel/ under the
+ * cutover. mac-intel/ takes no arm64 file at all; mac/ takes the arm64 files
+ * the Rust release.json names, by hash, and no other. A feed file carries
+ * arm64 entries, never arm64 in its own name, so feeds pass.
+ */
+export function guardMacUpload(platform, files, { root = io.root } = {}) {
+  if (!macCutoverConfig(releaseManifest())) return;
+  const records = files.map((file) => {
+    const name = path.basename(file);
+    const record = { name, size: statSync(file).size };
+    if (/arm64/i.test(name) && !name.endsWith(".blockmap")) record.sha512 = sha512FileSync(file);
+    return record;
+  });
+  assertNoElectronArm64(records, platform === "mac" ? (readMacPlan(root)?.rust?.files ?? []) : []);
+}
+
+async function localFileRecord(dir, name) {
+  const file = path.join(dir, name);
+  assert(existsSync(file), `missing local artifact: ${name}`);
+  return { name, size: statSync(file).size, sha512: await hashFile(file) };
+}
+
+function linkOrCopy(from, to) {
+  rmSync(to, { force: true });
+  try {
+    linkSync(from, to);
+  } catch {
+    copyFileSync(from, to);
+  }
+}
+
+/**
+ * Lay a cutover release out the way it will be uploaded: one directory per
+ * feed, holding that feed and exactly the files that go beside it.
+ *
+ * @param {{ root?: string, cutover: any, mode: string, version: string, rust?: any, bridge?: any, releaseDate?: string, blockmap?: (file: string, out: string) => unknown }} options
+ */
+export async function stageMacCutover({
+  root = io.root,
+  cutover,
+  mode,
+  version,
+  rust = null,
+  bridge = null,
+  releaseDate = io.now().toISOString(),
+  blockmap = buildBlockMap,
+}) {
+  assert(MAC_RELEASE_MODES.includes(mode), `unknown Mac release mode ${mode}`);
+  assert((mode === "intel-only") === !rust, `a ${mode} release ${rust ? "ships no" : "needs the"} Rust files`);
+  const dist = path.join(root, "dist");
+  let intel = null;
+  if (mode !== "rust-only") {
+    const names = [`Markie-${version}-x64.zip`, `Markie-${version}-x64.dmg`];
+    intel = { version, files: [] };
+    for (const name of names) {
+      intel.files.push(await localFileRecord(dist, name));
+      assert(existsSync(path.join(dist, `${name}.blockmap`)), `missing differential update blockmap: ${name}.blockmap`);
+    }
+  }
+  const feeds = buildCutoverFeeds({
+    rust: rust ? { version: rust.version, files: rust.files } : null,
+    intel,
+    bridge,
+    cutoverVersion: cutover.version,
+    releaseDate,
+  });
+  rmSync(path.join(dist, "cutover"), { recursive: true, force: true });
+  if (feeds.mac) {
+    const dir = macCutoverDir(root, "mac");
+    mkdirSync(dir, { recursive: true });
+    for (const file of rust.files) {
+      const staged = path.join(dir, file.name);
+      linkOrCopy(file.path, staged);
+      await blockmap(staged, `${staged}.blockmap`);
+    }
+    // The bridge travels with a joint release; a Rust-only one carries the
+    // bridge already in the bucket and uploads nothing for it.
+    if (mode === "joint") {
+      const zip = intel.files[0].name;
+      for (const name of [zip, `${zip}.blockmap`]) linkOrCopy(path.join(dist, name), path.join(dir, name));
+    }
+    writeFileSync(path.join(dir, "latest-mac.yml"), feeds.mac.text);
+  }
+  if (feeds.macIntel) {
+    const dir = macCutoverDir(root, "mac-intel");
+    mkdirSync(dir, { recursive: true });
+    for (const file of intel.files) {
+      for (const name of [file.name, `${file.name}.blockmap`]) linkOrCopy(path.join(dist, name), path.join(dir, name));
+    }
+    writeFileSync(path.join(dir, "latest-mac.yml"), feeds.macIntel.text);
+  }
+  const plan = {
+    schemaVersion: 1,
+    mode,
+    version,
+    cutoverVersion: cutover.version,
+    rust: rust
+      ? {
+          version: rust.version,
+          gitCommit: rust.gitCommit,
+          sourceDir: rust.dir ?? null,
+          files: rust.files.map(({ name, size, sha512 }) => ({ name, size, sha512 })),
+        }
+      : null,
+    intel: intel ? { version: intel.version } : null,
+    bridge: feeds.bridge
+      ? {
+          name: feeds.bridge.name,
+          size: feeds.bridge.size,
+          sha512: feeds.bridge.sha512,
+          version: artifactVersion(feeds.bridge.name, "x64", "zip"),
+          carried: mode === "rust-only",
+        }
+      : null,
+  };
+  writeJson(macPlanPath(root), plan);
+  return { plan, feeds };
+}
+
+function assertPackagedUpdateConfig(appPath, manifest, updaterPath) {
+  const updateConfigPath = path.join(appPath, "Contents/Resources/app-update.yml");
+  assert(existsSync(updateConfigPath), `missing updater config: ${updateConfigPath}`);
+  const updateConfig = readFileSync(updateConfigPath, "utf8");
+  for (const snippet of [
+    `provider: ${manifest.storage.provider}`,
+    `bucket: ${manifest.storage.bucket}`,
+    `endpoint: ${manifest.storage.endpoint}`,
+    `region: ${manifest.storage.region}`,
+    `path: ${updaterPath}`,
+  ]) {
+    assert(updateConfig.includes(snippet), `packaged updater config is missing ${snippet}`);
+  }
+}
+
+// electron/update-harness.js lets a build carrying this marker be pointed at
+// a loopback feed. Only electron-builder.update-harness.cjs writes it, and a
+// release never ships it.
+export function assertNoHarnessMarkerIn(packageJsonText, label = "the packaged app") {
+  const metadata = JSON.parse(packageJsonText);
+  assert(
+    metadata.markieUpdateHarness === undefined,
+    `${label} is an update-harness build (markieUpdateHarness is set); it can never be released`
+  );
+}
+
+function assertNoHarnessMarker(appPath) {
+  const archive = path.join(appPath, "Contents/Resources/app.asar");
+  if (!existsSync(archive)) return;
+  const asar = createRequire(import.meta.url)("@electron/asar");
+  assertNoHarnessMarkerIn(asar.extractFile(archive, "package.json").toString("utf8"), path.basename(appPath));
+}
+
+function verifyDiskImageTrust(file) {
+  run("codesign", ["--verify", "--verbose=2", file]);
+  run("spctl", ["-a", "-vv", "-t", "open", "--context", "context:primary-signature", file]);
+  run("xcrun", ["stapler", "validate", file]);
+}
+
+/**
+ * The Rust ZIP, unpacked into a temporary folder and judged the way macOS and
+ * Squirrel will: a single Markie.app that is not Electron, carries the
+ * cutover's bundle id and team, the release's version, a valid deep
+ * signature, Gatekeeper's notarized verdict and a stapled ticket.
+ */
+function verifyRustBundle(zip, { version, cutover }) {
+  const temp = mkdtempSync(path.join(tmpdir(), "markie-rust-verify-"));
+  try {
+    run("ditto", ["-x", "-k", zip, temp]);
+    const apps = readdirSync(temp).filter((name) => !name.startsWith("__MACOSX"));
+    assert(apps.length === 1 && apps[0] === "Markie.app", `${path.basename(zip)} must hold Markie.app alone, found ${apps.join(", ")}`);
+    const app = path.join(temp, "Markie.app");
+    assert(
+      !existsSync(path.join(app, "Contents/Frameworks/Electron Framework.framework")),
+      `${path.basename(zip)} is an Electron app; arm64 Macs get Markie RS only`
+    );
+    const plist = JSON.parse(
+      run("plutil", ["-convert", "json", "-o", "-", path.join(app, "Contents/Info.plist")], { capture: true, quiet: true })
+    );
+    assert(plist.CFBundleIdentifier === cutover.bundleId, `Markie RS is ${plist.CFBundleIdentifier}, expected ${cutover.bundleId}`);
+    assert(plist.CFBundleShortVersionString === version, `Markie RS reports ${plist.CFBundleShortVersionString}, expected ${version}`);
+    run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
+    const details = spawnSync("codesign", ["-dv", "--verbose=2", app], { encoding: "utf8" });
+    const signed = parseCodesignDetails(`${details.stdout}\n${details.stderr}`);
+    assert(signed.identifier === cutover.bundleId, `Markie RS is signed as ${signed.identifier}, expected ${cutover.bundleId}`);
+    assert(signed.teamId === cutover.teamId, `Markie RS is signed by team ${signed.teamId}, expected ${cutover.teamId}`);
+    run("spctl", ["-a", "-vvv", "-t", "install", app]);
+    run("xcrun", ["stapler", "validate", app]);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+/** Which files a target's evidence holds. Before the cutover, local.json is one flat list. */
+function evidenceFilesFor(evidence, platform) {
+  if (!evidence?.targets) return evidence?.files ?? [];
+  return evidence.targets[platform]?.files ?? [];
+}
+
+async function verifyLocalMacCutover({ root, verifyTrust, cutover }) {
+  const plan = readMacPlan(root);
+  assert(plan, `missing dist/${MAC_RELEASE_PLAN_FILE}; run release:prepare:mac first`);
+  assert(
+    plan.cutoverVersion === cutover.version,
+    `dist/ was prepared for the ${plan.cutoverVersion} cutover; the manifest says ${cutover.version}`
+  );
+  assert(MAC_RELEASE_MODES.includes(plan.mode), `unknown Mac release mode ${plan.mode}`);
+  const version = assertVersion(plan.version);
+  assert(isStableNumbered(version), `Mac releases under the cutover are X.Y.Z, not ${version}`);
+  const packageVersion = readJson(path.join(root, "package.json")).version;
+  if (plan.mode !== "rust-only") {
+    assert(packageVersion === version, `package.json is ${packageVersion}; the prepared Mac release is ${version}`);
+  }
+  if (plan.mode !== "intel-only") {
+    assert(plan.rust?.version === version, `the prepared Rust build is ${plan.rust?.version}, expected ${version}`);
+    assert(plan.bridge?.name, "the prepared mac/ feed records no Intel bridge");
+  }
+  const rustFiles = plan.rust?.files ?? [];
+  const expected = {
+    mac: plan.mode === "intel-only" ? null : [`Markie-${version}-arm64.zip`, `Markie-${version}-arm64.dmg`, plan.bridge?.name],
+    "mac-intel": plan.mode === "rust-only" ? null : [`Markie-${version}-x64.zip`, `Markie-${version}-x64.dmg`],
+  };
+  const targets = {};
+  for (const platform of ["mac", "mac-intel"]) {
+    const dir = macCutoverDir(root, platform);
+    if (!expected[platform]) {
+      assert(!existsSync(dir), `dist/cutover/${platform} is not part of a ${plan.mode} release`);
+      continue;
+    }
+    const feedPath = path.join(dir, "latest-mac.yml");
+    assert(existsSync(feedPath), `missing dist/cutover/${platform}/latest-mac.yml; run release:prepare:mac first`);
+    const feed = parseElectronBuilderFeed(readFileSync(feedPath, "utf8"));
+    assert(feed.version === version, `the staged ${platform} feed is ${feed.version ?? "missing"}, expected ${version}`);
+    const names = feed.files.map((entry) => decodeURIComponent(entry.url));
+    assert(
+      names.length === expected[platform].length && expected[platform].every((name) => names.includes(name)),
+      `the staged ${platform} feed lists ${names.join(", ")}; expected ${expected[platform].join(", ")}`
+    );
+    const carried = platform === "mac" && plan.bridge?.carried ? plan.bridge : null;
+    const files = [];
+    const carriedFiles = [];
+    for (const entry of feed.files) {
+      const name = decodeURIComponent(entry.url);
+      assert(!name.includes("/") && !name.includes(".."), `unsafe artifact name in feed: ${name}`);
+      if (carried && name === carried.name) {
+        assert(
+          entry.size === carried.size && entry.sha512 === carried.sha512,
+          `the carried Intel bridge ${name} does not match what prepare read from the stable feed`
+        );
+        assert(!existsSync(path.join(dir, name)), `${name} is carried from the bucket and must not be uploaded again`);
+        carriedFiles.push({ name, size: carried.size, sha512: carried.sha512 });
+        continue;
+      }
+      assert(name.includes(`-${version}-`) || name === plan.bridge?.name, `artifact does not contain release version ${version}: ${name}`);
+      const file = path.join(dir, name);
+      assert(existsSync(file), `missing local artifact: dist/cutover/${platform}/${name}`);
+      const size = statSync(file).size;
+      assert(size === entry.size, `${name} size ${size} does not match feed size ${entry.size}`);
+      const sha512 = await hashFile(file);
+      assert(sha512 === entry.sha512, `${name} SHA-512 does not match the staged ${platform} feed`);
+      const blockmap = `${file}.blockmap`;
+      assert(existsSync(blockmap), `missing differential update blockmap: ${path.basename(blockmap)}`);
+      files.push({
+        name,
+        size,
+        sha512,
+        blockmap: path.basename(blockmap),
+        blockmapSize: statSync(blockmap).size,
+        blockmapSha512: await hashFile(blockmap),
+      });
+    }
+    // The arm64 bytes are the Rust release's or nothing.
+    assertNoElectronArm64([...files, ...carriedFiles], platform === "mac" ? rustFiles : []);
+    if (platform === "mac") {
+      for (const rust of rustFiles) {
+        const staged = files.find((file) => file.name === rust.name);
+        assert(
+          staged && staged.size === rust.size && staged.sha512 === rust.sha512,
+          `${rust.name} in dist/cutover/mac is not the file the Rust release.json names`
+        );
+      }
+    }
+    targets[platform] = { platform, version: feed.version, feedPath, files, carriedFiles };
+  }
+  if (plan.mode === "joint") {
+    const bridge = targets.mac.files.find((file) => file.name === plan.bridge.name);
+    const intelZip = targets["mac-intel"].files.find((file) => file.name === plan.bridge.name);
+    assert(
+      bridge && intelZip && bridge.sha512 === intelZip.sha512,
+      "in a joint release the Intel bridge in mac/ is this release's own x64 ZIP"
+    );
+  }
+  if (verifyTrust) {
+    assert(process.platform === "darwin", "macOS trust verification must run on macOS");
+    const manifest = releaseManifest();
+    assert(
+      !existsSync(path.join(root, "dist/mac-arm64/Markie.app")),
+      "dist/ holds an Electron arm64 app; under the cutover Electron is built for Intel only"
+    );
+    if (targets["mac-intel"]) {
+      const appPath = path.join(root, "dist/mac/Markie.app");
+      assert(existsSync(appPath), "missing packaged app: dist/mac/Markie.app");
+      // An Intel build that read mac/ would be offered the Rust version and
+      // reinstall the bridge on every check. It has to read mac-intel/.
+      assertPackagedUpdateConfig(appPath, manifest, cutover.intelDir);
+      assertNoHarnessMarker(appPath);
+      run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
+      run("spctl", ["-a", "-vvv", "-t", "install", appPath]);
+      run("xcrun", ["stapler", "validate", appPath]);
+      verifyDiskImageTrust(path.join(macCutoverDir(root, "mac-intel"), `Markie-${version}-x64.dmg`));
+    }
+    if (targets.mac) {
+      const dir = macCutoverDir(root, "mac");
+      verifyRustBundle(path.join(dir, `Markie-${version}-arm64.zip`), { version, cutover });
+      verifyDiskImageTrust(path.join(dir, `Markie-${version}-arm64.dmg`));
+    }
+  }
+  return { version, mode: plan.mode, plan, targets };
+}
+
+/** The Mac platforms of one release, in the order their feeds are written. */
+function releaseUnits(platform, local) {
+  if (platform === "mac" && local.targets) {
+    return Object.keys(local.targets)
+      .sort(byFeedOrder)
+      .map((name) => ({
+        platform: name,
+        target: earlyTarget(name),
+        files: local.targets[name].files,
+        carriedFiles: local.targets[name].carriedFiles ?? [],
+        feedPath: local.targets[name].feedPath,
+        extra: {},
+      }));
+  }
+  return [
+    {
+      platform,
+      target: earlyTarget(platform),
+      files: local.files,
+      carriedFiles: [],
+      feedPath: local.feedPath,
+      extra: {
+        ...(local.signerSubject ? { signerSubject: local.signerSubject } : {}),
+        ...(local.signing ? { signing: local.signing } : {}),
+      },
+    },
+  ];
+}
+
+/**
+ * mac-intel/latest-mac.yml does not exist before the cutover, and the only
+ * release allowed to create it is the cutover release itself.
+ */
+function assertFirstIntelFeed(version) {
+  const cutover = macCutoverConfig(releaseManifest());
+  assert(
+    cutover && version === cutover.version,
+    `the stable Intel feed is missing; only the cutover release ${cutover?.version ?? "(none declared)"} may create it`
+  );
+}
+
+/** Has the deployed server been taught the cutover? Asked before a cutover feed goes stable. */
+async function assertServerKnowsMacCutover() {
+  const cutover = macCutoverConfig(releaseManifest());
+  if (!cutover) return;
+  const { latestJsonUrl } = releaseUrls();
+  const body = await (await fetchRequired(`${latestJsonUrl}?release-check=${Date.now()}`, { cache: "no-store" })).json();
+  assert(
+    body.macCutover === cutover.version,
+    `the deployed server does not know the ${cutover.version} Mac cutover (latest.json says ${body.macCutover ?? "nothing"}); ` +
+      "deploy the server from this commit first, or the Intel download would look for its DMG in the Apple Silicon feed"
+  );
+}
+
+async function prepareMacCutover(cutover, { rustDir = process.env.MARKIE_RUST_RELEASE_DIR || null, rustOnly = false, intelOnly = false } = {}) {
+  assert(!(rustOnly && intelOnly), "--rust-only and --intel-only cannot both be set");
+  assert(
+    rustDir || intelOnly,
+    `the ${cutover.version} Mac cutover is on: pass --rust-dir=<rust/target/public/<version>> ` +
+      "(or MARKIE_RUST_RELEASE_DIR) for Markie RS, or --intel-only for an Electron Intel release alone"
+  );
+  assert(!(rustDir && intelOnly), "--intel-only ships no Rust files; drop --rust-dir");
+  const mode = rustOnly ? "rust-only" : intelOnly ? "intel-only" : "joint";
+  const commit = assertReleaseGitState();
+  const packageVersion = packageJson().version;
+  const rust = rustDir
+    ? await readRustRelease(path.resolve(rustDir), { expectVersion: mode === "joint" ? packageVersion : null })
+    : null;
+  const version = assertVersion(mode === "rust-only" ? rust.version : packageVersion);
+  assert(isStableNumbered(version), `Mac releases under the cutover are X.Y.Z, not ${version}`);
+  assert(
+    compareVersions(version, cutover.version) >= 0,
+    `${version} is older than the ${cutover.version} cutover this manifest declares`
+  );
+  if (mode !== "rust-only") assertMacReleaseCredentials();
+  assertMacReleaseToolchain();
+
+  // A Rust-only release keeps the Intel bridge the stable mac/ feed already
+  // has, checked byte for byte in the bucket before anything is built.
+  let bridge = null;
+  if (mode === "rust-only") {
+    const target = earlyTarget("mac");
+    const stable = await fetchFeed(target.stableFeedUrl);
+    assert(stable, `the stable macOS feed ${target.stableFeedUrl} is missing`);
+    bridge = bridgeFromFeed(stable, cutover.version);
+    assert(
+      bridge,
+      `the stable mac/ feed (${stable.version}) has no Intel bridge yet; the first release under the cutover ships Rust and Intel together`
+    );
+    await verifyRemoteFile(`${target.artifactBaseUrl}/${encodeURIComponent(bridge.name)}`, { url: bridge.name, size: bridge.size, sha512: bridge.sha512 }, true);
+  }
+
+  run("npm", ["run", "release:preflight"]);
+  rmSync(path.join(rootDir, "dist"), { recursive: true, force: true });
+  if (mode !== "rust-only") {
+    // x64 only. electron-builder.config.cjs points this build's updater at
+    // mac-intel/ because the manifest declares the cutover.
+    try {
+      run(builderBin(), ["--config", builderConfigPath, "--mac", "--x64", "--publish", "never"]);
+    } finally {
+      run("npm", ["run", "native:restore"]);
+    }
+    assert(
+      !existsSync(path.join(rootDir, "dist/mac-arm64")),
+      "electron-builder produced an arm64 Electron app; under the cutover Electron is built for Intel only"
+    );
+    await notarizeMacDiskImages(version, ["x64"]);
+    run("npm", ["run", "electron:smoke:mac:x64"]);
+    const launchEnv = { ...process.env, MARKIE_ALLOW_E2E: "1" };
+    run("node", ["scripts/desktop-launch-smoke.mjs", "--platform", "mac", "--arch", "x64", "--timeout-ms", "180000"], {
+      env: launchEnv,
+    });
+  }
+  await stageMacCutover({ root: rootDir, cutover, mode, version, rust, bridge, releaseDate: new Date().toISOString() });
+  const verified = await verifyLocalMacArtifacts({ verifyTrust: true });
+  writeEvidence(version, "local.json", {
+    schemaVersion: 2,
+    version,
+    platform: "mac",
+    mode,
+    cutover: cutover.version,
+    commit,
+    preparedAt: new Date().toISOString(),
+    rust: verified.plan.rust,
+    bridge: verified.plan.bridge,
+    // The flat list older readers expect: what goes to mac/ when there is a
+    // mac/ part, otherwise what goes to mac-intel/.
+    files: (verified.targets.mac ?? verified.targets["mac-intel"]).files,
+    targets: Object.fromEntries(
+      Object.entries(verified.targets).map(([name, target]) => [name, { files: target.files, carriedFiles: target.carriedFiles }])
+    ),
+    checks: [
+      "preflight",
+      ...(mode === "rust-only" ? [] : ["package-smoke", "native-launch", "updater-config-mac-intel", "dmg-notarization"]),
+      ...(mode === "intel-only" ? [] : ["rust-release-json", "rust-bundle-identity", "rust-not-electron", "intel-bridge"]),
+      "codesign",
+      "gatekeeper",
+      "stapler",
+      "no-electron-arm64",
+      "sha512",
+    ],
+  });
+  console.log(`[release] prepared and verified the ${mode} Mac release ${version}; nothing was uploaded`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1566,15 +2409,23 @@ const isStableNumbered = (version) => releaseChannel(version) === "latest";
  * stable users at artifacts that were never uploaded beside their feed.
  */
 export function earlyTarget(platform, manifest = releaseManifest()) {
-  assert(platform === "mac" || platform === "win" || platform === "linux", `unknown platform: ${platform}`);
+  assert(["mac", "mac-intel", "win", "linux"].includes(platform), `unknown platform: ${platform}`);
+  // mac-intel exists only under the Mac cutover: Electron x64 in its own
+  // directory. Its files share names with mac/'s (latest-mac.yml and
+  // beta-mac.yml), so its local copies live in a subdirectory and its
+  // evidence files carry a prefix.
+  const cutover = platform === "mac-intel" ? macCutoverConfig(manifest) : null;
+  assert(platform !== "mac-intel" || cutover, "mac-intel is a platform only under the Mac cutover");
   const publicBase = manifest.storage.publicBaseUrl.replace(/\/+$/, "");
   const stablePath = {
     mac: () => publicMacPlatform(manifest).feed.path,
+    "mac-intel": () => cutover.intelFeedPath,
     win: () => windowsPlatform(manifest).feed.path,
     linux: () => linuxPlatform(manifest).feed.path,
   }[platform]();
   const earlyPath = {
     mac: manifest.betaChannel?.feed?.path,
+    "mac-intel": manifest.betaChannel?.macIntelFeed?.path,
     win: manifest.betaChannel?.windowsFeed?.path,
     linux: manifest.betaChannel?.linuxFeed?.path,
   }[platform];
@@ -1587,20 +2438,32 @@ export function earlyTarget(platform, manifest = releaseManifest()) {
   const stableFeedFile = path.posix.basename(stablePath);
   const earlyFeedFile = path.posix.basename(earlyPath);
   assert(stableFeedFile !== earlyFeedFile, "early and stable feeds must be different files");
+  const prefix = platform === "mac-intel" ? "mac-intel-" : "";
   return {
     platform,
-    label: { mac: "macOS", win: "Windows", linux: "Linux" }[platform],
+    label: { mac: "macOS", "mac-intel": "macOS Intel", win: "Windows", linux: "Linux" }[platform],
     artifactBaseUrl: `${publicBase}/${directory}`,
     stableFeedFile,
     earlyFeedFile,
     stableFeedUrl: `${publicBase}/${stablePath}`,
     earlyFeedUrl: `${publicBase}/${earlyPath}`,
-    previousStableFile: `previous-${stableFeedFile}`,
-    previousEarlyFile: `previous-${earlyFeedFile}`,
-    localEvidenceFile: { mac: "local.json", win: "local-windows.json", linux: "local-linux.json" }[platform],
-    publicEvidenceFile: { mac: "public.json", win: "public-windows.json", linux: "public-linux.json" }[platform],
-    // Only a platform awaiting its first release may have no stable feed yet.
-    allowsFirstRelease: platform === "linux" && linuxAwaitsFirstRelease(manifest),
+    // Where this platform's feed copies go under .release/<version>/early,
+    // promote and the rollback folders. The uploaded object takes the file's
+    // own name, so two platforms with the same feed name cannot share a folder.
+    stageDir: platform === "mac-intel" ? "mac-intel" : "",
+    previousStableFile: `previous-${prefix}${stableFeedFile}`,
+    previousEarlyFile: `previous-${prefix}${earlyFeedFile}`,
+    localEvidenceFile: { mac: "local.json", "mac-intel": "local.json", win: "local-windows.json", linux: "local-linux.json" }[platform],
+    publicEvidenceFile: {
+      mac: "public.json",
+      "mac-intel": "public-mac-intel.json",
+      win: "public-windows.json",
+      linux: "public-linux.json",
+    }[platform],
+    // Only a platform awaiting its first release may have no stable feed yet:
+    // Linux while it is "ready", and Intel until the cutover release creates
+    // mac-intel/ (assertFirstIntelFeed pins that to the cutover version).
+    allowsFirstRelease: (platform === "linux" && linuxAwaitsFirstRelease(manifest)) || platform === "mac-intel",
   };
 }
 
@@ -1658,6 +2521,7 @@ async function uploadAndVerifyArtifacts(platform, local, artifactBaseUrl) {
   const files = local.files.flatMap((file) =>
     file.blockmap ? [path.join(dist, file.name), path.join(dist, file.blockmap)] : [path.join(dist, file.name)]
   );
+  if (platform === "mac" || platform === "mac-intel") guardMacUpload(platform, files);
   io.publish(platform, files, local.version);
   await verifyArtifactsInBucket(local.files, artifactBaseUrl);
 }
@@ -1685,8 +2549,8 @@ async function verifyArtifactsInBucket(files, artifactBaseUrl) {
  * website, and latest.json are not touched.
  */
 export async function publishEarly(platform, confirmVersion, { soakDays: soakFlag } = {}) {
-  const target = earlyTarget(platform);
-  const version = io.packageVersion();
+  const label = earlyTarget(platform).label;
+  const version = platform === "mac" ? io.macReleaseVersion() : io.packageVersion();
   assert(confirmVersion === version, `pass --confirm-public-release=${version} to publish to early access`);
   assert(
     isStableNumbered(version),
@@ -1701,8 +2565,11 @@ export async function publishEarly(platform, confirmVersion, { soakDays: soakFla
         ? assertLinuxEvidence(version, commit)
         : assertLocalEvidence(version, commit);
   const local = await io.verifyLocal(platform, { commit });
-  assert(local.version === version, `local ${target.label} artifacts are ${local.version}, expected ${version}`);
-  assertEvidenceMatchesArtifacts(evidence.files, local.files);
+  assert(local.version === version, `local ${label} artifacts are ${local.version}, expected ${version}`);
+  // One unit per feed directory: a single one for every platform except the
+  // Mac under the cutover, which writes mac-intel/ and mac/ as two.
+  const units = releaseUnits(platform, local);
+  for (const unit of units) assertEvidenceMatchesArtifacts(evidenceFilesFor(evidence, unit.platform), unit.files);
 
   const previousState = readEarlyState(version);
   assert(!previousState?.promotedAt, `${version} is already stable; publish a new version instead`);
@@ -1712,71 +2579,90 @@ export async function publishEarly(platform, confirmVersion, { soakDays: soakFla
       : undefined;
 
   if (platform === "mac") await verifyWebsiteContract({ allowVersionMismatch: true });
-  const stable = await fetchFeed(target.stableFeedUrl);
-  // The first Linux release has no stable feed to be newer than.
-  assert(stable || target.allowsFirstRelease, `the stable ${target.label} feed ${target.stableFeedUrl} is missing`);
-  if (stable) {
-    assertVersion(stable.version);
-    assert(
-      compareVersions(version, stable.version) > 0,
-      `release ${version} must be newer than the stable ${target.label} feed ${stable.version}`
-    );
-  }
-  const early = await fetchFeed(target.earlyFeedUrl);
-  if (early) {
-    assertVersion(early.version);
-    assert(
-      compareVersions(version, early.version) >= 0,
-      `the early ${target.label} feed already names newer ${early.version}`
-    );
-  }
-  // Save what the early feed held before this release, once. A re-run after a
-  // failure finds its own version there and must not overwrite the real
-  // previous feed with it, or rollback would restore the build it is rolling
-  // back.
-  const previousEarlyFile = evidencePath(version, target.previousEarlyFile);
   mkdirSync(evidenceDir(version), { recursive: true });
-  if (early && early.version !== version) writeFileSync(previousEarlyFile, early.text);
-  const previousEarlyVersion =
-    early && early.version !== version
-      ? early.version
-      : (previousState?.platforms?.[platform]?.previousEarlyVersion ?? null);
+  for (const unit of units) {
+    const { target } = unit;
+    const stable = await fetchFeed(target.stableFeedUrl);
+    // The first Linux release, and the cutover's first Intel feed, have no
+    // stable feed to be newer than.
+    assert(stable || target.allowsFirstRelease, `the stable ${target.label} feed ${target.stableFeedUrl} is missing`);
+    if (!stable && unit.platform === "mac-intel") assertFirstIntelFeed(version);
+    if (stable) {
+      assertVersion(stable.version);
+      assert(
+        compareVersions(version, stable.version) > 0,
+        `release ${version} must be newer than the stable ${target.label} feed ${stable.version}`
+      );
+    }
+    const early = await fetchFeed(target.earlyFeedUrl);
+    if (early) {
+      assertVersion(early.version);
+      assert(
+        compareVersions(version, early.version) >= 0,
+        `the early ${target.label} feed already names newer ${early.version}`
+      );
+    }
+    // Save what the early feed held before this release, once. A re-run after a
+    // failure finds its own version there and must not overwrite the real
+    // previous feed with it, or rollback would restore the build it is rolling
+    // back.
+    if (early && early.version !== version) writeFileSync(evidencePath(version, target.previousEarlyFile), early.text);
+    unit.stable = stable;
+    unit.previousEarlyVersion =
+      early && early.version !== version
+        ? early.version
+        : (previousState?.platforms?.[unit.platform]?.previousEarlyVersion ?? null);
+  }
 
-  await uploadAndVerifyArtifacts(platform, local, target.artifactBaseUrl);
+  for (const unit of units) {
+    await uploadAndVerifyArtifacts(unit.platform, { version, files: unit.files, feedPath: unit.feedPath }, unit.target.artifactBaseUrl);
+    // A Rust-only release lists the Intel bridge already in mac/; it is not
+    // uploaded again, but it is downloaded and checked like everything else.
+    await verifyArtifactsInBucket(unit.carriedFiles, unit.target.artifactBaseUrl);
+  }
 
-  const feedText = readFileSync(local.feedPath, "utf8");
-  const feed = parseElectronBuilderFeed(feedText);
-  assert(feed.version === version, `local ${target.label} feed is ${feed.version}, expected ${version}`);
-  assertFeedMatchesEvidence(feed, local.files, `local ${target.label} feed`);
-  const earlyDir = path.join(evidenceDir(version), "early");
-  mkdirSync(earlyDir, { recursive: true });
-  const earlyFeedPath = path.join(earlyDir, target.earlyFeedFile);
-  writeFileSync(earlyFeedPath, feedText);
-  io.publish(platform, [earlyFeedPath], version);
-  await waitForFeedVersion(target.earlyFeedUrl, version);
+  // The feeds last, mac-intel/ before mac/.
+  for (const unit of units) {
+    const { target } = unit;
+    const feedText = readFileSync(unit.feedPath, "utf8");
+    const feed = parseElectronBuilderFeed(feedText);
+    assert(feed.version === version, `local ${target.label} feed is ${feed.version}, expected ${version}`);
+    assertFeedMatchesEvidence(feed, [...unit.files, ...unit.carriedFiles], `local ${target.label} feed`);
+    const earlyDir = path.join(evidenceDir(version), "early", target.stageDir);
+    mkdirSync(earlyDir, { recursive: true });
+    const earlyFeedPath = path.join(earlyDir, target.earlyFeedFile);
+    writeFileSync(earlyFeedPath, feedText);
+    io.publish(unit.platform, [earlyFeedPath], version);
+    await waitForFeedVersion(target.earlyFeedUrl, version);
+    unit.feedSha512 = sha512Text(feedText);
+  }
 
   const publishedAt = io.now().toISOString();
-  const state = recordEarlyPublish(previousState, {
-    version,
-    commit,
-    platform,
-    publishedAt,
-    soakDays,
-    approval: `confirm-public-release=${version}`,
-    platformRecord: {
-      earlyFeedUrl: target.earlyFeedUrl,
-      stableFeedUrl: target.stableFeedUrl,
-      feedSha512: sha512Text(feedText),
-      previousEarlyVersion,
-      previousStableVersion: stable?.version ?? null,
-      ...(local.signerSubject ? { signerSubject: local.signerSubject } : {}),
-      ...(local.signing ? { signing: local.signing } : {}),
-      files: local.files,
-    },
-  });
+  let state = previousState;
+  for (const unit of units) {
+    state = recordEarlyPublish(state, {
+      version,
+      commit,
+      platform: unit.platform,
+      publishedAt,
+      soakDays: state === previousState ? soakDays : undefined,
+      approval: `confirm-public-release=${version}`,
+      platformRecord: {
+        earlyFeedUrl: unit.target.earlyFeedUrl,
+        stableFeedUrl: unit.target.stableFeedUrl,
+        feedSha512: unit.feedSha512,
+        previousEarlyVersion: unit.previousEarlyVersion,
+        previousStableVersion: unit.stable?.version ?? null,
+        ...unit.extra,
+        files: unit.files,
+        ...(unit.carriedFiles.length > 0 ? { carriedFiles: unit.carriedFiles } : {}),
+      },
+    });
+  }
   writeEarlyState(state);
   io.log(
-    `[release] Markie ${version} is on the early ${target.label} feed; it promotes to stable at ${state.soakUntil} unless held`
+    `[release] Markie ${version} is on the early ${units.map((unit) => unit.target.label).join(" and ")} feed${units.length > 1 ? "s" : ""}; ` +
+      `it promotes to stable at ${state.soakUntil} unless held`
   );
   return state;
 }
@@ -1816,23 +2702,25 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
   const release = acquirePromoteLock();
   try {
     const plans = [];
-    const platforms = Object.keys(state.platforms).sort();
+    const platforms = Object.keys(state.platforms).sort(byFeedOrder);
     for (const platform of platforms) {
       const target = earlyTarget(platform);
       const record = state.platforms[platform];
-      const savedPath = path.join(evidenceDir(version), "early", target.earlyFeedFile);
+      // A Rust-only Mac release lists the Intel bridge it did not upload.
+      const listed = [...record.files, ...(record.carriedFiles ?? [])];
+      const savedPath = path.join(evidenceDir(version), "early", target.stageDir, target.earlyFeedFile);
       assert(existsSync(savedPath), `missing ${path.relative(io.root, savedPath)}; was ${version} published early from here?`);
       const savedText = readFileSync(savedPath, "utf8");
       assert(sha512Text(savedText) === record.feedSha512, `saved early ${target.label} feed does not match ${EARLY_STATE_FILE}`);
       const saved = parseElectronBuilderFeed(savedText);
       assert(saved.version === version, `saved early ${target.label} feed names ${saved.version}`);
-      assertFeedMatchesEvidence(saved, record.files, `saved early ${target.label} feed`);
+      assertFeedMatchesEvidence(saved, listed, `saved early ${target.label} feed`);
       // Same commit means the same build, so the smoke-tested evidence still
       // here must agree with what was recorded at early publish.
       const localEvidence = evidencePath(version, target.localEvidenceFile);
       if (existsSync(localEvidence)) {
         const local = readJson(localEvidence);
-        if (local.commit === state.commit) assertEvidenceMatchesArtifacts(local.files, record.files);
+        if (local.commit === state.commit) assertEvidenceMatchesArtifacts(evidenceFilesFor(local, platform), record.files);
       }
 
       const early = await fetchFeed(target.earlyFeedUrl);
@@ -1850,6 +2738,7 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
       assert(sha512Text(early.text) === record.feedSha512, `the early ${target.label} feed for ${version} changed since it was published`);
       const stable = await fetchFeed(target.stableFeedUrl);
       assert(stable || target.allowsFirstRelease, `the stable ${target.label} feed is missing`);
+      if (!stable && platform === "mac-intel") assertFirstIntelFeed(version);
       if (stable) assertVersion(stable.version);
       const order = stable ? compareVersions(version, stable.version) : 1;
       if (order < 0) {
@@ -1864,11 +2753,14 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
       if (alreadyStable) {
         assert(sha512Text(stable.text) === record.feedSha512, `stable ${target.label} names ${version} with a different feed than early did`);
       }
-      await verifyArtifactsInBucket(record.files, target.artifactBaseUrl);
+      await verifyArtifactsInBucket(listed, target.artifactBaseUrl);
       plans.push({ platform, target, savedText, stable, alreadyStable });
     }
-    if (plans.some((plan) => plan.platform === "mac" && !plan.alreadyStable)) {
+    if (plans.some((plan) => (plan.platform === "mac" || plan.platform === "mac-intel") && !plan.alreadyStable)) {
       await verifyWebsiteContract({ allowVersionMismatch: true });
+      // A server from before the cutover would resolve the Intel route from
+      // the Apple Silicon feed and find no Intel DMG there.
+      await assertServerKnowsMacCutover();
     }
     // Linux going stable for the first time is the moment the website starts
     // offering it, so the server that answers has to know Linux exists.
@@ -1880,7 +2772,7 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
     for (const plan of plans) {
       if (plan.alreadyStable) continue;
       if (plan.stable) writeFileSync(evidencePath(version, plan.target.previousStableFile), plan.stable.text);
-      const promoteDir = path.join(evidenceDir(version), "promote");
+      const promoteDir = path.join(evidenceDir(version), "promote", plan.target.stageDir);
       mkdirSync(promoteDir, { recursive: true });
       const stableFeedPath = path.join(promoteDir, plan.target.stableFeedFile);
       writeFileSync(stableFeedPath, plan.savedText);
@@ -1891,9 +2783,23 @@ export async function promoteRelease(confirmVersion, { force = false } = {}) {
     const promotedAt = io.now().toISOString();
     for (const plan of plans) {
       await waitForFeedVersion(plan.target.stableFeedUrl, version);
-      if (plan.platform === "mac") {
+      if (plan.platform === "mac-intel") {
+        const verified = await verifyPublicMac({ expectedVersion: null, expectedIntelVersion: version, deep: false, waitForRoutes: true });
+        writeEvidence(version, plan.target.publicEvidenceFile, {
+          schemaVersion: 1,
+          version,
+          platform: "mac-intel",
+          commit: state.commit,
+          publishedAt: promotedAt,
+          promotedFrom: "early",
+          feedUrl: plan.target.stableFeedUrl,
+          intelUrl: verified.intelUrl,
+          files: state.platforms["mac-intel"].files,
+          checks: ["remote-size", "remote-sha512", "intel-download-route", "updater-choice", "same-bits-as-early"],
+        });
+      } else if (plan.platform === "mac") {
         await waitForWebsiteVersion(version, 72, io.pollDelayMs);
-        const verified = await verifyPublicMac({ expectedVersion: version, deep: false });
+        const verified = await verifyPublicMac({ expectedVersion: version, expectedIntelVersion: null, deep: false });
         writeEvidence(version, plan.target.publicEvidenceFile, {
           schemaVersion: 1,
           version,
@@ -2005,7 +2911,9 @@ export async function rollbackEarly(confirmVersion) {
     `${version} is already stable; use release:rollback:mac / release:rollback:win / release:rollback:linux for the stable feed`
   );
   io.publishCredentials();
-  for (const platform of Object.keys(state.platforms).sort()) {
+  // mac/ before mac-intel/ here, the reverse of publishing: old installs stop
+  // being pointed at the bridge before its own feed moves.
+  for (const platform of Object.keys(state.platforms).sort(byFeedOrder).reverse()) {
     const target = earlyTarget(platform);
     const live = await fetchFeed(target.earlyFeedUrl);
     if (live?.version !== version) {
@@ -2028,7 +2936,7 @@ export async function rollbackEarly(confirmVersion) {
     }
     assert(restoreText, `nothing to restore the early ${target.label} feed to`);
     const restoreVersion = assertVersion(parseElectronBuilderFeed(restoreText).version);
-    const rollbackDir = path.join(evidenceDir(version), "early-rollback");
+    const rollbackDir = path.join(evidenceDir(version), "early-rollback", target.stageDir);
     mkdirSync(rollbackDir, { recursive: true });
     const file = path.join(rollbackDir, target.earlyFeedFile);
     writeFileSync(file, restoreText);
@@ -2055,7 +2963,7 @@ export async function mirrorStableToEarly(platform, version, feedPath) {
   if (early && compareVersions(early.version, version) >= 0) {
     return { mirrored: false, reason: `early feed already names ${early.version}` };
   }
-  const dir = path.join(evidenceDir(version), "early-mirror");
+  const dir = path.join(evidenceDir(version), "early-mirror", target.stageDir);
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, target.earlyFeedFile);
   copyFileSync(feedPath, file);
@@ -2092,10 +3000,11 @@ function assertPromoteGitState(commit) {
 
 async function earlyStatus() {
   const result = {};
-  for (const platform of ["mac", "win", "linux"]) {
+  const platforms = macCutoverConfig(releaseManifest()) ? ["mac", "mac-intel", "win", "linux"] : ["mac", "win", "linux"];
+  for (const platform of platforms) {
     try {
       const target = earlyTarget(platform);
-      result[`${platform}EarlyFeedVersion`] = (await fetchFeed(target.earlyFeedUrl))?.version ?? null;
+      result[`${platform === "mac-intel" ? "macIntel" : platform}EarlyFeedVersion`] = (await fetchFeed(target.earlyFeedUrl))?.version ?? null;
     } catch {
       result[`${platform}EarlyFeedVersion`] = null;
     }
@@ -2103,6 +3012,17 @@ async function earlyStatus() {
   const plan = planPromoteDue(listEarlyStates(), io.now());
   result.earlyPipeline = plan.summary;
   return result;
+}
+
+// Which Intel version verify-public pins under the cutover: --intel-version
+// when given; otherwise the same version, unless that version was a Rust-only
+// release (its local.json says so), which leaves mac-intel/ alone.
+function intelVersionToVerify(version, flags) {
+  const flag = flagValue(flags, "intel-version");
+  if (flag) return flag === "any" ? null : assertVersion(flag);
+  const local = evidencePath(version, "local.json");
+  if (existsSync(local) && readJson(local).mode === "rust-only") return null;
+  return version;
 }
 
 function flagValue(args, name) {
@@ -2210,7 +3130,13 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
     );
   }
 
-  if (command === "prepare") return prepareMac();
+  if (command === "prepare") {
+    return prepareMac({
+      rustDir: flagValue(flags, "rust-dir") ?? (process.env.MARKIE_RUST_RELEASE_DIR || null),
+      rustOnly: flags.includes("--rust-only"),
+      intelOnly: flags.includes("--intel-only"),
+    });
+  }
   if (command === "verify-local") {
     const verified = await verifyLocalMacArtifacts({ verifyTrust: true });
     console.log(`[release] local Markie ${verified.version} artifacts are signed, notarized, and internally consistent`);
@@ -2225,18 +3151,25 @@ export async function runReleaseCli(args = process.argv.slice(2)) {
     return publishMac(flagValue(flags, "confirm-public-release"));
   }
   if (command === "verify-public") {
+    const expectedVersion = flagValue(flags, "version") ?? packageJson().version;
     const verified = await verifyPublicMac({
-      expectedVersion: flagValue(flags, "version") ?? packageJson().version,
+      expectedVersion,
+      expectedIntelVersion: macCutoverConfig(releaseManifest()) ? intelVersionToVerify(expectedVersion, flags) : null,
       deep: flags.includes("--deep"),
     });
-    console.log(`[release] public Markie ${verified.version} release is valid${flags.includes("--deep") ? " with full SHA-512 checks" : ""}`);
+    console.log(
+      `[release] public Markie ${verified.version} release is valid` +
+        (verified.intelVersion ? `, with Markie for Intel Macs at ${verified.intelVersion}` : "") +
+        (flags.includes("--deep") ? ", with full SHA-512 checks" : "")
+    );
     return;
   }
   if (command === "rollback") return rollbackMac(flagValue(flags, "confirm-rollback"));
   throw new Error(
-    "usage: release.mjs status | version <semver> | prepare mac | verify-local mac | " +
+    "usage: release.mjs status | version <semver> | " +
+      "prepare mac [--rust-dir=<rust/target/public/<semver>>] [--rust-only | --intel-only] | verify-local mac | " +
       "publish mac [--early [--soak-days=<n>]] --confirm-public-release=<semver> | " +
-      "verify-public mac [--version=<semver>] [--deep] | rollback mac --confirm-rollback=<semver> | " +
+      "verify-public mac [--version=<semver>] [--intel-version=<semver>|any] [--deep] | rollback mac --confirm-rollback=<semver> | " +
       "prepare win | verify-local win | publish win [--early] --confirm-public-release=<semver> | " +
       "rollback win --confirm-rollback=<semver> | verify-public win [--version=<semver>] [--deep] | " +
       "prepare linux | verify-local linux | publish linux [--early] --confirm-public-release=<semver> | " +

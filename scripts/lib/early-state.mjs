@@ -63,7 +63,8 @@ export function soakUntilFrom(isoTime, soakDays) {
 export function recordEarlyPublish(previous, update) {
   const { version, commit, platform, publishedAt, soakDays, platformRecord, approval } = update;
   assert(isStableVersion(version), `early releases carry a stable version, got ${version}`);
-  assert(["mac", "win", "linux"].includes(platform), `unknown early platform: ${platform}`);
+  // mac-intel is the Intel feed under the Mac cutover, published with mac.
+  assert(["mac", "mac-intel", "win", "linux"].includes(platform), `unknown early platform: ${platform}`);
   if (previous) {
     assert(previous.version === version, `early state for ${previous.version} cannot record ${version}`);
     assert(!previous.promotedAt, `${version} was already promoted to stable at ${previous.promotedAt}`);

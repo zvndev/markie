@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { preCutoverManifest } from "../scripts/lib/release-test-manifest";
 import {
   earlyTarget,
   holdRelease,
@@ -211,6 +212,8 @@ beforeEach(() => {
   globalThis.fetch = world.fetch;
   restoreIo = setReleaseIo({
     root,
+    // The pre-cutover pipeline; release-cutover.test.ts covers the cutover.
+    manifest: preCutoverManifest,
     now: () => new Date(clock),
     pollDelayMs: 0,
     releaseGitState: () => COMMIT,

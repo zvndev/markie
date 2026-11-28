@@ -100,6 +100,7 @@
     "reveal:check": "node scripts/reveal-check.mjs",
     "find:check": "node scripts/find-check.mjs",
     "update:check": "node scripts/update-flow-check.mjs",
+    "cutover:check": "node scripts/mac-cutover-handoff-check.mjs",
     "embed:check": "node scripts/embed-check.mjs",
     "ui:check": "node scripts/ui-check.mjs",
     "markdown-style:gallery": "node scripts/markdown-style-gallery.mjs",

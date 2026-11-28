@@ -50,6 +50,7 @@ const { withConnectOrigins } = require("./csp");
 const localAssets = require("./local-assets");
 const { desktopUpdatePolicy, shouldSetupAutoUpdate } = require("./update-policy");
 const { guardedLogger } = require("./updater-logging");
+const { updateHarnessFeed } = require("./update-harness");
 const {
   readBetaOptIn,
   readChannelPrefs,
@@ -3237,6 +3238,11 @@ function applyUpdateChannel() {
     currentVersion,
     leftEarlyFrom,
   });
+  // A build made by electron-builder.update-harness.cjs, and only such a build,
+  // may be pointed at a loopback feed for the Mac cutover handoff check. Every
+  // real build answers null here; see update-harness.js.
+  const harnessFeed = updateHarnessFeed({ isPackaged: app.isPackaged, metadata: require("../package.json"), env: process.env });
+  if (harnessFeed) autoUpdater.setFeedURL(harnessFeed);
   // The channel setter turns allowDowngrade on inside electron-updater, so the
   // explicit value has to be assigned after it.
   autoUpdater.channel = channel;

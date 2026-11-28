@@ -220,6 +220,11 @@ const REQUIRED_RELEASE_DOC_SNIPPETS = [
   // in, so the two cannot drift apart again.
   "## Windows release runbook",
   "npm run release:publish:win",
+  // The Mac cutover: Apple Silicon to Markie RS, Intel on its own feed.
+  "## Mac cutover (0.10.0)",
+  "--rust-dir=",
+  "mac-intel/latest-mac.yml",
+  "npm run cutover:check",
   "## Linux release runbook",
   "npm run release:prepare:linux",
   'npm run release:publish:early:linux -- --confirm-public-release="$MARKIE_RELEASE_VERSION"',
@@ -393,6 +398,36 @@ export function validateReleaseManifest(rootDir) {
   assert(publish?.endpoint === manifest.storage.endpoint, "builder endpoint must come from the release manifest");
   assert(publish?.region === manifest.storage.region, "builder region must come from the release manifest");
   assert(publish?.path === "mac", "builder publish path must match the macOS feed directory");
+  // The Mac cutover (docs/RELEASING.md, "Mac cutover (0.10.0)"): Intel reads
+  // its own directory, and every Electron Mac build made under the cutover has
+  // that directory baked into app-update.yml. Without the cutover, macOS keeps
+  // the top-level block and no Mac override may exist.
+  const intel = manifest.platforms?.find((platform) => platform.id === "mac-x64");
+  if (manifest.macCutover) {
+    assert(/^\d+\.\d+\.\d+$/.test(manifest.macCutover.version ?? ""), "macCutover.version must be X.Y.Z");
+    assert(manifest.macCutover.arm64Source === "rust", "macCutover.arm64Source must be rust");
+    assert(manifest.macCutover.bundleId === builder.appId, "macCutover.bundleId must be the app id both apps share");
+    assert(/^[A-Z0-9]{10}$/.test(manifest.macCutover.teamId ?? ""), "macCutover.teamId must be the Apple team both apps are signed by");
+    assert(intel?.feed?.path === "mac-intel/latest-mac.yml", "the Intel feed path must remain canonical under the Mac cutover");
+    assert(intel?.fallbackFeed?.path === mac.feed.path, "the Intel fallback feed must be the shared pre-cutover mac/ feed");
+    assert(
+      manifest.betaChannel?.macIntelFeed?.path === "mac-intel/beta-mac.yml",
+      "the Intel early feed path must remain canonical under the Mac cutover"
+    );
+    assert(
+      builder.mac?.publish?.[0]?.path === path.posix.dirname(intel.feed.path),
+      "builder macOS publish path must be the Intel feed directory under the Mac cutover"
+    );
+  } else {
+    assert(intel?.feed?.path === mac.feed.path, "without the Mac cutover, Intel shares the macOS feed");
+    assert(!builder.mac?.publish, "without the Mac cutover, macOS keeps the top-level publish block");
+  }
+  // electron/update-harness.js lets a build carrying this marker be pointed at
+  // a loopback feed. The release config must never write it.
+  assert(
+    builder.extraMetadata?.markieUpdateHarness === undefined,
+    "the release builder config must not mark a build as an update harness"
+  );
   assert(publicSource.includes("downloadManifest.latestManifestRoute"), "server must expose the manifest-backed latest JSON route");
   assert(publicSource.includes('publicShare.get("/download/latest"'), "server must expose the stable latest human route");
   assert(dockerfile.includes("COPY download-manifest.json ./download-manifest.json"), "server image must include the release manifest");
@@ -403,6 +438,7 @@ export function validateReleaseManifest(rootDir) {
     latestManifestRoute: manifest.latestManifestRoute,
     feedPath: mac.feed.path,
     bucket: manifest.storage.bucket,
+    macCutover: manifest.macCutover?.version ?? null,
   };
 }
 

@@ -14,6 +14,9 @@ const [dataFile, userData, phase] = process.argv.slice(-3);
 const real = path.join(os.homedir(), "Library", "Application Support");
 if (!userData || path.resolve(userData).startsWith(real)) throw new Error("refusing a userData folder that is not scratch");
 app.setName("markie-fixture");
+// No Dock icon and no menu bar: the window is never shown, and nothing on
+// screen changes while the fixture is written.
+if (process.platform === "darwin") app.setActivationPolicy?.("prohibited");
 app.setPath("userData", path.resolve(userData));
 protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 

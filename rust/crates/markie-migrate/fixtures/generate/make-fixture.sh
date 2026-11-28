@@ -1,10 +1,15 @@
 #!/bin/sh
 # Rebuilds tests/fixtures/electron-userdata from fresh, made-up data.
-# Needs the repo's node_modules (with Electron) next to the repo root.
+# Needs the repo's node_modules (with Electron) next to the repo root, or
+# MARKIE_FIXTURE_ELECTRON naming the Electron binary of the version Markie
+# ships (package-lock.json), for example one unpacked from Electron's own
+# download cache after checking its SHA-256 against
+# node_modules/electron/checksums.json.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../../../.." && pwd)
-electron="$repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+electron="${MARKIE_FIXTURE_ELECTRON:-$repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron}"
+"$electron" --version
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 node --import "$repo/rust/scripts/ts-run/register.mjs" "$here/gen.ts" "$scratch/data.json"

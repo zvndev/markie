@@ -1441,6 +1441,10 @@ function verifyRustBundle(zip, { version, cutover }) {
     );
     assert(plist.CFBundleIdentifier === cutover.bundleId, `Markie RS is ${plist.CFBundleIdentifier}, expected ${cutover.bundleId}`);
     assert(plist.CFBundleShortVersionString === version, `Markie RS reports ${plist.CFBundleShortVersionString}, expected ${version}`);
+    // Squirrel.Mac renames the installed bundle after the update's executable:
+    // an executable called markie-rs turns /Applications/Markie.app into
+    // markie-rs.app, breaking Dock items and the bundled MCP path agents use.
+    assert(plist.CFBundleExecutable === "Markie", `Markie RS's executable is ${plist.CFBundleExecutable}; it must be Markie, or Squirrel installs it as ${plist.CFBundleExecutable}.app`);
     run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
     const details = spawnSync("codesign", ["-dv", "--verbose=2", app], { encoding: "utf8" });
     const signed = parseCodesignDetails(`${details.stdout}\n${details.stderr}`);

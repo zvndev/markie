@@ -159,9 +159,14 @@ verify_shape() {
   rm -f "$expected_plist"
   [[ -n "$(plist CFBundleDocumentTypes.0.CFBundleTypeName)" ]] || die "the bundle declares no document types"
   [[ -f "$APP/Contents/Resources/icon.icns" ]] || die "the bundle has no icon.icns, which its document types name"
-  [[ "$(/usr/bin/lipo -archs "$APP/Contents/MacOS/markie-rs")" == arm64 ]] || die "the binary is not arm64 only"
+  # Squirrel.Mac names the installed app after CFBundleExecutable: anything but
+  # Electron's "Markie" turns /Applications/Markie.app into another name.
+  [[ "$(plist CFBundleExecutable)" == "$APP_NAME" ]] || die "the bundle executable is '$(plist CFBundleExecutable)', not $APP_NAME: Squirrel.Mac would install it as /Applications/$(plist CFBundleExecutable).app"
+  [[ -f "$APP/Contents/MacOS/$APP_NAME" && -x "$APP/Contents/MacOS/$APP_NAME" ]] || die "Contents/MacOS/$APP_NAME is missing"
+  [[ "$(ls "$APP/Contents/MacOS")" == "$APP_NAME" ]] || die "Contents/MacOS holds more than $APP_NAME"
+  [[ "$(/usr/bin/lipo -archs "$APP/Contents/MacOS/$APP_NAME")" == arm64 ]] || die "the binary is not arm64 only"
   local reported expected="$APP_NAME $VERSION ($BUNDLE_ID) $COMMIT"
-  reported="$("$APP/Contents/MacOS/markie-rs" --version)"
+  reported="$("$APP/Contents/MacOS/$APP_NAME" --version)"
   [[ "$reported" == "$expected" ]] || die "the binary reports '$reported', expected '$expected' (rebuild from this commit)"
   [[ "$(cat "$APP/Contents/Resources/app-identity.json")" == "{\"appName\":\"$APP_NAME\",\"profileName\":\"Markie Nightly\"}" ]] || die "app-identity.json does not name $APP_NAME and its profile"
   [[ -z "$(find "$APP" -type l)" ]] || die "the bundle holds a symlink"

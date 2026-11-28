@@ -12,6 +12,7 @@ This is the Mac only. Windows stays on Electron, and nothing here names or chang
 |---|---|---|---|
 | Built with | electron-builder | `cargo build --features nightly` | `cargo build` |
 | App | `Markie.app` | `Markie.app` | `Markie RS.app` |
+| Executable | `Contents/MacOS/Markie` | `Contents/MacOS/Markie` (`markie-rs` up to `.8`) | `Contents/MacOS/markie-rs` |
 | Bundle id | `com.zvn.markie` | `com.zvn.markie` | `com.zvn.markie.rs` |
 | URL scheme | `markie://` | `markie://` | `markie-rs://` |
 | Document types | Markdown, Darkmown, text, Word and the rest | the same, entry for entry | none |
@@ -277,7 +278,7 @@ To go forward again after B, publish a Rust build as usual. Its feed replaces th
 
 Built: [PUBLIC.md](PUBLIC.md). The public app is a third identity in `paths.rs` (the `public` feature): the same name, bundle id, scheme and document types, its own data folder `Markie App`, the import from Electron stable's `markie` profile, and the public store's `latest-mac.yml` and `beta-mac.yml` with no token. It takes only the arm64 ZIP; Intel Macs stay on Electron. Its bundle keeps Electron's MCP path, `Contents/Resources/mcp/markie-mcp.mjs`, working, and its Settings claim default apps. `rust/scripts/public-release.sh` builds it.
 
-The nightly keeps its identity, its gateway feed, its bundle layout and `nightly-release.sh`. Two shared changes reach it too: the updater now also requires Gatekeeper to accept a download as `Notarized Developer ID`, which every published nightly is, and Settings › Files claims default apps on both Mac builds.
+The nightly keeps its identity, its gateway feed, its bundle layout and `nightly-release.sh`, with one fix it needed as well: its executable is now `Markie`, Electron's own, because Squirrel.Mac names the installed bundle after it (PUBLIC.md, "Identity"). Two other shared changes reach it: the updater now also requires Gatekeeper to accept a download as `Notarized Developer ID`, which every published nightly is, and Settings › Files claims default apps on both Mac builds.
 
 ## Tests
 

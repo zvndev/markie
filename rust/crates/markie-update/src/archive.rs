@@ -227,7 +227,7 @@ pub(crate) mod tests {
             file("Markie.app/", b""),
             file("Markie.app/Contents/", b""),
             file("Markie.app/Contents/Info.plist", b"<plist/>"),
-            file("Markie.app/Contents/MacOS/markie-rs", b"binary"),
+            file("Markie.app/Contents/MacOS/Markie", b"binary"),
             link("Markie.app/Contents/Frameworks/Current", "A"),
         ])
         .unwrap();

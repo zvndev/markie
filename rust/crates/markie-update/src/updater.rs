@@ -110,7 +110,7 @@ impl Updater<'_> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
-    use crate::bundle::tests::{FakeTools, VERSION, fixture};
+    use crate::bundle::tests::{FakeTools, VERSION, fixture, fixture_with};
     use crate::gateway::tests::{Mocked, TOKEN};
     use crate::{BUNDLE_NAME, LANE_PREFIX};
     use std::process::Command;
@@ -181,6 +181,43 @@ mod tests {
         // The same process checking again does not download it a second time.
         assert_eq!(s.run(&FakeTools::good(), Some(TOKEN), Some(VERSION)).unwrap(), Outcome::RestartPending { version: Version::parse(VERSION).unwrap() });
         assert_eq!(s.mocked.requests().len(), 3);
+    }
+
+    /// Kirby's Mac: 0.10.0-super-nightly.8 at /Applications/Markie.app, its
+    /// executable `markie-rs`. The next nightly's is `Markie`. The check
+    /// downloads, verifies and swaps it in under the same bundle path, and the
+    /// restart (which opens that path) starts the new executable.
+    #[test]
+    fn a_nightly_whose_executable_is_markie_rs_updates_into_one_named_markie() {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("Applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        let target = fixture_with(&apps, "com.zvn.markie", OLD, "old", "markie-rs");
+        let s = Scene { target, work_dir: dir.path().join("data/updates"), mocked: Mocked::start(), dir };
+        s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
+        let outcome = s.run(&FakeTools::good(), Some(TOKEN), None).unwrap();
+        assert!(matches!(outcome, Outcome::Installed { .. }), "{outcome:?}");
+        assert_eq!(s.target, apps.join("Markie.app"));
+        assert!(s.target.join("Contents/MacOS/Markie").is_file());
+        assert!(!s.target.join("Contents/MacOS/markie-rs").exists());
+        assert_eq!(marker(&s.target), "new");
+        let names: Vec<_> = std::fs::read_dir(&apps).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, [std::ffi::OsString::from("Markie.app")]);
+        assert!(s.work_dir.join("previous").join(BUNDLE_NAME).join("Contents/MacOS/markie-rs").is_file(), "the old bundle is kept for a roll back");
+        assert_eq!(crate::swap::bundle_of(&s.target.join("Contents/MacOS/Markie")), Some(s.target.clone()));
+    }
+
+    #[test]
+    fn a_bundle_named_for_another_executable_is_never_swapped_in() {
+        let s = scene();
+        let source = s.dir.path().join("zip-source-wrong");
+        std::fs::create_dir_all(&source).unwrap();
+        let app = fixture_with(&source, "com.zvn.markie", VERSION, "new", "markie-rs");
+        let zip = s.dir.path().join("wrong.zip");
+        assert!(Command::new("/usr/bin/ditto").args(["-c", "-k", "--keepParent"]).arg(&app).arg(&zip).status().unwrap().success());
+        s.mocked.publish(VERSION, &std::fs::read(zip).unwrap());
+        assert!(matches!(s.run(&FakeTools::good(), Some(TOKEN), None), Err(UpdateError::Bundle(BundleError::Executable { .. }))));
+        s.untouched();
     }
 
     #[test]

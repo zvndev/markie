@@ -54,6 +54,12 @@ pub const FEED_NAME: &str = "super-nightly-mac.yml";
 /// Markie's identity on the Mac. A downloaded bundle must be exactly this.
 pub const BUNDLE_ID: &str = "com.zvn.markie";
 pub const BUNDLE_NAME: &str = "Markie.app";
+/// Its `CFBundleExecutable`, Electron Markie's own. Squirrel.Mac, inside an
+/// installed Electron Markie, names the installed bundle after the update's
+/// executable: a Rust bundle with any other name would land as
+/// /Applications/<name>.app. Builds up to 0.10.0-super-nightly.8 carried
+/// "markie-rs"; the swap does not care what the bundle it replaces carries.
+pub const EXECUTABLE: &str = "Markie";
 /// Kirby Campbell's Developer ID team.
 pub const TEAM_ID: &str = "3VU8SG5TD9";
 

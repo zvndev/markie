@@ -462,7 +462,10 @@ fn latest_native_report(dir: &Path) -> Option<PathBuf> {
     std::fs::read_dir(dir).ok()?.filter_map(Result::ok).filter_map(|entry| {
         let name = entry.file_name();
         let name = name.to_str()?;
-        if !name.ends_with(".ips") || !(name.starts_with("markie-rs-") || name.starts_with("Markie RS-")) {
+        // macOS names a report for the process: this build's executable, and
+        // "markie-rs" for the Mac builds that carried it before.
+        let own = format!("{}-", markie_core::paths::BUNDLE_EXECUTABLE);
+        if !name.ends_with(".ips") || !(name.starts_with(&own) || name.starts_with("markie-rs-") || name.starts_with("Markie RS-")) {
             return None;
         }
         if !entry.file_type().ok()?.is_file() { return None; }
@@ -472,7 +475,8 @@ fn latest_native_report(dir: &Path) -> Option<PathBuf> {
         let id = metadata.get("bundleID").and_then(Value::as_str);
         let process = metadata.get("name").and_then(Value::as_str);
         if metadata.get("bug_type").and_then(Value::as_str) != Some("309")
-            || (id != Some(markie_core::paths::BUNDLE_ID) && !(id.is_none() && process == Some("markie-rs")))
+            || (id != Some(markie_core::paths::BUNDLE_ID)
+                && !(id.is_none() && (process == Some("markie-rs") || process == Some(markie_core::paths::BUNDLE_EXECUTABLE))))
         {
             return None;
         }

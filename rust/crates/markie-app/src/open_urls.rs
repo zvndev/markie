@@ -94,7 +94,7 @@ pub fn register_url_scheme() {
         fn LSRegisterURL(url: *const c_void, update: u8) -> i32;
     }
     let Ok(exe) = std::env::current_exe() else { return };
-    // …/Markie RS.app/Contents/MacOS/markie-rs
+    // …/Markie RS.app/Contents/MacOS/markie-rs, or …/Markie.app/Contents/MacOS/Markie
     let Some(bundle) = exe.ancestors().nth(3).filter(|p| p.extension().is_some_and(|e| e == "app")) else { return };
     let bytes = bundle.as_os_str().as_bytes();
     // SAFETY: plain CoreFoundation calls on a path we own; the URL is released.

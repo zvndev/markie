@@ -38,7 +38,13 @@ SCREEN = RUST / "scripts" / "screen"
 TOOLS = RUST / "target" / "bench-tools"
 # MARKIE_BENCH_RS_APP points at another build, for example a saved "before" copy.
 RS_APP = Path(os.environ.get("MARKIE_BENCH_RS_APP", RUST / "target" / "release" / "Markie RS.app"))
-RS_BIN = RS_APP / "Contents" / "MacOS" / "markie-rs"
+def bundle_binary(app):
+    """Contents/MacOS/<CFBundleExecutable>: "markie-rs" in Markie RS.app, "Markie" in the Mac app."""
+    import plistlib
+    with open(Path(app) / "Contents" / "Info.plist", "rb") as f:
+        return Path(app) / "Contents" / "MacOS" / plistlib.load(f)["CFBundleExecutable"]
+
+
 EL_BIN = Path("/Applications/Markie.app/Contents/MacOS/Markie")
 EL_ASAR = Path("/Applications/Markie.app/Contents/Resources/app.asar")
 
@@ -178,7 +184,7 @@ def launch_cmd(app: str, file: Path, data: Path) -> tuple[list[str], dict]:
     if is_rs(app):
         env["MARKIE_RS_DATA_DIR"] = str(data)
         env["MARKIE_RS_PERF"] = "1"
-        binary = RS_BIN if app == "rs" else Path(RSB_APP) / "Contents" / "MacOS" / "markie-rs"
+        binary = bundle_binary(RS_APP if app == "rs" else RSB_APP)
         return [str(binary), str(file)], env
     return [str(EL_BIN), f"--user-data-dir={data}", str(file)], env
 
@@ -569,7 +575,7 @@ def main():
     apps = a.apps.split(",")
     if "rsb" in apps and not RSB_APP:
         sys.exit("set MARKIE_BENCH_RS_BEFORE to the other Markie RS.app")
-    if "rs" in apps and not RS_BIN.exists():
+    if "rs" in apps and not ((RS_APP / "Contents" / "Info.plist").exists() and bundle_binary(RS_APP).exists()):
         sys.exit(f"build the app first: {RUST}/scripts/bundle-mac.sh")
     if a.what in ("all", "launch"):
         bench_launch(out, a.runs, not a.no_idle, apps, a.label, a.fixtures.split(","), a.load_limit)

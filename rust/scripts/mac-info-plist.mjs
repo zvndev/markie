@@ -19,11 +19,18 @@ const require = createRequire(import.meta.url);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export const IDENTITIES = {
-  rs: { name: "Markie RS", bundleId: "com.zvn.markie.rs", scheme: "markie-rs", icon: "markie-rs", main: false },
-  nightly: { name: "Markie", bundleId: "com.zvn.markie", scheme: "markie", icon: "icon.icns", main: true },
-  public: { name: "Markie", bundleId: "com.zvn.markie", scheme: "markie", icon: "icon.icns", main: true },
+  rs: { name: "Markie RS", bundleId: "com.zvn.markie.rs", scheme: "markie-rs", icon: "markie-rs", executable: "markie-rs", main: false },
+  nightly: { name: "Markie", bundleId: "com.zvn.markie", scheme: "markie", icon: "icon.icns", executable: "Markie", main: true },
+  public: { name: "Markie", bundleId: "com.zvn.markie", scheme: "markie", icon: "icon.icns", executable: "Markie", main: true },
 };
-export const EXECUTABLE = "markie-rs";
+/** `Contents/MacOS/<this>`. The Mac app's is "Markie", Electron Markie's own:
+ * Squirrel.Mac names the installed bundle after the update's executable, so
+ * any other name turns /Applications/Markie.app into /Applications/<name>.app.
+ * The cargo binary, `markie-rs`, is copied in under this name. */
+export function executableFor(variant) {
+  if (!Object.hasOwn(IDENTITIES, variant)) throw new Error("variant must be rs, nightly or public");
+  return IDENTITIES[variant].executable;
+}
 
 export function builderConfig(root = repo) {
   return require(path.join(root, "electron-builder.config.cjs"));
@@ -50,7 +57,7 @@ export function infoPlist(variant, version, config = builderConfig()) {
     CFBundleName: identity.name,
     CFBundleDisplayName: identity.name,
     CFBundleIdentifier: identity.bundleId,
-    CFBundleExecutable: EXECUTABLE,
+    CFBundleExecutable: identity.executable,
     CFBundleIconFile: identity.icon,
     CFBundlePackageType: "APPL",
     CFBundleInfoDictionaryVersion: "6.0",
@@ -97,5 +104,7 @@ export function plistXml(plist) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [variant, version] = process.argv.slice(2);
-  process.stdout.write(plistXml(infoPlist(variant, version)));
+  // `--executable <variant>` prints the bundle executable's name, for the shell scripts.
+  if (variant === "--executable") process.stdout.write(`${executableFor(version)}\n`);
+  else process.stdout.write(plistXml(infoPlist(variant, version)));
 }

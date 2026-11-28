@@ -44,6 +44,7 @@ mod identity {
     pub const URL_SCHEME: &str = "markie-rs";
     pub const URL_SCHEME_PREFIX: &str = "markie-rs://";
     pub const PROFILE_NAME: &str = "Markie RS";
+    pub const BUNDLE_EXECUTABLE: &str = "markie-rs";
     pub const CHANNEL: &str = "dev";
     pub const ELECTRON_PROFILE: Option<&str> = None;
 }
@@ -54,6 +55,7 @@ mod identity {
     pub const URL_SCHEME: &str = "markie";
     pub const URL_SCHEME_PREFIX: &str = "markie://";
     pub const PROFILE_NAME: &str = "Markie Nightly";
+    pub const BUNDLE_EXECUTABLE: &str = "Markie";
     pub const CHANNEL: &str = "super-nightly";
     pub const ELECTRON_PROFILE: Option<&str> = Some("Markie Super-nightly");
 }
@@ -69,6 +71,7 @@ mod identity {
     /// "Markie App" reads plainly in Application Support, Keychain Access and
     /// Documents, and stays right after Electron is gone from the Mac.
     pub const PROFILE_NAME: &str = "Markie App";
+    pub const BUNDLE_EXECUTABLE: &str = "Markie";
     /// The stable feed; early access is a setting on top of it.
     pub const CHANNEL: &str = "stable";
     /// Electron Markie stable's userData folder: `app.getPath("userData")`
@@ -79,6 +82,12 @@ mod identity {
 pub use identity::APP_NAME;
 /// What macOS sees: the bundle id and the one URL scheme the bundle claims.
 pub use identity::{BUNDLE_ID, URL_SCHEME, URL_SCHEME_PREFIX};
+/// The bundle's `CFBundleExecutable`, `Contents/MacOS/<this>`. The Mac app's
+/// is "Markie", as Electron Markie's: Squirrel.Mac names the installed bundle
+/// after the update's executable, so anything else would turn
+/// /Applications/Markie.app into /Applications/<executable>.app. The cargo
+/// binary stays `markie-rs` and is copied in under this name.
+pub use identity::BUNDLE_EXECUTABLE;
 /// This build's own places: the data folder under Application Support, the
 /// Keychain service of its sign-in (and, with " Vault", of its vault), and its
 /// folder under Documents for cloud files. Never one of Electron's.
@@ -178,6 +187,8 @@ mod tests {
             }
         }
         assert_eq!(MAC_APP, NIGHTLY || PUBLIC);
+        // Squirrel.Mac renames the installed app after the executable: the Mac app's must be Electron's.
+        assert_eq!(BUNDLE_EXECUTABLE, if MAC_APP { "Markie" } else { "markie-rs" });
         assert!(!(NIGHTLY && PUBLIC));
         if PUBLIC {
             // The public Mac app: Markie's identity, Electron stable's profile as the import source.

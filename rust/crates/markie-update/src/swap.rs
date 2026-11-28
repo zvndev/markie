@@ -184,10 +184,42 @@ mod tests {
 
     #[test]
     fn finds_the_bundle_an_executable_runs_from() {
+        assert_eq!(bundle_of(Path::new("/Applications/Markie.app/Contents/MacOS/Markie")), Some(PathBuf::from("/Applications/Markie.app")));
+        // The executable of builds up to 0.10.0-super-nightly.8.
         assert_eq!(bundle_of(Path::new("/Applications/Markie.app/Contents/MacOS/markie-rs")), Some(PathBuf::from("/Applications/Markie.app")));
         for loose in ["/repo/rust/target/debug/markie-rs", "/Applications/Markie.app/Contents/Resources/markie-rs", "/x/MacOS/markie-rs", "/Markie Nightly/Contents/MacOS/markie-rs", "markie-rs"] {
             assert_eq!(bundle_of(Path::new(loose)), None, "{loose}");
         }
+    }
+
+    /// Kirby's Mac runs 0.10.0-super-nightly.8, whose executable is
+    /// `markie-rs`; the next nightly's is `Markie`. The swap replaces the
+    /// whole bundle at the same path, so the app stays /Applications/Markie.app
+    /// and the relaunch, which opens that path, starts the new executable.
+    #[test]
+    fn a_bundle_with_the_old_executable_name_is_replaced_by_one_with_the_new_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("Applications");
+        let staging = dir.path().join("staging");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        let target = apps.join(crate::BUNDLE_NAME);
+        std::fs::create_dir_all(target.join("Contents/MacOS")).unwrap();
+        std::fs::write(target.join("Contents/MacOS/markie-rs"), "old").unwrap();
+        let staged = staging.join(crate::BUNDLE_NAME);
+        std::fs::create_dir_all(staged.join("Contents/MacOS")).unwrap();
+        std::fs::write(staged.join("Contents/MacOS/Markie"), "new").unwrap();
+
+        let installed = install(&staged, &target, &dir.path().join("previous"), &never).unwrap();
+        assert_eq!(std::fs::read_to_string(target.join("Contents/MacOS/Markie")).unwrap(), "new");
+        assert!(!target.join("Contents/MacOS/markie-rs").exists(), "nothing of the old bundle is left in place");
+        let names: Vec<_> = std::fs::read_dir(&apps).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, [std::ffi::OsString::from("Markie.app")], "the app keeps its name; no markie-rs.app or Markie 2.app");
+        let previous = installed.previous.unwrap();
+        assert_eq!(std::fs::read_to_string(previous.join("Contents/MacOS/markie-rs")).unwrap(), "old", "the roll back copy is the old bundle as it was");
+        // What the restart opens is the bundle path, found from either executable.
+        assert_eq!(bundle_of(&target.join("Contents/MacOS/Markie")), Some(target.clone()));
+        assert_eq!(bundle_of(&target.join("Contents/MacOS/markie-rs")), Some(target));
     }
 
     #[test]

@@ -322,7 +322,9 @@ mod tests {
     use markie_update::{Outcome, UpdateError, Version};
     use std::path::{Path, PathBuf};
 
-    const EXE: &str = "/Applications/Markie.app/Contents/MacOS/markie-rs";
+    const EXE: &str = "/Applications/Markie.app/Contents/MacOS/Markie";
+    /// The executable of the Rust Mac builds up to 0.10.0-super-nightly.8.
+    const OLD_EXE: &str = "/Applications/Markie.app/Contents/MacOS/markie-rs";
     const V: &str = "0.1.0-super-nightly.7";
 
     fn version(text: &str) -> Version {
@@ -334,6 +336,8 @@ mod tests {
         let nightly = Channel::SuperNightly;
         let plan = decide(nightly, Some(Path::new(EXE)), false, false, V).unwrap();
         assert_eq!(plan, Plan { target: PathBuf::from("/Applications/Markie.app"), current: version(V) });
+        // A nightly still running as markie-rs updates the same bundle, and restarts it by its path.
+        assert_eq!(decide(nightly, Some(Path::new(OLD_EXE)), false, false, V).unwrap(), plan);
         // The dev build, a scratch data folder, a test server, a bare binary
         // from `cargo run`, and a version that is not a nightly's.
         assert_eq!(decide(Channel::None, Some(Path::new(EXE)), false, false, V), None);

@@ -275,6 +275,8 @@ export function verifyRelease(settings, tools = systemTools) {
     const info = JSON.parse(read.stdout);
     assert(info.CFBundleIdentifier === BUNDLE_ID && info.CFBundleName === APP_NAME, "The app in the ZIP is not Markie.");
     assert(info.CFBundleShortVersionString === settings.version && info.CFBundleVersion === settings.version, "The app in the ZIP is another version.");
+    // Squirrel.Mac names the installed app after the executable: only Electron's own name keeps /Applications/Markie.app.
+    assert(info.CFBundleExecutable === APP_NAME, `The app's executable is ${info.CFBundleExecutable}, not ${APP_NAME}: Squirrel.Mac would install it under another name.`);
     // The copyright line carries the build year, so it is left out of the comparison.
     const comparable = ({ NSHumanReadableCopyright: _year, ...rest }) => rest;
     assert(isDeepStrictEqual(comparable(info), comparable(infoPlist("nightly", settings.version))), "The app's Info.plist is not Markie's: its URL scheme and document types must be exactly Electron Markie's.");
@@ -288,7 +290,7 @@ export function verifyRelease(settings, tools = systemTools) {
     assert(tools.run("/usr/sbin/spctl", ["--assess", "--type", "execute", app]).ok, "Gatekeeper does not accept the app.");
     assert(tools.run("/usr/bin/xcrun", ["stapler", "validate", app], { env: process.env }).ok, "The notarization ticket is not stapled.");
     // The binary names the commit it was built from; it must be this checkout's.
-    const reported = tools.run(path.join(app, "Contents", "MacOS", "markie-rs"), ["--version"]);
+    const reported = tools.run(path.join(app, "Contents", "MacOS", APP_NAME), ["--version"]);
     assert(reported.ok && reported.stdout.trim() === `${APP_NAME} ${settings.version} (${BUNDLE_ID}) ${settings.gitCommit}`, "The app was not built from the checked-out commit at this version.");
   } finally { rmSync(temporary, { recursive: true, force: true }); }
   return {

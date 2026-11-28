@@ -68,7 +68,7 @@ function release(version = VERSION) {
   mkdirSync(path.join(app, "Contents", "Resources"), { recursive: true });
   mkdirSync(output);
   writeFileSync(path.join(app, "Contents", "Info.plist"), plistXml(infoPlist("nightly", version)));
-  const binary = path.join(app, "Contents", "MacOS", "markie-rs");
+  const binary = path.join(app, "Contents", "MacOS", infoPlist("nightly", version).CFBundleExecutable);
   writeFileSync(binary, `#!/bin/sh\necho "${APP_NAME} ${version} (${BUNDLE_ID}) ${COMMIT}"\n`);
   chmodSync(binary, 0o755);
   writeFileSync(path.join(app, "Contents", "Resources", "icon.icns"), "icon");

@@ -17,6 +17,7 @@ Both come from the same two feeds. An installed Electron Markie on Apple silicon
 |---|---|---|---|
 | Built with | electron-builder | `cargo build --features public` | `cargo build --features nightly` |
 | App, bundle id | `Markie.app`, `com.zvn.markie` | the same | the same |
+| Executable | `Contents/MacOS/Markie` | the same | the same, from the next nightly on (up to `0.10.0-super-nightly.8` it was `markie-rs`) |
 | URL scheme, document types | `markie://`, Markie's 21 | the same, entry for entry | the same |
 | Data folder | `~/Library/Application Support/markie` | `~/Library/Application Support/Markie App` | `…/Markie Nightly` |
 | Keychain services | "Markie Safe Storage" | "Markie App", "Markie App Vault" | "Markie Nightly", "Markie Nightly Vault" |
@@ -27,6 +28,8 @@ Both come from the same two feeds. An installed Electron Markie on Apple silicon
 | Updates from | `latest-mac.yml` or `beta-mac.yml` | the same files | the private gateway |
 
 The same name and bundle id make the switch an in-place update. macOS keeps the Dock icon, the default-app claims and the privacy grants, because to macOS it is the same app.
+
+The executable must be `Markie` too. Squirrel.Mac, inside an installed Electron Markie, names the installed bundle after the update's `CFBundleExecutable`: rc.1 carried the cargo binary's name, `markie-rs`, and the end-to-end test showed ShipIt installing it as `/Applications/markie-rs.app`. That breaks Dock items, the MCP path, scripts and Spotlight habits. The cargo binary is still `markie-rs`; `bundle-mac.sh` copies it in as `Contents/MacOS/Markie`, `public-release.sh`, `nightly-release.sh` and `nightly-publish.mjs` refuse any other name, and the Rust updater refuses a download whose executable is not `Markie`. The Rust updater itself swaps the whole bundle at its own path, so a nightly still running as `markie-rs` updates into a `Markie` one in place (`a_nightly_whose_executable_is_markie_rs_updates_into_one_named_markie`).
 
 `rust/crates/markie-core/src/paths.rs` holds the identity. The `public` feature selects it; `nightly` and `public` together do not compile.
 
@@ -160,7 +163,7 @@ The output, in `rust/target/public/<version>/`:
 
 `verify` requires, on the app and again on the app unpacked from the ZIP:
 
-- the Info.plist is exactly what `scripts/mac-info-plist.mjs public` writes;
+- the Info.plist is exactly what `scripts/mac-info-plist.mjs public` writes, with `CFBundleExecutable` `Markie`, and `Contents/MacOS` holds only `Markie`;
 - the binary is arm64 only and reports this name, version, bundle id and commit;
 - the MCP layout is the staged one, from the pinned commit;
 - the signature is valid, by `Developer ID Application: Kirby Campbell (3VU8SG5TD9)`, with the hardened runtime and a secure timestamp;

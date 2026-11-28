@@ -32,6 +32,8 @@ pub enum BundleError {
     Notarization,
     #[error("a macOS tool needed to check the update could not run")]
     Tool,
+    #[error("the update's executable is {found}, not {expected}")]
+    Executable { expected: String, found: String },
 }
 
 /// What a real bundle must be.
@@ -40,11 +42,15 @@ pub struct Expect {
     pub bundle_id: String,
     pub team_id: String,
     pub version: String,
+    /// `CFBundleExecutable`. Squirrel.Mac names the installed bundle after it,
+    /// so a Markie bundle carries Electron's own, "Markie", wherever it is
+    /// installed from.
+    pub executable: String,
 }
 
 impl Expect {
     pub fn markie(version: &crate::Version) -> Self {
-        Self { bundle_id: crate::BUNDLE_ID.into(), team_id: crate::TEAM_ID.into(), version: version.to_string() }
+        Self { bundle_id: crate::BUNDLE_ID.into(), team_id: crate::TEAM_ID.into(), version: version.to_string(), executable: crate::EXECUTABLE.into() }
     }
 
     /// The code requirement: this bundle id, Apple's Developer ID chain, this
@@ -231,6 +237,9 @@ pub fn verify(tools: &dyn Tools, app: &Path, expect: &Expect) -> Result<(), Bund
     if !plain_name || !std::fs::symlink_metadata(app.join("Contents/MacOS").join(&executable)).is_ok_and(|m| m.file_type().is_file()) {
         return Err(BundleError::Shape);
     }
+    if executable != expect.executable {
+        return Err(BundleError::Executable { expected: expect.executable.clone(), found: executable });
+    }
     Ok(())
 }
 
@@ -249,7 +258,7 @@ pub(crate) mod tests {
 
     pub(crate) fn display(identifier: &str, team: &str, authority: &str, flags: &str) -> String {
         format!(
-            "Executable=/tmp/x/Markie.app/Contents/MacOS/markie-rs\nIdentifier={identifier}\nFormat=app bundle with Mach-O thin (arm64)\n\
+            "Executable=/tmp/x/Markie.app/Contents/MacOS/Markie\nIdentifier={identifier}\nFormat=app bundle with Mach-O thin (arm64)\n\
              CodeDirectory v=20500 size=1234 flags={flags} hashes=30+7 location=embedded\nAuthority={authority}\n\
              Authority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTimestamp=24 Nov 2026 at 12:00:00\nTeamIdentifier={team}\n"
         )
@@ -296,19 +305,26 @@ pub(crate) mod tests {
         }
     }
 
-    /// A bundle-shaped folder with the given identity. Not signed.
+    /// A bundle-shaped folder with the given identity, its executable
+    /// "Markie" as every Markie bundle's. Not signed.
     pub(crate) fn fixture(parent: &Path, bundle_id: &str, version: &str, marker: &str) -> PathBuf {
+        fixture_with(parent, bundle_id, version, marker, crate::EXECUTABLE)
+    }
+
+    /// The same with another executable name: "markie-rs", as the Rust Mac
+    /// builds up to 0.10.0-super-nightly.8 carried it.
+    pub(crate) fn fixture_with(parent: &Path, bundle_id: &str, version: &str, marker: &str, executable: &str) -> PathBuf {
         let app = parent.join(crate::BUNDLE_NAME);
         std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
         std::fs::create_dir_all(app.join("Contents/Resources")).unwrap();
-        std::fs::write(app.join("Contents/MacOS/markie-rs"), format!("#!/bin/sh\necho {marker}\n")).unwrap();
+        std::fs::write(app.join("Contents/MacOS").join(executable), format!("#!/bin/sh\necho {marker}\n")).unwrap();
         std::fs::write(app.join("Contents/Resources/marker.txt"), marker).unwrap();
         std::fs::write(
             app.join("Contents/Info.plist"),
             format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
                  <plist version=\"1.0\"><dict>\n<key>CFBundleIdentifier</key><string>{bundle_id}</string>\n\
-                 <key>CFBundleShortVersionString</key><string>{version}</string>\n<key>CFBundleExecutable</key><string>markie-rs</string>\n\
+                 <key>CFBundleShortVersionString</key><string>{version}</string>\n<key>CFBundleExecutable</key><string>{executable}</string>\n\
                  <key>CFBundlePackageType</key><string>APPL</string>\n</dict></plist>\n"
             ),
         )
@@ -390,7 +406,7 @@ pub(crate) mod tests {
         // A missing executable, a missing plist, and a wrongly named bundle.
         let dir = tempfile::tempdir().unwrap();
         let app = fixture(dir.path(), "com.zvn.markie", VERSION, "x");
-        std::fs::remove_file(app.join("Contents/MacOS/markie-rs")).unwrap();
+        std::fs::remove_file(app.join("Contents/MacOS/Markie")).unwrap();
         assert_eq!(verify(&tools, &app, &expect()), Err(BundleError::Shape));
         std::fs::remove_file(app.join("Contents/Info.plist")).unwrap();
         assert_eq!(verify(&tools, &app, &expect()), Err(BundleError::Shape));
@@ -415,6 +431,15 @@ pub(crate) mod tests {
             let app = fixture(dir.path(), bundle_id, version, "x");
             assert_eq!(verify(&tools, &app, &public), Err(want), "{bundle_id} {version}");
         }
+    }
+
+    #[test]
+    fn a_bundle_must_carry_electrons_executable_name_or_squirrel_would_rename_the_app() {
+        let tools = FakeTools::good();
+        let dir = tempfile::tempdir().unwrap();
+        let app = fixture_with(dir.path(), "com.zvn.markie", VERSION, "x", "markie-rs");
+        assert_eq!(verify(&tools, &app, &expect()), Err(BundleError::Executable { expected: "Markie".into(), found: "markie-rs".into() }));
+        assert_eq!(expect().executable, "Markie");
     }
 
     #[test]

@@ -85,7 +85,11 @@ cargo build --release -p markie-app ${FEATURES[@]+"${FEATURES[@]}"}
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "${CARGO_TARGET_DIR:-target}/release/markie-rs" "$APP/Contents/MacOS/markie-rs"
+# The bundle executable is the identity's (mac-info-plist.mjs): "Markie" for
+# the Mac app, as Electron's, because Squirrel.Mac names the installed app
+# after it; "markie-rs" for the dev build. The cargo binary keeps its name.
+EXEC="$(node scripts/mac-info-plist.mjs --executable "$VARIANT")"
+cp "${CARGO_TARGET_DIR:-target}/release/markie-rs" "$APP/Contents/MacOS/$EXEC"
 if [[ "$VARIANT" == public ]]; then
   # Contents/Resources/mcp/markie-mcp.mjs, the path in people's agent
   # settings, hands over to the adapter; Electron's server, from a pinned
@@ -131,7 +135,8 @@ if [[ "$SCHEMES" != "$SCHEME " ]]; then
   echo "Info.plist claims '$SCHEMES', expected only $SCHEME" >&2; exit 1
 fi
 # The binary must agree with the bundle about what it is. No window opens.
-REPORTED="$("$APP/Contents/MacOS/markie-rs" --version)"
+[[ "$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" == "$EXEC" ]] || { echo "Info.plist names another executable than Contents/MacOS/$EXEC" >&2; exit 1; }
+REPORTED="$("$APP/Contents/MacOS/$EXEC" --version)"
 case "$REPORTED" in
   "$NAME $VERSION ($BUNDLE_ID)"*) ;;
   *) echo "The binary reports '$REPORTED', the bundle is $NAME $VERSION ($BUNDLE_ID)" >&2; exit 1 ;;

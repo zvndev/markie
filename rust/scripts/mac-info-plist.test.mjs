@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { infoPlist, plistXml } from "./mac-info-plist.mjs";
+import { executableFor, infoPlist, plistXml } from "./mac-info-plist.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // What Electron Markie 0.9.8-super-nightly.2's own Info.plist declares, read
@@ -43,7 +43,9 @@ test("the Mac app declares exactly what Electron Markie declares", { skip: proce
   assert.equal(plist.CFBundleDocumentTypes.length, 21);
   assert.equal(plist.CFBundleShortVersionString, VERSION);
   assert.equal(plist.CFBundleVersion, VERSION);
-  assert.equal(plist.CFBundleExecutable, "markie-rs");
+  // Electron's own executable name: Squirrel.Mac names the installed app after it.
+  assert.equal(plist.CFBundleExecutable, electron.CFBundleExecutable ?? "Markie");
+  assert.equal(plist.CFBundleExecutable, "Markie");
   assert.equal(plist.CFBundlePackageType, "APPL");
 });
 
@@ -55,12 +57,14 @@ test("the public Mac app declares the same plist as the nightly, with its own ve
   assert.deepEqual(pub.CFBundleDocumentTypes, electron.CFBundleDocumentTypes);
   assert.deepEqual(pub.CFBundleURLTypes, electron.CFBundleURLTypes);
   assert.equal(asMacReads(infoPlist("public", "0.10.0-rc.1")).CFBundleShortVersionString, "0.10.0-rc.1");
+  assert.equal(pub.CFBundleExecutable, "Markie");
 });
 
 test("the dev build claims its own scheme and no file types", { skip: process.platform !== "darwin" && "needs plutil" }, () => {
   const plist = asMacReads(infoPlist("rs", "0.10.0"));
   assert.equal(plist.CFBundleIdentifier, "com.zvn.markie.rs");
   assert.equal(plist.CFBundleName, "Markie RS");
+  assert.equal(plist.CFBundleExecutable, "markie-rs", "the dev build keeps its own executable name");
   assert.deepEqual(plist.CFBundleURLTypes, [{ CFBundleURLName: "com.zvn.markie.rs", CFBundleTypeRole: "Viewer", CFBundleURLSchemes: ["markie-rs"] }]);
   for (const key of ["CFBundleDocumentTypes", "UTExportedTypeDeclarations", "UTImportedTypeDeclarations"]) assert.equal(plist[key], undefined, key);
 });
@@ -68,6 +72,10 @@ test("the dev build claims its own scheme and no file types", { skip: process.pl
 test("refuses a variant or version it does not know, and a config that is not Markie's", () => {
   assert.throws(() => infoPlist("stable", VERSION), /rs, nightly or public/);
   assert.throws(() => infoPlist("toString", VERSION), /rs, nightly or public/);
+  assert.deepEqual(["rs", "nightly", "public"].map(executableFor), ["markie-rs", "Markie", "Markie"]);
+  assert.throws(() => executableFor("stable"), /rs, nightly or public/);
+  const cli = spawnSync(process.execPath, [path.join(here, "mac-info-plist.mjs"), "--executable", "public"], { encoding: "utf8" });
+  assert.equal(cli.stdout, "Markie\n");
   assert.throws(() => infoPlist("nightly", ""), /version is required/);
   assert.throws(() => infoPlist("nightly", "1.0 <script>"), /version is required/);
   assert.throws(() => infoPlist("nightly", VERSION, { appId: "com.example.other", productName: "Markie" }), /not Markie's/);

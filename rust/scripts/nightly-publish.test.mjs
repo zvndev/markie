@@ -35,7 +35,7 @@ function release(options = {}) {
   mkdirSync(path.join(app, "Contents", "MacOS"), { recursive: true });
   mkdirSync(output);
   writeFileSync(path.join(app, "Contents", "Info.plist"), plistFor(options));
-  const binary = path.join(app, "Contents", "MacOS", "markie-rs");
+  const binary = path.join(app, "Contents", "MacOS", options.executable ?? "Markie");
   writeFileSync(binary, `#!/bin/sh\necho "${APP_NAME} ${options.reportedVersion ?? VERSION} (${BUNDLE_ID}) ${options.reportedCommit ?? COMMIT}"\n`);
   chmodSync(binary, 0o755);
   const zip = path.join(output, ZIP_NAME);
@@ -45,7 +45,7 @@ function release(options = {}) {
   return { root, output, zip, settings, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-const goodDisplay = `Executable=/tmp/x/${BUNDLE_NAME}/Contents/MacOS/markie-rs\nIdentifier=${BUNDLE_ID}\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=1234 flags=0x10000(runtime) hashes=30+7 location=embedded\nAuthority=${IDENTITY}\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTimestamp=24 Nov 2026 at 12:00:00\nTeamIdentifier=${TEAM_ID}\n`;
+const goodDisplay = `Executable=/tmp/x/${BUNDLE_NAME}/Contents/MacOS/Markie\nIdentifier=${BUNDLE_ID}\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=1234 flags=0x10000(runtime) hashes=30+7 location=embedded\nAuthority=${IDENTITY}\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTimestamp=24 Nov 2026 at 12:00:00\nTeamIdentifier=${TEAM_ID}\n`;
 
 /** Real ditto, plutil and the fixture binary; scripted codesign, spctl and stapler. */
 function fakeTools(overrides = {}) {
@@ -197,7 +197,7 @@ test("verify passes a right release and names each wrong one", macOnly, () => {
     assert.match(calls, /spctl --assess --type execute/);
     assert.match(calls, /xcrun stapler validate/);
     // Nothing from the ZIP runs before the signature checks.
-    assert.ok(tools.calls.findIndex((c) => c.endsWith("markie-rs --version")) > tools.calls.findIndex((c) => c.startsWith("/usr/bin/xcrun")));
+    assert.ok(tools.calls.findIndex((c) => c.endsWith("MacOS/Markie --version")) > tools.calls.findIndex((c) => c.startsWith("/usr/bin/xcrun")));
     for (const [change, message] of [
       [{ sealed: false }, /code signature is not valid/], [{ ours: false }, /Electron Markie's designated requirement/], [{ gatekeeper: false }, /Gatekeeper/], [{ stapled: false }, /not stapled/],
       [{ display: goodDisplay.replace(TEAM_ID + "\n", "AAAAAAAAAA\n") }, /signing team/],
@@ -229,6 +229,8 @@ test("verify refuses another app, another version, or any other scheme or file t
     ["a document type taken at a higher rank", { change: (p) => { p.CFBundleDocumentTypes[2].LSHandlerRank = "Owner"; } }, /not Markie's/],
     ["an added key", { change: (p) => { p.LSUIElement = true; } }, /not Markie's/],
     ["a binary of another version", { reportedVersion: "0.10.0-super-nightly.6" }, /not built from the checked-out commit at this version/],
+    // Squirrel.Mac names the installed app after the executable: markie-rs would land as /Applications/markie-rs.app.
+    ["the cargo binary's name as the executable", { executable: "markie-rs", change: (p) => { p.CFBundleExecutable = "markie-rs"; } }, /executable is markie-rs, not Markie/],
   ]) {
     const r = release(options);
     try { createFeed(r.settings); assert.throws(() => verifyRelease(r.settings, fakeTools()), message, label); }

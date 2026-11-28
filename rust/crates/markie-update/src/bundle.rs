@@ -28,6 +28,8 @@ pub enum BundleError {
     Team,
     #[error("macOS Gatekeeper does not accept the update")]
     Gatekeeper,
+    #[error("the update is not notarized by Apple")]
+    Notarization,
     #[error("a macOS tool needed to check the update could not run")]
     Tool,
 }
@@ -41,7 +43,7 @@ pub struct Expect {
 }
 
 impl Expect {
-    pub fn markie(version: &crate::NightlyVersion) -> Self {
+    pub fn markie(version: &crate::Version) -> Self {
         Self { bundle_id: crate::BUNDLE_ID.into(), team_id: crate::TEAM_ID.into(), version: version.to_string() }
     }
 
@@ -206,9 +208,14 @@ pub fn verify(tools: &dyn Tools, app: &Path, expect: &Expect) -> Result<(), Bund
     if !signature.hardened_runtime {
         return Err(BundleError::Signature);
     }
-    let gatekeeper = ok(tools, SPCTL, &["--assess".as_ref(), "--type".as_ref(), "execute".as_ref(), app.as_os_str()])?;
+    let gatekeeper = ok(tools, SPCTL, &["--assess".as_ref(), "--type".as_ref(), "execute".as_ref(), "--verbose=2".as_ref(), app.as_os_str()])?;
     if !gatekeeper.status.success() {
         return Err(BundleError::Gatekeeper);
+    }
+    // Accepted because Apple notarized it, not by a local rule or exception:
+    // spctl names the reason on stderr.
+    if !String::from_utf8_lossy(&gatekeeper.stderr).lines().any(|line| line.trim() == "source=Notarized Developer ID") {
+        return Err(BundleError::Notarization);
     }
     // Now the sealed Info.plist: this app, and the version the feed promised.
     let plist = app.join("Contents/Info.plist");
@@ -237,7 +244,7 @@ pub(crate) mod tests {
     pub(crate) const VERSION: &str = "0.1.0-super-nightly.7";
 
     pub(crate) fn expect() -> Expect {
-        Expect::markie(&crate::NightlyVersion::parse(VERSION).unwrap())
+        Expect::markie(&crate::Version::parse(VERSION).unwrap())
     }
 
     pub(crate) fn display(identifier: &str, team: &str, authority: &str, flags: &str) -> String {
@@ -259,12 +266,14 @@ pub(crate) mod tests {
         pub ours: bool,
         pub display: String,
         pub gatekeeper: bool,
+        /// What spctl names as the reason it accepted the bundle.
+        pub source: &'static str,
         pub calls: RefCell<Vec<String>>,
     }
 
     impl FakeTools {
         pub fn good() -> Self {
-            Self { sealed: true, ours: true, display: good_display(), gatekeeper: true, calls: RefCell::new(Vec::new()) }
+            Self { sealed: true, ours: true, display: good_display(), gatekeeper: true, source: "Notarized Developer ID", calls: RefCell::new(Vec::new()) }
         }
     }
 
@@ -281,7 +290,7 @@ pub(crate) mod tests {
                 CODESIGN if args.contains(&OsStr::new("--display")) => answer(true, &self.display),
                 CODESIGN if args.contains(&OsStr::new("-R")) => answer(self.ours, ""),
                 CODESIGN => answer(self.sealed, ""),
-                SPCTL => answer(self.gatekeeper, ""),
+                SPCTL => answer(self.gatekeeper, &format!("{}: accepted\nsource={}\n", args.last().map(|a| a.to_string_lossy()).unwrap_or_default(), self.source)),
                 _ => SystemTools.run(program, args),
             }
         }
@@ -354,6 +363,10 @@ pub(crate) mod tests {
         assert_eq!(failing(|t| t.sealed = false), Err(BundleError::Signature));
         assert_eq!(failing(|t| t.ours = false), Err(BundleError::Team));
         assert_eq!(failing(|t| t.gatekeeper = false), Err(BundleError::Gatekeeper));
+        // Accepted, but not for Apple's notarization: a local rule, or a bare Developer ID.
+        assert_eq!(failing(|t| t.source = "Developer ID"), Err(BundleError::Notarization));
+        assert_eq!(failing(|t| t.source = "no usable signature"), Err(BundleError::Notarization));
+        assert_eq!(failing(|t| t.source = "Notarized Developer ID (local override)"), Err(BundleError::Notarization));
         assert_eq!(failing(|t| t.display = display("com.zvn.markie", "AAAAAAAAAA", "Developer ID Application: Someone Else (AAAAAAAAAA)", "0x10000(runtime)")), Err(BundleError::Team));
         assert_eq!(failing(|t| t.display = display("com.zvn.markie", "not set", "", "0x2(adhoc)")), Err(BundleError::Team));
         assert_eq!(failing(|t| t.display = display("com.zvn.markie", "3VU8SG5TD9", "Apple Development: Kirby Campbell (3VU8SG5TD9)", "0x10000(runtime)")), Err(BundleError::Team));
@@ -384,6 +397,24 @@ pub(crate) mod tests {
         let renamed = dir.path().join("Markie Nightly.app");
         std::fs::rename(&app, &renamed).unwrap();
         assert_eq!(verify(&tools, &renamed, &expect()), Err(BundleError::Shape));
+    }
+
+    #[test]
+    fn a_public_release_must_be_exactly_the_feeds_version_too() {
+        let tools = FakeTools::good();
+        let public = Expect::markie(&crate::Version::parse("0.10.0").unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let app = fixture(dir.path(), "com.zvn.markie", "0.10.0", "x");
+        assert_eq!(verify(&tools, &app, &public), Ok(()));
+        for (bundle_id, version, want) in [
+            ("com.zvn.markie", "0.9.7", BundleError::Version { expected: "0.10.0".into(), found: "0.9.7".into() }),
+            ("com.zvn.markie", "0.10.0-rc.1", BundleError::Version { expected: "0.10.0".into(), found: "0.10.0-rc.1".into() }),
+            ("com.zvn.markie.rs", "0.10.0", BundleError::Identity),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let app = fixture(dir.path(), bundle_id, version, "x");
+            assert_eq!(verify(&tools, &app, &public), Err(want), "{bundle_id} {version}");
+        }
     }
 
     #[test]

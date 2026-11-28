@@ -11,6 +11,11 @@ publish.workspace = true
 # markie:// scheme, with a data folder of its own. Without it, the dev side
 # build "Markie RS". src/paths.rs, docs/rust-port/NIGHTLY.md.
 nightly = []
+# The public Mac app, from 0.10.0 on Apple silicon: the same name, bundle id
+# and scheme as `nightly`, its own data folder ("Markie App"), the public
+# stable and early-access feeds, and the import from Electron's stable profile.
+# Never together with `nightly`. docs/rust-port/PUBLIC.md.
+public = []
 
 [dependencies]
 anyhow.workspace = true

@@ -1,7 +1,7 @@
 //! Which app this build is, and where it keeps its own data.
 //!
-//! Two builds come out of this source, chosen by the `nightly` cargo feature
-//! and nothing else:
+//! Three builds come out of this source, chosen by the cargo features
+//! `nightly` and `public` and nothing else:
 //!
 //! - **Markie RS**, the default: the dev side build. Its own name, bundle id
 //!   and `markie-rs://` scheme, so it never answers for Markie.
@@ -10,24 +10,34 @@
 //!   `markie://`, Markie's document types), because the installed Electron
 //!   super-nightly updates itself into it and macOS must see one app
 //!   (docs/rust-port/NIGHTLY.md).
+//! - **Markie**, with `public`: the public Mac app on Apple silicon from
+//!   0.10.0. The same identity again, so the installed Electron Markie
+//!   updates itself into it in place; the public stable and early-access
+//!   feeds; and the import from Electron's stable profile
+//!   (docs/rust-port/PUBLIC.md).
 //!
-//! Whatever the identity, the data never mixes with Electron Markie's.
-//! `PROFILE_NAME` names the data folder, the Keychain services and the cloud
-//! folder, and it is never one of Electron's folders (`markie`, which the
-//! Mac's disk also reads as `Markie`, and `Markie Super-nightly`). The
-//! Electron profile is only ever read, from a copy, by the first-run import.
-//!
-//! The public Mac release, when it comes, is a third identity block here: the
-//! same name and bundle id, its own `PROFILE_NAME`, `CHANNEL` and
-//! `ELECTRON_PROFILE` (`markie`). Windows stays on Electron and reads none of
+//! Whatever the identity, the data never mixes with Electron Markie's or with
+//! another Rust build's. `PROFILE_NAME` names the data folder, the Keychain
+//! services and the cloud folder, and it is never one of Electron's folders
+//! (`markie`, which the Mac's disk also reads as `Markie`, and
+//! `Markie Super-nightly`). The Electron profile is only ever read, from a
+//! copy, by the first-run import. Windows stays on Electron and reads none of
 //! this.
 
 use std::path::PathBuf;
 
+#[cfg(all(feature = "nightly", feature = "public"))]
+compile_error!("the `nightly` and `public` features are two different apps; build one at a time");
+
 /// The Mac app on the super-nightly channel, as opposed to the dev build.
 pub const NIGHTLY: bool = cfg!(feature = "nightly");
+/// The public Mac app, on the stable and early-access feeds.
+pub const PUBLIC: bool = cfg!(feature = "public");
+/// A build that is Markie on the Mac: `com.zvn.markie`, `markie://` and
+/// Markie's document types. Either channel; never the dev build.
+pub const MAC_APP: bool = NIGHTLY || PUBLIC;
 
-#[cfg(not(feature = "nightly"))]
+#[cfg(not(any(feature = "nightly", feature = "public")))]
 mod identity {
     pub const APP_NAME: &str = "Markie RS";
     pub const BUNDLE_ID: &str = "com.zvn.markie.rs";
@@ -47,6 +57,24 @@ mod identity {
     pub const CHANNEL: &str = "super-nightly";
     pub const ELECTRON_PROFILE: Option<&str> = Some("Markie Super-nightly");
 }
+#[cfg(all(feature = "public", not(feature = "nightly")))]
+mod identity {
+    pub const APP_NAME: &str = "Markie";
+    pub const BUNDLE_ID: &str = "com.zvn.markie";
+    pub const URL_SCHEME: &str = "markie";
+    pub const URL_SCHEME_PREFIX: &str = "markie://";
+    /// Not "Markie": the Mac's disk reads that as Electron's stable `markie`,
+    /// which a roll back to Electron must find untouched. Not "Markie RS" or
+    /// "Markie Nightly", the other Rust builds', which may sit on the same Mac.
+    /// "Markie App" reads plainly in Application Support, Keychain Access and
+    /// Documents, and stays right after Electron is gone from the Mac.
+    pub const PROFILE_NAME: &str = "Markie App";
+    /// The stable feed; early access is a setting on top of it.
+    pub const CHANNEL: &str = "stable";
+    /// Electron Markie stable's userData folder: `app.getPath("userData")`
+    /// is named for package.json's `name`, "markie". Never the super-nightly's.
+    pub const ELECTRON_PROFILE: Option<&str> = Some("markie");
+}
 /// What the user sees: the menu bar, the window, About.
 pub use identity::APP_NAME;
 /// What macOS sees: the bundle id and the one URL scheme the bundle claims.
@@ -64,23 +92,41 @@ pub use identity::{CHANNEL, ELECTRON_PROFILE};
 /// compared the way the Mac's disk compares names.
 pub const ELECTRON_PROFILES: &[&str] = &["markie", "Markie Super-nightly"];
 
+/// Every data folder name a Rust build uses. No two are the same to the disk.
+pub const RUST_PROFILES: &[&str] = &["Markie RS", "Markie Nightly", "Markie App"];
+
 /// The version this build reports. The nightly carries `X.Y.Z-super-nightly.N`,
 /// given to the compiler as `MARKIE_NIGHTLY_VERSION` by
 /// `scripts/nightly-release.sh`; a nightly built without it is `.0`, which
-/// every published nightly is newer than.
+/// every published nightly is newer than. The public app carries `X.Y.Z` (or
+/// `X.Y.Z-rc.N` for a release candidate), given as `MARKIE_PUBLIC_VERSION` by
+/// `scripts/public-release.sh`; built without it, it is the workspace version.
 pub const APP_VERSION: &str = if NIGHTLY {
     match option_env!("MARKIE_NIGHTLY_VERSION") {
         Some(version) => version,
         None => concat!(env!("CARGO_PKG_VERSION"), "-super-nightly.0"),
     }
+} else if PUBLIC {
+    match option_env!("MARKIE_PUBLIC_VERSION") {
+        Some(version) => version,
+        None => env!("CARGO_PKG_VERSION"),
+    }
 } else {
     env!("CARGO_PKG_VERSION")
 };
 
-/// The commit a nightly was built from (`MARKIE_NIGHTLY_COMMIT`), or "".
-pub const BUILD_COMMIT: &str = match option_env!("MARKIE_NIGHTLY_COMMIT") {
-    Some(commit) => commit,
-    None => "",
+/// The commit a release was built from (`MARKIE_NIGHTLY_COMMIT` for the
+/// nightly, `MARKIE_PUBLIC_COMMIT` for the public app), or "".
+pub const BUILD_COMMIT: &str = if PUBLIC {
+    match option_env!("MARKIE_PUBLIC_COMMIT") {
+        Some(commit) => commit,
+        None => "",
+    }
+} else {
+    match option_env!("MARKIE_NIGHTLY_COMMIT") {
+        Some(commit) => commit,
+        None => "",
+    }
 };
 
 pub fn data_dir() -> PathBuf {
@@ -121,7 +167,24 @@ mod tests {
         if let Some(source) = ELECTRON_PROFILE {
             assert!(ELECTRON_PROFILES.contains(&source), "the import reads a real Electron profile name");
         }
-        if NIGHTLY {
+        // Each Rust build has its own folder, and this build's is one of them.
+        assert!(RUST_PROFILES.contains(&PROFILE_NAME));
+        for (at, one) in RUST_PROFILES.iter().enumerate() {
+            for other in &RUST_PROFILES[at + 1..] {
+                assert!(!one.eq_ignore_ascii_case(other), "{one} and {other}");
+            }
+            for electron in ELECTRON_PROFILES {
+                assert!(!one.eq_ignore_ascii_case(electron), "{one} is Electron's {electron}");
+            }
+        }
+        assert_eq!(MAC_APP, NIGHTLY || PUBLIC);
+        assert!(!(NIGHTLY && PUBLIC));
+        if PUBLIC {
+            // The public Mac app: Markie's identity, Electron stable's profile as the import source.
+            assert_eq!((APP_NAME, BUNDLE_ID, URL_SCHEME), ("Markie", "com.zvn.markie", "markie"));
+            assert_eq!((PROFILE_NAME, CHANNEL, ELECTRON_PROFILE), ("Markie App", "stable", Some("markie")));
+            assert!(!APP_VERSION.contains("nightly"), "{APP_VERSION}");
+        } else if NIGHTLY {
             // The Mac app itself: Markie's identity, so Electron's updater installs it over Electron.
             assert_eq!((APP_NAME, BUNDLE_ID, URL_SCHEME), ("Markie", "com.zvn.markie", "markie"));
             assert_eq!((PROFILE_NAME, CHANNEL, ELECTRON_PROFILE), ("Markie Nightly", "super-nightly", Some("Markie Super-nightly")));

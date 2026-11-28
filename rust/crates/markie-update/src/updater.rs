@@ -3,22 +3,23 @@
 use crate::bundle::{self, BundleError, Expect, Tools};
 use crate::gateway::{FeedAnswer, Gateway, GatewayError, sendable_token};
 use crate::swap::{self, SwapError};
-use crate::{NightlyVersion, archive};
+use crate::{Version, archive};
 use std::path::{Path, PathBuf};
 
 /// How a check ended without an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// No Markie Cloud session: nothing was asked of the gateway.
+    /// No Markie Cloud session on a lane that needs one: nothing was asked
+    /// of the gateway. Never the answer on the public lanes.
     SignedOut,
     /// The gateway has nothing for this account.
     NotAvailable,
     /// The feed's version is the running one, or older.
-    UpToDate { current: NightlyVersion },
+    UpToDate { current: Version },
     /// `version` was swapped in earlier in this run; a restart starts it.
-    RestartPending { version: NightlyVersion },
+    RestartPending { version: Version },
     /// `version` was verified and is now the installed bundle.
-    Installed { version: NightlyVersion, previous: Option<PathBuf> },
+    Installed { version: Version, previous: Option<PathBuf> },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +40,7 @@ pub struct Updater<'a> {
     pub gateway: &'a Gateway,
     pub tools: &'a dyn Tools,
     /// The version of the running process.
-    pub current: NightlyVersion,
+    pub current: Version,
     /// The bundle the running process was started from.
     pub target: PathBuf,
     /// A private folder of this app's: downloads are staged in `staging`
@@ -54,10 +55,16 @@ pub fn paused_marker(work_dir: &Path) -> PathBuf {
 }
 
 impl Updater<'_> {
-    /// `token`: the Markie Cloud bearer token, if signed in. `pending`: a
-    /// version this process already installed and has not restarted into.
-    pub fn run(&self, token: Option<&str>, pending: Option<NightlyVersion>) -> Result<Outcome, UpdateError> {
-        let Some(token) = token.filter(|t| sendable_token(t)) else { return Ok(Outcome::SignedOut) };
+    /// `token`: the Markie Cloud bearer token, if signed in; only a lane that
+    /// takes one ever sees it. `pending`: a version this process already
+    /// installed and has not restarted into.
+    pub fn run(&self, token: Option<&str>, pending: Option<Version>) -> Result<Outcome, UpdateError> {
+        let token = if self.gateway.lane().token {
+            let Some(token) = token.filter(|t| sendable_token(t)) else { return Ok(Outcome::SignedOut) };
+            Some(token)
+        } else {
+            None
+        };
         let feed = match self.gateway.feed(token)? {
             FeedAnswer::NotAvailable => return Ok(Outcome::NotAvailable),
             FeedAnswer::Feed(feed) => feed,
@@ -87,7 +94,7 @@ impl Updater<'_> {
         Ok(Outcome::Installed { version: feed.version, previous })
     }
 
-    fn stage_and_install(&self, token: &str, feed: &crate::feed::Feed, staging: &Path) -> Result<Option<PathBuf>, UpdateError> {
+    fn stage_and_install(&self, token: Option<&str>, feed: &crate::feed::Feed, staging: &Path) -> Result<Option<PathBuf>, UpdateError> {
         let zip = staging.join(&feed.artifact);
         self.gateway.download(token, feed, &zip)?;
         archive::inspect(&mut std::fs::File::open(&zip)?)?;
@@ -144,8 +151,8 @@ mod tests {
     impl Scene {
         fn run(&self, tools: &FakeTools, token: Option<&str>, pending: Option<&str>) -> Result<Outcome, UpdateError> {
             let gateway = self.mocked.gateway();
-            let updater = Updater { gateway: &gateway, tools, current: NightlyVersion::parse(OLD).unwrap(), target: self.target.clone(), work_dir: self.work_dir.clone() };
-            updater.run(token, pending.map(|p| NightlyVersion::parse(p).unwrap()))
+            let updater = Updater { gateway: &gateway, tools, current: Version::parse(OLD).unwrap(), target: self.target.clone(), work_dir: self.work_dir.clone() };
+            updater.run(token, pending.map(|p| Version::parse(p).unwrap()))
         }
         fn untouched(&self) {
             assert_eq!(marker(&self.target), "old", "the installed bundle must not change");
@@ -160,7 +167,7 @@ mod tests {
         s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
         let outcome = s.run(&FakeTools::good(), Some(TOKEN), None).unwrap();
         let previous = s.work_dir.join("previous").join(BUNDLE_NAME);
-        assert_eq!(outcome, Outcome::Installed { version: NightlyVersion::parse(VERSION).unwrap(), previous: Some(previous.clone()) });
+        assert_eq!(outcome, Outcome::Installed { version: Version::parse(VERSION).unwrap(), previous: Some(previous.clone()) });
         assert_eq!(marker(&s.target), "new");
         assert_eq!(marker(&previous), "old");
         assert!(!s.work_dir.join("staging").exists());
@@ -172,7 +179,7 @@ mod tests {
             assert_eq!(request.headers.get("authorization").unwrap(), &format!("Bearer {TOKEN}"));
         }
         // The same process checking again does not download it a second time.
-        assert_eq!(s.run(&FakeTools::good(), Some(TOKEN), Some(VERSION)).unwrap(), Outcome::RestartPending { version: NightlyVersion::parse(VERSION).unwrap() });
+        assert_eq!(s.run(&FakeTools::good(), Some(TOKEN), Some(VERSION)).unwrap(), Outcome::RestartPending { version: Version::parse(VERSION).unwrap() });
         assert_eq!(s.mocked.requests().len(), 3);
     }
 
@@ -194,7 +201,7 @@ mod tests {
         for published in [OLD, "0.1.0-super-nightly.5", "0.0.9-super-nightly.99"] {
             let s = scene();
             s.mocked.publish(published, &zipped(s.dir.path(), "com.zvn.markie", published, "new"));
-            assert_eq!(s.run(&FakeTools::good(), Some(TOKEN), None).unwrap(), Outcome::UpToDate { current: NightlyVersion::parse(OLD).unwrap() });
+            assert_eq!(s.run(&FakeTools::good(), Some(TOKEN), None).unwrap(), Outcome::UpToDate { current: Version::parse(OLD).unwrap() });
             assert_eq!(s.mocked.requests().len(), 1, "no download for {published}");
             s.untouched();
         }
@@ -230,7 +237,7 @@ mod tests {
         let s = scene();
         s.mocked.publish(VERSION, &zipped(s.dir.path(), "com.zvn.markie", VERSION, "new"));
         let gateway = s.mocked.gateway();
-        let updater = Updater { gateway: &gateway, tools: &bundle::SystemTools, current: NightlyVersion::parse(OLD).unwrap(), target: s.target.clone(), work_dir: s.work_dir.clone() };
+        let updater = Updater { gateway: &gateway, tools: &bundle::SystemTools, current: Version::parse(OLD).unwrap(), target: s.target.clone(), work_dir: s.work_dir.clone() };
         assert!(matches!(updater.run(Some(TOKEN), None), Err(UpdateError::Bundle(BundleError::Signature))));
         s.untouched();
     }
@@ -280,26 +287,165 @@ mod tests {
     }
 
     /// The updater's own checks, on a real release ZIP, before it is published:
-    /// what an installed nightly will do with this exact file, short of the swap.
+    /// what an installed Markie will do with this exact file, short of the swap.
+    /// A super-nightly ZIP or a public one (`rust/target/public/<version>/`).
     ///
-    ///   MARKIE_NIGHTLY_ZIP=<path to Markie-X.Y.Z-super-nightly.N-arm64.zip> \
+    ///   MARKIE_RELEASE_ZIP=<path to Markie-<version>-arm64.zip> \
     ///     cargo test -p markie-update the_updater_accepts_the_release_zip -- --ignored
+    ///
+    /// `MARKIE_NIGHTLY_ZIP` is read too, as the nightly runbook names it.
     #[test]
-    #[ignore = "needs MARKIE_NIGHTLY_ZIP: a signed, notarized release ZIP"]
+    #[ignore = "needs MARKIE_RELEASE_ZIP: a signed, notarized release ZIP"]
     fn the_updater_accepts_the_release_zip() {
-        let zip = PathBuf::from(std::env::var_os("MARKIE_NIGHTLY_ZIP").expect("set MARKIE_NIGHTLY_ZIP to the release ZIP"));
+        let zip = std::env::var_os("MARKIE_RELEASE_ZIP").or_else(|| std::env::var_os("MARKIE_NIGHTLY_ZIP"));
+        let zip = PathBuf::from(zip.expect("set MARKIE_RELEASE_ZIP to the release ZIP"));
         let name = zip.file_name().and_then(|n| n.to_str()).expect("a file name");
         let version = name
             .strip_prefix("Markie-")
             .and_then(|n| n.strip_suffix("-arm64.zip"))
-            .and_then(NightlyVersion::parse)
+            .and_then(Version::parse)
             .expect("the ZIP must be named Markie-<version>-arm64.zip");
+        assert!(version.is_super_nightly() || version.is_public(), "{version} is no channel's version");
         assert_eq!(crate::feed::artifact_name(&version), name);
         let contents = archive::inspect(&mut std::fs::File::open(&zip).unwrap()).expect("the ZIP's table of contents");
         let dir = tempfile::tempdir().unwrap();
         let app = bundle::unpack(&bundle::SystemTools, &zip, &dir.path().join("unpacked")).expect("unpacking");
-        bundle::verify(&bundle::SystemTools, &app, &Expect::markie(&version)).expect("an installed nightly would refuse this ZIP");
+        bundle::verify(&bundle::SystemTools, &app, &Expect::markie(&version)).expect("an installed Markie would refuse this ZIP");
         eprintln!("accepted {name}: {} entries, {} bytes unpacked", contents.entries, contents.expanded_bytes);
+    }
+
+    // ---------------------------------------------------------------- public lanes
+
+    const CURRENT: &str = "0.10.0";
+    const NEXT: &str = "0.10.1";
+
+    /// The public Mac app at 0.10.0 in /Applications, and a mock public store.
+    fn public_scene() -> Scene {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("Applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        let target = fixture(&apps, "com.zvn.markie", CURRENT, "old");
+        let work_dir = dir.path().join("data/updates");
+        Scene { dir, target, work_dir, mocked: Mocked::start() }
+    }
+
+    impl Scene {
+        fn run_public(&self, tools: &FakeTools, early_access: bool) -> Result<Outcome, UpdateError> {
+            let gateway = self.mocked.public_gateway(crate::public_lane(early_access));
+            let updater = Updater { gateway: &gateway, tools, current: Version::parse(CURRENT).unwrap(), target: self.target.clone(), work_dir: self.work_dir.clone() };
+            // A Markie Cloud token, as a signed-in app holds one: never sent here.
+            updater.run(Some(TOKEN), None)
+        }
+        fn paths(&self) -> Vec<String> {
+            self.mocked.requests().iter().map(|r| r.url.path().to_string()).collect()
+        }
+    }
+
+    fn intel_zip(dir: &Path, version: &str) -> Vec<u8> {
+        // Electron for Intel Macs: Markie's identity too, so only the feed's
+        // file name and the arm64-only rule keep it off this Mac.
+        zipped(dir, "com.zvn.markie", version, "intel")
+    }
+
+    #[test]
+    fn the_public_app_takes_the_arm64_zip_from_the_stable_feed_without_signing_in() {
+        let s = public_scene();
+        let arm = zipped(s.dir.path(), "com.zvn.markie", NEXT, "new");
+        s.mocked.publish_public(&crate::PUBLIC_STABLE, NEXT, &arm, &intel_zip(s.dir.path(), NEXT));
+        let outcome = s.run_public(&FakeTools::good(), false).unwrap();
+        assert!(matches!(outcome, Outcome::Installed { version, .. } if version.to_string() == NEXT));
+        assert_eq!(marker(&s.target), "new", "the arm64 bundle, never the x64 one");
+        assert_eq!(s.paths(), ["/markie-releases/mac/latest-mac.yml", "/markie-releases/mac/Markie-0.10.1-arm64.zip"]);
+        assert!(s.mocked.requests().iter().all(|r| r.headers.get("authorization").is_none()), "no token on the public store");
+    }
+
+    #[test]
+    fn early_access_reads_the_beta_feed() {
+        let s = public_scene();
+        let arm = zipped(s.dir.path(), "com.zvn.markie", NEXT, "new");
+        s.mocked.publish_public(&crate::PUBLIC_EARLY, NEXT, &arm, &intel_zip(s.dir.path(), NEXT));
+        assert!(matches!(s.run_public(&FakeTools::good(), true).unwrap(), Outcome::Installed { .. }));
+        assert_eq!(s.paths(), ["/markie-releases/mac/beta-mac.yml", "/markie-releases/mac/Markie-0.10.1-arm64.zip"]);
+        // With early access off, the same Mac reads only the stable feed, which here has nothing.
+        let s = public_scene();
+        s.mocked.publish_public(&crate::PUBLIC_EARLY, NEXT, &arm, &intel_zip(s.dir.path(), NEXT));
+        assert_eq!(s.run_public(&FakeTools::good(), false).unwrap(), Outcome::NotAvailable);
+        assert_eq!(s.paths(), ["/markie-releases/mac/latest-mac.yml"]);
+        s.untouched();
+    }
+
+    #[test]
+    fn the_public_app_never_takes_the_x64_zip() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        // An Intel-only feed, the shape Electron published before arm64 was split off.
+        let s = public_scene();
+        let intel = intel_zip(s.dir.path(), NEXT);
+        let text = crate::feed::tests::public_feed_text(NEXT, b"unused", &intel);
+        let arm_entry = format!("  - url: Markie-{NEXT}-arm64.zip\n    sha512: {}\n    size: 6\n", crate::feed::tests::sha(b"unused"));
+        s.mocked.mount(Mock::given(method("GET")).and(path("/markie-releases/mac/latest-mac.yml")).respond_with(ResponseTemplate::new(200).set_body_string(text.replace(&arm_entry, ""))));
+        assert!(matches!(s.run_public(&FakeTools::good(), false), Err(UpdateError::Gateway(GatewayError::Feed(crate::feed::FeedError::Artifact)))));
+        assert_eq!(s.paths(), ["/markie-releases/mac/latest-mac.yml"], "nothing was downloaded");
+        s.untouched();
+    }
+
+    #[test]
+    fn the_public_app_refuses_a_wrong_team_bundle_id_or_notarization() {
+        let wrong: [(&str, fn(&mut FakeTools)); 4] = [
+            ("team", |t| t.ours = false),
+            ("another team's Developer ID", |t| t.display = crate::bundle::tests::display("com.zvn.markie", "AAAAAAAAAA", "Developer ID Application: Someone Else (AAAAAAAAAA)", "0x10000(runtime)")),
+            ("not notarized", |t| t.source = "Developer ID"),
+            ("signature", |t| t.sealed = false),
+        ];
+        for (name, change) in wrong {
+            let s = public_scene();
+            s.mocked.publish_public(&crate::PUBLIC_STABLE, NEXT, &zipped(s.dir.path(), "com.zvn.markie", NEXT, "new"), &intel_zip(s.dir.path(), NEXT));
+            let mut tools = FakeTools::good();
+            change(&mut tools);
+            assert!(matches!(s.run_public(&tools, false), Err(UpdateError::Bundle(_))), "{name}");
+            s.untouched();
+        }
+        for bundle_id in ["com.zvn.markie.rs", "com.zvn.markie.nightly", "com.example.markie"] {
+            let s = public_scene();
+            s.mocked.publish_public(&crate::PUBLIC_STABLE, NEXT, &zipped(s.dir.path(), bundle_id, NEXT, "new"), &intel_zip(s.dir.path(), NEXT));
+            assert!(matches!(s.run_public(&FakeTools::good(), false), Err(UpdateError::Bundle(BundleError::Identity))), "{bundle_id}");
+            s.untouched();
+        }
+    }
+
+    #[test]
+    fn the_public_app_refuses_the_same_or_a_lower_version() {
+        for published in [CURRENT, "0.9.7", "0.10.0-rc.2", "0.10.0-beta.9"] {
+            let s = public_scene();
+            s.mocked.publish_public(&crate::PUBLIC_STABLE, published, &zipped(s.dir.path(), "com.zvn.markie", published, "new"), &intel_zip(s.dir.path(), published));
+            assert_eq!(s.run_public(&FakeTools::good(), false).unwrap(), Outcome::UpToDate { current: Version::parse(CURRENT).unwrap() }, "{published}");
+            assert_eq!(s.paths().len(), 1, "no download for {published}");
+            s.untouched();
+        }
+    }
+
+    #[test]
+    fn the_public_app_refuses_a_sha512_or_size_mismatch() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let cases: [(&str, fn(&mut Vec<u8>)); 3] = [
+            ("sha512", |z| { let middle = z.len() / 2; z[middle] ^= 0xff; }),
+            ("shorter", |z| { z.pop(); }),
+            ("longer", |z| z.extend_from_slice(b"extra")),
+        ];
+        for (name, change) in cases {
+            let s = public_scene();
+            let real = zipped(s.dir.path(), "com.zvn.markie", NEXT, "new");
+            let mut served = real.clone();
+            change(&mut served);
+            let text = crate::feed::tests::public_feed_text(NEXT, &real, b"intel");
+            s.mocked.mount(Mock::given(method("GET")).and(path("/markie-releases/mac/latest-mac.yml")).respond_with(ResponseTemplate::new(200).set_body_string(text)));
+            s.mocked.mount(Mock::given(method("GET")).and(path(format!("/markie-releases/mac/Markie-{NEXT}-arm64.zip"))).respond_with(ResponseTemplate::new(200).set_body_bytes(served)));
+            let tools = FakeTools::good();
+            assert!(matches!(s.run_public(&tools, false), Err(UpdateError::Gateway(GatewayError::Integrity))), "{name}");
+            assert!(tools.calls.borrow().is_empty(), "{name}: nothing unpacked or inspected");
+            s.untouched();
+        }
     }
 
     #[test]

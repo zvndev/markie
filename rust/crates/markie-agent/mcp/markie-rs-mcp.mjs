@@ -7,19 +7,23 @@ import { resolve, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
-const bundled = join(here, "mcp", "markie-mcp.mjs");
+// The public Mac app keeps Electron's server in mcp-server/, because its
+// mcp/markie-mcp.mjs is the hand-over to this file (rust/scripts/stage-mcp.sh).
+// The nightly and the dev build keep it in mcp/.
+const bundled = [join(here, "mcp-server", "markie-mcp.mjs"), join(here, "mcp", "markie-mcp.mjs")].find((file) => existsSync(file));
 const server = pathToFileURL(resolve(process.env.MARKIE_RS_MCP_SERVER ||
-  (existsSync(bundled) ? bundled : join(here, "../../../../mcp/markie-mcp.mjs"))));
+  bundled || join(here, "../../../../mcp/markie-mcp.mjs")));
 const client = new URL("./agent-client.mjs", server);
 // Which build this adapter belongs to: the name the app answers with, and the
 // name of its data folder. The Mac app ("Markie", data in "Markie Nightly" on
-// the super-nightly channel) says so in app-identity.json beside this file,
-// written by the bundle script and covered by the bundle's signature. Only
-// that exact pair is honoured; anything else is the dev build.
+// the super-nightly channel, "Markie App" on the public feeds) says so in
+// app-identity.json beside this file, written by the bundle script and
+// covered by the bundle's signature. Only those exact pairs are honoured;
+// anything else is the dev build.
 let appName = "Markie RS", profileName = "Markie RS";
 try {
   const identity = JSON.parse(readFileSync(join(here, "app-identity.json"), "utf8"));
-  if (identity.appName === "Markie" && identity.profileName === "Markie Nightly") ({ appName, profileName } = identity);
+  if (identity.appName === "Markie" && ["Markie Nightly", "Markie App"].includes(identity.profileName)) ({ appName, profileName } = identity);
 } catch { /* The dev build and a source checkout have no such file. */ }
 const base = process.platform === "darwin"
   ? join(homedir(), "Library", "Application Support")

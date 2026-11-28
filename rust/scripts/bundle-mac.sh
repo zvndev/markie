@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build "Markie RS.app" for local testing on this Mac, or, with
-# MARKIE_VARIANT=nightly, the bundle of the Mac app itself, "Markie.app".
+# MARKIE_VARIANT=nightly or public, the bundle of the Mac app itself, "Markie.app".
 #
 # Markie RS (the default) is deliberately NOT part of any release pipeline:
 #   - its own name and bundle id (com.zvn.markie.rs), so macOS never confuses
@@ -19,6 +19,15 @@
 # own; it never touches /Applications. Signing with the Developer ID,
 # notarizing and zipping are scripts/nightly-release.sh;
 # docs/rust-port/NIGHTLY.md is the runbook.
+#
+# Markie (MARKIE_VARIANT=public, MARKIE_PUBLIC_VERSION=X.Y.Z or X.Y.Z-rc.N)
+# is the public Mac app for Apple silicon: the same identity as the nightly,
+# its own data folder ("Markie App"), and Electron Markie's MCP server laid out
+# so the path agents already use keeps working (scripts/stage-mcp.sh). Signing,
+# notarizing, the ZIP and the DMG are scripts/public-release.sh;
+# docs/rust-port/PUBLIC.md is the runbook.
+#
+# CARGO_TARGET_DIR is honoured: the binary is taken from its release folder.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -46,8 +55,22 @@ case "$VARIANT" in
     export MARKIE_NIGHTLY_COMMIT="${MARKIE_NIGHTLY_COMMIT:-$(git rev-parse HEAD)}"
     APP="${MARKIE_BUNDLE_DIR:-target/nightly/$VERSION}/$NAME.app"
     ;;
+  public)
+    NAME="Markie"; BUNDLE_ID="com.zvn.markie"; SCHEME="markie"
+    VERSION="${MARKIE_PUBLIC_VERSION:-}"
+    if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|beta)\.(0|[1-9][0-9]*))?$ ]]; then
+      echo "MARKIE_PUBLIC_VERSION must be X.Y.Z, X.Y.Z-rc.N or X.Y.Z-beta.N" >&2; exit 1
+    fi
+    if [[ "${VERSION%%-*}" != "$CARGO_VERSION" ]]; then
+      echo "MARKIE_PUBLIC_VERSION must start with the workspace version $CARGO_VERSION" >&2; exit 1
+    fi
+    FEATURES=(--features public)
+    export MARKIE_PUBLIC_VERSION="$VERSION"
+    export MARKIE_PUBLIC_COMMIT="${MARKIE_PUBLIC_COMMIT:-$(git rev-parse HEAD)}"
+    APP="${MARKIE_BUNDLE_DIR:-target/public/$VERSION}/$NAME.app"
+    ;;
   *)
-    echo "MARKIE_VARIANT must be rs or nightly" >&2; exit 1
+    echo "MARKIE_VARIANT must be rs, nightly or public" >&2; exit 1
     ;;
 esac
 
@@ -62,9 +85,16 @@ cargo build --release -p markie-app ${FEATURES[@]+"${FEATURES[@]}"}
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/markie-rs "$APP/Contents/MacOS/markie-rs"
-cp -R ../mcp "$APP/Contents/Resources/mcp"
-cp crates/markie-agent/mcp/markie-rs-mcp.mjs "$APP/Contents/Resources/markie-rs-mcp.mjs"
+cp "${CARGO_TARGET_DIR:-target}/release/markie-rs" "$APP/Contents/MacOS/markie-rs"
+if [[ "$VARIANT" == public ]]; then
+  # Contents/Resources/mcp/markie-mcp.mjs, the path in people's agent
+  # settings, hands over to the adapter; Electron's server, from a pinned
+  # commit, sits in mcp-server/; app-identity.json names "Markie App".
+  scripts/stage-mcp.sh "$APP/Contents/Resources"
+else
+  cp -R ../mcp "$APP/Contents/Resources/mcp"
+  cp crates/markie-agent/mcp/markie-rs-mcp.mjs "$APP/Contents/Resources/markie-rs-mcp.mjs"
+fi
 if [[ "$VARIANT" == nightly ]]; then
   # Tells the MCP adapter beside it which app it is and where its data lives
   # (PROFILE_NAME in crates/markie-core/src/paths.rs).
@@ -76,7 +106,7 @@ mkdir -p "$APP/Contents/Resources/font-licenses"
 for dir in ../src/assets/fonts/*/; do
   cp "$dir/LICENSE.txt" "$APP/Contents/Resources/font-licenses/$(basename "$dir").txt"
 done
-if [[ "$VARIANT" == nightly ]]; then
+if [[ "$VARIANT" == nightly || "$VARIANT" == public ]]; then
   # Markie's own icon, under the name its document types refer to.
   cp ../build/icon.icns "$APP/Contents/Resources/icon.icns"
 else
@@ -90,7 +120,7 @@ else
     iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/markie-rs.icns"
   fi
 fi
-# One generator for both variants. The Mac app's document types come from
+# One generator for every variant. The Mac app's document types come from
 # electron-builder.config.cjs, the file Electron Markie's own plist is made from.
 node scripts/mac-info-plist.mjs "$VARIANT" "$VERSION" > "$APP/Contents/Info.plist"
 /usr/bin/plutil -lint "$APP/Contents/Info.plist" >/dev/null

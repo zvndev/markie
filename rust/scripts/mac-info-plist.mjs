@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /** Writes the Info.plist of a Markie RS bundle.
  *
- *   node rust/scripts/mac-info-plist.mjs <rs|nightly> <version>   # XML on stdout
+ *   node rust/scripts/mac-info-plist.mjs <rs|nightly|public> <version>   # XML on stdout
  *
  * `rs` is the dev side build: its own bundle id, the markie-rs:// scheme and
- * no file types. `nightly` is the Mac app: Markie's bundle id, markie://, and
- * the document types Electron Markie declares, read from the same
+ * no file types. `nightly` and `public` are the Mac app, on the super-nightly
+ * channel and on the public feeds: Markie's bundle id, markie://, and the
+ * document types Electron Markie declares, read from the same
  * electron-builder.config.cjs electron-builder reads, so the two apps cannot
- * drift apart while both exist. macOS and Squirrel.Mac must see one app.
+ * drift apart while both exist. macOS and Squirrel.Mac must see one app. The
+ * two Mac variants write the same plist; only the version differs.
  */
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -19,6 +21,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 export const IDENTITIES = {
   rs: { name: "Markie RS", bundleId: "com.zvn.markie.rs", scheme: "markie-rs", icon: "markie-rs", main: false },
   nightly: { name: "Markie", bundleId: "com.zvn.markie", scheme: "markie", icon: "icon.icns", main: true },
+  public: { name: "Markie", bundleId: "com.zvn.markie", scheme: "markie", icon: "icon.icns", main: true },
 };
 export const EXECUTABLE = "markie-rs";
 
@@ -41,7 +44,7 @@ export function documentTypes(config, iconFile) {
 
 export function infoPlist(variant, version, config = builderConfig()) {
   const identity = IDENTITIES[variant];
-  if (!identity) throw new Error("variant must be rs or nightly");
+  if (!Object.hasOwn(IDENTITIES, variant)) throw new Error("variant must be rs, nightly or public");
   if (typeof version !== "string" || !/^[0-9A-Za-z.-]{1,64}$/.test(version)) throw new Error("a version is required");
   const plist = {
     CFBundleName: identity.name,

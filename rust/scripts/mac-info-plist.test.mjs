@@ -47,6 +47,16 @@ test("the Mac app declares exactly what Electron Markie declares", { skip: proce
   assert.equal(plist.CFBundlePackageType, "APPL");
 });
 
+test("the public Mac app declares the same plist as the nightly, with its own version", { skip: process.platform !== "darwin" && "needs plutil" }, () => {
+  const pub = asMacReads(infoPlist("public", "0.10.0"));
+  const nightly = asMacReads(infoPlist("nightly", "0.10.0"));
+  assert.deepEqual(pub, nightly);
+  assert.equal(pub.CFBundleIdentifier, electron.CFBundleIdentifier);
+  assert.deepEqual(pub.CFBundleDocumentTypes, electron.CFBundleDocumentTypes);
+  assert.deepEqual(pub.CFBundleURLTypes, electron.CFBundleURLTypes);
+  assert.equal(asMacReads(infoPlist("public", "0.10.0-rc.1")).CFBundleShortVersionString, "0.10.0-rc.1");
+});
+
 test("the dev build claims its own scheme and no file types", { skip: process.platform !== "darwin" && "needs plutil" }, () => {
   const plist = asMacReads(infoPlist("rs", "0.10.0"));
   assert.equal(plist.CFBundleIdentifier, "com.zvn.markie.rs");
@@ -56,7 +66,8 @@ test("the dev build claims its own scheme and no file types", { skip: process.pl
 });
 
 test("refuses a variant or version it does not know, and a config that is not Markie's", () => {
-  assert.throws(() => infoPlist("stable", VERSION), /rs or nightly/);
+  assert.throws(() => infoPlist("stable", VERSION), /rs, nightly or public/);
+  assert.throws(() => infoPlist("toString", VERSION), /rs, nightly or public/);
   assert.throws(() => infoPlist("nightly", ""), /version is required/);
   assert.throws(() => infoPlist("nightly", "1.0 <script>"), /version is required/);
   assert.throws(() => infoPlist("nightly", VERSION, { appId: "com.example.other", productName: "Markie" }), /not Markie's/);

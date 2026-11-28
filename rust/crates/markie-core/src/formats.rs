@@ -219,20 +219,26 @@ fn newline_of(text: &str) -> Newline {
 
 /// Tabs, newlines and form feeds are text. NULs and the other C0 controls are
 /// a strong binary sign, not something to replace.
+/// Refuse text with binary control characters, as a save does before writing.
+pub fn check_text(text: &str) -> Result<(), TextError> {
+    assert_text(text)
+}
+
 fn assert_text(text: &str) -> Result<(), TextError> {
-    if text
-        .chars()
-        .any(|c| (c as u32) < 32 && !matches!(c, '\t' | '\n' | '\x0c' | '\r'))
-    {
-        return Err(TextError::BinaryContent(
-            "This file contains binary control characters and cannot be edited as text.",
-        ));
-    }
-    Ok(())
+    // In UTF-8 every byte under 32 is that ASCII character, so a byte scan is
+    // the same test as one over the chars, and much faster on 100 MB.
+    scan_utf8_bytes(text.as_bytes()).map(|_| ())
 }
 
 /// Decode without replacing invalid bytes or changing any line endings.
 pub fn decode_text(bytes: &[u8]) -> Result<DecodedText, TextError> {
+    decode_text_owned(bytes.to_vec())
+}
+
+/// [`decode_text`] for bytes the caller owns: UTF-8 text keeps its buffer, so
+/// a 100 MB file is not copied a second time, and one pass over the bytes
+/// both refuses control characters and finds the line endings.
+pub fn decode_text_owned(mut bytes: Vec<u8>) -> Result<DecodedText, TextError> {
     if bytes.starts_with(&[0xff, 0xfe, 0, 0]) || bytes.starts_with(&[0, 0, 0xfe, 0xff]) {
         return Err(TextError::UnsupportedEncoding(
             "UTF-32 text is not supported. Convert a copy to UTF-8 first.",
@@ -260,11 +266,18 @@ pub fn decode_text(bytes: &[u8]) -> Result<DecodedText, TextError> {
     } else {
         (TextEncoding::Utf8, 0)
     };
-    let body = &bytes[offset..];
-    let text = match encoding {
-        TextEncoding::Utf8 => String::from_utf8(body.to_vec())
-            .map_err(|_| TextError::InvalidText("The file is not valid UTF-8 text. No bytes were replaced.".into()))?,
+    let (text, newline) = match encoding {
+        TextEncoding::Utf8 => {
+            bytes.drain(..offset);
+            // In UTF-8 a byte under 32 is always that ASCII character, so the
+            // byte scan is the same test as `assert_text` over the chars.
+            let text = String::from_utf8(bytes)
+                .map_err(|_| TextError::InvalidText("The file is not valid UTF-8 text. No bytes were replaced.".into()))?;
+            let newline = scan_utf8_bytes(text.as_bytes())?;
+            (text, newline)
+        }
         TextEncoding::Utf16Le | TextEncoding::Utf16Be => {
+            let body = &bytes[offset..];
             if body.len() % 2 != 0 {
                 return Err(TextError::InvalidText(
                     "The file is not valid UTF-16 text. No bytes were replaced.".into(),
@@ -277,18 +290,52 @@ pub fn decode_text(bytes: &[u8]) -> Result<DecodedText, TextError> {
                     _ => u16::from_be_bytes([c[0], c[1]]),
                 })
                 .collect();
-            String::from_utf16(&units).map_err(|_| {
+            let text = String::from_utf16(&units).map_err(|_| {
                 TextError::InvalidText("The file is not valid UTF-16 text. No bytes were replaced.".into())
-            })?
+            })?;
+            assert_text(&text)?;
+            let newline = newline_of(&text);
+            (text, newline)
         }
     };
-    assert_text(&text)?;
-    Ok(DecodedText {
-        newline: newline_of(&text),
-        text,
-        encoding,
-        bom: offset > 0,
-    })
+    Ok(DecodedText { newline, text, encoding, bom: offset > 0 })
+}
+
+/// `assert_text` and `newline_of` in one pass over UTF-8 bytes. Most bytes are
+/// 32 or more, so the loop tests 16 at a time and looks closer only at a
+/// block holding a control character.
+fn scan_utf8_bytes(bytes: &[u8]) -> Result<Newline, TextError> {
+    let binary = || TextError::BinaryContent("This file contains binary control characters and cannot be edited as text.");
+    let mut kind = Newline::None;
+    let note = |next: Newline, kind: &mut Newline| {
+        if *kind == Newline::None || *kind == next {
+            *kind = next;
+        } else {
+            *kind = Newline::Mixed;
+        }
+    };
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 16 <= bytes.len() && bytes[i..i + 16].iter().fold(true, |ok, &b| ok & (b >= 32)) {
+            i += 16;
+            continue;
+        }
+        let b = bytes[i];
+        if b < 32 {
+            match b {
+                b'\t' | b'\x0c' => {}
+                b'\n' => note(Newline::Lf, &mut kind),
+                b'\r' if bytes.get(i + 1) == Some(&b'\n') => {
+                    note(Newline::Crlf, &mut kind);
+                    i += 1;
+                }
+                b'\r' => note(Newline::Cr, &mut kind),
+                _ => return Err(binary()),
+            }
+        }
+        i += 1;
+    }
+    Ok(kind)
 }
 
 /// Encode exactly the supplied text. Callers must not normalize newlines.

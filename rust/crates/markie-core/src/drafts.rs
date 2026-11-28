@@ -92,6 +92,7 @@ pub struct Draft {
     pub meta: DraftMeta,
 }
 
+#[derive(Clone)]
 pub struct Drafts {
     root: PathBuf,
 }

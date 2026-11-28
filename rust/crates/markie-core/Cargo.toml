@@ -24,7 +24,10 @@ serde_json.workspace = true
 pulldown-cmark.workspace = true
 rusqlite.workspace = true
 dirs.workspace = true
-sha2 = "0.10"
+# 0.11 uses the ARMv8 SHA-256 instructions when the CPU has them; 0.10 only
+# with its "asm" feature, so it hashed at about 160 MB/s here. A save of a
+# 100 MB document hashes it two or three times (History, `history.rs`).
+sha2 = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 trash = "5"
 regex = "1"

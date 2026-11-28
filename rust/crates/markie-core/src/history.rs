@@ -151,6 +151,14 @@ fn clean_name(raw: &str) -> String {
     line.chars().take(NAME_MAX).collect::<String>().trim().to_string()
 }
 
+/// A file's text and modified time, read before it is replaced
+/// ([`History::read_previous`]). `text` is `None` when there was no file to
+/// read, or it was not UTF-8.
+pub struct Previous {
+    pub text: Option<String>,
+    pub modified: Option<std::time::SystemTime>,
+}
+
 pub struct History {
     root: PathBuf,
     caps: Caps,
@@ -246,6 +254,26 @@ impl History {
         self.capture_hash(file, next_hash, writer)
     }
 
+    /// What `file` says now and when it was written: the first half of
+    /// [`Self::capture`], for a save that writes the file while the version is
+    /// still being kept (`document::write_text_document`).
+    pub fn read_previous(file: &Path) -> Previous {
+        // The time first: a write after it moves it, never the other way.
+        let modified = fs::metadata(file).and_then(|m| m.modified()).ok();
+        Previous { text: fs::read_to_string(file).ok(), modified }
+    }
+
+    /// [`Self::capture`] from bytes read before the file was replaced. The
+    /// two hashes are worked out side by side; each is a pass over the text.
+    pub fn capture_previous(&self, file: &Path, next: &str, writer: Writer, previous: Previous) -> std::io::Result<Captured> {
+        let (next_hash, prev_hash) = std::thread::scope(|s| {
+            let prev = previous.text.as_deref().map(|p| s.spawn(move || sha256_hex(p.as_bytes())));
+            let next_hash = sha256_hex(next.as_bytes());
+            (next_hash, prev.map(|h| h.join().expect("hash thread")))
+        });
+        self.record_read(file, Some(next_hash), Some(writer), previous, prev_hash)
+    }
+
     /// The Node MCP announces the hash just before replacing the file.
     pub fn note_agent_write(&self, file: &Path, hash: &str, agent: String) -> std::io::Result<Captured> {
         if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -266,6 +294,17 @@ impl History {
 
     /// `record` in `electron/history.js`.
     fn record(&self, file: &Path, next_hash: Option<String>, writer: Option<Writer>) -> std::io::Result<Captured> {
+        self.record_read(file, next_hash, writer, Self::read_previous(file), None)
+    }
+
+    fn record_read(
+        &self,
+        file: &Path,
+        next_hash: Option<String>,
+        writer: Option<Writer>,
+        previous: Previous,
+        prev_hash: Option<String>,
+    ) -> std::io::Result<Captured> {
         let stamp_writer = |this: &Self| {
             let (Some(writer), Some(next_hash)) = (&writer, &next_hash) else { return };
             let (author, agent) = match writer {
@@ -274,12 +313,17 @@ impl History {
             };
             this.write_last_write(file, &LastWrite { hash: next_hash.clone(), author, iso: Some(iso((this.now)())), agent });
         };
-        let Ok(previous) = fs::read_to_string(file) else {
+        let Previous { text: Some(previous), modified } = previous else {
             stamp_writer(self);
             return Ok(Captured::NoFile);
         };
-        let prev_hash = sha256_hex(previous.as_bytes());
-        let newest = self.stems(file).pop().and_then(|s| self.read(file, &s));
+        let prev_hash = prev_hash.unwrap_or_else(|| sha256_hex(previous.as_bytes()));
+        // A newest version of another length cannot hold the same bytes, so
+        // it is read and hashed only when the lengths match.
+        let newest = self.stems(file).pop().filter(|s| {
+            fs::metadata(self.dir_for(file).join(format!("{s}.md"))).is_ok_and(|m| m.len() == previous.len() as u64)
+        });
+        let newest = newest.and_then(|s| self.read(file, &s));
         if newest.is_some_and(|n| sha256_hex(n.as_bytes()) == prev_hash) {
             stamp_writer(self);
             return Ok(Captured::Duplicate);
@@ -302,7 +346,7 @@ impl History {
             },
             last => VersionMeta {
                 author: if last.is_some() { "external".into() } else { fallback.into() },
-                iso: Some(self.written_at(file)),
+                iso: Some(self.written_at(modified)),
                 agent: None,
                 name: None,
             },
@@ -329,11 +373,9 @@ impl History {
         Ok(Captured::Saved(target))
     }
 
-    fn written_at(&self, file: &Path) -> String {
+    fn written_at(&self, modified: Option<std::time::SystemTime>) -> String {
         let now = (self.now)();
-        let ms = fs::metadata(file)
-            .and_then(|m| m.modified())
-            .ok()
+        let ms = modified
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(now, |d| (d.as_millis() as i64).min(now));
         iso(ms)
@@ -401,7 +443,7 @@ impl History {
                 },
                 last => VersionMeta {
                     author: if last.is_some() { "external".into() } else { "user".into() },
-                    iso: Some(self.written_at(file)),
+                    iso: Some(self.written_at(fs::metadata(file).and_then(|m| m.modified()).ok())),
                     agent: None,
                     name: None,
                 },

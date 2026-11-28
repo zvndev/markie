@@ -65,6 +65,8 @@ impl Workspace {
         if self.dirty {
             self.save(window, cx);
         }
+        // The next document must not open while this one is still writing.
+        self.wait_for_save(cx);
     }
 
     /// Open `text` as an unsaved document called `name`.
@@ -121,7 +123,7 @@ impl Workspace {
         self.split_source_latest = false;
         self.split_echo = None;
         self.set_preview(&text, format, cx);
-        self.update_stats(&text);
+        self.update_stats(&text, cx);
         self.dirty = !clean && !text.is_empty();
         self.autosave.cancel();
         self.disk_conflict = None;

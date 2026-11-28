@@ -115,7 +115,7 @@
     "preview:check": "node scripts/link-preview-check.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.2.0",
     "electron-updater": "^6.8.11",
     "node-pty": "^1.1.0"
   },

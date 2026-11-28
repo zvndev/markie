@@ -101,7 +101,7 @@ def run_rs(scratch, fixture, out):
         m = re.match(r"markie-doc-bench (\S+) (?:landed (\d+) )?mean (\S+) median (\S+) p95 (\S+) max (\S+) over_16.7ms (\d+)", line)
         if m:
             r[m.group(1)] = {"landed": int(m.group(2) or 0), "mean": float(m.group(3)), "median": float(m.group(4)), "p95": float(m.group(5)), "max": float(m.group(6)), "over16": int(m.group(7))}
-        for key in ("reopen_first_frame_ms", "reopen_editable_ms", "save_ms"):
+        for key in ("reopen_first_frame_ms", "reopen_editable_ms", "save_ms", "save_main_ms"):
             m = re.match(rf"markie-doc-bench {key} (\S+)", line)
             if m:
                 r[key] = float(m.group(1))

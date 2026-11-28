@@ -140,7 +140,7 @@ impl Workspace {
             if self.rich_active() {
                 self.load_rich(&text, cx);
             }
-            self.update_stats(&text);
+            self.update_stats(&text, cx);
             self.dirty = true;
             // Loaded as unsaved (`loadFile({ unsaved: true })`): nothing is
             // written until the next edit.

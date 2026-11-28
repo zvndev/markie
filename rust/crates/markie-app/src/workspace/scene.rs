@@ -968,16 +968,27 @@ async fn doc_bench(handle: AnyWindowHandle, workspace: &Entity<Workspace>, execu
         flick.push(cost);
     }
     spread("scroll_flick_frame_ms", &flick);
-    // Save: ⌘S's own function, to the frame after it.
+    // Save: ⌘S's own function until the save has landed: written, recorded
+    // as saved, and a frame drawn after. A large document saves on its own
+    // thread, so the main thread is free sooner (`save_main_ms`); `save_ms`
+    // is the whole save, as Electron's figure runs to main's write finishing.
+    // An autosave still running from the typing above finishes untimed.
     executor.timer(Duration::from_millis(400)).await;
-    let save_ms = cx
+    let _ = cx.update(|cx| workspace.update(cx, |ws, cx| ws.wait_for_save(cx)));
+    let t = Instant::now();
+    let save_main_ms = cx
         .update_window(handle, |_, window, cx| {
-            let t = Instant::now();
             workspace.update(cx, |ws, cx| ws.save(window, cx));
             frame(window, cx);
             ms(t)
         })
         .unwrap_or(0.);
+    while cx.update(|cx| workspace.read(cx).save_in_flight()) {
+        executor.timer(Duration::from_millis(1)).await;
+    }
+    let _ = cx.update_window(handle, |_, window, cx| frame(window, cx));
+    let save_ms = ms(t);
+    eprintln!("markie-doc-bench save_main_ms {save_main_ms:.2}");
     let on_disk = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     eprintln!("markie-doc-bench save_ms {save_ms:.2} bytes_on_disk {on_disk} dirty_after {}", cx.update(|cx| workspace.read(cx).dirty));
 }

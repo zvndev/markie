@@ -80,6 +80,7 @@ mod projects_view;
 mod rail;
 mod recent_page;
 mod rich;
+mod save_job;
 mod text_view;
 mod theme_sync;
 mod doc_theme;
@@ -191,7 +192,7 @@ pub struct Workspace {
     /// The whole status-bar and statistics-panel count, kept with `words`.
     doc_stats: stats::DocStats,
     sections: Vec<outline::Section>,
-    history: History,
+    history: std::sync::Arc<History>,
     drafts: Drafts,
     disk: DiskMemory,
     autosave: Autosave,
@@ -210,6 +211,14 @@ pub struct Workspace {
     /// Pending work after an edit: the exact edited marker, counts and
     /// outline, done once typing pauses instead of on every keystroke.
     settle_task: Option<Task<()>>,
+    /// Counts and the outline of a large document, counted in the background
+    /// (`update_stats`); a newer count drops an older one.
+    stats_generation: u64,
+    _stats_task: Task<()>,
+    /// Counts edits, so a save running in the background knows whether the
+    /// text changed while it wrote (`save_job.rs`).
+    edit_generation: u64,
+    save_job: Option<save_job::SaveJob>,
     /// Drops a Recent/Starred refresh overtaken by a newer one.
     lists_generation: u64,
     /// What the file says on disk when it changed under unsaved edits.
@@ -401,7 +410,7 @@ impl Workspace {
             reading_minutes: 0,
             doc_stats: stats::DocStats::default(),
             sections: Vec::new(),
-            history: History::new(&data_dir),
+            history: std::sync::Arc::new(History::new(&data_dir)),
             drafts,
             disk: DiskMemory::default(),
             autosave: Autosave::default(),
@@ -415,6 +424,10 @@ impl Workspace {
             _recovery_task: Task::ready(()),
             _poll_task: Task::ready(()),
             settle_task: None,
+            stats_generation: 0,
+            _stats_task: Task::ready(()),
+            edit_generation: 0,
+            save_job: None,
             lists_generation: 0,
             disk_conflict: None,
             disk_missing: false,
@@ -791,13 +804,13 @@ impl Workspace {
                 self.document_failure = None;
                 self.file_grants.grant_document(&doc.path);
                 let large = doc.is_large();
+                let (size, modified) = (doc.size, doc.modified);
                 let kind = match doc.content {
-                    Content::Text { text: raw, encoding, bom } => {
+                    Content::Text { text, encoding, bom } => {
                         // A CSV is held as the text it is on disk and shown
                         // as a table; its Text view is an editor that only
                         // knows "\n" (`csv_doc.rs`).
                         let csv = doc.format == FormatKind::Csv;
-                        let text = raw.clone();
                         let language = doc.format.editor_language();
                         // Electron shows literal text formats in a plain field:
                         // no syntax colors and no line numbers.
@@ -825,8 +838,13 @@ impl Workspace {
                         });
                         // No set_preview here: the CSV rows and the rich editor are
                         // loaded below, once `self.doc` is the new document.
-                        self.update_stats(&text);
-                        self.disk.remember(&doc.path, &raw, false);
+                        if large {
+                            // The last document's counts must not show while
+                            // this one's are counted.
+                            self.apply_stats(stats::DocStats::default(), Vec::new());
+                        }
+                        self.update_stats(&text, cx);
+                        self.disk.remember_read(&doc.path, &text, size, modified);
                         DocKind::Text { encoding, bom, saved: text }
                     }
                     Content::Html(html) => {
@@ -938,15 +956,40 @@ impl Workspace {
         }
     }
 
-    fn update_stats(&mut self, text: &str) {
-        let s = stats::compute(text);
+    /// Word counts and the outline. Counting 100 MB takes seconds (the
+    /// regexes and a Markdown parse), so from the large tier on they are
+    /// counted on a background thread and land a moment after the text shows;
+    /// until then the last counts stay.
+    fn update_stats(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.stats_generation += 1;
+        if (text.len() as u64) < markie_core::document::LARGE_DOC_BYTES {
+            self._stats_task = Task::ready(());
+            let (s, sections) = (stats::compute(text), outline::sections(text));
+            return self.apply_stats(s, sections);
+        }
+        let generation = self.stats_generation;
+        let text = text.to_owned();
+        self._stats_task = cx.spawn(async move |this, cx| {
+            let (s, sections) = cx.background_spawn(async move { (stats::compute(&text), outline::sections(&text)) }).await;
+            this.update(cx, |this, cx| {
+                if this.stats_generation == generation {
+                    this.apply_stats(s, sections);
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
+    }
+
+    fn apply_stats(&mut self, s: stats::DocStats, sections: Vec<outline::Section>) {
         self.words = s.words;
         self.reading_minutes = s.reading_minutes;
         self.doc_stats = s;
-        self.sections = outline::sections(text);
+        self.sections = sections;
     }
 
     fn on_edit(&mut self, cx: &mut Context<Self>) {
+        self.edit_generation += 1;
         // Split view, the rich pane's echo and a live room need the text on
         // every edit. Otherwise the whole-text work waits for a pause.
         if self.mode != Mode::Split && self.split_echo.is_none() && !self.live_running() {
@@ -966,7 +1009,7 @@ impl Workspace {
         }
         let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         self.dirty = &text != saved;
-        self.update_stats(&text);
+        self.update_stats(&text, cx);
         self.schedule_journal(&text, cx);
         if self.dirty && self.disk_conflict.is_none() {
             self.autosave.note_change(Instant::now());
@@ -983,6 +1026,7 @@ impl Workspace {
         if !matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Text { .. })) {
             return;
         }
+        self.edit_generation += 1;
         self.dirty = true;
         // The crash journal does not wait for the settle: it is due 250 ms
         // after this edit (2 s past 256 K characters), as in Electron, and
@@ -1018,7 +1062,7 @@ impl Workspace {
             // Typed and undone back to the saved bytes: nothing to save.
             self.autosave.cancel();
         }
-        self.update_stats(&text);
+        self.update_stats(&text, cx);
         cx.notify();
     }
 
@@ -1086,6 +1130,14 @@ impl Workspace {
 
     /// Write whatever autosave still owes, now. Never a dialog.
     fn flush_pending(&mut self, cx: &mut Context<Self>) {
+        // A save still writing finishes before the app quits or the window
+        // closes, and so does any save started below.
+        self.wait_for_save(cx);
+        self.flush_pending_writes(cx);
+        self.wait_for_save(cx);
+    }
+
+    fn flush_pending_writes(&mut self, cx: &mut Context<Self>) {
         if self.document_failure.is_some() { return; }
         if matches!(self.doc.as_ref().map(|d| &d.kind), Some(DocKind::Office(_))) {
             return self.office_flush_recovery(cx);
@@ -1115,6 +1167,9 @@ impl Workspace {
         if !self.dirty {
             return;
         }
+        if self.saves_in_background() {
+            return self.autosave_in_background(cx);
+        }
         let text = self.current_text(cx);
         if self.is_untitled() {
             // No file yet: the journal is where autosave keeps it.
@@ -1141,9 +1196,33 @@ impl Workspace {
         cx.notify();
     }
 
+    /// `autosave_now` for a large document: the same checks, then the draft
+    /// and the write on the save thread.
+    fn autosave_in_background(&mut self, cx: &mut Context<Self>) {
+        if self.save_in_flight() {
+            // Saves again once the running one lands.
+            return self.start_background_save(false, true, None, cx);
+        }
+        let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) else { return };
+        if self.disk.over_cap(&path).is_some() {
+            return;
+        }
+        if let Some(DiskChange::Changed(theirs)) = self.disk.changed_since(&path) {
+            if save_conflict_action(true, false, true) == SaveAction::Refuse {
+                // The draft keeps the unsaved text, as on the main thread.
+                let text = self.current_text(cx);
+                let _ = self.drafts.save(Some(&path), &text);
+                self.note_disk_change(theirs, cx);
+                return;
+            }
+        }
+        self.start_background_save(false, true, None, cx);
+    }
+
     /// Keep the previous text as a version, write the new text, and remember
     /// that this write was ours.
     fn write_text(&mut self, text: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        self.wait_for_save(cx);
         let Some(doc) = self.doc.as_mut() else { return Ok(()) };
         if doc.untitled {
             return Ok(());
@@ -1151,11 +1230,10 @@ impl Workspace {
         let DocKind::Text { encoding, bom, saved } = &mut doc.kind else { return Ok(()) };
         // A CSV is written as the text it is: the table changed only the
         // cells that were edited (`markie_core::csv_table`).
-        let disk_text = text.to_string();
-        let _ = self.history.capture(&doc.path, &disk_text, Writer::User);
-        document::save_text(&doc.path, &disk_text, *encoding, *bom)?;
+        let _ = self.history.capture(&doc.path, text, Writer::User);
+        document::save_text(&doc.path, text, *encoding, *bom)?;
         *saved = text.to_string();
-        self.disk.remember(&doc.path, &disk_text, true);
+        self.disk.remember(&doc.path, text, true);
         let path = doc.path.clone();
         self.dirty = false;
         if self.side == SidePanel::History {
@@ -1180,6 +1258,10 @@ impl Workspace {
     }
 
     fn check_disk(&mut self, cx: &mut Context<Self>) {
+        if self.save_in_flight() {
+            // Markie's own write is landing; it is recorded when it has.
+            return;
+        }
         let Some(doc) = &self.doc else { return };
         if !matches!(doc.kind, DocKind::Text { .. }) || doc.untitled {
             return;
@@ -1213,6 +1295,7 @@ impl Workspace {
 
     /// Replace the editor's text with what is on disk, as the saved state.
     fn load_text(&mut self, path: &Path, raw: String, cx: &mut Context<Self>) {
+        self.wait_for_save(cx);
         self.disk.remember(path, &raw, false);
         let text = raw;
         let editor_text = self.editor_text(&text, cx);
@@ -1222,7 +1305,7 @@ impl Workspace {
             self.pending_editor_text = Some(editor_text);
             self.set_preview(&text, format, cx);
         }
-        self.update_stats(&text);
+        self.update_stats(&text, cx);
         self.dirty = false;
     }
 
@@ -1246,8 +1329,11 @@ impl Workspace {
             cx.notify();
             return;
         }
-        let text = self.current_text(cx);
         self.autosave.cancel();
+        if self.save_in_flight() && self.saves_in_background() {
+            // Writes the newest text once the running save lands.
+            return self.start_background_save(true, false, Some(window), cx);
+        }
         if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
             let name = path.file_name().map_or_else(|| "This document".into(), |n| n.to_string_lossy().into_owned());
             if let Some(size) = self.disk.over_cap(&path) {
@@ -1261,6 +1347,16 @@ impl Workspace {
                 }
             }
         }
+        self.write_now(window, cx);
+    }
+
+    /// The write after a save's checks: on the save thread for a large
+    /// document, here for everything else.
+    fn write_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saves_in_background() {
+            return self.start_background_save(true, false, Some(window), cx);
+        }
+        let text = self.current_text(cx);
         self.write_after_save_checks(&text, window, cx);
     }
 
@@ -1288,10 +1384,7 @@ impl Workspace {
                         this.load_text(&path, theirs, cx);
                         cx.notify();
                     }
-                    1 => {
-                        let text = this.current_text(cx);
-                        this.write_after_save_checks(&text, window, cx);
-                    }
+                    1 => this.write_now(window, cx),
                     _ => {}
                 }
             })

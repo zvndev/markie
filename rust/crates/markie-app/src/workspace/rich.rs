@@ -89,7 +89,7 @@ impl Workspace {
         let Some(OpenDoc { kind: DocKind::Text { saved, .. }, .. }) = &self.doc else { return };
         let text = self.rich.read(cx).markdown();
         self.dirty = &text != saved;
-        self.update_stats(&text);
+        self.update_stats(&text, cx);
         self.schedule_journal(&text, cx);
         self.split_source_follow(text);
         // A live room that cannot carry this file leaves the file alone.

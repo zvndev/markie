@@ -28,13 +28,14 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUST = os.path.abspath(os.path.join(HERE, "..", ".."))
+SCRATCH = "/nonexistent"
 FIXTURES = [f"{s}.{e}" for s in ("1m", "10m", "50m", "100m") for e in ("md", "txt")]
 
 
 def front() -> str:
-    out = subprocess.run(["lsappinfo", "info", "-only", "name", subprocess.run(["lsappinfo", "front"], capture_output=True, text=True).stdout.strip()], capture_output=True, text=True).stdout
-    m = re.search(r'"([^"]*)"', out)
-    return m.group(1) if m else out.strip()
+    """The frontmost app's name and bundle path."""
+    out = subprocess.run(["lsappinfo", "info", "-only", "name,bundlepath", subprocess.run(["lsappinfo", "front"], capture_output=True, text=True).stdout.strip()], capture_output=True, text=True).stdout
+    return " ".join(re.findall(r'"([^"]*)"', out)) or out.strip()
 
 
 def tree_rss_kb(root: int) -> int:
@@ -69,7 +70,9 @@ def launch(cmd, env, log_path, timeout):
             time.sleep(0.1)
         proc.wait()
     after = front()
-    if before != after:
+    # Kirby and other apps change the frontmost app while this runs. Only one
+    # of the bench's own builds coming to the front is a harness failure.
+    if before != after and (SCRATCH in after or os.path.join(RUST, "target") in after):
         print(f"  frontmost app changed: {before} -> {after}; stop and check the harness", file=sys.stderr)
         sys.exit(3)
     return {"spawn": t0 * 1000, "peak_rss_mb": peak / 1024, "load": load, "wall_s": time.time() - t0, "front": after}
@@ -191,7 +194,9 @@ def run_electron(scratch, fixture, out):
 
 
 def main():
+    global SCRATCH
     cmd, scratch = sys.argv[1], os.path.abspath(sys.argv[2])
+    SCRATCH = scratch
     results_path = os.path.join(scratch, "large-results.json")
     results = json.load(open(results_path)) if os.path.exists(results_path) else []
     if cmd == "run":
@@ -200,6 +205,8 @@ def main():
         for n in range(runs):
             for fixture in only:
                 for app in (("rs", "electron") if n % 2 == 0 else ("electron", "rs")):
+                    if any(r["fixture"] == fixture and r["app"] == app and r["run"] == n and "failure" not in r for r in results):
+                        continue
                     out = os.path.join(scratch, "runs", f"{fixture}-{app}-{n}-{int(time.time())}")
                     os.makedirs(out, exist_ok=True)
                     r = (run_rs if app == "rs" else run_electron)(scratch, fixture, out)

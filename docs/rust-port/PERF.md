@@ -2,6 +2,84 @@
 
 Date: 2026-11-22. Goal set by Kirby on 2026-11-21: Markie RS must be much faster than Electron Markie (0.9.7). "Much faster" means at least 2x on launch and open, and no worse anywhere.
 
+## Large documents (editors 7.9)
+
+Date: 2026-11-28, branch `t3/markie-rs-perf-79`, Markie RS at `rust/markie-rs` aca9a36 plus the bench, against Electron Markie 0.9.7 (main e8440384 on Electron 42.11.18). Three runs of each, medians.
+
+### Summary
+
+- **Markie RS is better at every size on typing, scrolling and memory.** A keystroke costs about 1 ms at any size, against Electron's 5 ms at 1 MB and 130 to 155 ms at 100 MB. A scroll frame costs 1.1 to 1.7 ms, against 2.8 ms at 1 MB and 24 ms at 100 MB. Peak memory is a fifth to a half of Electron's.
+- **Opening is faster up to 10 MB and slower from 50 MB.** At 50 MB Markie RS paints in 950 to 990 ms, Electron in 370 to 640 ms. At 100 MB it is 1.9 s against 0.4 s (text) and 1.4 s (Markdown).
+- **Saving is slower from 10 MB.** 100 ms against 75 to 84 ms at 10 MB, 460 ms against 280 ms at 50 MB, 0.8 to 0.9 s against 0.5 to 0.8 s at 100 MB.
+- **Verdict for 7.9: FAIL.** The rule is PASS only if Markie RS is equal or better everywhere, and open and save are not.
+- A file of exactly 100,000,000 bytes is refused by both apps before it is read (`MAX_DOC_BYTES`), so "100 MB" here is 99,999,000 bytes.
+
+### Results
+
+Medians of 3 runs. Load is the 1-minute load average when the run started, on 18 cores.
+
+| Fixture | App | First paint ms | Editable ms | Peak RSS MB | Scroll frame ms (median / p95 / max) | Key at start ms | Key at end ms | Save ms | Load |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 MB .md | Electron | 318 | 341 | 1,127 | 3.3 / 4.3 / 5.0 | 6.8 | 26.0 | 41 | 446 |
+| 1 MB .md | Markie RS | 98 | 101 | 268 | 1.6 / 2.0 / 4.3 | 1.0 | 1.3 | 24 | 395 |
+| 1 MB .txt | Electron | 320 | 334 | 1,030 | 2.8 / 3.3 / 5.8 | 5.3 | 5.0 | 33 | 472 |
+| 1 MB .txt | Markie RS | 77 | 80 | 161 | 1.1 / 1.4 / 4.4 | 0.9 | 0.8 | 20 | 489 |
+| 10 MB .md | Electron | 407 | 467 | 1,486 | 6.3 / 8.8 / 30.4 | 16.9 | 35.7 | 84 | 418 |
+| 10 MB .md | Markie RS | 249 | 254 | 742 | 1.5 / 1.9 / 5.1 | 1.3 | 1.1 | 100 | 432 |
+| 10 MB .txt | Electron | 262 | 290 | 1,174 | 4.5 / 5.9 / 6.7 | 16.2 | 16.3 | 75 | 430 |
+| 10 MB .txt | Markie RS | 208 | 210 | 330 | 1.4 / 1.6 / 3.8 | 0.7 | 0.8 | 101 | 450 |
+| 50 MB .md | Electron | 642 | 885 | 2,398 | 7.4 / 14.5 / 22.7 | 69.0 | 87.7 | 280 | 328 |
+| 50 MB .md | Markie RS | 950 | 952 | 2,152 | 1.6 / 1.9 / 4.3 | 1.1 | 1.3 | 466 | 351 |
+| 50 MB .txt | Electron | 372 | 447 | 2,386 | 12.6 / 21.1 / 31.8 | 69.1 | 67.6 | 283 | 208 |
+| 50 MB .txt | Markie RS | 992 | 995 | 1,042 | 1.4 / 1.7 / 4.0 | 0.8 | 0.8 | 459 | 233 |
+| 100 MB .md | Electron | 1,438 | 1,797 | 4,118 | 23.6 / 34.9 / 56.8 | 132 | 145 | 792 | 285 |
+| 100 MB .md | Markie RS | 1,902 | 1,905 | 3,569 | 1.7 / 2.1 / 4.5 | 1.2 | 1.1 | 940 | 441 |
+| 100 MB .txt | Electron | 437 | 587 | 3,570 | 24.8 / 39.0 / 56.0 | 154 | 156 | 541 | 337 |
+| 100 MB .txt | Markie RS | 1,893 | 1,895 | 1,938 | 1.3 / 1.7 / 3.9 | 0.7 | 0.7 | 806 | 460 |
+
+### Where Markie RS is slower, and why
+
+| Area | Sizes | Cause | Plan |
+|---|---|---|---|
+| Open | 50 and 100 MB | Linear in the file, about 19 ms a MB. At 100 MB about half (950 ms) is `open_path` (read, decode, the editor's rope, word counts, the disk hash) and half (940 ms) is the first frame. CodeMirror reads the text once and lays out only the screen, which is why Electron's plain text opens in 0.4 s at 100 MB | Profile `open_path` and the editor's first layout at 100 MB; move counting and hashing off the main thread; find the whole-document pass in gpui-kit's first frame |
+| Save | 10 MB and more | Linear, about 9 ms a MB against Electron's 5.5: the rope copied to a string, the History snapshot, the write and the disk hash, all on the main thread | Write and snapshot from a background thread with the text copied once |
+
+Markie RS opens large files without soft wrap (see the first table of hot spots), so its lines run off to the right; Electron wraps. Electron's scroll figures include wrapping long lines; Markie RS's do not.
+
+### What else was running
+
+The Mac was never quiet. Load averages were 170 to 670 on 18 cores during the runs: iOS simulators (Circular and system apps), other agents' `cargo build` and `cargo test` of Markie RS, `swift-frontend`, Spotlight indexing. Kirby used the Mac and opened his own Markie during the run. Both apps ran under the same load, taking turns run by run, so the comparison holds better than the absolute numbers. Expect every number to be lower on a quiet Mac.
+
+### How it was measured
+
+Nothing was shown on screen and no input reached Kirby's display. The frontmost app was checked before and after every run.
+
+- **Markie RS**: a release build with `--features scene`, the `doc` scene with `bench: true` (`scene.rs` `doc_bench`). The window is hidden, so GPU presentation is not in any figure.
+- **Electron**: `rust/scripts/bench/electron-large/main.cjs` runs Electron 42.11.18 with the checkout's real preload, its renderer built by Vite, and main's own read and save modules (`doc-tiers`, `disk-memory`, `history`, `atomic-write`). The window is offscreen and the app is an accessory, so it never shows or activates. Input goes through `webContents.sendInputEvent`. Every other IPC channel answers null; the registry row a large open writes is skipped, which flatters Electron slightly.
+- **First paint**: Markie RS, `open_path` to the end of the first frame showing the document, at launch (`MARKIE_RS_PERF`). Electron, main receiving `get-initial-file` (it reads the file then) to the frame after the first line of text appears. Both include reading the file.
+- **Editable**: until a keystroke typed at once lands on screen. Markie RS opens synchronously, so it is first paint plus the first keystroke's frame.
+- **Peak RSS**: sampled every 100 ms over each app's whole process tree for the whole run (open, typing, scrolling, save). Electron's four processes are summed.
+- **Scroll**: 600 frames that sweep the document from top to bottom. Each frame's main-thread cost: Markie RS, setting the offset to the end of the frame's paint; Electron, setting `scrollTop`, CodeMirror's scroll handler and forced style and layout (paint not included, which flatters Electron).
+- **Typing**: 30 keys at the start, then 30 at the end of the document. Markie RS, keystroke to the end of the frame's paint. Electron, from Chromium's own trace: the renderer main thread's busy time from the keydown to the end of the frame's commit, with idle time left out. Waiting for the next frame is in neither.
+- **Save**: Markie RS, its ⌘S function to the frame after. Electron, the menu's save sent to the page until main's write finished: the page's save, IPC, the snapshot, the atomic write.
+
+Run it again:
+
+```sh
+S=<scratch>
+python3 rust/scripts/bench/gen-large.py $S/fx
+mkdir -p $S/esrc && git -C <electron checkout> archive HEAD | tar -x -C $S/esrc && ln -s <electron checkout>/node_modules $S/esrc/node_modules
+cat > $S/esrc/vite.bench.config.ts <<'TS'
+import base from "./vite.config";
+export default { ...base, cacheDir: process.env.BENCH_VITE_CACHE, build: { ...base.build, outDir: process.env.BENCH_OUT } };
+TS
+(cd $S/esrc && BENCH_VITE_CACHE=$S/vite-cache BENCH_OUT=$S/electron-out npx vite build --config vite.bench.config.ts)
+# Electron 42.11.18 for darwin-arm64 from its GitHub release, checked against node_modules/electron/checksums.json, unzipped to $S/electron
+(cd rust && cargo build --release -p markie-app --features scene)
+python3 rust/scripts/bench/large-docs.py run $S --runs 3    # about 45 minutes; resumes if stopped
+python3 rust/scripts/bench/large-docs.py summary $S
+```
+
 ## Status
 
 Not finished. The fixes are in and profiled, but the final before-and-after run against Electron has not run yet. For about six hours this Mac had 0 to 15% idle CPU from other agents' Rust builds and iOS simulators, and once rebooted. A timed launch in those conditions measures the other agents, so the run waits for at least half the CPU to be idle before each sample, and that never happened for long enough.

@@ -10,8 +10,8 @@ Date: 2026-11-22. Branch: `t3/markie-rs-editor-parity-1`, from `rust/markie-rs` 
 |---|---|
 | PASS | 74 |
 | IMPROVEMENT | 4 (8.13: no TipTap rewrites of untouched text; 13.2, 13.8, 13.9: the full-page History with one-press rows and Older and Newer arrows) |
-| FAIL | 2 (7.4, kept at 36 languages by Kirby's choice, and its group 7.0) |
-| NEEDS-CAPTURE | 4 (7.9, the 50 MB timing; 7.18, the CSV table with a real pointer and beside Electron's frame; 8.6, a real trackpad pinch; their group 8.0) |
+| FAIL | 3 (7.4, kept at 36 languages by Kirby's choice; 7.9, slower to open 50 MB and more and to save 10 MB and more; their group 7.0) |
+| NEEDS-CAPTURE | 3 (7.18, the CSV table with a real pointer and beside Electron's frame; 8.6, a real trackpad pinch; their group 8.0) |
 | EXCLUDED | 0 |
 | EXCLUDED-PLATFORM | 0 |
 | Total | 84 |
@@ -68,7 +68,7 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 
 | # | Bullet | Status | Evidence (Electron / Markie RS) | Notes |
 |---|---|---|---|---|
-| 7.0 | What the user can do (group) | FAIL | children | Follows 7.4, which stays FAIL by Kirby's choice to keep 36 languages; 7.9 needs a timed run. 7.5 passes since the editor fixes pass. |
+| 7.0 | What the user can do (group) | FAIL | children | Follows 7.4, which stays FAIL by Kirby's choice to keep 36 languages, and 7.9, slower than Electron to open 50 MB and more and to save 10 MB and more. 7.5 passes since the editor fixes pass. |
 | 7.1 | Edit raw source in Source (⌘2) or Split (⌘3); Rich is ⌘1 | PASS | `page.tsx` `requestMode` / `markie-app/src/main.rs:61-63`, `workspace.rs` `set_mode`, `mode_tests` | Large and literal documents stay in Source, as `requestMode`. |
 | 7.2 | Find and replace (⌘F, ⌥⌘F) | PASS | `find-bar.tsx` / GPUI Kit search, `workspace/source.rs` `FindReplace` | Now also in the Edit menu (7.5). |
 | 7.3 | Format GFM tables (⌥⌘T) | PASS | `format-tables.ts` / `markie-core/src/format_tables.rs`; fixture, 14 inputs byte-identical | Also in the Edit menu. |
@@ -77,7 +77,7 @@ The 446 blocks that still differ are all TipTap rewriting what the user wrote:
 | 7.6 | Large documents get a virtualized editor | PASS | `doc-tiers.ts` `LARGE_DOC_BYTES`, `large-doc.tsx` / `markie-core/src/document.rs:29`, `mode_allowed`, `text_view.rs:218` | Same 1 MB line, same note wording, GPUI Kit's rope editor draws only visible lines. |
 | 7.7 | CSV shows as a table, converts CSV ↔ GFM | PASS | `csv.ts` / `workspace/csv_doc.rs` `save_as_text`, `markie-core/src/csv.rs`; fixture | Since Electron PR #149 an open CSV is never converted (section 7a). The conversion is left for the two crossings: Markdown saved as `.csv`, and a CSV saved under another name. Fixture entry for a BOM updated to Electron's current output. |
 | 7.8 | Files | PASS | each file has its port: `editor-keymap.ts` (`main.rs` bindings), `source-find.ts` (GPUI Kit search), `source-handle.ts` (`workspace.rs` editor entity), `format-tables.ts`, `csv.ts`, `undo-target.ts` (`edit_menu`), `large-doc.tsx` (`text_view.rs`) | `source-comments.ts` is local comments, section 12's. |
-| 7.9 | Rust port note: performance on a 1 to 100 MB buffer | NEEDS-CAPTURE | GPUI Kit rope editor | Needs a timed live run (steps below). Files at 100 MB are refused by both apps (`MAX_DOC_BYTES`). |
+| 7.9 | Rust port note: performance on a 1 to 100 MB buffer | FAIL | GPUI Kit rope editor | Timed 2026-11-28 against Electron 0.9.7, both off screen, 3 runs ([PERF.md](PERF.md#large-documents-editors-79)). Markie RS is faster or equal at 1 and 10 MB to open, and at every size to type (about 1 ms a key against Electron's 5 to 155 ms), to scroll (1.1 to 1.7 ms a frame against 2.8 to 25 ms) and in memory. It is slower to open 50 MB (950 to 990 ms against 370 to 640 ms) and 100 MB (1.9 s against 0.4 to 1.4 s), and to save from 10 MB (100 ms against 75 to 84 ms; 460 ms against 280 ms at 50 MB). Exactly 100,000,000 bytes is refused by both (`MAX_DOC_BYTES`). |
 | 7.19 | ⌥↑ ⌥↓ move the lines (`moveLineUp`, `moveLineDown`) | PASS | `@codemirror/commands` `moveLine` / `workspace/source_keys.rs` `move_lines`; `alt_up_and_down_move_lines_with_the_selection` | Was missing (2026-11-25). Whole lines of a multi-line selection move; a selection ending at a line's start leaves that line, as `selectedLineBlocks`. One undo step: the touched lines are one `replace`. |
 | 7.20 | ⇧⌥↑ ⇧⌥↓ copy the lines (`copyLineUp`, `copyLineDown`) | PASS | `copyLine` / `copy_lines`; `shift_alt_up_and_down_copy_lines`; `source_keys_win_in_source_text_and_nowhere_else` | Was missing: GPUI Kit bound these keys to add a cursor. They copy now; ⌥⌘↑ ⌥⌘↓ still add a cursor, as CodeMirror. |
 | 7.21 | ⇧⌘K deletes the lines (`deleteLine`) | PASS | `deleteLine` / `delete_lines`; `shift_cmd_k_deletes_lines_and_keeps_the_column` | Was missing. The cursor lands a line down at the same column. |
@@ -242,7 +242,7 @@ Pending Kirby, recorded and unchanged:
 Follow SCREEN.md. Launch with `env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=<scratch>`, a scratch data dir, and only your own fixture. Resize both windows to 1280 by 820 with `act.sh <pid> resize 1280 820`. Do each in light and dark.
 
 1. **7.5 Edit menu.** Type in Source, then Edit › Undo and Redo. Click into View, type, then Edit › Undo. Open the find box, type, then Edit › Undo: only the find box changes.
-2. **7.9 Speed.** Open a 50 MB Markdown fixture in Source; time to first paint and scroll to the end; compare with Electron.
+2. **7.9 Speed.** Done off screen on 2026-11-28 (PERF.md, `large-docs.py`); no screen session is needed.
 3. **8.4 Rail.** Click the pencil. Capture the rail beside Electron's, with a heading and a list selected, and with Advanced open. Then all eight templates' pages, light and dark, side by side with `side-by-side.py`.
 4. **8.5 Viewer and statistics.** Double-click a picture in a document with three pictures; press → twice and ←; click the picture for natural size. Press ⇧⌘I and capture the popover beside Electron's.
 5. **8.6 Pinch.** One slow pinch out and in on the trackpad; it should move one or two zoom steps each way, as in Electron.

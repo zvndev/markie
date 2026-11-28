@@ -9,6 +9,10 @@
       "type": "electron-builder-mac-yml",
       "path": "mac/beta-mac.yml"
     },
+    "macIntelFeed": {
+      "type": "electron-builder-mac-yml",
+      "path": "mac-intel/beta-mac.yml"
+    },
     "windowsFeed": {
       "type": "electron-builder-win-yml",
       "path": "windows/beta.yml"
@@ -17,6 +21,13 @@
       "type": "electron-builder-linux-yml",
       "path": "linux/beta-linux.yml"
     }
+  },
+  "macCutover": {
+    "note": "From this version on, Apple Silicon Macs run Markie RS (the Rust app) and Intel Macs stay on Electron as Markie for Intel Macs. mac/ carries the Rust arm64 build plus one Electron x64 ZIP, the Intel bridge, so Intel installs older than this version still reach an Electron build that reads mac-intel/. mac-intel/ carries Electron x64 only. docs/RELEASING.md, \"Mac cutover (0.10.0)\".",
+    "version": "0.10.0",
+    "arm64Source": "rust",
+    "bundleId": "com.zvn.markie",
+    "teamId": "3VU8SG5TD9"
   },
   "siteUrl": "https://markiedocs.com",
   "latestManifestRoute": "/download/latest.json",
@@ -52,9 +63,13 @@
       "os": "macos",
       "arch": "x64",
       "status": "public",
-      "description": "For Macs with an Intel processor.",
+      "description": "Markie for Intel Macs. For Macs with an Intel processor.",
       "artifactPattern": "Markie-*-x64.dmg",
       "feed": {
+        "type": "electron-builder-mac-yml",
+        "path": "mac-intel/latest-mac.yml"
+      },
+      "fallbackFeed": {
         "type": "electron-builder-mac-yml",
         "path": "mac/latest-mac.yml"
       }

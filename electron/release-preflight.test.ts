@@ -67,6 +67,7 @@ describe("release preflight", () => {
       latestManifestRoute: "/download/latest.json",
       feedPath: "mac/latest-mac.yml",
       bucket: "markie-releases",
+      macCutover: "0.10.0",
     });
   });
 

@@ -15,6 +15,7 @@ import {
   downloadHref,
   downloadManifest,
   downloadPlatforms,
+  fallbackFeedForPlatform,
   feedForPlatform,
   findDownloadPlatform,
   parseArtifactName,
@@ -60,7 +61,17 @@ async function resolvePlatformRelease(platform: DownloadPlatform): Promise<Resol
   const missingAt = missingFeedCache.get(platform.id);
   if (!cached && missingAt && Date.now() - missingAt < MISSING_FEED_TTL_MS) return null;
   try {
-    const res = await fetch(feed.url);
+    let res = await fetch(feed.url);
+    let source = feed;
+    // A platform with a fallback feed reads it only while its own feed does
+    // not exist: the Intel Mac route before the 0.10.0 cutover is promoted.
+    // Any other failure is the bucket misbehaving, not a missing feed, and is
+    // handled like one below.
+    const fallback = res.status === 404 ? fallbackFeedForPlatform(platform) : null;
+    if (fallback) {
+      res = await fetch(fallback.url);
+      source = fallback;
+    }
     if (res.status === 404) missingFeedCache.set(platform.id, Date.now());
     if (!res.ok) throw new Error(`feed ${res.status}`);
     missingFeedCache.delete(platform.id);
@@ -69,7 +80,7 @@ async function resolvePlatformRelease(platform: DownloadPlatform): Promise<Resol
     const artifactName = parseArtifactName(feedText, platform);
     if (!version) throw new Error(`no version for ${platform.id} in feed`);
     if (!artifactName) throw new Error(`no artifact for ${platform.id} in feed`);
-    const artifactUrl = artifactDownloadUrl(platform, artifactName);
+    const artifactUrl = artifactDownloadUrl(platform, artifactName, source);
     if (!artifactUrl) throw new Error(`no artifact base for ${platform.id}`);
     const release = { version, artifactName, artifactUrl };
     downloadCache.set(platform.id, { release, at: Date.now() });
@@ -172,6 +183,12 @@ publicShare.get(downloadManifest.latestManifestRoute, async (c) => {
     awaitingFirstRelease: downloadPlatforms()
       .filter((platform) => platform.status === "ready" && !releases.some((entry) => entry.platform.id === platform.id))
       .map((platform) => platform.id),
+    // The version from which Apple Silicon gets Markie RS and Intel reads its
+    // own feed, or null before that. The release runner asks for it before a
+    // cutover feed goes stable: a server deployed before the cutover would
+    // look for the Intel DMG in the Apple Silicon feed and find nothing. The
+    // two Mac platforms above can carry different versions from then on.
+    macCutover: downloadManifest.macCutover?.version ?? null,
   });
 });
 

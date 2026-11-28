@@ -35,6 +35,12 @@ export type DownloadPlatform = {
   description: string;
   artifactPattern?: string;
   feed?: DownloadFeed;
+  // Read only while `feed` does not exist yet (the bucket answers 404). The
+  // Mac cutover moved Intel to its own feed, mac-intel/latest-mac.yml, which
+  // the 0.10.0 promotion creates. Until then the Intel route keeps resolving
+  // from the shared mac/ feed it always used, so the server can be deployed
+  // ahead of the release without leaving the Intel download dead.
+  fallbackFeed?: DownloadFeed;
   // Who is expected to have signed this platform's artifacts. It lives here so
   // the CI job that signs and the release runner that publishes read the same
   // string; when they each held their own copy, nothing would have noticed them
@@ -56,6 +62,11 @@ export type DownloadManifest = {
   };
   primaryPlatformId: string;
   platforms: DownloadPlatform[];
+  // Present once Apple Silicon Macs ship Markie RS (the Rust app) and Intel
+  // Macs follow their own Electron feed. docs/RELEASING.md, "Mac cutover".
+  // bundleId and teamId are what both apps are signed as, which is what lets
+  // Squirrel accept Markie RS as an in-place update of Electron Markie.
+  macCutover?: { version: string; arm64Source: "rust"; bundleId: string; teamId: string; note?: string };
 };
 
 export const DOWNLOAD_MANIFEST_URL = new URL("../download-manifest.json", import.meta.url);
@@ -94,8 +105,13 @@ const loadManifest = (): DownloadManifest => {
     if ((platform.status === "public" || platform.status === "ready") && !platform.feed) {
       throw new Error(`${platform.status} download platform ${platform.id} needs a feed`);
     }
-    if (platform.feed?.path.startsWith("/") || platform.feed?.path.includes("..")) {
-      throw new Error(`invalid download feed path: ${platform.feed.path}`);
+    for (const feed of [platform.feed, platform.fallbackFeed]) {
+      if (feed?.path.startsWith("/") || feed?.path.includes("..")) {
+        throw new Error(`invalid download feed path: ${feed.path}`);
+      }
+    }
+    if (platform.fallbackFeed && platform.fallbackFeed.type !== platform.feed?.type) {
+      throw new Error(`download platform ${platform.id} has a fallback feed of a different type`);
     }
     ids.add(platform.id);
     routes.add(platform.route);
@@ -103,8 +119,37 @@ const loadManifest = (): DownloadManifest => {
   if (!ids.has(manifest.primaryPlatformId)) {
     throw new Error(`primary download platform is missing: ${manifest.primaryPlatformId}`);
   }
+  validateMacCutover(manifest);
   return manifest;
 };
+
+const feedDir = (feed?: DownloadFeed) => (feed ? feed.path.split("/").slice(0, -1).join("/") : null);
+
+/**
+ * The Mac cutover splits the two Mac platforms across two feed directories:
+ * Apple Silicon reads mac/ (Markie RS), Intel reads mac-intel/ (Electron).
+ * Exported for the tests; loadManifest runs it on the real file.
+ */
+export function validateMacCutover(manifest: Pick<DownloadManifest, "macCutover" | "platforms">) {
+  const cutover = manifest.macCutover;
+  if (!cutover) return;
+  if (!/^\d+\.\d+\.\d+$/.test(cutover.version ?? "")) {
+    throw new Error(`macCutover.version must be X.Y.Z: ${cutover.version}`);
+  }
+  if (cutover.arm64Source !== "rust") throw new Error("macCutover.arm64Source must be rust");
+  if (!cutover.bundleId || !/^[A-Z0-9]{10}$/.test(cutover.teamId ?? "")) {
+    throw new Error("macCutover needs the bundleId and the 10-character Apple teamId both apps are signed with");
+  }
+  const arm = manifest.platforms.find((platform) => platform.id === "mac-arm64");
+  const intel = manifest.platforms.find((platform) => platform.id === "mac-x64");
+  if (!arm?.feed || !intel?.feed) throw new Error("the Mac cutover needs both Mac platforms with feeds");
+  if (feedDir(arm.feed) === feedDir(intel.feed)) {
+    throw new Error("the Mac cutover gives Intel its own feed directory, apart from Apple Silicon");
+  }
+  if (intel.fallbackFeed && intel.fallbackFeed.path !== arm.feed.path) {
+    throw new Error("the Intel fallback feed is the shared pre-cutover feed, the Apple Silicon one");
+  }
+}
 
 export const downloadManifest = loadManifest();
 
@@ -209,8 +254,21 @@ export function parseDmgName(feedText: string): string | null {
   return parseArtifactName(feedText, primaryDownloadPlatform());
 }
 
-export function artifactDownloadUrl(platform: DownloadPlatform, artifactName: string): string | null {
-  const feed = feedForPlatform(platform);
+/** The platform's fallback feed, resolved the same way as its main one. */
+export function fallbackFeedForPlatform(
+  platform: DownloadPlatform,
+  envBase = process.env.MARKIE_DOWNLOAD_BASE,
+  nodeEnv = process.env.NODE_ENV
+): ResolvedDownloadFeed | null {
+  if (!platform.fallbackFeed) return null;
+  return feedForPlatform({ ...platform, feed: platform.fallbackFeed }, envBase, nodeEnv);
+}
+
+export function artifactDownloadUrl(
+  platform: DownloadPlatform,
+  artifactName: string,
+  feed: ResolvedDownloadFeed | null = feedForPlatform(platform)
+): string | null {
   if (!feed) return null;
   return `${stripTrailingSlash(feed.artifactBaseUrl)}/${encodeURIComponent(artifactName)}`;
 }

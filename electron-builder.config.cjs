@@ -15,6 +15,30 @@ if (!macPlatform?.feed?.path) {
 
 const publishPath = path.posix.dirname(macPlatform.feed.path);
 
+// The Mac cutover (docs/RELEASING.md, "Mac cutover (0.10.0)"). From 0.10.0
+// Apple Silicon Macs run Markie RS, the Rust app, from mac/, and Electron ships
+// on the Mac for Intel only, from its own directory. The updater directory is
+// baked into app-update.yml at pack time, so every Electron Mac build made
+// under the cutover points at mac-intel/. The release runner builds x64 only
+// and refuses to publish an Electron arm64 build; a local arm64 pack still
+// works for development and the private lane overrides publish entirely.
+//
+// The top-level publish block stays on mac/: the release runner uploads the
+// Rust files and the mac/ feed through it, and the mac-intel/ uploads through
+// a generated config of their own, the way Windows and Linux do.
+const macIntelPlatform = releaseManifest.platforms.find((platform) => platform.id === "mac-x64");
+const macCutover = releaseManifest.macCutover ?? null;
+
+if (macCutover && !macIntelPlatform?.feed?.path) {
+  throw new Error("the Mac cutover needs an Intel updater feed path in the release manifest");
+}
+
+const macIntelPublishPath = macCutover ? path.posix.dirname(macIntelPlatform.feed.path) : null;
+
+if (macCutover && macIntelPublishPath === publishPath) {
+  throw new Error("the Mac cutover gives Intel its own updater directory, apart from mac/");
+}
+
 // Windows is built in CI and published from here, so it needs its own updater
 // directory: the path is baked into app-update.yml at pack time, and an
 // installer that shipped with the wrong one would look for its updates in the
@@ -86,6 +110,8 @@ module.exports = {
     entitlements: "build/entitlements.mac.plist",
     entitlementsInherit: "build/entitlements.mac.plist",
     notarize: true,
+    // Only under the cutover; before it, macOS kept the top-level block.
+    ...(macIntelPublishPath ? { publish: [publishTarget(macIntelPublishPath)] } : {}),
     // Content-type claims, so LaunchServices accepts Markie as the default app
     // for the formats Settings > Files offers (electron/default-apps.js). The
     // extension-only fileAssociations below cannot express a UTI. Everything
@@ -137,10 +163,11 @@ module.exports = {
       { target: "nsis", arch: ["x64"] },
       { target: "zip", arch: ["x64"] },
     ],
-    // Overrides the top-level publish block for Windows only. macOS keeps
-    // reading the top-level one, so its app-update.yml is byte-for-byte what it
-    // was — and the release runner asserts that, which is what would catch this
-    // if the override ever leaked across platforms.
+    // Overrides the top-level publish block for Windows only. macOS reads its
+    // own block under the Mac cutover (mac-intel/) and the top-level one before
+    // it, and the release runner asserts the packaged app-update.yml either
+    // way, which is what would catch this if an override leaked across
+    // platforms.
     publish: [publishTarget(winPublishPath)],
     ...(windowsSigntoolOptions ? { signtoolOptions: windowsSigntoolOptions } : {}),
   },

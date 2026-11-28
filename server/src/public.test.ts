@@ -26,6 +26,7 @@ const {
   parseDmgName,
   parseFeedVersion,
   primaryDownloadCta,
+  validateMacCutover,
 } = await import("./downloads.ts");
 const { clearDownloadCacheForTests, publicShare } = await import("./public.ts");
 const { auth } = await import("./auth.ts");
@@ -328,8 +329,10 @@ test("latest release JSON is a stable machine-readable source for sites and emai
         arch: "x64",
         version: "0.4.0",
         downloadUrl: "https://markiedocs.com/download/mac-intel",
+        // Intel reads its own feed since the Mac cutover, so its artifact
+        // lives beside that feed in mac-intel/.
         artifactUrl:
-          "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-x64.dmg",
+          "https://f005.backblazeb2.com/file/markie-releases/mac-intel/Markie-0.4.0-x64.dmg",
       },
       {
         id: "windows-x64",
@@ -346,6 +349,7 @@ test("latest release JSON is a stable machine-readable source for sites and emai
     // yet, so it is not offered; the release runner reads this list to know
     // the deployed server will offer it once the feed lands.
     awaitingFirstRelease: ["linux-x64", "linux-x64-deb"],
+    macCutover: "0.10.0",
   });
 });
 
@@ -483,9 +487,10 @@ test("the Intel download route redirects to the x64 artifact", async (t) => {
 
   const res = await publicShare.request("/download/mac-intel");
   assert.equal(res.status, 302);
+  // The Intel feed is mac-intel/latest-mac.yml since the Mac cutover.
   assert.equal(
     res.headers.get("location"),
-    "https://f005.backblazeb2.com/file/markie-releases/mac/Markie-0.4.0-x64.dmg"
+    "https://f005.backblazeb2.com/file/markie-releases/mac-intel/Markie-0.4.0-x64.dmg"
   );
 });
 
@@ -603,4 +608,163 @@ test("a public page linking to another account's publicly shared document does n
   assert.ok(!html.includes(bToken), "A's public page must not carry B's public link token");
   assert.ok(!html.includes(bDoc));
   assert.match(html, /<a class="doc-link-muted"[^>]*>their page<\/a>/);
+});
+
+// ---------------------------------------------------------------------------
+// The Mac cutover (0.10.0). Apple Silicon reads mac/latest-mac.yml, which now
+// carries Markie RS for arm64 plus one Electron x64 ZIP (the Intel bridge for
+// installs older than the cutover). Intel reads mac-intel/latest-mac.yml,
+// Electron x64 only. The two can carry different versions.
+// ---------------------------------------------------------------------------
+
+const CUTOVER_MAC_YML = `version: 0.10.3
+files:
+  - url: Markie-0.10.3-arm64.zip
+    sha512: rrr==
+    size: 21000000
+  - url: Markie-0.10.3-arm64.dmg
+    sha512: sss==
+    size: 22000000
+  - url: Markie-0.10.0-x64.zip
+    sha512: bridge==
+    size: 210709891
+path: Markie-0.10.3-arm64.zip
+sha512: rrr==
+releaseDate: '2026-12-10T00:00:00.000Z'
+`;
+
+const CUTOVER_INTEL_YML = `version: 0.10.1
+files:
+  - url: Markie-0.10.1-x64.zip
+    sha512: iii==
+    size: 210709891
+  - url: Markie-0.10.1-x64.dmg
+    sha512: jjj==
+    size: 219341444
+path: Markie-0.10.1-x64.zip
+sha512: iii==
+releaseDate: '2026-12-08T00:00:00.000Z'
+`;
+
+const PRE_CUTOVER_MAC_YML = DUAL_ARCH_YML.replaceAll("0.4.0", "0.9.7").replace(
+  "Markie-0.9.7-mac.zip",
+  "Markie-0.9.7-x64.zip"
+);
+
+const bucket = (objects: Record<string, string | number>) => async (input: RequestInfo | URL) => {
+  const url = String(input);
+  for (const [suffix, body] of Object.entries(objects)) {
+    if (url.endsWith(suffix)) {
+      return typeof body === "number" ? new Response("no", { status: body }) : new Response(body, { status: 200 });
+    }
+  }
+  return new Response("not found", { status: 404 });
+};
+
+const ARTIFACTS = "https://f005.backblazeb2.com/file/markie-releases";
+
+test("after the cutover, /download/mac serves the Markie RS DMG from mac/", async (t) => {
+  withFetch(t, bucket({ "/mac/latest-mac.yml": CUTOVER_MAC_YML, "/mac-intel/latest-mac.yml": CUTOVER_INTEL_YML }));
+  const res = await publicShare.request("/download/mac");
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("location"), `${ARTIFACTS}/mac/Markie-0.10.3-arm64.dmg`);
+});
+
+test("after the cutover, /download/mac-intel serves the Electron x64 DMG from mac-intel/", async (t) => {
+  const calls = withFetch(
+    t,
+    bucket({ "/mac/latest-mac.yml": CUTOVER_MAC_YML, "/mac-intel/latest-mac.yml": CUTOVER_INTEL_YML })
+  );
+  const res = await publicShare.request("/download/mac-intel");
+  assert.equal(res.status, 302);
+  // Never the bridge ZIP that mac/ lists for old Intel installs.
+  assert.equal(res.headers.get("location"), `${ARTIFACTS}/mac-intel/Markie-0.10.1-x64.dmg`);
+  assert.deepEqual(calls, [`${ARTIFACTS}/mac-intel/latest-mac.yml`], "the shared mac/ feed is not read");
+});
+
+test("latest.json lets the two Mac platforms carry different versions after the cutover", async (t) => {
+  withFetch(
+    t,
+    bucket({
+      "/mac/latest-mac.yml": CUTOVER_MAC_YML,
+      "/mac-intel/latest-mac.yml": CUTOVER_INTEL_YML,
+      "/windows/latest.yml": WINDOWS_YML,
+    })
+  );
+  const body = await (await publicShare.request("/download/latest.json")).json();
+  const mac = (id: string) => body.platforms.find((platform: { id: string }) => platform.id === id);
+  // The headline version is the primary platform's: Markie RS on Apple Silicon.
+  assert.equal(body.version, "0.10.3");
+  assert.equal(body.macCutover, "0.10.0");
+  assert.deepEqual(
+    { version: mac("mac-arm64").version, artifactUrl: mac("mac-arm64").artifactUrl },
+    { version: "0.10.3", artifactUrl: `${ARTIFACTS}/mac/Markie-0.10.3-arm64.dmg` }
+  );
+  assert.deepEqual(
+    { version: mac("mac-x64").version, artifactUrl: mac("mac-x64").artifactUrl },
+    { version: "0.10.1", artifactUrl: `${ARTIFACTS}/mac-intel/Markie-0.10.1-x64.dmg` }
+  );
+});
+
+test("before the cutover is promoted, the Intel route keeps resolving from the shared mac/ feed", async (t) => {
+  // mac-intel/latest-mac.yml does not exist until the 0.10.0 promotion, and
+  // the server can be deployed before that.
+  const calls = withFetch(t, bucket({ "/mac/latest-mac.yml": PRE_CUTOVER_MAC_YML }));
+  const res = await publicShare.request("/download/mac-intel");
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("location"), `${ARTIFACTS}/mac/Markie-0.9.7-x64.dmg`);
+  assert.deepEqual(calls, [`${ARTIFACTS}/mac-intel/latest-mac.yml`, `${ARTIFACTS}/mac/latest-mac.yml`]);
+  const body = await (await publicShare.request("/download/latest.json")).json();
+  const intel = body.platforms.find((platform: { id: string }) => platform.id === "mac-x64");
+  assert.equal(intel.version, "0.9.7");
+});
+
+test("the Intel fallback is for a missing feed only, not for a bucket error", async (t) => {
+  const calls = withFetch(
+    t,
+    bucket({ "/mac-intel/latest-mac.yml": 503, "/mac/latest-mac.yml": PRE_CUTOVER_MAC_YML })
+  );
+  const res = await publicShare.request("/download/mac-intel");
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("location"), "https://markiedocs.com/download");
+  assert.deepEqual(calls, [`${ARTIFACTS}/mac-intel/latest-mac.yml`]);
+});
+
+test("the manifest declares the Mac cutover with Intel on its own feed", () => {
+  const intel = findDownloadPlatform("mac-x64");
+  assert.equal(findDownloadPlatform("mac-arm64")?.feed?.path, "mac/latest-mac.yml");
+  assert.equal(intel?.feed?.path, "mac-intel/latest-mac.yml");
+  assert.equal(intel?.fallbackFeed?.path, "mac/latest-mac.yml");
+  assert.equal(feedForPlatform(intel!, undefined, "test")?.artifactBaseUrl, `${ARTIFACTS}/mac-intel`);
+});
+
+test("a cutover manifest that leaves Intel in the Apple Silicon directory is rejected", () => {
+  const arm = findDownloadPlatform("mac-arm64")!;
+  const intel = findDownloadPlatform("mac-x64")!;
+  const cutover = { version: "0.10.0", arm64Source: "rust" as const, bundleId: "com.zvn.markie", teamId: "3VU8SG5TD9" };
+  assert.throws(
+    () =>
+      validateMacCutover({
+        macCutover: cutover,
+        platforms: [arm, { ...intel, feed: { type: "electron-builder-mac-yml", path: "mac/latest-mac.yml" } }],
+      }),
+    /own feed directory/
+  );
+  assert.throws(
+    () =>
+      validateMacCutover({
+        macCutover: cutover,
+        platforms: [arm, { ...intel, fallbackFeed: { type: "electron-builder-mac-yml", path: "windows/latest.yml" } }],
+      }),
+    /fallback feed/
+  );
+  assert.throws(
+    () => validateMacCutover({ macCutover: { ...cutover, version: "0.10" }, platforms: [arm, intel] }),
+    /X\.Y\.Z/
+  );
+  assert.throws(
+    () => validateMacCutover({ macCutover: { ...cutover, teamId: "" }, platforms: [arm, intel] }),
+    /teamId/
+  );
+  assert.doesNotThrow(() => validateMacCutover({ macCutover: cutover, platforms: [arm, intel] }));
 });

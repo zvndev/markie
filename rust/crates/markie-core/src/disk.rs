@@ -20,7 +20,9 @@ struct Seen {
     verified: Option<(u64, SystemTime)>,
 }
 
-fn content_hash(bytes: &[u8]) -> u64 {
+/// The in-memory hash [`DiskMemory`] keeps, public so a background save can
+/// work it out off the main thread ([`DiskMemory::remember_hashed`]).
+pub fn content_hash(bytes: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut h);
@@ -46,14 +48,24 @@ pub enum DiskChange {
 
 impl DiskMemory {
     pub fn remember(&mut self, path: &Path, content: &str, own_write: bool) {
-        let stamp = own_write
-            .then(|| fs::metadata(path).ok())
-            .flatten()
-            .and_then(|m| stamp(&m));
-        self.seen.insert(
-            path.to_path_buf(),
-            Seen { hash: content_hash(content.as_bytes()), own_write: stamp, verified: None },
-        );
+        self.remember_hashed(path, content_hash(content.as_bytes()), own_write);
+    }
+
+    /// [`Self::remember`] for bytes just read, with the size and modified
+    /// time taken before the read (`document::open`). Any later write moves
+    /// that stamp, so until it moves the file needs no second read: the first
+    /// save after opening a 100 MB file does not read and hash it again.
+    pub fn remember_read(&mut self, path: &Path, content: &str, size: u64, modified: Option<SystemTime>) {
+        self.remember(path, content, false);
+        if let (Some(seen), Some(modified)) = (self.seen.get_mut(path), modified) {
+            seen.verified = Some((size, modified));
+        }
+    }
+
+    /// [`Self::remember`] with the hash of `content` already worked out.
+    pub fn remember_hashed(&mut self, path: &Path, hash: u64, own_write: bool) {
+        let stamp = own_write.then(|| fs::metadata(path).ok()).flatten().and_then(|m| stamp(&m));
+        self.seen.insert(path.to_path_buf(), Seen { hash, own_write: stamp, verified: None });
     }
 
     pub fn forget(&mut self, path: &Path) {
@@ -153,6 +165,42 @@ mod tests {
         assert_eq!(format_megabytes(100_000_000), "100 MB");
         assert_eq!(format_megabytes(2_500_000), "2.5 MB");
         assert_eq!(over_cap_message("a.md", 120_000_000), "a.md on disk is now 120 MB, more than Markie opens (100 MB). Save your copy under another name.");
+    }
+
+    fn set_mtime(p: &Path, t: SystemTime) {
+        fs::OpenOptions::new().write(true).open(p).unwrap().set_modified(t).unwrap();
+    }
+
+    /// The stamp from before the read stands for the bytes read: the file is
+    /// not read again until a write moves it, and any write that does is seen.
+    #[test]
+    fn a_stamped_read_is_trusted_until_the_file_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.md");
+        fs::write(&p, "one").unwrap();
+        let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        set_mtime(&p, then);
+        let mut mem = DiskMemory::default();
+        mem.remember_read(&p, "one", 3, Some(then));
+        // Same size and time: trusted without a read, like an own write.
+        fs::write(&p, "two").unwrap();
+        set_mtime(&p, then);
+        assert_eq!(mem.changed_since(&p), None);
+        // A write that moves the time is read and reported.
+        set_mtime(&p, then + std::time::Duration::from_secs(5));
+        assert_eq!(mem.changed_since(&p), Some(DiskChange::Changed("two".into())));
+    }
+
+    #[test]
+    fn a_read_without_a_time_is_checked_by_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.md");
+        fs::write(&p, "one").unwrap();
+        let mut mem = DiskMemory::default();
+        mem.remember_read(&p, "one", 3, None);
+        assert_eq!(mem.changed_since(&p), None);
+        fs::write(&p, "two").unwrap();
+        assert_eq!(mem.changed_since(&p), Some(DiskChange::Changed("two".into())));
     }
 
     #[test]
